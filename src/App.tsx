@@ -434,7 +434,7 @@ function App() {
       <motion.div
         className="bloom"
         initial={{ width: isPlaying ? 200 : 140 }}
-        animate={{ width: isHovered ? (isPlaying ? 400 : 280) : (isPlaying ? 200 : 140) }}
+        animate={{ width: isHovered ? (isPlaying ? 280 : 280) : (isPlaying ? 200 : 140) }}
         onHoverStart={() => setIsHovered(true)}
         onHoverEnd={() => setIsHovered(false)}
         style={{ originY: 0 }}
