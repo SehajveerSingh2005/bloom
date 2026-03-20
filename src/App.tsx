@@ -424,6 +424,24 @@ function App() {
     setIsMuted(!isMuted);
   }, [isMuted]);
 
+  // Open WiFi settings
+  const openWifiSettings = useCallback(async () => {
+    try {
+      await invoke("open_wifi_settings");
+    } catch (e) {
+      console.error("Failed to open WiFi settings:", e);
+    }
+  }, []);
+
+  // Open notification center
+  const openNotificationCenter = useCallback(async () => {
+    try {
+      await invoke("open_notification_center");
+    } catch (e) {
+      console.error("Failed to open notification center:", e);
+    }
+  }, []);
+
   // Demo notification (for testing)
   const triggerNotification = useCallback(() => {
     setNotificationCount((prev) => prev + 1);
@@ -452,13 +470,17 @@ function App() {
                 exit={{ opacity: 0, x: -10 }}
                 transition={{ duration: 0.12, ease: "easeInOut" }}
               >
-                <div className="passive-feature" title={isOnline ? "Connected" : "Offline"}>
+                <div
+                  className="passive-feature clickable"
+                  title={isOnline ? "Connected" : "Offline"}
+                  onClick={openWifiSettings}
+                >
                   <WifiIcon connected={isOnline} />
                 </div>
                 <div
                   className="passive-feature clickable"
                   title={isMuted ? "Notifications muted" : "Notifications active"}
-                  onClick={toggleMute}
+                  onClick={openNotificationCenter}
                 >
                   {isMuted ? <BellOffIcon /> : <BellIcon />}
                 </div>

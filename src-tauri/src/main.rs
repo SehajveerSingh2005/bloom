@@ -7,7 +7,7 @@ use windows::Win32::UI::Shell::{
     ABM_NEW, ABM_SETPOS,
     ABE_TOP,
 };
-
+use windows::Win32::UI::Shell::ShellExecuteA;
 use windows::Win32::Foundation::HWND;
 
 // Media info struct for Tauri commands
@@ -106,6 +106,44 @@ fn media_prev() {
     control_media_session(MediaAction::Prev);
 }
 
+#[tauri::command]
+fn open_wifi_settings() {
+    unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use std::ptr::null_mut;
+        
+        // Open Windows WiFi/Network settings using the ms-availablenetworks: protocol
+        let _ = ShellExecuteA(
+            Some(HWND(null_mut())),
+            windows::core::PCSTR(b"open\0".as_ptr()),
+            windows::core::PCSTR(b"ms-availablenetworks:\0".as_ptr()),
+            windows::core::PCSTR::null(),
+            windows::core::PCSTR::null(),
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
+#[tauri::command]
+fn open_notification_center() {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use std::ptr::null_mut;
+        
+        // Open Windows Action Center / Notification Center using shell execute
+        // This directly opens the notification panel without keyboard shortcuts
+        let _ = ShellExecuteA(
+            Some(HWND(null_mut())),
+            windows::core::PCSTR(b"open\0".as_ptr()),
+            windows::core::PCSTR(b"ms-actioncenter:\0".as_ptr()),
+            windows::core::PCSTR::null(),
+            windows::core::PCSTR::null(),
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
 enum MediaAction {
     Play,
     Pause,
@@ -175,7 +213,9 @@ fn main() {
             media_pause,
             media_play_pause,
             media_next,
-            media_prev
+            media_prev,
+            open_wifi_settings,
+            open_notification_center
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
