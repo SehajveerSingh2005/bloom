@@ -438,7 +438,7 @@ function App() {
         onHoverStart={() => setIsHovered(true)}
         onHoverEnd={() => setIsHovered(false)}
         style={{ originY: 0 }}
-        transition={{ type: "spring", stiffness: 300, damping: 25 }}
+        transition={{ type: "spring", stiffness: 400, damping: 25, mass: 0.8 }}
       >
         {/* Left side - Music visualizer OR Passive features */}
         <div className="side-content left">
@@ -450,7 +450,7 @@ function App() {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.15 }}
+                transition={{ duration: 0.12, ease: "easeInOut" }}
               >
                 <div className="passive-feature" title={isOnline ? "Connected" : "Offline"}>
                   <WifiIcon connected={isOnline} />
@@ -471,7 +471,7 @@ function App() {
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ duration: 0.15 }}
+                  transition={{ duration: 0.12, ease: "easeInOut" }}
                 >
                   <Visualizer isPlaying={isPlaying} audioData={audioData} />
                 </motion.div>
@@ -490,10 +490,10 @@ function App() {
             <motion.button
               key="album-art"
               className="album-art"
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.8 }}
-              transition={{ duration: 0.15 }}
+              initial={{ opacity: 0, scale: 0.8, x: 10 }}
+              animate={{ opacity: 1, scale: 1, x: 0 }}
+              exit={{ opacity: 0, scale: 0.8, x: 10 }}
+              transition={{ duration: 0.12, ease: "easeInOut", delay: 0.05 }}
               onClick={togglePlayPause}
               title="Click to pause"
             >
@@ -522,7 +522,7 @@ function App() {
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 10 }}
-                transition={{ duration: 0.15 }}
+                transition={{ duration: 0.08, ease: "easeInOut" }}
               >
                 {temperature !== null && (
                   <div className="passive-feature" title={weatherCondition || "Temperature"}>
