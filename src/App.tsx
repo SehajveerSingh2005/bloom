@@ -105,6 +105,9 @@ function App() {
   
   // Audio visualization state
   const [audioData, setAudioData] = useState<number[]>(new Array(5).fill(0.3));
+  const [useRealAudio, setUseRealAudio] = useState(false);
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+  const [dataArray, setDataArray] = useState<Uint8Array | null>(null);
   
   // Notification state
   const [notificationCount, setNotificationCount] = useState(0);
@@ -279,29 +282,61 @@ function App() {
     return () => clearInterval(pollInterval);
   }, []);
 
-  // Audio visualization setup - capture system audio for real visualization
+  // Audio visualization setup - real system audio capture
   useEffect(() => {
     if (!isPlaying) {
       setAudioData(new Array(5).fill(0.3));
       return;
     }
 
-    let animationFrameId: number;
-    let analyserNode: AnalyserNode | null = null;
-    let dataArray: Uint8Array | null = null;
-    let stream: MediaStream | null = null;
+    // If we already have analyser, just run the visualization loop
+    if (analyser && dataArray && useRealAudio) {
+      let animationFrameId: number;
+      
+      const updateVisualizer = () => {
+        analyser.getByteFrequencyData(dataArray);
+        
+        // Get frequency data for 5 bands
+        const bands = [0, 1, 2, 3, 4];
+        const bandSize = Math.floor(dataArray.length / 10);
+        
+        const normalized = bands.map(i => {
+          // Average across a small frequency range for smoother response
+          const start = i * bandSize;
+          const end = start + bandSize;
+          let sum = 0;
+          for (let j = start; j < end; j++) {
+            sum += dataArray[j];
+          }
+          const avg = sum / bandSize / 255;
+          
+          // Apply response curve
+          return Math.pow(avg, 0.7) * 1.1;
+        }).map(v => Math.max(0.25, Math.min(0.95, v)));
+        
+        // Smooth transition
+        setAudioData(prev => prev.map((p, i) => p * 0.3 + normalized[i] * 0.7));
+        
+        animationFrameId = requestAnimationFrame(updateVisualizer);
+      };
+      
+      updateVisualizer();
+      
+      return () => {
+        cancelAnimationFrame(animationFrameId);
+      };
+    }
 
+    // First time setup - try to capture system audio
     const setupAudioCapture = async () => {
       try {
-        // Create audio context and analyser
         const ctx = new AudioContext();
-        analyserNode = ctx.createAnalyser();
-        analyserNode.fftSize = 64;
-        analyserNode.smoothingTimeConstant = 0.7;
+        const analyserNode = ctx.createAnalyser();
+        analyserNode.fftSize = 512;
+        analyserNode.smoothingTimeConstant = 0.85;
 
-        // Try to capture system audio using screen sharing API
-        // User needs to select "Share system audio" option
-        stream = await navigator.mediaDevices.getDisplayMedia({
+        // Request system audio capture
+        const stream = await navigator.mediaDevices.getDisplayMedia({
           video: false,
           audio: true,
         } as MediaStreamConstraints);
@@ -309,63 +344,60 @@ function App() {
         const source = ctx.createMediaStreamSource(stream);
         source.connect(analyserNode);
 
-        dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+        const data = new Uint8Array(analyserNode.frequencyBinCount);
         
-        const updateVisualizer = () => {
-          if (analyserNode && dataArray) {
-            analyserNode.getByteFrequencyData(dataArray);
-            
-            // Use lower frequencies for visualization (5 bars)
-            const normalized = Array.from(dataArray.slice(0, 5))
-              .map(v => {
-                const normalized = v / 255;
-                // Apply curve for more dynamic response
-                return Math.pow(normalized, 0.6) * 1.3;
-              })
-              .map(v => Math.max(0.25, Math.min(1, v)));
-            
-            setAudioData(normalized);
-          }
-          
-          animationFrameId = requestAnimationFrame(updateVisualizer);
-        };
+        setAnalyser(analyserNode);
+        setDataArray(data);
+        setUseRealAudio(true);
 
-        updateVisualizer();
+        // Stop video track, keep audio analyser working
+        setTimeout(() => {
+          stream.getVideoTracks().forEach(t => t.stop());
+        }, 100);
 
       } catch (e) {
-        console.log("Audio capture not available, using simulated visualization");
-        // Fallback to simulated visualization
+        console.log("System audio capture not available");
+        setUseRealAudio(false);
         simulateVisualization();
       }
     };
 
     const simulateVisualization = () => {
       let time = 0;
-      let prevValues = new Array(5).fill(0.3);
+      let velocities = new Array(5).fill(0);
+      let positions = new Array(5).fill(0.3);
       
       const simulate = () => {
         time += 0.08;
+        
         setAudioData(prev => {
           const newValues = prev.map((_, i) => {
-            // Multi-layer wave simulation for natural audio-like behavior
-            const baseWave = Math.sin(time * 2 + i * 0.5) * 0.2;
-            const highFreq = Math.sin(time * 5 + i * 0.8) * 0.15;
-            const lowFreq = Math.sin(time * 1.2) * 0.2;
-            const beat = Math.sin(time * 3) * Math.cos(time * 0.5) * 0.15;
-            const random = (Math.random() - 0.5) * 0.3;
+            // Each bar represents a different frequency band
+            const baseFreq = [0.8, 1.2, 1.7, 2.3, 3.1][i];
+            const beatFreq = [0.4, 0.4, 0.8, 0.8, 0.4][i];
             
-            // Combine all components
-            let value = 0.55 + baseWave + highFreq + lowFreq + beat + random;
+            // Pseudo-random variation per frequency band
+            const variation = Math.sin(time * baseFreq + i * 2.1) * Math.cos(time * 0.5 + i * 0.3);
+            const beat = Math.sin(time * beatFreq) * Math.cos(time * 0.9) * 0.25;
             
-            // Smooth with previous value for continuity
-            value = value * 0.7 + prevValues[i] * 0.3;
-            prevValues[i] = value;
+            // Target value
+            const target = 0.45 + variation * 0.2 + beat * 0.2;
             
-            return Math.max(0.25, Math.min(1, value));
+            // Smooth interpolation
+            positions[i] += (target - positions[i]) * 0.12;
+            
+            // Velocity/inertia
+            velocities[i] += (positions[i] - prev[i]) * 0.4;
+            velocities[i] *= 0.75;
+            
+            const value = positions[i] + velocities[i] * 0.08;
+            
+            return Math.max(0.25, Math.min(0.9, value));
           });
           return newValues;
         });
-        animationFrameId = requestAnimationFrame(simulate);
+        
+        requestAnimationFrame(simulate);
       };
       simulate();
     };
@@ -373,18 +405,9 @@ function App() {
     setupAudioCapture();
 
     return () => {
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-      }
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-      if (analyserNode) {
-        analyserNode.disconnect();
-      }
       setAudioData(new Array(5).fill(0.3));
     };
-  }, [isPlaying]);
+  }, [isPlaying, analyser, dataArray, useRealAudio]);
 
   // Media controls via Tauri commands
   const togglePlayPause = useCallback(async () => {

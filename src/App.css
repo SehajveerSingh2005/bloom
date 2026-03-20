@@ -115,16 +115,17 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  height: 16px;
-  width: 35px;
+  height: 20px;
+  width: 38px;
   position: relative;
 }
 
 .visualizer-horizontal .bar-horizontal {
-  width: 3px;
+  width: 4px;
   height: 100%;
+  min-height: 4px;
   background: rgba(255, 255, 255, 0.95);
-  border-radius: 3px;
+  border-radius: 25%;
   transform-origin: center;
   will-change: transform;
 }
