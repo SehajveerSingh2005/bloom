@@ -1,175 +1,227 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
 
-html, body {
-  margin: 0;
-  padding: 0;
-  background: transparent;
-  overflow: hidden;
+html,
+body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
 }
 
 .screen {
-  width: 100vw;
-  height: 100vh;
-
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-
-  margin: 0;
-  padding: 0;
-
-  pointer-events: none;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    margin: 0;
+    padding: 0;
+    pointer-events: none;
 }
 
 .bloom {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(20px);
+    border-radius: 0 0 18px 18px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-top: none;
 
-  position: relative;
+    color: white;
 
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(20px);
+    pointer-events: auto;
+    cursor: default;
 
-  border-radius: 0 0 13px 13px;
+    padding: 0 12px;
 
-  /* subtle border */
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-top: none;
+    white-space: nowrap;
 
-  color: white;
+    height: 36px;
 
-  pointer-events: auto;
-  cursor: default;
+    font-family:
+        "Inter",
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+}
 
-  padding: 0 12px;
+/* Concave top corners ("bridge" to screen edge) */
+.bloom::before,
+.bloom::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    width: 13px;
+    height: 13px;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(20px);
+    pointer-events: none;
+}
 
-  overflow: hidden;
-  white-space: nowrap;
+.bloom::before {
+    left: -13px;
+    -webkit-mask-image: radial-gradient(
+        circle at 0 13px,
+        transparent 13px,
+        black 13px
+    );
+    mask-image: radial-gradient(circle at 0 13px, transparent 13px, black 13px);
+    background:
+        radial-gradient(
+            circle at 0 13px,
+            transparent 13px,
+            rgba(255, 255, 255, 0.15) 13px,
+            rgba(255, 255, 255, 0.15) 14px,
+            transparent 14.1px
+        ),
+        rgba(0, 0, 0, 0.5);
+}
 
-  height: 30px;
-
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+.bloom::after {
+    right: -13px;
+    -webkit-mask-image: radial-gradient(
+        circle at 13px 13px,
+        transparent 13px,
+        black 13px
+    );
+    mask-image: radial-gradient(
+        circle at 13px 13px,
+        transparent 13px,
+        black 13px
+    );
+    background:
+        radial-gradient(
+            circle at 13px 13px,
+            transparent 13px,
+            rgba(255, 255, 255, 0.15) 13px,
+            rgba(255, 255, 255, 0.15) 14px,
+            transparent 14.1px
+        ),
+        rgba(0, 0, 0, 0.5);
 }
 
 .time {
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.3px;
-  line-height: 1;
-  cursor: default;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    line-height: 1;
+    cursor: default;
 
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
 }
 
 /* Side content containers */
 .side-content {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  position: absolute;
-  height: 100%;
-  align-items: center;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: absolute;
+    height: 100%;
+    align-items: center;
 }
 
 .side-content.left {
-  left: 12px;
+    left: 12px;
 }
 
 .side-content.right {
-  right: 12px;
+    right: 12px;
 }
 
 .passive-features-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .passive-feature {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
 
-  color: rgba(255, 255, 255, 0.9);
+    color: rgba(255, 255, 255, 0.9);
 }
 
 .passive-feature .label {
-  font-size: 11px;
-  font-weight: 500;
-  opacity: 0.85;
+    font-size: 11px;
+    font-weight: 500;
+    opacity: 0.85;
 }
 
 /* Music visualizer - horizontal bars (like iPhone Dynamic Island) */
 .music-visualizer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
 }
 
 .visualizer-horizontal {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  height: 20px;
-  width: 38px;
-  position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 20px;
+    width: 38px;
+    position: relative;
 }
 
 .visualizer-horizontal .bar-horizontal {
-  width: 4px;
-  height: 100%;
-  min-height: 4px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 25%;
-  transform-origin: center;
-  will-change: transform;
+    width: 4px;
+    height: 100%;
+    min-height: 4px;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 25%;
+    transform-origin: center;
+    will-change: transform;
 }
 
 /* Album art (compact mode) */
 .album-art {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 
-  background: rgba(255, 255, 255, 0.15);
-  border: none;
-  border-radius: 6px;
-  padding: 0;
+    background: rgba(255, 255, 255, 0.15);
+    border: none;
+    border-radius: 6px;
+    padding: 0;
 
-  cursor: pointer;
+    cursor: pointer;
 
-  flex-shrink: 0;
-  overflow: hidden;
-  
-  width: 20px;
-  height: 20px;
+    flex-shrink: 0;
+    overflow: hidden;
+
+    width: 20px;
+    height: 20px;
 }
 
 .album-art img {
-  width: 20px;
-  height: 20px;
-  object-fit: cover;
+    width: 20px;
+    height: 20px;
+    object-fit: cover;
 }
 
 .album-art-placeholder {
-  font-size: 12px;
-  line-height: 20px;
-  filter: brightness(0) invert(1); /* Make icon white */
+    font-size: 12px;
+    line-height: 20px;
+    filter: brightness(0) invert(1); /* Make icon white */
 }
 
 .album-art:hover {
-  background: rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.25);
 }
 
 .clickable {
-  cursor: pointer;
+    cursor: pointer;
 }
 
 .clickable:hover {
-  opacity: 0.7;
+    opacity: 0.7;
 }
