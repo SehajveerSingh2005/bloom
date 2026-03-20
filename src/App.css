@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
 html, body {
   margin: 0;
   padding: 0;
@@ -15,7 +17,7 @@ html, body {
 
   margin: 0;
   padding: 0;
-  
+
   pointer-events: none;
 }
 
@@ -26,25 +28,147 @@ html, body {
 
   position: relative;
 
-  /* Glass base */
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(20px);
 
-  border-radius: 0 0 20px 20px;
+  border-radius: 0 0 13px 13px;
 
   /* subtle border */
   border: 1px solid rgba(255, 255, 255, 0.15);
-
+  border-top: none;
 
   color: white;
 
   pointer-events: auto;
   cursor: default;
+
+  padding: 0 12px;
+
+  overflow: hidden;
+  white-space: nowrap;
+
+  height: 30px;
+
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 .time {
-  font-size: 14px;
-  font-family: Arial, Helvetica, sans-serif;
-  letter-spacing: 0.5px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
   line-height: 1;
   cursor: default;
+
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* Side content containers */
+.side-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: absolute;
+  height: 100%;
+  align-items: center;
+}
+
+.side-content.left {
+  left: 12px;
+}
+
+.side-content.right {
+  right: 12px;
+}
+
+.passive-features-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.passive-feature {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.passive-feature .label {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+/* Music visualizer - horizontal bars (like iPhone Dynamic Island) */
+.music-visualizer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.visualizer-horizontal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 16px;
+  width: 35px;
+  position: relative;
+}
+
+.visualizer-horizontal .bar-horizontal {
+  width: 3px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 3px;
+  transform-origin: center;
+  will-change: transform;
+}
+
+/* Album art (compact mode) */
+.album-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  border-radius: 6px;
+  padding: 0;
+
+  cursor: pointer;
+
+  flex-shrink: 0;
+  overflow: hidden;
+  
+  width: 20px;
+  height: 20px;
+}
+
+.album-art img {
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+}
+
+.album-art-placeholder {
+  font-size: 12px;
+  line-height: 20px;
+  filter: brightness(0) invert(1); /* Make icon white */
+}
+
+.album-art:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.clickable:hover {
+  opacity: 0.7;
 }
