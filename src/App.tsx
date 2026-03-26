@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -112,6 +113,10 @@ function App() {
   // Notification state
   const [notificationCount, setNotificationCount] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
+
+  // Volume state (for sync with overlay window)
+  const [volume, setVolume] = useState(0.5);
+  const [isBlobMuted, setIsBlobMuted] = useState(false);
 
   // Update time
   useEffect(() => {
@@ -408,6 +413,21 @@ function App() {
       setAudioData(new Array(5).fill(0.3));
     };
   }, [isPlaying, analyser, dataArray, useRealAudio]);
+
+  // Volume monitoring - listen for volume changes from backend (for state sync)
+  useEffect(() => {
+    const unlisten = listen("volume-change", (event: any) => {
+      const { volume: newVolume, is_muted } = event.payload;
+
+      setVolume(newVolume);
+      setIsBlobMuted(is_muted);
+      // Note: Volume overlay window is now handled by the backend
+    });
+
+    return () => {
+      unlisten.then(fn => fn());
+    };
+  }, []);
 
   // Media controls via Tauri commands
   const togglePlayPause = useCallback(async () => {

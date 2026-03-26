@@ -1,0 +1,170 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+}
+
+.volume-overlay-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    pointer-events: none;
+    position: relative;
+}
+
+/* Wrapper that supports 'blooming' from the left edge */
+.volume-notch-wrapper {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    overflow: visible;
+    transform-origin: left center;
+}
+
+/* The vertical island notch */
+.volume-notch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+
+    padding: 16px 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(20px);
+
+    /* Rounded on the right side to look like it grows from the left edge */
+    border-radius: 0 18px 18px 0;
+
+    /* Apple-like border */
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-left: none;
+
+    width: 42px;
+    height: 196px;
+
+    position: relative;
+    pointer-events: auto;
+}
+
+/* Concave bridge corners connecting the island to the left edge */
+.volume-notch::before,
+.volume-notch::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    width: 13px;
+    height: 13px;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(20px);
+    pointer-events: none;
+}
+
+/* Top bridge corner: curves from left edge to island top */
+.volume-notch::before {
+    top: -13px;
+    -webkit-mask-image: radial-gradient(
+        circle at 13px 0px,
+        transparent 13px,
+        black 13px
+    );
+    mask-image: radial-gradient(
+        circle at 13px 0px,
+        transparent 13px,
+        black 13px
+    );
+    background:
+        radial-gradient(
+            circle at 13px 0px,
+            transparent 13px,
+            rgba(255, 255, 255, 0.15) 13px,
+            rgba(255, 255, 255, 0.14) 14px,
+            transparent 14.1px
+        ),
+        rgba(0, 0, 0, 0.5);
+}
+
+/* Bottom bridge corner: curves from left edge to island bottom */
+.volume-notch::after {
+    bottom: -13px;
+    -webkit-mask-image: radial-gradient(
+        circle at 13px 13px,
+        transparent 13px,
+        black 13px
+    );
+    mask-image: radial-gradient(
+        circle at 13px 13px,
+        transparent 13px,
+        black 13px
+    );
+    background:
+        radial-gradient(
+            circle at 13px 13px,
+            transparent 13px,
+            rgba(255, 255, 255, 0.15) 13px,
+            rgba(255, 255, 255, 0.14) 14px,
+            transparent 14.1px
+        ),
+        rgba(0, 0, 0, 0.5);
+}
+
+/* Container for bar and text to manage staggered animation */
+.volume-notch-content-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    height: 100%;
+    width: 100%;
+}
+
+/* Volume bar track */
+.volume-notch-bar {
+    width: 10px;
+    height: 136px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 20px;
+    position: relative;
+    overflow: hidden;
+    margin-top: 4px;
+}
+
+/* Animated volume fill */
+.volume-notch-fill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background: white;
+    border-radius: 20px;
+}
+
+/* Volume percentage text at bottom */
+.volume-notch-text {
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    font-family:
+        "Inter",
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+    text-align: center;
+    width: 100%;
+    margin-bottom: 2px;
+    opacity: 0.85;
+}

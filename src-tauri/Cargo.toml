@@ -29,5 +29,8 @@ windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_System_Com",
   "Media_Control",
+  "Win32_Media_Audio",
+  "Win32_Media_Audio_Endpoints",
+  "Win32_System_Threading",
 ] }
 

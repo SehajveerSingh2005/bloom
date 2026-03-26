@@ -28,6 +28,27 @@
         "focus": false,
         "skipTaskbar": true,
         "shadow": false
+      },
+      {
+        "label": "volume-overlay",
+        "title": "Volume",
+        "url": "volume-overlay.html",
+        "width": 200,
+        "height": 400,
+        "x": 0,
+        "y": 40,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "focus": false,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": false
       }
     ],
     "security": {

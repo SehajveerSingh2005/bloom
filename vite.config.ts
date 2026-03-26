@@ -29,4 +29,14 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  // Multiple HTML entry points
+  build: {
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        "volume-overlay": "volume-overlay.html",
+      },
+    },
+  },
 }));
