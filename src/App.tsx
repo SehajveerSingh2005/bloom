@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
@@ -78,10 +78,12 @@ function Visualizer({ isPlaying, audioData }: { isPlaying: boolean; audioData: n
   );
 }
 
-interface MediaMetadata {
+interface MediaInfo {
   title: string;
   artist: string;
-  artwork?: { src: string }[];
+  is_playing: boolean;
+  has_media: boolean;
+  artwork?: string[];
 }
 
 function App() {
@@ -101,7 +103,12 @@ function App() {
   
   // Media state
   const [isPlaying, setIsPlaying] = useState(false);
-  const [mediaInfo, setMediaInfo] = useState<MediaMetadata>({ title: "", artist: "" });
+  const [mediaInfo, setMediaInfo] = useState<MediaInfo>({ 
+    title: "", 
+    artist: "", 
+    is_playing: false, 
+    has_media: false 
+  });
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
   
   // Audio visualization state
@@ -111,12 +118,7 @@ function App() {
   const [dataArray, setDataArray] = useState<Uint8Array | null>(null);
   
   // Notification state
-  const [notificationCount, setNotificationCount] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
-
-  // Volume state (for sync with overlay window)
-  const [volume, setVolume] = useState(0.5);
-  const [isBlobMuted, setIsBlobMuted] = useState(false);
+  const [isMuted] = useState(false);
 
   // Update time
   useEffect(() => {
@@ -260,6 +262,9 @@ function App() {
           setMediaInfo({
             title: info.title,
             artist: info.artist,
+            is_playing: info.is_playing,
+            has_media: info.has_media,
+            artwork: info.artwork
           });
           setIsPlaying(info.is_playing);
           
@@ -269,7 +274,12 @@ function App() {
           }
         } else {
           setIsPlaying(false);
-          setMediaInfo({ title: "", artist: "" });
+          setMediaInfo({ 
+            title: "", 
+            artist: "", 
+            is_playing: false, 
+            has_media: false 
+          });
           setAlbumArtUrl(null);
         }
       } catch (e) {
@@ -299,7 +309,7 @@ function App() {
       let animationFrameId: number;
       
       const updateVisualizer = () => {
-        analyser.getByteFrequencyData(dataArray);
+        (analyser as any).getByteFrequencyData(dataArray);
         
         // Get frequency data for 5 bands
         const bands = [0, 1, 2, 3, 4];
@@ -414,14 +424,10 @@ function App() {
     };
   }, [isPlaying, analyser, dataArray, useRealAudio]);
 
-  // Volume monitoring - listen for volume changes from backend (for state sync)
+  // Volume monitoring - sync with backend (unused in main window but keeping listener for potential expansion)
   useEffect(() => {
-    const unlisten = listen("volume-change", (event: any) => {
-      const { volume: newVolume, is_muted } = event.payload;
-
-      setVolume(newVolume);
-      setIsBlobMuted(is_muted);
-      // Note: Volume overlay window is now handled by the backend
+    const unlisten = listen("volume-change", (_event: any) => {
+      // Logic for main window volume sync can go here if needed
     });
 
     return () => {
@@ -439,10 +445,6 @@ function App() {
     }
   }, [isPlaying]);
 
-  // Toggle mute/notifications
-  const toggleMute = useCallback(() => {
-    setIsMuted(!isMuted);
-  }, [isMuted]);
 
   // Open WiFi settings
   const openWifiSettings = useCallback(async () => {
@@ -462,10 +464,6 @@ function App() {
     }
   }, []);
 
-  // Demo notification (for testing)
-  const triggerNotification = useCallback(() => {
-    setNotificationCount((prev) => prev + 1);
-  }, []);
 
   return (
     <div className="screen">
@@ -537,7 +535,7 @@ function App() {
               exit={{ opacity: 0, scale: 0.8, x: 10 }}
               transition={{ duration: 0.12, ease: "easeInOut", delay: 0.05 }}
               onClick={togglePlayPause}
-              title="Click to pause"
+              title={mediaInfo.title ? `${mediaInfo.title} - ${mediaInfo.artist}` : "Click to pause"}
             >
               {albumArtUrl ? (
                 <img
