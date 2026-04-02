@@ -14,6 +14,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 
+// Audio visualization event
+#[derive(Clone, serde::Serialize)]
+struct AudioVisualizationData {
+    frequencies: Vec<f32>,
+}
+
 // Media info struct for Tauri commands
 #[derive(serde::Serialize, Clone)]
 pub struct MediaInfo {
@@ -204,6 +210,232 @@ fn send_media_key(vk_code: u16) {
 
 // IAudioEndpointVolume COM interface for volume control
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+
+// WASAPI Audio capture for visualization
+fn setup_audio_visualization(app_handle: AppHandle) {
+    std::thread::spawn(move || {
+        use windows::Win32::Media::Audio::{
+            IMMDeviceEnumerator, IMMDevice, IAudioClient, IAudioCaptureClient,
+            eRender, eConsole, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
+        };
+        use windows::Win32::System::Com::{
+            CoInitializeEx, CoUninitialize, CoTaskMemFree,
+            COINIT_APARTMENTTHREADED,
+        };
+        use windows::Win32::Foundation::S_OK;
+
+        unsafe {
+            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let com_initialized = hr.is_ok() || hr == S_OK;
+
+            let result: Result<(), String> = (|| {
+                // Get default audio output device
+                let enumerator: IMMDeviceEnumerator =
+                    CoCreateInstance(&windows::Win32::Media::Audio::MMDeviceEnumerator, None, CLSCTX_ALL)
+                        .map_err(|e| format!("CoCreateInstance failed: {:?}", e))?;
+
+                let device: IMMDevice = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
+                    .map_err(|e| format!("GetDefaultAudioEndpoint failed: {:?}", e))?;
+
+                // Activate audio client
+                let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)
+                    .map_err(|e| format!("Activate failed: {:?}", e))?;
+
+                // Get mix format for loopback
+                let format_ptr = audio_client.GetMixFormat()
+                    .map_err(|e| format!("GetMixFormat failed: {:?}", e))?;
+                
+                let channels = (*format_ptr).nChannels as usize;
+                let bits_per_sample = (*format_ptr).wBitsPerSample;
+                let bytes_per_sample = (bits_per_sample / 8) as usize;
+                
+                // Validate format
+                if bytes_per_sample == 0 || channels == 0 || bytes_per_sample > 4 {
+                    CoTaskMemFree(Some(format_ptr as *const _));
+                    return Err(format!("Invalid audio format: channels={}, bits={}", channels, bits_per_sample));
+                }
+                
+                // Initialize audio client for loopback capture
+                let buffer_duration = 10_000_000i64; // 100ms in 100-ns units
+
+                audio_client.Initialize(
+                    AUDCLNT_SHAREMODE_SHARED,
+                    AUDCLNT_STREAMFLAGS_LOOPBACK,
+                    buffer_duration,
+                    0,
+                    format_ptr,
+                    Some(std::ptr::null()),
+                ).map_err(|e| format!("Initialize failed: {:?}", e))?;
+
+                // Now free the format pointer after Initialize
+                CoTaskMemFree(Some(format_ptr as *const _));
+
+                // Get capture client
+                let capture_client: IAudioCaptureClient = audio_client.GetService()
+                    .map_err(|e| format!("GetService failed: {:?}", e))?;
+
+                // Start capturing
+                audio_client.Start()
+                    .map_err(|e| format!("Start failed: {:?}", e))?;
+
+                // FFT buffer (512 samples for frequency analysis)
+                const FFT_SIZE: usize = 512;
+                let mut fft_buffer = vec![0.0f32; FFT_SIZE];
+                let mut buffer_pos = 0;
+
+                // Simple frequency bands for visualization (5 bands)
+                const NUM_BANDS: usize = 5;
+                
+                // Per-band gain to balance visual output
+                
+                // History for smoothing
+                let mut prev_values = [0.1f32; NUM_BANDS];
+
+                // Main visualization loop
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(16));
+
+                    // Process all available packets
+                    loop {
+                        // Get available packet count
+                        let packet_length = match capture_client.GetNextPacketSize() {
+                            Ok(len) => len,
+                            Err(_) => break,
+                        };
+
+                        if packet_length == 0 {
+                            break;
+                        }
+
+                        // Get audio data
+                        let mut data_ptr: *mut u8 = std::ptr::null_mut();
+                        let mut num_frames = 0u32;
+                        let mut flags = 0u32;
+
+                        if capture_client.GetBuffer(
+                            &mut data_ptr,
+                            &mut num_frames,
+                            &mut flags,
+                            Some(std::ptr::null_mut()),
+                            Some(std::ptr::null_mut()),
+                        ).is_err() {
+                            break;
+                        }
+
+                        if !data_ptr.is_null() && num_frames > 0 && bytes_per_sample > 0 && channels > 0 {
+                            // Process audio data (convert to f32 samples)
+                            let stride = channels * bytes_per_sample;
+                            
+                            for frame in 0..num_frames as usize {
+                                let frame_offset = frame * stride;
+
+                                // Read and mix channels - use wrapping to prevent overflow
+                                let mut sample_val: i64 = 0;
+                                for ch in 0..channels {
+                                    let sample_offset = frame_offset + ch * bytes_per_sample;
+                                    let sample: i64 = match bytes_per_sample {
+                                        2 => *(data_ptr.add(sample_offset) as *const i16) as i64,
+                                        4 => *(data_ptr.add(sample_offset) as *const i32) as i64,
+                                        _ => 0,
+                                    };
+                                    sample_val = sample_val.wrapping_add(sample);
+                                }
+                                sample_val /= channels as i64;
+
+                                // Normalize to f32 [-1.0, 1.0]
+                                let normalized = match bytes_per_sample {
+                                    2 => (sample_val as f32) / 32768.0,
+                                    4 => (sample_val as f32) / 2147483648.0,
+                                    _ => 0.0,
+                                };
+
+                                // Add to FFT buffer with Hanning window
+                                if buffer_pos < FFT_SIZE {
+                                    let window = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * buffer_pos as f32 / FFT_SIZE as f32).cos());
+                                    fft_buffer[buffer_pos] = normalized * window;
+                                    buffer_pos += 1;
+                                }
+
+                                // Process FFT when buffer is full
+                                if buffer_pos >= FFT_SIZE {
+                                    // Simple DFT for frequency analysis (5 bands)
+                                    let mut bands = [0.0f32; NUM_BANDS];
+                                    
+                                    // Shifted bands lower to better capture music frequencies (93Hz per bin at 48kHz)
+                                    let band_ranges = [
+                                        (1, 3),    // Bass / Beat
+                                        (3, 10),   // Low-mids / Vocals
+                                        (10, 30),  // Mids / Snare
+                                        (30, 80),  // High-mids / Perk
+                                        (80, 250), // Highs / Cymbals
+                                    ];
+
+                                    for (band_idx, (bin_start, bin_end)) in band_ranges.iter().enumerate() {
+                                        let mut peak_mag = 0.0f32;
+                                        
+                                        for bin in *bin_start..*bin_end {
+                                            if bin >= FFT_SIZE / 2 { break; }
+                                            
+                                            let freq = 2.0 * std::f32::consts::PI * bin as f32 / FFT_SIZE as f32;
+                                            let mut real = 0.0f32;
+                                            let mut imag = 0.0f32;
+                                            
+                                            for (sample_idx, &sample) in fft_buffer.iter().enumerate() {
+                                                let phase = freq * sample_idx as f32;
+                                                real += sample * phase.cos();
+                                                imag -= sample * phase.sin();
+                                            }
+                                            
+                                            let mag = (real * real + imag * imag).sqrt();
+                                            if mag > peak_mag {
+                                                peak_mag = mag;
+                                            }
+                                        }
+                                        
+                                        // Peak normalization and band gains
+                                        let normalization = 110.0; 
+                                        let gain_multiplier = [2.0, 1.8, 2.2, 3.5, 5.5];
+                                        bands[band_idx] = (peak_mag / normalization) * gain_multiplier[band_idx];
+                                    }
+
+                                    // Apply response curve and smoothing
+                                    let mut output = [0.0f32; NUM_BANDS];
+                                    for i in 0..NUM_BANDS {
+                                        // More aggressive response to keep bars dancing
+                                        let target = (bands[i] * 1.5).powf(0.5);
+                                        // Snappy 20/80 smoothing for high reactivity
+                                        output[i] = prev_values[i] * 0.2 + target * 0.8;
+                                        output[i] = output[i].min(1.0).max(0.18);
+                                        prev_values[i] = output[i];
+                                    }
+
+                                    // Emit to frontend (one event per full FFT buffer)
+                                    let _ = app_handle.emit("audio-visualization", AudioVisualizationData {
+                                        frequencies: output.to_vec(),
+                                    });
+
+                                    // Reset buffer for next batch
+                                    buffer_pos = 0;
+                                }
+                            }
+
+                            // Release buffer
+                            let _ = capture_client.ReleaseBuffer(num_frames);
+                        }
+                    }
+                }
+            })();
+
+            if com_initialized {
+                CoUninitialize();
+            }
+
+            if let Err(e) = result {
+                eprintln!("Audio visualization error: {}", e);
+            }
+        }
+    });
+}
 
 // Volume monitoring using Windows Core Audio API with raw COM
 fn setup_volume_monitor(app_handle: AppHandle) {
@@ -403,10 +635,11 @@ fn main() {
             let window = app.get_webview_window("main").unwrap();
             let hwnd = window.hwnd().unwrap();
             register_appbar(hwnd);
-            
+
             let _hook = setup_keyboard_hook();
             setup_volume_monitor(app.handle().clone());
-            
+            setup_audio_visualization(app.handle().clone());
+
             Ok(())
         })
         .run(tauri::generate_context!())

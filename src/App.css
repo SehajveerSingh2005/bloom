@@ -57,7 +57,7 @@ body {
     top: 0;
     width: 13px;
     height: 13px;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.8);
     backdrop-filter: blur(20px);
     pointer-events: none;
 }
@@ -166,18 +166,17 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 3px;
+    gap: 4.5px;
     height: 20px;
     width: 38px;
     position: relative;
 }
 
 .visualizer-horizontal .bar-horizontal {
-    width: 4px;
+    width: 5px;
     height: 100%;
-    min-height: 4px;
     background: rgba(255, 255, 255, 0.95);
-    border-radius: 25%;
+    border-radius: 100px;
     transform-origin: center;
     will-change: transform;
 }

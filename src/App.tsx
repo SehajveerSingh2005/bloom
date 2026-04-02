@@ -69,9 +69,16 @@ function Visualizer({ isPlaying, audioData }: { isPlaying: boolean; audioData: n
         <motion.div
           key={i}
           className="bar-horizontal"
-          style={{ scaleY: value }}
-          animate={{ opacity: isPlaying ? 0.95 : 0.5 }}
-          transition={{ duration: 0.05 }}
+          animate={{ 
+            scaleY: isPlaying ? value : 0.1,
+            opacity: isPlaying ? 0.95 : 0.5 
+          }}
+          transition={{ 
+            type: "spring", 
+            stiffness: 600, 
+            damping: 30, 
+            mass: 0.5 
+          }}
         />
       ))}
     </div>
@@ -112,11 +119,8 @@ function App() {
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
   
   // Audio visualization state
-  const [audioData, setAudioData] = useState<number[]>(new Array(5).fill(0.3));
-  const [useRealAudio, setUseRealAudio] = useState(false);
-  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
-  const [dataArray, setDataArray] = useState<Uint8Array | null>(null);
-  
+  const [audioData, setAudioData] = useState<number[]>(new Array(5).fill(0.18));
+
   // Notification state
   const [isMuted] = useState(false);
 
@@ -297,132 +301,25 @@ function App() {
     return () => clearInterval(pollInterval);
   }, []);
 
-  // Audio visualization setup - real system audio capture
+  // Audio visualization - receive data from backend
   useEffect(() => {
-    if (!isPlaying) {
-      setAudioData(new Array(5).fill(0.3));
-      return;
-    }
-
-    // If we already have analyser, just run the visualization loop
-    if (analyser && dataArray && useRealAudio) {
-      let animationFrameId: number;
-      
-      const updateVisualizer = () => {
-        (analyser as any).getByteFrequencyData(dataArray);
-        
-        // Get frequency data for 5 bands
-        const bands = [0, 1, 2, 3, 4];
-        const bandSize = Math.floor(dataArray.length / 10);
-        
-        const normalized = bands.map(i => {
-          // Average across a small frequency range for smoother response
-          const start = i * bandSize;
-          const end = start + bandSize;
-          let sum = 0;
-          for (let j = start; j < end; j++) {
-            sum += dataArray[j];
-          }
-          const avg = sum / bandSize / 255;
-          
-          // Apply response curve
-          return Math.pow(avg, 0.7) * 1.1;
-        }).map(v => Math.max(0.25, Math.min(0.95, v)));
-        
-        // Smooth transition
-        setAudioData(prev => prev.map((p, i) => p * 0.3 + normalized[i] * 0.7));
-        
-        animationFrameId = requestAnimationFrame(updateVisualizer);
-      };
-      
-      updateVisualizer();
-      
-      return () => {
-        cancelAnimationFrame(animationFrameId);
-      };
-    }
-
-    // First time setup - try to capture system audio
-    const setupAudioCapture = async () => {
-      try {
-        const ctx = new AudioContext();
-        const analyserNode = ctx.createAnalyser();
-        analyserNode.fftSize = 512;
-        analyserNode.smoothingTimeConstant = 0.85;
-
-        // Request system audio capture
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: false,
-          audio: true,
-        } as MediaStreamConstraints);
-
-        const source = ctx.createMediaStreamSource(stream);
-        source.connect(analyserNode);
-
-        const data = new Uint8Array(analyserNode.frequencyBinCount);
-        
-        setAnalyser(analyserNode);
-        setDataArray(data);
-        setUseRealAudio(true);
-
-        // Stop video track, keep audio analyser working
-        setTimeout(() => {
-          stream.getVideoTracks().forEach(t => t.stop());
-        }, 100);
-
-      } catch (e) {
-        console.log("System audio capture not available");
-        setUseRealAudio(false);
-        simulateVisualization();
-      }
-    };
-
-    const simulateVisualization = () => {
-      let time = 0;
-      let velocities = new Array(5).fill(0);
-      let positions = new Array(5).fill(0.3);
-      
-      const simulate = () => {
-        time += 0.08;
-        
-        setAudioData(prev => {
-          const newValues = prev.map((_, i) => {
-            // Each bar represents a different frequency band
-            const baseFreq = [0.8, 1.2, 1.7, 2.3, 3.1][i];
-            const beatFreq = [0.4, 0.4, 0.8, 0.8, 0.4][i];
-            
-            // Pseudo-random variation per frequency band
-            const variation = Math.sin(time * baseFreq + i * 2.1) * Math.cos(time * 0.5 + i * 0.3);
-            const beat = Math.sin(time * beatFreq) * Math.cos(time * 0.9) * 0.25;
-            
-            // Target value
-            const target = 0.45 + variation * 0.2 + beat * 0.2;
-            
-            // Smooth interpolation
-            positions[i] += (target - positions[i]) * 0.12;
-            
-            // Velocity/inertia
-            velocities[i] += (positions[i] - prev[i]) * 0.4;
-            velocities[i] *= 0.75;
-            
-            const value = positions[i] + velocities[i] * 0.08;
-            
-            return Math.max(0.25, Math.min(0.9, value));
-          });
-          return newValues;
-        });
-        
-        requestAnimationFrame(simulate);
-      };
-      simulate();
-    };
-
-    setupAudioCapture();
+    const unlisten = listen<{ frequencies: number[] }>("audio-visualization", (event) => {
+      const frequencies = event.payload.frequencies;
+      // Just use the smoothed values from backend directly
+      setAudioData(frequencies);
+    });
 
     return () => {
-      setAudioData(new Array(5).fill(0.3));
+      unlisten.then(fn => fn());
     };
-  }, [isPlaying, analyser, dataArray, useRealAudio]);
+  }, []);
+
+  // Reset visualization when not playing
+  useEffect(() => {
+    if (!isPlaying) {
+      setAudioData(new Array(5).fill(0.18));
+    }
+  }, [isPlaying]);
 
   // Volume monitoring - sync with backend (unused in main window but keeping listener for potential expansion)
   useEffect(() => {
