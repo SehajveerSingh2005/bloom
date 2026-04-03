@@ -46,20 +46,20 @@ function ThermometerIcon() {
 }
 
 function PlayIcon() {
-    return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z" />
-        </svg>
-    );
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
 }
 
 function PauseIcon() {
-    return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <rect x="6" y="4" width="4" height="16" />
-            <rect x="14" y="4" width="4" height="16" />
-        </svg>
-    );
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="6" y="4" width="4" height="16" />
+      <rect x="14" y="4" width="4" height="16" />
+    </svg>
+  );
 }
 
 function BatteryIcon({ charging, level }: { charging: boolean; level: number }) {
@@ -86,15 +86,15 @@ function Visualizer({ isPlaying, audioData }: { isPlaying: boolean; audioData: n
         <motion.div
           key={i}
           className="bar-horizontal"
-          animate={{ 
+          animate={{
             scaleY: isPlaying ? value : 0.1,
-            opacity: isPlaying ? 0.95 : 0.5 
+            opacity: isPlaying ? 0.95 : 0.5
           }}
-          transition={{ 
-            type: "spring", 
-            stiffness: 600, 
-            damping: 30, 
-            mass: 0.5 
+          transition={{
+            type: "spring",
+            stiffness: 600,
+            damping: 30,
+            mass: 0.5
           }}
         />
       ))}
@@ -123,7 +123,7 @@ function MarqueeText({ title, artist }: { title: string, artist: string }) {
 
   return (
     <div className="media-details" ref={containerRef}>
-      <div 
+      <div
         className={`marquee-content ${shouldMarquee ? 'should-animate' : ''}`}
         ref={contentRef}
       >
@@ -138,35 +138,41 @@ function MarqueeText({ title, artist }: { title: string, artist: string }) {
 function App() {
   const [time, setTime] = useState("");
   const [isHovered, setIsHovered] = useState(false);
-  
+
   // Battery state
   const [batteryLevel, setBatteryLevel] = useState(100);
   const [isCharging, setIsCharging] = useState(false);
-  
+
   // Weather state
   const [temperature, setTemperature] = useState<number | null>(null);
   const [weatherCondition, setWeatherCondition] = useState<string>("");
-  
+
   // Network state
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  
+
   // Media state
   const [isPlaying, setIsPlaying] = useState(false);
-  const [mediaInfo, setMediaInfo] = useState<MediaInfo>({ 
-    title: "", 
-    artist: "", 
-    is_playing: false, 
-    has_media: false 
+  const [mediaInfo, setMediaInfo] = useState<MediaInfo>({
+    title: "",
+    artist: "",
+    is_playing: false,
+    has_media: false
   });
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
-  
+
   // Audio visualization state
   const [audioData, setAudioData] = useState<number[]>(new Array(5).fill(0.18));
 
-  // Reset visualization when not playing
+  // New bloom mode state: 'status', 'music', or 'calendar'
+  const [bloomMode, setBloomMode] = useState<'status' | 'music' | 'calendar'>('status');
+  const [isMuted] = useState(false);
+
+  // Reset window height when state changes
   useEffect(() => {
     let timeout: any;
-    if (isHovered) {
+    if (bloomMode === 'calendar') {
+      invoke("set_window_height", { height: 275 });
+    } else if (isHovered) {
       invoke("set_window_height", { height: 240 });
     } else {
       // Wait for the spring animation to finish before snapping the OS window bounds
@@ -175,11 +181,43 @@ function App() {
       }, 400);
     }
     return () => clearTimeout(timeout);
-  }, [isHovered]);
+  }, [isHovered, bloomMode === 'calendar']);
 
-  // New bloom mode state: 'status' or 'music'
-  const [bloomMode, setBloomMode] = useState<'status' | 'music'>('status');
-  const [isMuted] = useState(false);
+  // Timer state
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [isCompactTimerVisible, setIsCompactTimerVisible] = useState(false);
+  const timerIntervalRef = useRef<any>(null);
+
+  const formatTimerTime = (totalSeconds: number) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const startTimer = (mins: number) => {
+    setTimerSeconds(mins * 60);
+    setIsTimerRunning(true);
+  };
+
+  const toggleTimer = () => setIsTimerRunning(!isTimerRunning);
+  const resetTimer = () => {
+    setIsTimerRunning(false);
+    setTimerSeconds(0);
+  };
+
+  useEffect(() => {
+    if (isTimerRunning && timerSeconds > 0) {
+      timerIntervalRef.current = setInterval(() => {
+        setTimerSeconds(s => s - 1);
+      }, 1000);
+    } else if (timerSeconds === 0) {
+      setIsTimerRunning(false);
+    }
+    return () => {
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    };
+  }, [isTimerRunning, timerSeconds === 0]); // Only restart if it hits 0
 
   // Auto-switch to music mode when media is detected
   useEffect(() => {
@@ -213,8 +251,22 @@ function App() {
 
     updateTime();
     const interval = setInterval(updateTime, 1000);
-    return () => clearInterval(interval);
-  }, []);
+
+    // Toggle compact timer view every 5 seconds if running
+    let timerToggleInterval: any;
+    if (isTimerRunning && bloomMode !== 'calendar') {
+      timerToggleInterval = setInterval(() => {
+        setIsCompactTimerVisible(prev => !prev);
+      }, 5000);
+    } else {
+      setIsCompactTimerVisible(false);
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (timerToggleInterval) clearInterval(timerToggleInterval);
+    };
+  }, [isTimerRunning, bloomMode]);
 
   // Battery API
   useEffect(() => {
@@ -223,14 +275,14 @@ function App() {
     const initBattery = async () => {
       try {
         battery = await (navigator as any).getBattery();
-        
+
         const updateBattery = () => {
           setBatteryLevel(Math.round(battery.level * 100));
           setIsCharging(battery.charging);
         };
 
         updateBattery();
-        
+
         battery.addEventListener("levelchange", updateBattery);
         battery.addEventListener("chargingchange", updateBattery);
 
@@ -274,7 +326,7 @@ function App() {
               );
               const data = await response.json();
               setTemperature(Math.round(data.current_weather.temperature));
-              
+
               // Simple weather code mapping
               const code = data.current_weather.weathercode;
               const conditions: Record<number, string> = {
@@ -347,17 +399,17 @@ function App() {
           artwork: info.artwork
         });
         setIsPlaying(info.is_playing);
-        
+
         if (info.artwork && info.artwork.length > 0) {
           setAlbumArtUrl(info.artwork[0]);
         }
       } else {
         setIsPlaying(false);
-        setMediaInfo({ 
-          title: "", 
-          artist: "", 
-          is_playing: false, 
-          has_media: false 
+        setMediaInfo({
+          title: "",
+          artist: "",
+          is_playing: false,
+          has_media: false
         });
         setAlbumArtUrl(null);
       }
@@ -391,13 +443,12 @@ function App() {
   // Media controls via Tauri commands
   const togglePlayPause = useCallback(async () => {
     try {
-      // Optimistsic update
-      setIsPlaying(prev => !prev);
       await invoke("media_play_pause");
+      setIsPlaying(!isPlaying);
     } catch (e) {
       console.error("Failed to toggle play/pause:", e);
     }
-  }, []);
+  }, [isPlaying]);
 
   const skipNext = useCallback(async () => {
     try {
@@ -440,23 +491,47 @@ function App() {
     }
   };
 
+  const toggleCalendarMode = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setBloomMode(prev => {
+      if (prev === 'calendar') {
+        // Return to music mode if media is present and playing, otherwise status
+        return (mediaInfo.has_media && isPlaying) ? 'music' : 'status';
+      }
+      return 'calendar';
+    });
+  };
+
   // Music mode shows any time we have media info (playing or paused)
   const isMusicMode = mediaInfo.has_media && bloomMode === 'music';
+  const isCalendarMode = bloomMode === 'calendar';
 
   return (
     <div className="screen">
       <motion.div
         className={`bloom ${isHovered ? 'expanded' : ''}`}
         initial={{ width: 140 }}
-        animate={{ 
-          width: isHovered
-            ? (isMusicMode ? 260 : 320)
-            : (isMusicMode ? 200 : 140),
-          height: isHovered && mediaInfo.has_media && isPlaying ? 64 : 36
+        animate={{
+          width: isCalendarMode
+            ? 480
+            : isHovered
+                ? (isMusicMode ? 260 : 320)
+                : (isMusicMode ? 200 : 140),
+          height: isCalendarMode
+            ? 275
+            : isHovered && mediaInfo.has_media && isPlaying ? 64 : 36
         }}
-        onClick={handleBloomClick}
+        onClick={() => {
+          // Only toggle if not in calendar mode (which has its own internal propagation stops)
+          if (!isCalendarMode) handleBloomClick();
+        }}
         onHoverStart={() => setIsHovered(true)}
-        onHoverEnd={() => setIsHovered(false)}
+        onHoverEnd={() => {
+          setIsHovered(false);
+          if (isCalendarMode) {
+            setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'status');
+          }
+        }}
         style={{ originY: 0 }}
         transition={{ type: "spring", stiffness: 400, damping: 25, mass: 0.8 }}
       >
@@ -496,7 +571,9 @@ function App() {
           </div>
 
           {/* Center - Time (always visible) */}
-          <span className="time">{time}</span>
+          <span className="time clickable" onClick={toggleCalendarMode}>
+            {isCompactTimerVisible ? formatTimerTime(timerSeconds) : time}
+          </span>
 
           {/* Right: album art (music) or battery+temp (status) */}
           <div className="side-content right">
@@ -525,14 +602,14 @@ function App() {
                 >
                   <div className="album-art-inner">
                     {albumArtUrl ? (
-                        <img src={albumArtUrl} alt="Art" />
+                      <img src={albumArtUrl} alt="Art" />
                     ) : (
-                        <div className="album-art-placeholder">🎵</div>
+                      <div className="album-art-placeholder">🎵</div>
                     )}
                     <div className="album-art-overlay">
-                        <div className="control-icon-small">
-                            {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                        </div>
+                      <div className="control-icon-small">
+                        {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                      </div>
                     </div>
                   </div>
                 </motion.button>
@@ -564,23 +641,110 @@ function App() {
 
         {/* Bottom row - Song details (only on hover when playing) */}
         <AnimatePresence>
-          {isHovered && isPlaying && mediaInfo.has_media && (
-              <motion.div 
-                className="bottom-row"
-                initial={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
-                animate={{ opacity: 1, height: 28, scale: 1, filter: "blur(0px)" }}
-                exit={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
-                transition={{ 
-                  default: { type: "spring", stiffness: 400, damping: 25, mass: 0.8 },
-                  opacity: { duration: 0.25, ease: "easeOut" },
-                  filter: { duration: 0.25, ease: "easeOut" }
-                }}
-              >
-                <MarqueeText title={mediaInfo.title} artist={mediaInfo.artist} />
-              </motion.div>
+          {isHovered && isPlaying && mediaInfo.has_media && !isCalendarMode && (
+            <motion.div
+              className="bottom-row"
+              initial={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
+              animate={{ opacity: 1, height: 28, scale: 1, filter: "blur(0px)" }}
+              exit={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
+              transition={{
+                default: { type: "spring", stiffness: 400, damping: 25, mass: 0.8 },
+                opacity: { duration: 0.25, ease: "easeOut" },
+                filter: { duration: 0.25, ease: "easeOut" }
+              }}
+            >
+              <MarqueeText title={mediaInfo.title} artist={mediaInfo.artist} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Calendar & Timer Split View */}
+        <AnimatePresence>
+          {isCalendarMode && (
+            <motion.div
+              className="calendar-timer-content split-view"
+              onClick={e => e.stopPropagation()} /* Block mode switches when clicking inside */
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.1 } }}
+              transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            >
+              <div className="calendar-column">
+                <Calendar />
+              </div>
+              
+              <div className="timer-column">
+                <div className="timer-section-new">
+                  <div className="timer-display-large">
+                    <span className="timer-time-large">{formatTimerTime(timerSeconds)}</span>
+                  </div>
+                  
+                  <div className="timer-controls-new">
+                    <button onClick={toggleTimer} className="timer-btn primary">
+                      {isTimerRunning ? 'Pause' : 'Start'}
+                    </button>
+                    <button onClick={resetTimer} className="timer-btn secondary">Reset</button>
+                  </div>
+
+                  <div className="timer-presets-new">
+                    {[5, 15, 25, 50].map(mins => (
+                      <button key={mins} onClick={() => startTimer(mins)} className="preset-btn-small">
+                        {mins}m
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
           )}
         </AnimatePresence>
       </motion.div>
+    </div>
+  );
+}
+
+function Calendar() {
+  const [date] = useState(new Date());
+  
+  const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
+
+  const currentMonth = date.getMonth();
+  const currentYear = date.getFullYear();
+  const monthName = date.toLocaleString('default', { month: 'long' });
+
+  const totalDays = daysInMonth(currentYear, currentMonth);
+  const startDay = firstDayOfMonth(currentYear, currentMonth);
+  const days = [];
+
+  // Padding for start of month
+  for (let i = 0; i < startDay; i++) {
+    days.push(<div key={`empty-${i}`} className="calendar-day empty" />);
+  }
+
+  // Actual days
+  const today = new Date().getDate();
+  const isCurrentMonth = new Date().getMonth() === currentMonth && new Date().getFullYear() === currentYear;
+
+  for (let i = 1; i <= totalDays; i++) {
+    days.push(
+      <div key={i} className={`calendar-day ${isCurrentMonth && i === today ? 'today' : ''}`}>
+        {i}
+      </div>
+    );
+  }
+
+  return (
+    <div className="calendar-container">
+      <div className="calendar-header">
+        <span className="month-year">{monthName} {currentYear}</span>
+      </div>
+      <div className="calendar-grid">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+          <div key={`${d}-${i}`} className="day-name">{d}</div>
+        ))}
+        {days}
+      </div>
     </div>
   );
 }

@@ -46,7 +46,7 @@ body {
         BlinkMacSystemFont,
         "Segoe UI",
         sans-serif;
-    
+
     transition: background 0.3s ease;
 }
 
@@ -84,7 +84,8 @@ body {
     width: 100%;
     overflow: hidden;
     position: relative;
-    display: block; /* So block-level child behaves completely normally */
+    display: block;
+    /* So block-level child behaves completely normally */
 }
 
 .marquee-content {
@@ -106,8 +107,16 @@ body {
 }
 
 @keyframes marquee-scroll {
-    0%, 15% { transform: translateX(0); }
-    85%, 100% { transform: translateX(min(0px, calc(100cqw - 100%))); }
+
+    0%,
+    15% {
+        transform: translateX(0);
+    }
+
+    85%,
+    100% {
+        transform: translateX(min(0px, calc(100cqw - 100%)));
+    }
 }
 
 .marquee-content .dot {
@@ -142,45 +151,35 @@ body {
 
 .bloom::before {
     left: -13px;
-    -webkit-mask-image: radial-gradient(
-        circle at 0 13px,
-        transparent 13px,
-        black 13px
-    );
+    -webkit-mask-image: radial-gradient(circle at 0 13px,
+            transparent 13px,
+            black 13px);
     mask-image: radial-gradient(circle at 0 13px, transparent 13px, black 13px);
     backdrop-filter: blur(20px);
     background:
-        radial-gradient(
-            circle at 0 13px,
+        radial-gradient(circle at 0 13px,
             transparent 13px,
             rgba(255, 255, 255, 0.1) 13px,
             rgba(255, 255, 255, 0.1) 14px,
-            transparent 14.1px
-        ),
+            transparent 14.1px),
         rgba(0, 0, 0, 0.8);
 }
 
 .bloom::after {
     right: -13px;
-    -webkit-mask-image: radial-gradient(
-        circle at 13px 13px,
-        transparent 13px,
-        black 13px
-    );
-    mask-image: radial-gradient(
-        circle at 13px 13px,
-        transparent 13px,
-        black 13px
-    );
+    -webkit-mask-image: radial-gradient(circle at 13px 13px,
+            transparent 13px,
+            black 13px);
+    mask-image: radial-gradient(circle at 13px 13px,
+            transparent 13px,
+            black 13px);
     backdrop-filter: blur(20px);
     background:
-        radial-gradient(
-            circle at 13px 13px,
+        radial-gradient(circle at 13px 13px,
             transparent 13px,
             rgba(255, 255, 255, 0.1) 13px,
             rgba(255, 255, 255, 0.1) 14px,
-            transparent 14.1px
-        ),
+            transparent 14.1px),
         rgba(0, 0, 0, 0.8);
 }
 
@@ -204,7 +203,8 @@ body {
     position: absolute;
     height: 100%;
     top: 0;
-    width: calc(50% - 52px); /* give more room from time */
+    width: calc(50% - 52px);
+    /* give more room from time */
 }
 
 .side-content.left {
@@ -310,11 +310,8 @@ body {
 .album-art-placeholder {
     font-size: 12px;
     line-height: 20px;
-    filter: brightness(0) invert(1); /* Make icon white */
-}
-
-.album-art:hover {
-    background: rgba(255, 255, 255, 0.25);
+    filter: brightness(0) invert(1);
+    /* Make icon white */
 }
 
 .album-art-inner {
@@ -347,7 +344,11 @@ body {
 
 .control-icon-small {
     color: white;
-    filter: drop-shadow(0 0 4px rgba(0,0,0,0.5));
+    filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.5));
+}
+
+.album-art:hover {
+    background: rgba(255, 255, 255, 0.25);
 }
 
 .clickable {
@@ -396,6 +397,163 @@ body {
     position: absolute;
     width: 6px;
     height: 6px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.8) 0%, rgba(168, 85, 247, 0.4) 70%, transparent 100%);
+    filter: blur(1px);
+}
+
+/* Calendar & Timer Split View */
+.calendar-timer-content.split-view {
+    width: 100%;
+    padding: 16px;
+    display: flex;
+    flex-direction: row; /* Side-by-Side */
+    gap: 16px;
+    color: white;
+    box-sizing: border-box;
+    border-radius: 0 0 28px 28px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.4);
+    margin-top: 1px;
+}
+
+.calendar-column {
+    flex: 1.2;
+    min-width: 0;
+}
+
+.timer-column {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    padding-left: 16px;
+}
+
+.calendar-container {
+    width: 100%;
+}
+
+.calendar-header {
+    margin-bottom: 8px;
+}
+
+.month-year {
+    font-size: 13px;
+    font-weight: 600;
+    opacity: 0.9;
+}
+
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+}
+
+.day-name {
+    font-size: 9px;
+    font-weight: 600;
+    opacity: 0.4;
+    text-align: center;
+    padding-bottom: 2px;
+}
+
+.calendar-day {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.calendar-day.today {
+    background: white;
+    color: black;
+    font-weight: 600;
+}
+
+.timer-section-new {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    align-items: center;
+    width: 100%;
+}
+
+.timer-display-large {
+    text-align: center;
+}
+
+.timer-time-large {
+    font-size: 32px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -1px;
+}
+
+.timer-controls-new {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+}
+
+.timer-btn {
+    flex: 1;
+    padding: 8px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.timer-btn.primary {
+    background: white;
+    color: black;
+}
+
+.timer-btn.secondary {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+.timer-presets-new {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    width: 100%;
+}
+
+.preset-btn-small {
+    padding: 6px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: white;
+    font-size: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.preset-btn-small:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.bloom.calendar-mode {
+    padding-top: 4px;
+    border-radius: 0 0 28px 28px !important;
+}
+
+.glow-cursor {
+    pointer-events: none;
+    position: absolute;
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
     background: radial-gradient(circle, rgba(255, 255, 255, 0.8) 0%, rgba(168, 85, 247, 0.4) 70%, transparent 100%);
     filter: blur(1px);
