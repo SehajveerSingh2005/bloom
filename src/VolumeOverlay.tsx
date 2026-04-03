@@ -18,21 +18,24 @@ function VolumeNotch({
   return (
     <motion.div
       className="volume-notch-wrapper"
+      style={{ transformOrigin: "left center" }}
       // Initial state: shrunk and transparent with a blur
-      initial={{ scale: 0.5, scaleX: 0, opacity: 0, originX: 0, filter: "blur(12px)" }}
+      initial={{ scaleX: 0, scaleY: 0.5, opacity: 0, filter: "blur(12px)", y: "-50%" }}
       // Animate: organic "pop" out from the edge
       animate={{
-        scale: 1,
         scaleX: 1,
+        scaleY: 1,
         opacity: 1,
-        filter: "blur(0px)"
+        filter: "blur(0px)",
+        y: "-50%"
       }}
       // Exit: snap back with high stiffness
       exit={{
         scaleX: 0,
-        scale: 0.8,
+        scaleY: 0.8,
         opacity: 0,
         filter: "blur(12px)",
+        y: "-50%",
         transition: {
           duration: 0.2,
           ease: [0.32, 0.72, 0, 1]

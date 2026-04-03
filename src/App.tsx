@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
@@ -93,6 +93,31 @@ interface MediaInfo {
   artwork?: string[];
 }
 
+function MarqueeText({ title, artist }: { title: string, artist: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [shouldMarquee, setShouldMarquee] = useState(false);
+
+  useEffect(() => {
+    if (containerRef.current && contentRef.current) {
+      setShouldMarquee(contentRef.current.scrollWidth > containerRef.current.clientWidth + 2);
+    }
+  }, [title, artist]);
+
+  return (
+    <div className="media-details" ref={containerRef}>
+      <div 
+        className={`marquee-content ${shouldMarquee ? 'should-animate' : ''}`}
+        ref={contentRef}
+      >
+        <span className="title">{title}</span>
+        <span className="dot">•</span>
+        <span className="artist">{artist}</span>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [time, setTime] = useState("");
   const [isHovered, setIsHovered] = useState(false);
@@ -121,8 +146,41 @@ function App() {
   // Audio visualization state
   const [audioData, setAudioData] = useState<number[]>(new Array(5).fill(0.18));
 
-  // Notification state
+  // Reset visualization when not playing
+  useEffect(() => {
+    let timeout: any;
+    if (isHovered) {
+      invoke("set_window_height", { height: 240 });
+    } else {
+      // Wait for the spring animation to finish before snapping the OS window bounds
+      timeout = setTimeout(() => {
+        invoke("set_window_height", { height: 40 });
+      }, 400);
+    }
+    return () => clearTimeout(timeout);
+  }, [isHovered]);
+
+  // New bloom mode state: 'status' or 'music'
+  const [bloomMode, setBloomMode] = useState<'status' | 'music'>('status');
   const [isMuted] = useState(false);
+
+  // Auto-switch to music mode when media is detected
+  useEffect(() => {
+    if (mediaInfo.has_media && isPlaying) {
+      setBloomMode('music');
+    }
+  }, [mediaInfo.has_media, isPlaying]);
+
+  // Auto-switch back to status mode if music stops for 4 seconds
+  useEffect(() => {
+    let timer: any;
+    if (!isPlaying && bloomMode === 'music') {
+      timer = setTimeout(() => {
+        setBloomMode('status');
+      }, 4000);
+    }
+    return () => clearTimeout(timer);
+  }, [isPlaying, bloomMode]);
 
   // Update time
   useEffect(() => {
@@ -221,6 +279,7 @@ function App() {
                 95: "Stormy",
                 96: "Stormy",
                 99: "Stormy",
+                224: "Stormy",
               };
               setWeatherCondition(conditions[code] || "Unknown");
             },
@@ -256,49 +315,40 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Native Windows Media Controls
+  // Native Windows Media Controls - Listen for updates from background worker
   useEffect(() => {
-    const fetchMediaInfo = async () => {
-      try {
-        const info = await invoke<MediaInfo>("get_media_info");
+    const unlisten = listen<MediaInfo>("media-update", (event) => {
+      const info = event.payload;
+      // console.log("Received media update:", info);
 
-        if (info.has_media) {
-          setMediaInfo({
-            title: info.title,
-            artist: info.artist,
-            is_playing: info.is_playing,
-            has_media: info.has_media,
-            artwork: info.artwork
-          });
-          setIsPlaying(info.is_playing);
-          
-          // Try to get album art from Windows media control
-          if (info.artwork && info.artwork.length > 0) {
-            setAlbumArtUrl(info.artwork[0]);
-          }
-        } else {
-          setIsPlaying(false);
-          setMediaInfo({ 
-            title: "", 
-            artist: "", 
-            is_playing: false, 
-            has_media: false 
-          });
-          setAlbumArtUrl(null);
+      if (info && info.has_media) {
+        setMediaInfo({
+          title: info.title,
+          artist: info.artist,
+          is_playing: info.is_playing,
+          has_media: info.has_media,
+          artwork: info.artwork
+        });
+        setIsPlaying(info.is_playing);
+        
+        if (info.artwork && info.artwork.length > 0) {
+          setAlbumArtUrl(info.artwork[0]);
         }
-      } catch (e) {
-        console.error("Failed to get media info:", e);
+      } else {
         setIsPlaying(false);
+        setMediaInfo({ 
+          title: "", 
+          artist: "", 
+          is_playing: false, 
+          has_media: false 
+        });
+        setAlbumArtUrl(null);
       }
+    });
+
+    return () => {
+      unlisten.then(fn => fn());
     };
-
-    // Initial fetch
-    fetchMediaInfo();
-
-    // Poll for media state changes
-    const pollInterval = setInterval(fetchMediaInfo, 1000);
-
-    return () => clearInterval(pollInterval);
   }, []);
 
   // Audio visualization - receive data from backend
@@ -320,17 +370,6 @@ function App() {
       setAudioData(new Array(5).fill(0.18));
     }
   }, [isPlaying]);
-
-  // Volume monitoring - sync with backend (unused in main window but keeping listener for potential expansion)
-  useEffect(() => {
-    const unlisten = listen("volume-change", (_event: any) => {
-      // Logic for main window volume sync can go here if needed
-    });
-
-    return () => {
-      unlisten.then(fn => fn());
-    };
-  }, []);
 
   // Media controls via Tauri commands
   const togglePlayPause = useCallback(async () => {
@@ -361,120 +400,136 @@ function App() {
     }
   }, []);
 
+  const handleBloomClick = () => {
+    if (isPlaying) {
+      setBloomMode(prev => prev === 'music' ? 'status' : 'music');
+    }
+  };
+
+  // Music mode shows any time we have media info (playing or paused)
+  const isMusicMode = mediaInfo.has_media && bloomMode === 'music';
 
   return (
     <div className="screen">
       <motion.div
-        className="bloom"
-        initial={{ width: isPlaying ? 200 : 140 }}
-        animate={{ width: isHovered ? (isPlaying ? 280 : 280) : (isPlaying ? 200 : 140) }}
+        className={`bloom ${isHovered ? 'expanded' : ''}`}
+        initial={{ width: 140 }}
+        animate={{ 
+          width: isHovered
+            ? (isMusicMode ? 260 : 320)
+            : (isMusicMode ? 200 : 140),
+          height: isHovered && mediaInfo.has_media ? 64 : 36
+        }}
+        onClick={handleBloomClick}
         onHoverStart={() => setIsHovered(true)}
         onHoverEnd={() => setIsHovered(false)}
         style={{ originY: 0 }}
         transition={{ type: "spring", stiffness: 400, damping: 25, mass: 0.8 }}
       >
-        {/* Left side - Music visualizer OR Passive features */}
-        <div className="side-content left">
-          <AnimatePresence mode="wait">
-            {isHovered ? (
-              <motion.div
-                key="left-passive"
-                className="passive-features-group"
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.12, ease: "easeInOut" }}
-              >
-                <div
-                  className="passive-feature clickable"
-                  title={isOnline ? "Connected" : "Offline"}
-                  onClick={openWifiSettings}
-                >
-                  <WifiIcon connected={isOnline} />
-                </div>
-                <div
-                  className="passive-feature clickable"
-                  title={isMuted ? "Notifications muted" : "Notifications active"}
-                  onClick={openNotificationCenter}
-                >
-                  {isMuted ? <BellOffIcon /> : <BellIcon />}
-                </div>
-              </motion.div>
-            ) : (
-              isPlaying && (
+        <div className="main-row">
+          {/* Left: visualizer (music) or wifi+notifs (status) */}
+          <div className="side-content left">
+            <AnimatePresence mode="wait">
+              {isMusicMode ? (
                 <motion.div
                   key="visualizer"
                   className="music-visualizer"
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ duration: 0.12, ease: "easeInOut" }}
                 >
                   <Visualizer isPlaying={isPlaying} audioData={audioData} />
                 </motion.div>
-              )
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Center - Time (always visible, stays centered) */}
-        <span className="time">{time}</span>
-
-        {/* Right side - Album Art + Passive features */}
-        <div className="side-content right">
-          {/* Album art - only in compact mode, removed from expanded to fix right-click menu issue */}
-          {isPlaying && !isHovered && (
-            <motion.button
-              key="album-art"
-              className="album-art"
-              initial={{ opacity: 0, scale: 0.8, x: 10 }}
-              animate={{ opacity: 1, scale: 1, x: 0 }}
-              exit={{ opacity: 0, scale: 0.8, x: 10 }}
-              transition={{ duration: 0.12, ease: "easeInOut", delay: 0.05 }}
-              onClick={togglePlayPause}
-              title={mediaInfo.title ? `${mediaInfo.title} - ${mediaInfo.artist}` : "Click to pause"}
-            >
-              {albumArtUrl ? (
-                <img
-                  src={albumArtUrl}
-                  alt="Album art"
-                  width="20"
-                  height="20"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                  }}
-                />
               ) : (
-                <div className="album-art-placeholder">🎵</div>
+                isHovered && (
+                  <motion.div
+                    key="left-passive"
+                    className="passive-features-group"
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                  >
+                    <div className="passive-feature clickable" onClick={openWifiSettings}>
+                      <WifiIcon connected={isOnline} />
+                    </div>
+                    <div className="passive-feature clickable" onClick={openNotificationCenter}>
+                      {isMuted ? <BellOffIcon /> : <BellIcon />}
+                    </div>
+                  </motion.div>
+                )
               )}
-            </motion.button>
-          )}
+            </AnimatePresence>
+          </div>
 
-          {/* Passive features - only visible on expand */}
-          <AnimatePresence>
-            {isHovered && (
-              <motion.div
-                key="right-passive"
-                className="passive-features-group"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 10 }}
-                transition={{ duration: 0.08, ease: "easeInOut" }}
-              >
-                {temperature !== null && (
-                  <div className="passive-feature" title={weatherCondition || "Temperature"}>
-                    <ThermometerIcon />
-                    <span className="label">{temperature}°</span>
-                  </div>
-                )}
-                <div className="passive-feature" title={`${isCharging ? "Charging" : "Battery"} - ${batteryLevel}%`}>
-                  <BatteryIcon charging={isCharging} level={batteryLevel} />
-                  <span className="label">{batteryLevel}%</span>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {/* Center - Time (always visible) */}
+          <span className="time">{time}</span>
+
+          {/* Right: album art (music) or battery+temp (status) */}
+          <div className="side-content right">
+            <AnimatePresence mode="wait">
+              {isMusicMode ? (
+                <motion.button
+                  key="album-art"
+                  className={`album-art${isHovered ? ' album-art-large' : ''}`}
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  transition={{ duration: 0.12 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    togglePlayPause();
+                  }}
+                >
+                  {albumArtUrl ? (
+                    <img src={albumArtUrl} alt="Art" />
+                  ) : (
+                    <div className="album-art-placeholder">🎵</div>
+                  )}
+                </motion.button>
+              ) : (
+                isHovered && (
+                  <motion.div
+                    key="right-passive"
+                    className="passive-features-group"
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                  >
+                    {temperature !== null && (
+                      <div className="passive-feature" title={weatherCondition}>
+                        <ThermometerIcon />
+                        <span className="label">{temperature}°</span>
+                      </div>
+                    )}
+                    <div className="passive-feature">
+                      <BatteryIcon charging={isCharging} level={batteryLevel} />
+                      <span className="label">{batteryLevel}%</span>
+                    </div>
+                  </motion.div>
+                )
+              )}
+            </AnimatePresence>
+          </div>
         </div>
+
+        {/* Bottom row - Song details (only on hover when playing) */}
+        <AnimatePresence>
+          {isHovered && isPlaying && mediaInfo.has_media && (
+              <motion.div 
+                className="bottom-row"
+                initial={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
+                animate={{ opacity: 1, height: 28, scale: 1, filter: "blur(0px)" }}
+                exit={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
+                transition={{ 
+                  default: { type: "spring", stiffness: 400, damping: 25, mass: 0.8 },
+                  opacity: { duration: 0.25, ease: "easeOut" },
+                  filter: { duration: 0.25, ease: "easeOut" }
+                }}
+              >
+                <MarqueeText title={mediaInfo.title} artist={mediaInfo.artist} />
+              </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
     </div>
   );

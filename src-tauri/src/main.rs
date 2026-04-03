@@ -13,6 +13,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VIRTUAL_KEY, VK_VOLUME_MUTE, VK_VOLUME_UP, VK_VOLUME_DOWN,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+use windows::Storage::Streams::DataReader;
+use base64::{Engine as _, engine::general_purpose};
+use std::sync::mpsc::{channel, Sender};
 
 // Audio visualization event
 #[derive(Clone, serde::Serialize)]
@@ -30,89 +34,34 @@ pub struct MediaInfo {
     artwork: Option<Vec<String>>,
 }
 
-#[tauri::command]
-fn get_media_info() -> MediaInfo {
-    get_system_media_info()
+enum SystemCommand {
+    VolumeMute,
+    VolumeUp,
+    VolumeDown,
 }
 
-fn get_system_media_info() -> MediaInfo {
-    unsafe {
-        use windows::Win32::System::Com::{
-            CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
-        };
-        use windows::Win32::Foundation::S_OK;
+static mut COMMAND_SENDER: Option<Sender<SystemCommand>> = None;
 
-        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let com_initialized = hr.is_ok() || hr == S_OK;
-
-        let result = (|| -> Option<MediaInfo> {
-            use windows::Media::Control::{
-                GlobalSystemMediaTransportControlsSessionManager,
-                GlobalSystemMediaTransportControlsSessionPlaybackStatus,
-            };
-
-            let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-                .ok()?
-                .get()
-                .ok()?;
-
-            let session = manager.GetCurrentSession().ok()?;
-
-            let playback_info = session.GetPlaybackInfo().ok()?;
-            let is_playing = playback_info.PlaybackStatus() == Ok(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
-
-            let media_props = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
-
-            let title = media_props.Title().ok()?.to_string();
-            let artist = media_props.Artist().ok()?.to_string();
-            let has_media = !title.is_empty();
-
-            Some(MediaInfo {
-                title,
-                artist,
-                is_playing,
-                has_media,
-                artwork: None,
-            })
-        })();
-
-        if com_initialized {
-            CoUninitialize();
+#[tauri::command]
+fn set_window_height(window: tauri::Window, height: f64) {
+    if let Ok(scale_factor) = window.scale_factor() {
+        if let Ok(physical_size) = window.inner_size() {
+            let logical_width = physical_size.width as f64 / scale_factor;
+            let _ = window.set_size(tauri::LogicalSize::new(logical_width, height));
         }
-
-        result.unwrap_or(MediaInfo {
-            title: String::new(),
-            artist: String::new(),
-            is_playing: false,
-            has_media: false,
-            artwork: None,
-        })
     }
 }
 
 #[tauri::command]
-fn media_play() {
-    control_media_session(MediaAction::Play);
+fn set_ignore_cursor_events(window: tauri::Window, ignore: bool) {
+    let _ = window.set_ignore_cursor_events(ignore);
 }
 
 #[tauri::command]
-fn media_pause() {
-    control_media_session(MediaAction::Pause);
-}
-
-#[tauri::command]
-fn media_play_pause() {
-    control_media_session(MediaAction::Toggle);
-}
-
-#[tauri::command]
-fn media_next() {
-    control_media_session(MediaAction::Next);
-}
-
-#[tauri::command]
-fn media_prev() {
-    control_media_session(MediaAction::Prev);
+fn hide_volume_overlay(app: tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("volume-overlay") {
+        let _ = win.hide();
+    }
 }
 
 #[tauri::command]
@@ -149,67 +98,6 @@ fn open_notification_center() {
         );
     }
 }
-
-enum MediaAction {
-    Play,
-    Pause,
-    Toggle,
-    Next,
-    Prev,
-}
-
-fn control_media_session(action: MediaAction) {
-    let vk_code = match action {
-        MediaAction::Play => 0xB3,
-        MediaAction::Pause => 0xB3,
-        MediaAction::Toggle => 0xB3,
-        MediaAction::Next => 0xB0,
-        MediaAction::Prev => 0xB1,
-    };
-
-    send_media_key(vk_code);
-}
-
-fn send_media_key(vk_code: u16) {
-    unsafe {
-        use windows::Win32::UI::Input::KeyboardAndMouse::{
-            SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP,
-            INPUT_TYPE, VIRTUAL_KEY, KEYBD_EVENT_FLAGS,
-        };
-
-        let inputs = [
-            INPUT {
-                r#type: INPUT_TYPE(0),
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VIRTUAL_KEY(vk_code),
-                        wScan: 0,
-                        dwFlags: KEYBD_EVENT_FLAGS(0),
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-            INPUT {
-                r#type: INPUT_TYPE(0),
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VIRTUAL_KEY(vk_code),
-                        wScan: 0,
-                        dwFlags: KEYEVENTF_KEYUP,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-        ];
-
-        let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-    }
-}
-
-// IAudioEndpointVolume COM interface for volume control
-use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 
 // WASAPI Audio capture for visualization
 fn setup_audio_visualization(app_handle: AppHandle) {
@@ -437,147 +325,158 @@ fn setup_audio_visualization(app_handle: AppHandle) {
     });
 }
 
-// Volume monitoring using Windows Core Audio API with raw COM
-fn setup_volume_monitor(app_handle: AppHandle) {
-    std::thread::spawn(move || {
-        use windows::Win32::Media::Audio::{
-            IMMDeviceEnumerator, IMMDevice,
-            eRender, eConsole,
-        };
-        use windows::Win32::System::Com::{
-            CoInitializeEx, CoUninitialize,
-            COINIT_APARTMENTTHREADED,
-        };
-        use windows::Win32::Foundation::S_OK;
 
-        unsafe {
-            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            let com_initialized = hr.is_ok() || hr == S_OK;
-
-            let result: Result<(), String> = (|| {
-                let enumerator: IMMDeviceEnumerator =
-                    CoCreateInstance(&windows::Win32::Media::Audio::MMDeviceEnumerator, None, CLSCTX_ALL)
-                        .map_err(|e| format!("CoCreateInstance failed: {:?}", e))?;
-
-                let device: IMMDevice = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
-                    .map_err(|e| format!("GetDefaultAudioEndpoint failed: {:?}", e))?;
-
-                // Activate the IAudioEndpointVolume interface
-                let audio_endpoint_volume: IAudioEndpointVolume = device.Activate(windows::Win32::System::Com::CLSCTX_ALL, None)
-                    .map_err(|e| format!("Activate failed: {:?}", e))?;
-
-                let mut last_volume: f32 = 0.0;
-                let mut last_muted: bool = false;
-
-                // Get initial volume
-                if let Ok(vol) = audio_endpoint_volume.GetMasterVolumeLevelScalar() {
-                    last_volume = vol;
-                }
-                if let Ok(muted) = audio_endpoint_volume.GetMute() {
-                    last_muted = muted.into();
-                }
-
-                let _ = app_handle.emit("volume-change", VolumeChangeEvent {
-                    volume: last_volume,
-                    is_muted: last_muted,
-                });
-
-                loop {
-                    std::thread::sleep(std::time::Duration::from_millis(16));
-
-                    if let (Ok(current_volume), Ok(current_muted)) = (
-                        audio_endpoint_volume.GetMasterVolumeLevelScalar(),
-                        audio_endpoint_volume.GetMute()
-                    ) {
-                        let is_muted: bool = current_muted.into();
-
-                        if (current_volume - last_volume).abs() > 0.001 || is_muted != last_muted {
-                            last_volume = current_volume;
-                            last_muted = is_muted;
-
-                            // Emit event to all windows
-                            let _ = app_handle.emit("volume-change", VolumeChangeEvent {
-                                volume: current_volume,
-                                is_muted,
-                            });
-
-                            // Show volume overlay window
-                                if let Some(volume_window) = app_handle.get_webview_window("volume-overlay") {
-                                    let _ = volume_window.show();
-                                }
-                        }
-                    }
-                }
-            })();
-
-            if com_initialized {
-                CoUninitialize();
-            }
-
-            if let Err(e) = result {
-                eprintln!("Failed to initialize volume monitor: {}", e);
-            }
-        }
-    });
-}
-
-// Handle volume key events and change volume
-fn handle_volume_key(vk_code: VIRTUAL_KEY) {
-    use windows::Win32::Media::Audio::{
-        IMMDeviceEnumerator, IMMDevice,
-        eRender, eConsole,
-    };
-    use windows::Win32::System::Com::{
-        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
-    };
-    use windows::Win32::Foundation::S_OK;
-
+// Refactored handle_volume_key to just send a command
+fn handle_volume_key_event(vk_code: VIRTUAL_KEY) {
     unsafe {
-        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let com_initialized = hr.is_ok() || hr == S_OK;
-
-        let result: Result<(), String> = (|| {
-            let enumerator: IMMDeviceEnumerator =
-                CoCreateInstance(&windows::Win32::Media::Audio::MMDeviceEnumerator, None, CLSCTX_ALL)
-                    .map_err(|e| format!("CoCreateInstance failed: {:?}", e))?;
-
-            let device: IMMDevice = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
-                .map_err(|e| format!("GetDefaultAudioEndpoint failed: {:?}", e))?;
-
-            // Activate using raw COM
-            let audio_endpoint_volume: IAudioEndpointVolume = device.Activate(windows::Win32::System::Com::CLSCTX_ALL, None)
-                .map_err(|e| format!("Activate failed: {:?}", e))?;
-
-            if let Ok(current_volume) = audio_endpoint_volume.GetMasterVolumeLevelScalar() {
-                match vk_code {
-                    VK_VOLUME_MUTE => {
-                        if let Ok(current_muted) = audio_endpoint_volume.GetMute() {
-                            let _ = audio_endpoint_volume.SetMute(!current_muted.as_bool(), std::ptr::null());
-                        }
-                    }
-                    VK_VOLUME_UP => {
-                        let new_volume = (current_volume + 0.05).min(1.0);
-                        let _ = audio_endpoint_volume.SetMasterVolumeLevelScalar(new_volume, std::ptr::null());
-                    }
-                    VK_VOLUME_DOWN => {
-                        let new_volume = (current_volume - 0.05).max(0.0);
-                        let _ = audio_endpoint_volume.SetMasterVolumeLevelScalar(new_volume, std::ptr::null());
-                    }
-                    _ => {}
-                }
+        if let Some(ref sender) = COMMAND_SENDER {
+            let cmd = match vk_code {
+                VK_VOLUME_MUTE => Some(SystemCommand::VolumeMute),
+                VK_VOLUME_UP => Some(SystemCommand::VolumeUp),
+                VK_VOLUME_DOWN => Some(SystemCommand::VolumeDown),
+                _ => None,
+            };
+            if let Some(cmd) = cmd {
+                // println!("Bloom Hook: Sending volume command: {:?}", vk_code);
+                let _ = sender.send(cmd);
             }
-
-            Ok(())
-        })();
-
-        if com_initialized {
-            CoUninitialize();
-        }
-
-        if let Err(e) = result {
-            eprintln!("Failed to handle volume key: {}", e);
         }
     }
+}
+
+fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
+    let (tx, rx) = channel::<SystemCommand>();
+    
+    let handle = app_handle.clone();
+    std::thread::spawn(move || {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+        use windows::Win32::Media::Audio::{IMMDeviceEnumerator, eRender, eConsole};
+        use windows::Media::Control::{GlobalSystemMediaTransportControlsSessionManager, GlobalSystemMediaTransportControlsSessionPlaybackStatus};
+
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+            let enumerator = CoCreateInstance::<_, IMMDeviceEnumerator>(&windows::Win32::Media::Audio::MMDeviceEnumerator, None, CLSCTX_ALL).ok();
+            let device = enumerator.as_ref().and_then(|e| e.GetDefaultAudioEndpoint(eRender, eConsole).ok());
+            let audio_endpoint_volume = device.as_ref().and_then(|d| d.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok());
+
+            let mut manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().and_then(|op| op.get()).ok();
+
+            let mut last_processed_media = std::time::Instant::now();
+            let mut last_volume: f32 = -1.0;
+            let mut last_muted: bool = false;
+
+            // Helper to try hiding native Windows OSDs
+            let hide_osd = || {
+                use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE};
+                let class1 = windows::core::PCSTR(b"NativeHWNDHost\0".as_ptr());
+                if let Ok(hwnd1) = FindWindowA(class1, windows::core::PCSTR::null()) {
+                    let _ = ShowWindow(hwnd1, SW_HIDE);
+                }
+            };
+
+            loop {
+                // Periodically try to get manager if it failed
+                if manager.is_none() {
+                    manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().and_then(|op| op.get()).ok();
+                }
+
+                // Check for volume commands from hook
+                while let Ok(cmd) = rx.try_recv() {
+                    if let Some(ref aev) = audio_endpoint_volume {
+                        match cmd {
+                            SystemCommand::VolumeMute => {
+                                if let Ok(muted) = aev.GetMute() {
+                                    let _ = aev.SetMute(!muted.as_bool(), std::ptr::null());
+                                    hide_osd();
+                                }
+                            }
+                            SystemCommand::VolumeUp => {
+                                if let Ok(vol) = aev.GetMasterVolumeLevelScalar() {
+                                    let _ = aev.SetMasterVolumeLevelScalar((vol + 0.05).min(1.0), std::ptr::null());
+                                    hide_osd();
+                                }
+                            }
+                            SystemCommand::VolumeDown => {
+                                if let Ok(vol) = aev.GetMasterVolumeLevelScalar() {
+                                    let _ = aev.SetMasterVolumeLevelScalar((vol - 0.05).max(0.0), std::ptr::null());
+                                    hide_osd();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Poll volume state and emit events (60fps)
+                if let Some(ref aev) = audio_endpoint_volume {
+                    if let (Ok(vol), Ok(muted)) = (aev.GetMasterVolumeLevelScalar(), aev.GetMute()) {
+                        let is_muted: bool = muted.into();
+                        if (vol - last_volume).abs() > 0.001 || is_muted != last_muted {
+                            last_volume = vol;
+                            last_muted = is_muted;
+                            let _ = handle.emit("volume-change", VolumeChangeEvent { volume: vol, is_muted });
+                        }
+                    }
+                }
+
+                // Poll Media Info (every 2 seconds)
+                if last_processed_media.elapsed().as_millis() >= 2000 {
+                    last_processed_media = std::time::Instant::now();
+                    
+                    let mut media_emitted = false;
+                    if let Some(ref mgr) = manager {
+                        let sessions = mgr.GetSessions().ok();
+                        if let Some(sessions) = sessions {
+                            let count = sessions.Size().unwrap_or(0);
+                             for i in 0..count {
+                                if let Ok(session) = sessions.GetAt(i) {
+                                    let playback_info = session.GetPlaybackInfo().ok();
+                                    let is_playing = playback_info.and_then(|p| p.PlaybackStatus().ok()) == Some(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
+                                    
+                                    if let Ok(media_props) = session.TryGetMediaPropertiesAsync().and_then(|op| op.get()) {
+                                        let title = media_props.Title().unwrap_or_default().to_string();
+                                        let artist = media_props.Artist().unwrap_or_default().to_string();
+                                        let has_media = !title.is_empty();
+
+                                        if has_media && (is_playing || !media_emitted) {
+                                            let artwork = (|| -> Option<Vec<String>> {
+                                                let thumb = media_props.Thumbnail().ok()?;
+                                                let stream = thumb.OpenReadAsync().ok()?.get().ok()?;
+                                                let mime = stream.ContentType().ok()?.to_string();
+                                                let size = stream.Size().ok()? as u32;
+                                                if size == 0 { return None; }
+                                                let reader = DataReader::CreateDataReader(&stream).ok()?;
+                                                reader.LoadAsync(size).ok()?.get().ok()?;
+                                                let mut bytes = vec![0u8; size as usize];
+                                                reader.ReadBytes(&mut bytes).ok()?;
+                                                Some(vec![format!("data:{};base64,{}", mime, general_purpose::STANDARD.encode(bytes))])
+                                            })();
+
+                                            let _ = handle.emit("media-update", MediaInfo { title, artist, is_playing, has_media, artwork });
+                                            media_emitted = true;
+                                            if is_playing { break; } // Prioritize playing session
+                                        }
+                                    }
+                                }
+                             }
+                        }
+                    }
+
+                    if !media_emitted {
+                        // println!("Bloom Media: No media active");
+                        let _ = handle.emit("media-update", MediaInfo { title: "".into(), artist: "".into(), is_playing: false, has_media: false, artwork: None });
+                    }
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(16));
+            }
+            
+            // Unreachable in this loop but good practice
+            // CoUninitialize();
+        }
+    });
+    
+    tx
 }
 
 // Low-level keyboard hook to intercept volume keys and hide native OSD
@@ -592,9 +491,8 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: windows::Win32::
 
         if vk_code == VK_VOLUME_MUTE || vk_code == VK_VOLUME_UP || vk_code == VK_VOLUME_DOWN {
             if wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize {
-                handle_volume_key(vk_code);
+                handle_volume_key_event(vk_code);
             }
-            // Always swallow these keys to prevent native OSD
             return windows::Win32::Foundation::LRESULT(1);
         }
     }
@@ -622,22 +520,22 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            get_media_info,
-            media_play,
-            media_pause,
-            media_play_pause,
-            media_next,
-            media_prev,
             open_wifi_settings,
-            open_notification_center
+            open_notification_center,
+            set_ignore_cursor_events,
+            set_window_height,
+            hide_volume_overlay
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
+            // Do NOT set_ignore_cursor_events — the window needs to receive hover
             let hwnd = window.hwnd().unwrap();
             register_appbar(hwnd);
 
+            let tx = setup_system_worker(app.handle().clone());
+            unsafe { COMMAND_SENDER = Some(tx.clone()); }
+
             let _hook = setup_keyboard_hook();
-            setup_volume_monitor(app.handle().clone());
             setup_audio_visualization(app.handle().clone());
 
             Ok(())
@@ -664,7 +562,7 @@ fn register_appbar(hwnd: HWND) {
             left: 0,
             top: 0,
             right: 1920,
-            bottom: 48,
+            bottom: 40, // Slightly more headroom
         };
 
         SHAppBarMessage(ABM_SETPOS, &mut abd);
@@ -675,7 +573,7 @@ fn register_appbar(hwnd: HWND) {
             abd.rc.left,
             abd.rc.top,
             abd.rc.right - abd.rc.left,
-            abd.rc.bottom - abd.rc.top,
+            40, // Match reserved height
             SWP_NOZORDER,
         );
     }

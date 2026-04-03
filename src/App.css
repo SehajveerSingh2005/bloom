@@ -16,7 +16,7 @@ body {
     align-items: flex-start;
     margin: 0;
     padding: 0;
-    pointer-events: none;
+    /* No pointer-events: none here — the pill itself needs to receive mouse */
 }
 
 .bloom {
@@ -27,19 +27,18 @@ body {
     background: rgba(0, 0, 0, 0.8);
     backdrop-filter: blur(20px);
     border-radius: 0 0 18px 18px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-top: none;
-
     color: white;
-
     pointer-events: auto;
     cursor: default;
-
-    padding: 0 12px;
-
+    padding: 0px 12px;
     white-space: nowrap;
-
-    height: 36px;
+    height: 100%;
+    flex-direction: column;
+    position: relative;
+    box-sizing: border-box;
+    /* No overflow:hidden — pseudo-elements for concave corners extend outside the box */
 
     font-family:
         "Inter",
@@ -47,6 +46,85 @@ body {
         BlinkMacSystemFont,
         "Segoe UI",
         sans-serif;
+    
+    transition: background 0.3s ease;
+}
+
+.bloom.expanded {
+    background: rgba(0, 0, 0, 0.92);
+}
+
+.main-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 36px;
+    position: relative;
+    flex-shrink: 0;
+    /* No overflow:hidden — it clips the concave ::before/::after corners */
+}
+
+.bottom-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 28px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
+    overflow: hidden;
+    padding: 0 12px;
+    box-sizing: border-box;
+    border-radius: 0 0 18px 18px;
+}
+
+.media-details {
+    container-type: inline-size;
+    width: 100%;
+    overflow: hidden;
+    position: relative;
+    display: block; /* So block-level child behaves completely normally */
+}
+
+.marquee-content {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 500;
+    white-space: nowrap;
+    width: max-content;
+    min-width: 100%;
+}
+
+.marquee-content.should-animate {
+    /* Use a nice easing for the hold at ends */
+    animation: marquee-scroll 8s cubic-bezier(0.4, 0, 0.6, 1) infinite alternate;
+}
+
+@keyframes marquee-scroll {
+    0%, 15% { transform: translateX(0); }
+    85%, 100% { transform: translateX(min(0px, calc(100cqw - 100%))); }
+}
+
+.marquee-content .dot {
+    opacity: 0.4;
+    font-size: 8px;
+    flex-shrink: 0;
+}
+
+.marquee-content .title,
+.marquee-content .artist {
+    display: inline-block;
+    /* remove truncation so it can expand fully and scroll */
+    white-space: nowrap;
+}
+
+.marquee-content .artist {
+    opacity: 0.6;
 }
 
 /* Concave top corners ("bridge" to screen edge) */
@@ -70,15 +148,16 @@ body {
         black 13px
     );
     mask-image: radial-gradient(circle at 0 13px, transparent 13px, black 13px);
+    backdrop-filter: blur(20px);
     background:
         radial-gradient(
             circle at 0 13px,
             transparent 13px,
-            rgba(255, 255, 255, 0.15) 13px,
-            rgba(255, 255, 255, 0.15) 14px,
+            rgba(255, 255, 255, 0.1) 13px,
+            rgba(255, 255, 255, 0.1) 14px,
             transparent 14.1px
         ),
-        rgba(0, 0, 0, 0.5);
+        rgba(0, 0, 0, 0.8);
 }
 
 .bloom::after {
@@ -93,15 +172,16 @@ body {
         transparent 13px,
         black 13px
     );
+    backdrop-filter: blur(20px);
     background:
         radial-gradient(
             circle at 13px 13px,
             transparent 13px,
-            rgba(255, 255, 255, 0.15) 13px,
-            rgba(255, 255, 255, 0.15) 14px,
+            rgba(255, 255, 255, 0.1) 13px,
+            rgba(255, 255, 255, 0.1) 14px,
             transparent 14.1px
         ),
-        rgba(0, 0, 0, 0.5);
+        rgba(0, 0, 0, 0.8);
 }
 
 .time {
@@ -123,15 +203,18 @@ body {
     gap: 8px;
     position: absolute;
     height: 100%;
-    align-items: center;
+    top: 0;
+    width: calc(50% - 52px); /* give more room from time */
 }
 
 .side-content.left {
-    left: 12px;
+    left: 14px;
+    justify-content: flex-start;
 }
 
 .side-content.right {
-    right: 12px;
+    right: 14px;
+    justify-content: flex-end;
 }
 
 .passive-features-group {
@@ -166,14 +249,14 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 4.5px;
+    gap: 2.5px;
     height: 20px;
-    width: 38px;
+    width: 28px;
     position: relative;
 }
 
 .visualizer-horizontal .bar-horizontal {
-    width: 5px;
+    width: 3.5px;
     height: 100%;
     background: rgba(255, 255, 255, 0.95);
     border-radius: 100px;
@@ -193,17 +276,24 @@ body {
     padding: 0;
 
     cursor: pointer;
-
     flex-shrink: 0;
     overflow: hidden;
 
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
+    transition: width 0.2s ease, height 0.2s ease, border-radius 0.2s ease;
+}
+
+/* Expanded album art on hover */
+.album-art.album-art-large {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
 }
 
 .album-art img {
-    width: 20px;
-    height: 20px;
+    width: 100%;
+    height: 100%;
     object-fit: cover;
 }
 
