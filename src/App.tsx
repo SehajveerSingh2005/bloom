@@ -45,6 +45,23 @@ function ThermometerIcon() {
   );
 }
 
+function PlayIcon() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+        </svg>
+    );
+}
+
+function PauseIcon() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16" />
+            <rect x="14" y="4" width="4" height="16" />
+        </svg>
+    );
+}
+
 function BatteryIcon({ charging, level }: { charging: boolean; level: number }) {
   const fillWidth = (level / 100) * 10;
 
@@ -171,16 +188,16 @@ function App() {
     }
   }, [mediaInfo.has_media, isPlaying]);
 
-  // Auto-switch back to status mode if music stops for 4 seconds
+  // Auto-switch back to status mode if music stops for 4 seconds AND not hovered
   useEffect(() => {
     let timer: any;
-    if (!isPlaying && bloomMode === 'music') {
+    if (!isPlaying && bloomMode === 'music' && !isHovered) {
       timer = setTimeout(() => {
         setBloomMode('status');
       }, 4000);
     }
     return () => clearTimeout(timer);
-  }, [isPlaying, bloomMode]);
+  }, [isPlaying, bloomMode, isHovered]);
 
   // Update time
   useEffect(() => {
@@ -374,12 +391,29 @@ function App() {
   // Media controls via Tauri commands
   const togglePlayPause = useCallback(async () => {
     try {
+      // Optimistsic update
+      setIsPlaying(prev => !prev);
       await invoke("media_play_pause");
-      setIsPlaying(!isPlaying);
     } catch (e) {
       console.error("Failed to toggle play/pause:", e);
     }
-  }, [isPlaying]);
+  }, []);
+
+  const skipNext = useCallback(async () => {
+    try {
+      await invoke("media_next");
+    } catch (e) {
+      console.error("Failed to skip next:", e);
+    }
+  }, []);
+
+  const skipPrevious = useCallback(async () => {
+    try {
+      await invoke("media_previous");
+    } catch (e) {
+      console.error("Failed to skip previous:", e);
+    }
+  }, []);
 
 
   // Open WiFi settings
@@ -418,7 +452,7 @@ function App() {
           width: isHovered
             ? (isMusicMode ? 260 : 320)
             : (isMusicMode ? 200 : 140),
-          height: isHovered && mediaInfo.has_media ? 64 : 36
+          height: isHovered && mediaInfo.has_media && isPlaying ? 64 : 36
         }}
         onClick={handleBloomClick}
         onHoverStart={() => setIsHovered(true)}
@@ -470,7 +504,7 @@ function App() {
               {isMusicMode ? (
                 <motion.button
                   key="album-art"
-                  className={`album-art${isHovered ? ' album-art-large' : ''}`}
+                  className={`album-art${isHovered ? ' album-art-large' : ''}${!isPlaying ? ' paused' : ''}`}
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
@@ -479,12 +513,28 @@ function App() {
                     e.stopPropagation();
                     togglePlayPause();
                   }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    skipNext();
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    skipPrevious();
+                  }}
                 >
-                  {albumArtUrl ? (
-                    <img src={albumArtUrl} alt="Art" />
-                  ) : (
-                    <div className="album-art-placeholder">🎵</div>
-                  )}
+                  <div className="album-art-inner">
+                    {albumArtUrl ? (
+                        <img src={albumArtUrl} alt="Art" />
+                    ) : (
+                        <div className="album-art-placeholder">🎵</div>
+                    )}
+                    <div className="album-art-overlay">
+                        <div className="control-icon-small">
+                            {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                        </div>
+                    </div>
+                  </div>
                 </motion.button>
               ) : (
                 isHovered && (

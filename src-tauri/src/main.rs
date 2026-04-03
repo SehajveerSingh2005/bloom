@@ -38,6 +38,9 @@ enum SystemCommand {
     VolumeMute,
     VolumeUp,
     VolumeDown,
+    MediaPlayPause,
+    MediaNext,
+    MediaPrevious,
 }
 
 static mut COMMAND_SENDER: Option<Sender<SystemCommand>> = None;
@@ -96,6 +99,33 @@ fn open_notification_center() {
             windows::core::PCSTR::null(),
             SW_SHOWNORMAL,
         );
+    }
+}
+
+#[tauri::command]
+fn media_play_pause() {
+    unsafe {
+        if let Some(ref sender) = COMMAND_SENDER {
+            let _ = sender.send(SystemCommand::MediaPlayPause);
+        }
+    }
+}
+
+#[tauri::command]
+fn media_next() {
+    unsafe {
+        if let Some(ref sender) = COMMAND_SENDER {
+            let _ = sender.send(SystemCommand::MediaNext);
+        }
+    }
+}
+
+#[tauri::command]
+fn media_previous() {
+    unsafe {
+        if let Some(ref sender) = COMMAND_SENDER {
+            let _ = sender.send(SystemCommand::MediaPrevious);
+        }
     }
 }
 
@@ -403,6 +433,27 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                     hide_osd();
                                 }
                             }
+                            SystemCommand::MediaPlayPause => {
+                                if let Some(ref mgr) = manager {
+                                    if let Ok(session) = mgr.GetCurrentSession() {
+                                        let _ = session.TryTogglePlayPauseAsync();
+                                    }
+                                }
+                            }
+                            SystemCommand::MediaNext => {
+                                if let Some(ref mgr) = manager {
+                                    if let Ok(session) = mgr.GetCurrentSession() {
+                                        let _ = session.TrySkipNextAsync();
+                                    }
+                                }
+                            }
+                            SystemCommand::MediaPrevious => {
+                                if let Some(ref mgr) = manager {
+                                    if let Ok(session) = mgr.GetCurrentSession() {
+                                        let _ = session.TrySkipPreviousAsync();
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -524,7 +575,10 @@ fn main() {
             open_notification_center,
             set_ignore_cursor_events,
             set_window_height,
-            hide_volume_overlay
+            hide_volume_overlay,
+            media_play_pause,
+            media_next,
+            media_previous
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();

@@ -22,7 +22,7 @@ body {
 .bloom {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     position: relative;
     background: rgba(0, 0, 0, 0.8);
     backdrop-filter: blur(20px);
@@ -291,6 +291,16 @@ body {
     border-radius: 8px;
 }
 
+.album-art.paused {
+    width: 20px;
+    height: 20px;
+}
+
+.album-art.album-art-large.paused {
+    width: 28px;
+    height: 28px;
+}
+
 .album-art img {
     width: 100%;
     height: 100%;
@@ -305,6 +315,39 @@ body {
 
 .album-art:hover {
     background: rgba(255, 255, 255, 0.25);
+}
+
+.album-art-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.album-art-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+.album-art:hover .album-art-overlay {
+    opacity: 1;
+}
+
+.control-icon-small {
+    color: white;
+    filter: drop-shadow(0 0 4px rgba(0,0,0,0.5));
 }
 
 .clickable {
