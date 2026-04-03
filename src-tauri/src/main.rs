@@ -562,7 +562,7 @@ fn register_appbar(hwnd: HWND) {
             left: 0,
             top: 0,
             right: 1920,
-            bottom: 40, // Slightly more headroom
+            bottom: 48, // Slightly more headroom
         };
 
         SHAppBarMessage(ABM_SETPOS, &mut abd);
