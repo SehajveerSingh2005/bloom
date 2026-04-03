@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import "./App.css";
 
 // Simple SVG icons
@@ -41,23 +42,6 @@ function ThermometerIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" />
-    </svg>
-  );
-}
-
-function PlayIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M8 5v14l11-7z" />
-    </svg>
-  );
-}
-
-function PauseIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-      <rect x="6" y="4" width="4" height="16" />
-      <rect x="14" y="4" width="4" height="16" />
     </svg>
   );
 }
@@ -159,7 +143,17 @@ function App() {
     has_media: false
   });
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
+  const [windowLabel] = useState<string>(getCurrentWebviewWindow().label);
+  const [isVisible, setIsVisible] = useState(true);
 
+  useEffect(() => {
+    const unlisten = listen<boolean>("visibility-change", (event) => {
+      setIsVisible(event.payload);
+    });
+    return () => {
+      unlisten.then(f => f());
+    };
+  }, []);
   // Audio visualization state
   const [audioData, setAudioData] = useState<number[]>(new Array(5).fill(0.18));
 
@@ -187,23 +181,26 @@ function App() {
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [isCompactTimerVisible, setIsCompactTimerVisible] = useState(false);
+  const [isTimerFinished, setIsTimerFinished] = useState(false);
   const timerIntervalRef = useRef<any>(null);
 
   const formatTimerTime = (totalSeconds: number) => {
-    const mins = Math.floor(totalSeconds / 60);
-    const secs = totalSeconds % 60;
+    const mins = Math.floor(Math.abs(totalSeconds) / 60);
+    const secs = Math.abs(totalSeconds) % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const startTimer = (mins: number) => {
     setTimerSeconds(mins * 60);
     setIsTimerRunning(true);
+    setIsTimerFinished(false);
   };
 
   const toggleTimer = () => setIsTimerRunning(!isTimerRunning);
   const resetTimer = () => {
     setIsTimerRunning(false);
     setTimerSeconds(0);
+    setIsTimerFinished(false);
   };
 
   useEffect(() => {
@@ -211,31 +208,32 @@ function App() {
       timerIntervalRef.current = setInterval(() => {
         setTimerSeconds(s => s - 1);
       }, 1000);
-    } else if (timerSeconds === 0) {
+    } else if (isTimerRunning && timerSeconds === 0) {
       setIsTimerRunning(false);
+      setIsTimerFinished(true);
     }
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     };
-  }, [isTimerRunning, timerSeconds === 0]); // Only restart if it hits 0
+  }, [isTimerRunning, timerSeconds === 0]);
 
   // Auto-switch to music mode when media is detected
   useEffect(() => {
-    if (mediaInfo.has_media && isPlaying) {
+    if (mediaInfo.has_media && isPlaying && bloomMode !== 'calendar') {
       setBloomMode('music');
     }
   }, [mediaInfo.has_media, isPlaying]);
 
-  // Auto-switch back to status mode if music stops for 4 seconds AND not hovered
+  // Auto-switch back to status mode if music stops for 4 seconds
   useEffect(() => {
     let timer: any;
-    if (!isPlaying && bloomMode === 'music' && !isHovered) {
+    if (!isPlaying && bloomMode === 'music') {
       timer = setTimeout(() => {
         setBloomMode('status');
       }, 4000);
     }
     return () => clearTimeout(timer);
-  }, [isPlaying, bloomMode, isHovered]);
+  }, [isPlaying, bloomMode]);
 
   // Update time
   useEffect(() => {
@@ -450,6 +448,7 @@ function App() {
     }
   }, [isPlaying]);
 
+
   const skipNext = useCallback(async () => {
     try {
       await invoke("media_next");
@@ -493,6 +492,10 @@ function App() {
 
   const toggleCalendarMode = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (isTimerFinished) {
+      resetTimer();
+      return;
+    }
     setBloomMode(prev => {
       if (prev === 'calendar') {
         // Return to music mode if media is present and playing, otherwise status
@@ -506,11 +509,56 @@ function App() {
   const isMusicMode = mediaInfo.has_media && bloomMode === 'music';
   const isCalendarMode = bloomMode === 'calendar';
 
+  if (windowLabel === 'bottom-corners') {
+    return (
+      <div className="screen">
+        <AnimatePresence>
+          {isVisible && (
+            <>
+              <motion.div 
+                className="screen-corner bottom-left" 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1, filter: "blur(0px)" }}
+                exit={{ opacity: 0, filter: "blur(10px)" }}
+              />
+              <motion.div 
+                className="screen-corner bottom-right" 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1, filter: "blur(0px)" }}
+                exit={{ opacity: 0, filter: "blur(10px)" }}
+              />
+            </>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  }
+
   return (
-    <div className="screen">
+    <div className="screen" style={{ overflow: 'hidden' }}>
+      {/* Screen Corners */}
+      <AnimatePresence>
+        {isVisible && (
+          <>
+            <motion.div 
+              className="screen-corner top-left" 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, filter: "blur(0px)" }}
+              exit={{ opacity: 0, filter: "blur(10px)" }}
+            />
+            <motion.div 
+              className="screen-corner top-right" 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, filter: "blur(0px)" }}
+              exit={{ opacity: 0, filter: "blur(10px)" }}
+            />
+          </>
+        )}
+      </AnimatePresence>
+
       <motion.div
         className={`bloom ${isHovered ? 'expanded' : ''}`}
-        initial={{ width: 140 }}
+        initial={{ width: 140, y: -100 }}
         animate={{
           width: isCalendarMode
             ? 480
@@ -519,10 +567,14 @@ function App() {
                 : (isMusicMode ? 200 : 140),
           height: isCalendarMode
             ? 275
-            : isHovered && mediaInfo.has_media && isPlaying ? 64 : 36
+            : isHovered && mediaInfo.has_media && isPlaying ? 64 : 36,
+          y: isVisible ? 0 : -80,
+          opacity: isVisible ? 1 : 0,
+          scale: isVisible ? 1 : 0.95,
+          filter: isVisible ? "blur(0px)" : "blur(8px)"
         }}
         onClick={() => {
-          // Only toggle if not in calendar mode (which has its own internal propagation stops)
+          // Only toggle if not in calendar mode
           if (!isCalendarMode) handleBloomClick();
         }}
         onHoverStart={() => setIsHovered(true)}
@@ -533,7 +585,10 @@ function App() {
           }
         }}
         style={{ originY: 0 }}
-        transition={{ type: "spring", stiffness: 400, damping: 25, mass: 0.8 }}
+        transition={{ 
+          y: { type: "spring", stiffness: 400, damping: 40, mass: 0.8, restDelta: 0.001 },
+          default: { type: "spring", stiffness: 400, damping: 25, mass: 0.8 }
+        }}
       >
         <div className="main-row">
           {/* Left: visualizer (music) or wifi+notifs (status) */}
@@ -571,9 +626,33 @@ function App() {
           </div>
 
           {/* Center - Time (always visible) */}
-          <span className="time clickable" onClick={toggleCalendarMode}>
-            {isCompactTimerVisible ? formatTimerTime(timerSeconds) : time}
-          </span>
+          <div className="time-flip-container" onClick={toggleCalendarMode}>
+            <AnimatePresence initial={false}>
+              {isCompactTimerVisible || isTimerFinished ? (
+                <motion.span
+                  key="timer"
+                  className={`time compact-timer ${isTimerFinished ? 'timer-finished' : ''}`}
+                  initial={{ rotateX: -90, opacity: 0 }}
+                  animate={{ rotateX: 0, opacity: 1 }}
+                  exit={{ rotateX: 90, opacity: 0 }}
+                  transition={{ type: "spring", stiffness: 600, damping: 30 }}
+                >
+                  {formatTimerTime(timerSeconds)}
+                </motion.span>
+              ) : (
+                <motion.span
+                  key="clock"
+                  className="time"
+                  initial={{ rotateX: -90, opacity: 0 }}
+                  animate={{ rotateX: 0, opacity: 1 }}
+                  exit={{ rotateX: 90, opacity: 0 }}
+                  transition={{ type: "spring", stiffness: 600, damping: 30 }}
+                >
+                  {time}
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </div>
 
           {/* Right: album art (music) or battery+temp (status) */}
           <div className="side-content right">
@@ -584,7 +663,7 @@ function App() {
                   className={`album-art${isHovered ? ' album-art-large' : ''}${!isPlaying ? ' paused' : ''}`}
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
+                  exit={{ opacity: 0, y: -20, scale: 0.8, filter: "blur(8px)" }}
                   transition={{ duration: 0.12 }}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -646,11 +725,11 @@ function App() {
               className="bottom-row"
               initial={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
               animate={{ opacity: 1, height: 28, scale: 1, filter: "blur(0px)" }}
-              exit={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
+              exit={{ opacity: 0, height: 0, y: -15, scale: 0.95, filter: "blur(8px)" }}
               transition={{
                 default: { type: "spring", stiffness: 400, damping: 25, mass: 0.8 },
-                opacity: { duration: 0.25, ease: "easeOut" },
-                filter: { duration: 0.25, ease: "easeOut" }
+                opacity: { duration: 0.2, ease: "easeOut" },
+                filter: { duration: 0.2, ease: "easeOut" }
               }}
             >
               <MarqueeText title={mediaInfo.title} artist={mediaInfo.artist} />
@@ -666,7 +745,7 @@ function App() {
               onClick={e => e.stopPropagation()} /* Block mode switches when clicking inside */
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.1 } }}
+              exit={{ opacity: 0, y: -40, scale: 0.9, filter: "blur(12px)", transition: { duration: 0.2 } }}
               transition={{ type: "spring", stiffness: 400, damping: 30 }}
             >
               <div className="calendar-column">
@@ -746,6 +825,23 @@ function Calendar() {
         {days}
       </div>
     </div>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="6" y="4" width="4" height="16" />
+      <rect x="14" y="4" width="4" height="16" />
+    </svg>
   );
 }
 

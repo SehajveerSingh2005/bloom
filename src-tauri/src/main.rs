@@ -41,6 +41,7 @@ enum SystemCommand {
     MediaPlayPause,
     MediaNext,
     MediaPrevious,
+    ToggleVisibility(bool),
 }
 
 static mut COMMAND_SENDER: Option<Sender<SystemCommand>> = None;
@@ -454,6 +455,13 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                     }
                                 }
                             }
+                            SystemCommand::ToggleVisibility(visible) => {
+                                let _ = handle.emit("visibility-change", visible);
+                                // For the bottom corners, we can just hide the window directly for 100% reliability
+                                if let Some(w) = handle.get_webview_window("bottom-corners") {
+                                    if visible { let _ = w.show(); } else { let _ = w.hide(); }
+                                }
+                            }
                         }
                     }
                 }
@@ -521,12 +529,40 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
 
                 std::thread::sleep(std::time::Duration::from_millis(16));
             }
-            
-            // Unreachable in this loop but good practice
-            // CoUninitialize();
         }
     });
-    
+
+    // Spawn a dedicated thread for fullscreen detection
+    let tx_clone = tx.clone();
+    std::thread::spawn(move || {
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+        use windows::Win32::Foundation::RECT;
+
+        let mut last_visible = true;
+        loop {
+            unsafe {
+                let hwnd = GetForegroundWindow();
+                if !hwnd.is_invalid() {
+                    let mut rect = RECT::default();
+                    if GetWindowRect(hwnd, &mut rect).is_ok() {
+                        let cx = GetSystemMetrics(SM_CXSCREEN);
+                        let cy = GetSystemMetrics(SM_CYSCREEN);
+                        let is_fs = rect.left <= 0 && rect.top <= 0 && rect.right >= cx && rect.bottom >= cy;
+                        
+                        if is_fs && last_visible {
+                            let _ = tx_clone.send(SystemCommand::ToggleVisibility(false));
+                            last_visible = false;
+                        } else if !is_fs && !last_visible {
+                            let _ = tx_clone.send(SystemCommand::ToggleVisibility(true));
+                            last_visible = true;
+                        }
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    });
+
     tx
 }
 
@@ -582,9 +618,30 @@ fn main() {
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
-            // Do NOT set_ignore_cursor_events — the window needs to receive hover
             let hwnd = window.hwnd().unwrap();
             register_appbar(hwnd);
+
+            // Create bottom corners window
+            let monitor = window.current_monitor().ok().flatten().unwrap();
+            let screen_size = monitor.size();
+            let screen_height = screen_size.height as f64 / monitor.scale_factor();
+
+            let _bottom_corners = tauri::WebviewWindowBuilder::new(
+                app,
+                "bottom-corners",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .transparent(true)
+            .decorations(false)
+            .always_on_top(true)
+            .shadow(false)
+            .inner_size(screen_size.width as f64 / monitor.scale_factor(), 38.0)
+            .position(0.0, screen_height - 38.0)
+            .skip_taskbar(true)
+            .build()
+            .unwrap();
+
+            let _ = _bottom_corners.set_ignore_cursor_events(true);
 
             let tx = setup_system_worker(app.handle().clone());
             unsafe { COMMAND_SENDER = Some(tx.clone()); }
