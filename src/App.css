@@ -183,16 +183,47 @@ body {
         rgba(0, 0, 0, 0.8);
 }
 
+.time-flip-container {
+    min-width: 60px;
+    height: 24px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    perspective: 1000px;
+    cursor: pointer;
+    z-index: 10;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: transform 0.1s ease;
+}
+
+.time-flip-container:hover .time {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.time-flip-container:active {
+    transform: scale(0.95);
+}
+
 .time {
     font-size: 13px;
     font-weight: 500;
     letter-spacing: 0.3px;
     line-height: 1;
-    cursor: default;
-
+    color: white;
+    backface-visibility: hidden;
     position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
+    transition: color 0.2s ease;
+}
+
+.timer-finished {
+    color: #ff4757 !important;
+    animation: timer-blink 0.6s infinite alternate cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes timer-blink {
+    0% { color: #fff; opacity: 1; transform: scale(1); }
+    100% { color: #ff4757; opacity: 1; transform: scale(1.05); }
 }
 
 /* Side content containers */
@@ -400,6 +431,43 @@ body {
     border-radius: 50%;
     background: radial-gradient(circle, rgba(255, 255, 255, 0.8) 0%, rgba(168, 85, 247, 0.4) 70%, transparent 100%);
     filter: blur(1px);
+}
+
+.screen-corner {
+    position: fixed;
+    width: 38px;
+    height: 38px;
+    background: #111;
+    z-index: 999999;
+    pointer-events: none;
+}
+
+.top-left {
+    top: 0;
+    left: 0;
+    -webkit-mask-image: radial-gradient(circle at 100% 100%, transparent 38px, black 38px);
+    mask-image: radial-gradient(circle at 100% 100%, transparent 38px, black 38px);
+}
+
+.top-right {
+    top: 0;
+    right: 0;
+    -webkit-mask-image: radial-gradient(circle at 0% 100%, transparent 38px, black 38px);
+    mask-image: radial-gradient(circle at 0% 100%, transparent 38px, black 38px);
+}
+
+.bottom-left {
+    bottom: 0;
+    left: 0;
+    -webkit-mask-image: radial-gradient(circle at 100% 0, transparent 38px, black 38px);
+    mask-image: radial-gradient(circle at 100% 0, transparent 38px, black 38px);
+}
+
+.bottom-right {
+    bottom: 0;
+    right: 0;
+    -webkit-mask-image: radial-gradient(circle at 0 0, transparent 38px, black 38px);
+    mask-image: radial-gradient(circle at 0 0, transparent 38px, black 38px);
 }
 
 /* Calendar & Timer Split View */
