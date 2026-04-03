@@ -30,6 +30,3 @@ Bloom is built on **Tauri v2**. To run a local dev instance or build a binary:
    ```
 3. **Run Dev**: `bun run tauri dev`
 4. **Build Windows Binary**: `bun run tauri build` (Builds located in `src-tauri/target/release/bundle`)
-
-## ⚖️ License
-MIT License - Developed by Sehajveer Singh.
