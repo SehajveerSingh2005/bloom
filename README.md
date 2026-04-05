@@ -1,4 +1,9 @@
 <h1 align="left">
+  <img 
+    src="https://github.com/user-attachments/assets/962887ec-636b-4e0f-90eb-0862c0feefca" 
+    width="24" 
+    style="vertical-align: -4px;"
+  />
   Bloom
 </h1>
 
