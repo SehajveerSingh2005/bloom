@@ -1,4 +1,6 @@
-# Bloom
+<h1 align="left">
+  Bloom
+</h1>
 
 ### Refined Desktop Utilities for Windows
 
