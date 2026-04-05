@@ -1,32 +1,69 @@
-# Bloom 🌸
-**The Modern Desktop Experience for Windows**
+# Bloom
 
-Bloom is a minimalist, glassmorphic dynamic platform for Windows designed to seamlessly integrate essential utilities into your workflow. Built as a sleek "island" that stays neatly at the top of your screen, it provides immediate access to system data, media controls, and utility overlays with fluid, liquid-like animations—all while maintaining a clean, distraction-free desktop.
+### Refined Desktop Utilities for Windows
 
-## ✨ Current Features
-- **🎨 Universal Dynamic Island**: A centralized, context-aware pill that intelligently adapts to your needs.
-- **🎵 Unified Media Experience**: Features a real-time reactive frequency visualizer and marquee text for song/artist details—automatically activating when music is detected.
-- **⚡ System Dashboard**: Glance-able status monitoring for battery life, system temperature, and Wi-Fi connectivity.
-- **🔊 Edge Volume Overlay**: A custom, "Apple-style" volume notch that pops out from the left edge of your screen. To keep your experience clean, **Bloom automatically hides the native Windows volume OSD**.
-- **💎 Premium Aesthetics**: 20px frosted glass with high-fidelity concave "bridge" corners, designed to feel like a native extension of the Windows interface.
-- **🚀 Engineered for Performance**: 1.0.0 is built on a high-performance Rust core (Tauri) and React (Framer Motion) to ensure zero-jank animations with minimal CPU footprint.
+Bloom translates the concept of the Dynamic Island into a high-performance, native Windows experience. Built on Tauri v2 and Rust, it provides a persistent, context-aware interface that integrates system status, media controls, and utility overlays with fluid motion and professional aesthetics.
 
-## 🔮 Future Roadmap
-Bloom is evolving from a system-status tool into a complete desktop companion. Future updates aim to include:
-- **Notifications Proxy**: A tighter, more refined view for system notifications.
-- **Quick Actions**: One-click toggles for Focus mode, Night light, and more.
-- **Customizable Widgets**: Embed tiny productivity tools directly into the island.
-- **Theming Engine**: Support for multiple glass styles and accent color syncing.
+---
 
-## 🛠️ Getting Started
-Bloom is built on **Tauri v2**. To run a local dev instance or build a binary:
+### Showcase
 
-1. **Prerequisites**: Ensure you have [Rust](https://rustup.rs/) and [Bun/Node](https://bun.sh/) installed.
-2. **Clone & Install**:
+---
+
+### Core Module
+
+#### The Dynamic Island
+A centralized island that adapts to your workflow.
+- **Audio Visualizer**: High-frequency reactive bars with liquid physics.
+- **Media Engine**: Real-time album art extraction and marquee typography.
+- **Status Dashboard**: Glanceable monitoring for battery, network, and temperature.
+- **Productivity View**: Integrated Pomodoro timer and calendar transition.
+
+#### Native Volume HUD
+Bloom intercepts system volume events to provide a minimalist replacement for the Windows OSD.
+- **Aggressive Suppression**: Automatically hides the native Microsoft volume indicator.
+- **Edge-Anchored**: Smoothly slides from the screen boundary with spring-loaded physics.
+
+#### Passive Screen Corners
+Modernize your display with rounded screen boundaries.
+- **Mica Integration**: Uses Windows 11 backdrop effects for a seamless blend.
+- **Non-Intrusive**: Operates as a separate transparent layer that respects fullscreen applications.
+
+#### Floating Settings Hub
+A glassmorphic control center for real-time personalization.
+- **Instant Sync**: Changes propagate across all Bloom windows without restarts.
+- **Module Control**: Toggle visualizers, artwork, or secondary HUDs on the fly.
+
+---
+
+### Architecture
+
+Bloom is engineered for zero-jank performance and minimal system impact.
+- **Backend**: High-efficiency Rust core utilizing `tauri` and `windows-rs`.
+- **Frontend**: React-based UI powered by `framer-motion` for fluid state transitions.
+- **Aesthetics**: Native Windows 11 Mica/Acrylic effects via `window-vibrancy`.
+
+---
+
+### Installation
+
+Bloom is built on Tauri v2. To run a local instance:
+
+1. **Prerequisites**: [Rust](https://rustup.rs/) and [Bun](https://bun.sh/)
+2. **Setup**:
    ```bash
    git clone https://github.com/SehajveerSingh2005/bloom.git
    cd bloom
    bun install
    ```
-3. **Run Dev**: `bun run tauri dev`
-4. **Build Windows Binary**: `bun run tauri build` (Builds located in `src-tauri/target/release/bundle`)
+3. **Execution**:
+   ```bash
+   bun run tauri dev
+   ```
+
+To generate a production executable:
+```bash
+bun run tauri build
+```
+
+---
