@@ -1,6 +1,6 @@
 [package]
 name = "bloom"
-version = "1.0.0"
+version = "2.0.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -37,4 +37,6 @@ windows = { version = "0.61", features = [
   "Graphics_Imaging",
 ] }
 base64 = "0.22"
+tauri-plugin-autostart = "2.5.1"
+window-vibrancy = "0.7.1"
 

@@ -36,6 +36,7 @@ export default defineConfig(async () => ({
       input: {
         main: "index.html",
         "volume-overlay": "volume-overlay.html",
+        settings: "settings.html",
       },
     },
   },

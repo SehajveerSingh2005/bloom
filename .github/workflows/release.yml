@@ -44,4 +44,24 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Bloom ${{ github.ref_name }}"
-          releaseDraft: true
+          releaseBody: |
+            ## Bloom v2.0.0 Refined Edition
+            
+            This major update transforms Bloom into a fully configurable, native-feeling Windows utility.
+            
+            ### New Features
+            - **Floating Settings Panel**: A beautiful, translucent settings hub that syncs in real-time.
+            - **Windows Mica Integration**: Modern Windows 11 blur effects on the settings window.
+            - **Dynamic Side-Content**: The Island now intelligentlly shrinks and expands based on active visualizers/artwork.
+            - **OLED Screen Corners**: Passive rounded screen edges (toggleable and persistent).
+            - **Enhanced Privacy**: Globally disabled browser context menus for a truly native feel.
+            - **Aggressive OSD Suppression**: Improved background hunter that kills the native Windows volume HUD instantly.
+            
+            ### Improvements
+            - Stable inter-window communication (broadcast system).
+            - Excluded Windows Desktop from fullscreen detection (no more accidental hiding).
+            - High-resolution icon pack with transparency.
+            
+            Enjoy the new Bloom!
+          releaseDraft: false
+          releasePrerelease: false

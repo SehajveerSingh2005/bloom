@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState, useRef } from "react";
 import "./VolumeOverlay.css";
 
@@ -93,14 +94,24 @@ function VolumeOverlayApp() {
   const [volume, setVolume] = useState(0.5);
   const [isMuted, setIsMuted] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [volumeOverlayEnabled, setVolumeOverlayEnabled] = useState(() => localStorage.getItem("bloom-volume-overlay-enabled") !== "false");
   const timeoutRef = useRef<any>(null);
 
-  // Listen for volume change events from the system via Tauri
+  // Listen for volume change events and settings changes
   useEffect(() => {
-    let unlistenFn: (() => void) | null = null;
+    const preventContext = (e: MouseEvent) => e.preventDefault();
+    document.addEventListener('contextmenu', preventContext);
 
-    const setupListener = async () => {
-      unlistenFn = await listen("volume-change", (event: any) => {
+    let unlistenVol: any = null;
+    let unlistenSettings: any = null;
+
+    const setupListeners = async () => {
+      unlistenVol = await listen("volume-change", (event: any) => {
+        if (!volumeOverlayEnabled) return; // Ignore if HUD is disabled
+
+        // Backup suppression
+        invoke("hide_native_osd");
+
         const { volume: newVolume, is_muted } = event.payload;
 
         setVolume(newVolume);
@@ -115,15 +126,23 @@ function VolumeOverlayApp() {
           setIsVisible(false);
         }, 2000);
       });
+
+      unlistenSettings = await listen<{ key: string, value: boolean }>("settings-changed", (event) => {
+        if (event.payload.key === "volume-overlay") {
+          setVolumeOverlayEnabled(event.payload.value);
+          if (!event.payload.value) setIsVisible(false);
+        }
+      });
     };
 
-    setupListener();
+    setupListeners();
 
     return () => {
-      if (unlistenFn) unlistenFn();
+      if (unlistenVol) unlistenVol();
+      if (unlistenSettings) unlistenSettings();
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
-  }, []);
+  }, [volumeOverlayEnabled]);
 
   // Manage window visibility to allow exit animation to finish before hiding the window
   useEffect(() => {

@@ -62,6 +62,48 @@ fn set_ignore_cursor_events(window: tauri::Window, ignore: bool) {
 }
 
 #[tauri::command]
+fn toggle_corners_window(app: tauri::AppHandle, show: bool) {
+    if let Some(win) = app.get_webview_window("bottom-corners") {
+        if show {
+            // Position at bottom of primary monitor
+            if let Ok(Some(monitor)) = win.primary_monitor() {
+                let size = monitor.size();
+                let _ = win.set_position(tauri::PhysicalPosition::new(0, (size.height - 40) as i32));
+                let _ = win.set_size(tauri::PhysicalSize::new(size.width, 40));
+            }
+            let _ = win.show();
+            let _ = win.set_always_on_top(true);
+        } else {
+            let _ = win.hide();
+        }
+    }
+}
+
+#[tauri::command]
+fn broadcast_setting(app: tauri::AppHandle, key: String, value: bool) {
+    let _ = app.emit("settings-changed", serde_json::json!({ "key": key, "value": value }));
+}
+
+#[tauri::command]
+fn hide_native_osd() {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE};
+        let class1 = windows::core::PCSTR(b"NativeHWNDHost\0".as_ptr());
+        if let Ok(hwnd) = FindWindowA(class1, windows::core::PCSTR::null()) {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+}
+
+#[tauri::command]
+fn open_settings_window(app: tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("settings") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
+#[tauri::command]
 fn hide_volume_overlay(app: tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("volume-overlay") {
         let _ = win.hide();
@@ -474,6 +516,8 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                             last_volume = vol;
                             last_muted = is_muted;
                             let _ = handle.emit("volume-change", VolumeChangeEvent { volume: vol, is_muted });
+                            // Aggressively hide native Windows volume OSD
+                            hide_osd();
                         }
                     }
                 }
@@ -543,10 +587,17 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
             unsafe {
                 let hwnd = GetForegroundWindow();
                 if !hwnd.is_invalid() {
+                    // Check if focused window is desktop (Progman or WorkerW)
+                    let mut class_name = [0u8; 256];
+                    let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
+                    let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
+                    let is_desktop = class_str == "Progman" || class_str == "WorkerW";
+
                     let mut rect = RECT::default();
-                    if GetWindowRect(hwnd, &mut rect).is_ok() {
+                    if GetWindowRect(hwnd, &mut rect).is_ok() && !is_desktop {
                         let cx = GetSystemMetrics(SM_CXSCREEN);
                         let cy = GetSystemMetrics(SM_CYSCREEN);
+                        // A window is fullscreen if it covers (or exceeds) the whole screen
                         let is_fs = rect.left <= 0 && rect.top <= 0 && rect.right >= cx && rect.bottom >= cy;
                         
                         if is_fs && last_visible {
@@ -556,6 +607,10 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                             let _ = tx_clone.send(SystemCommand::ToggleVisibility(true));
                             last_visible = true;
                         }
+                    } else if is_desktop && !last_visible {
+                        // If we are on desktop, we should be visible
+                        let _ = tx_clone.send(SystemCommand::ToggleVisibility(true));
+                        last_visible = true;
                     }
                 }
             }
@@ -606,7 +661,15 @@ struct VolumeChangeEvent {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
         .invoke_handler(tauri::generate_handler![
+            broadcast_setting,
+            hide_native_osd,
+            open_settings_window,
+            toggle_corners_window,
             open_wifi_settings,
             open_notification_center,
             set_ignore_cursor_events,
@@ -621,33 +684,38 @@ fn main() {
             let hwnd = window.hwnd().unwrap();
             register_appbar(hwnd);
 
-            // Create bottom corners window
-            let monitor = window.current_monitor().ok().flatten().unwrap();
-            let screen_size = monitor.size();
-            let screen_height = screen_size.height as f64 / monitor.scale_factor();
-
-            let _bottom_corners = tauri::WebviewWindowBuilder::new(
-                app,
-                "bottom-corners",
-                tauri::WebviewUrl::App("index.html".into()),
-            )
-            .transparent(true)
-            .decorations(false)
-            .always_on_top(true)
-            .shadow(false)
-            .inner_size(screen_size.width as f64 / monitor.scale_factor(), 38.0)
-            .position(0.0, screen_height - 38.0)
-            .skip_taskbar(true)
-            .build()
-            .unwrap();
-
-            let _ = _bottom_corners.set_ignore_cursor_events(true);
+            // Configure bottom corners window (it is already created by tauri.conf.json)
+            if let Some(bc_win) = app.get_webview_window("bottom-corners") {
+                let _ = bc_win.set_ignore_cursor_events(true);
+                if let Ok(Some(monitor)) = bc_win.primary_monitor() {
+                   let size = monitor.size();
+                   let _ = bc_win.set_position(tauri::PhysicalPosition::new(0, (size.height - 40) as i32));
+                   let _ = bc_win.set_size(tauri::PhysicalSize::new(size.width, 40));
+                }
+            }
 
             let tx = setup_system_worker(app.handle().clone());
             unsafe { COMMAND_SENDER = Some(tx.clone()); }
 
             let _hook = setup_keyboard_hook();
             setup_audio_visualization(app.handle().clone());
+
+            // Setup settings window effects and lifecycle
+            if let Some(settings_win) = app.get_webview_window("settings") {
+                // Apply Mica effect on Windows 11
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window_vibrancy::apply_mica(&settings_win, None);
+                }
+                
+                let win_clone = settings_win.clone();
+                settings_win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = win_clone.hide();
+                    }
+                });
+            }
 
             Ok(())
         })
