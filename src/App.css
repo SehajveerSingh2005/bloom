@@ -231,11 +231,9 @@ body {
     display: flex;
     align-items: center;
     gap: 8px;
-    position: absolute;
+    flex: 1;
     height: 100%;
-    top: 0;
-    width: calc(50% - 52px);
-    /* give more room from time */
+    min-width: 0;
 }
 
 .side-content.left {

@@ -46,6 +46,15 @@ function ThermometerIcon() {
   );
 }
 
+function SettingsIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3"></circle>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+    </svg>
+  );
+}
+
 function BatteryIcon({ charging, level }: { charging: boolean; level: number }) {
   const fillWidth = (level / 100) * 10;
 
@@ -146,12 +155,43 @@ function App() {
   const [windowLabel] = useState<string>(getCurrentWebviewWindow().label);
   const [isVisible, setIsVisible] = useState(true);
 
+  // Settings state
+  const [settingsWeatherEnabled, setSettingsWeatherEnabled] = useState(() => localStorage.getItem("bloom-weather-enabled") !== "false");
+  const [settingsCalendarEnabled, setSettingsCalendarEnabled] = useState(() => localStorage.getItem("bloom-calendar-enabled") !== "false");
+  const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-media-visualizer-enabled") !== "false");
+  const [settingsAlbumArtEnabled, setSettingsAlbumArtEnabled] = useState(() => localStorage.getItem("bloom-media-album-art-enabled") !== "false");
+  const [settingsMediaDetailsEnabled, setSettingsMediaDetailsEnabled] = useState(() => localStorage.getItem("bloom-media-details-enabled") !== "false");
+  const [settingsScreenCornersEnabled, setSettingsScreenCornersEnabled] = useState(() => localStorage.getItem("bloom-screen-corners-enabled") === "true");
+
   useEffect(() => {
-    const unlisten = listen<boolean>("visibility-change", (event) => {
+    // Disable context menu globally
+    const preventContext = (e: MouseEvent) => e.preventDefault();
+    document.addEventListener('contextmenu', preventContext);
+
+    const unlistenVisibility = listen<boolean>("visibility-change", (event) => {
       setIsVisible(event.payload);
     });
+    
+    const unlistenSettings = listen<{ key: string, value: boolean }>("settings-changed", (event) => {
+      console.log("App received settings-changed:", event.payload);
+      const { key, value } = event.payload;
+      if (key === "weather") setSettingsWeatherEnabled(value);
+      if (key === "calendar") setSettingsCalendarEnabled(value);
+      if (key === "visualizer") setSettingsVisualizerEnabled(value);
+      if (key === "album-art") setSettingsAlbumArtEnabled(value);
+      if (key === "media-details") setSettingsMediaDetailsEnabled(value);
+      if (key === "screen-corners") {
+        setSettingsScreenCornersEnabled(value);
+        // Specifically show/hide the corners window
+        if (windowLabel === 'main') {
+          invoke("toggle_corners_window", { show: value });
+        }
+      }
+    });
+
     return () => {
-      unlisten.then(f => f());
+      unlistenVisibility.then(f => f());
+      unlistenSettings.then(f => f());
     };
   }, []);
   // Audio visualization state
@@ -217,12 +257,24 @@ function App() {
     };
   }, [isTimerRunning, timerSeconds === 0]);
 
-  // Auto-switch to music mode when media is detected
+  const lastTrackRef = useRef<string | null>(null);
+  const lastPlayingRef = useRef<boolean>(false);
+
+  // Auto-switch to music mode only when a *new* track starts while playing,
+  // or when playback transitions from paused to playing.
   useEffect(() => {
-    if (mediaInfo.has_media && isPlaying && bloomMode !== 'calendar') {
+    const isNewTrackWhilePlaying = mediaInfo.title !== lastTrackRef.current && isPlaying;
+    const justStartedPlaying = isPlaying && !lastPlayingRef.current;
+    
+    // Only auto-switch if we are actually playing something new
+    if (mediaInfo.has_media && isPlaying && bloomMode !== 'calendar' && (isNewTrackWhilePlaying || justStartedPlaying)) {
+      console.log("Auto-switching to music mode. NewTrack:", isNewTrackWhilePlaying, "NewPlay:", justStartedPlaying);
       setBloomMode('music');
     }
-  }, [mediaInfo.has_media, isPlaying]);
+    
+    lastTrackRef.current = mediaInfo.title;
+    lastPlayingRef.current = isPlaying;
+  }, [mediaInfo.has_media, isPlaying, mediaInfo.title]);
 
   // Auto-switch back to status mode if music stops for 4 seconds
   useEffect(() => {
@@ -386,31 +438,29 @@ function App() {
   useEffect(() => {
     const unlisten = listen<MediaInfo>("media-update", (event) => {
       const info = event.payload;
-      // console.log("Received media update:", info);
+      if (!info) return;
 
-      if (info && info.has_media) {
-        setMediaInfo({
-          title: info.title,
-          artist: info.artist,
-          is_playing: info.is_playing,
-          has_media: info.has_media,
-          artwork: info.artwork
-        });
+      setMediaInfo(prev => {
+        // Deep-ish check for changes to prevent unnecessary re-renders/glitches
+        const isSame = prev.title === info.title && 
+                       prev.artist === info.artist && 
+                       prev.is_playing === info.is_playing && 
+                       prev.has_media === info.has_media;
+        
+        if (isSame) return prev;
+        
+        // Update playing state separately for the hook triggers
         setIsPlaying(info.is_playing);
-
+        
         if (info.artwork && info.artwork.length > 0) {
-          setAlbumArtUrl(info.artwork[0]);
+          const newArt = info.artwork[0];
+          setAlbumArtUrl(prev => prev === newArt ? prev : newArt);
+        } else {
+          setAlbumArtUrl(null);
         }
-      } else {
-        setIsPlaying(false);
-        setMediaInfo({
-          title: "",
-          artist: "",
-          is_playing: false,
-          has_media: false
-        });
-        setAlbumArtUrl(null);
-      }
+        
+        return info;
+      });
     });
 
     return () => {
@@ -484,6 +534,37 @@ function App() {
     }
   }, []);
 
+  const openSettingsWindow = useCallback(async () => {
+    try {
+      const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+      let settingsWebview = await WebviewWindow.getByLabel('settings');
+      
+      if (settingsWebview) {
+        console.log("Found existing settings window, showing...");
+        await settingsWebview.show();
+        await settingsWebview.unminimize();
+        await settingsWebview.setFocus();
+      } else {
+        console.log("Settings window not found, creating new one...");
+        settingsWebview = new WebviewWindow('settings', {
+          url: 'settings.html',
+          title: 'Settings',
+          width: 380,
+          height: 450,
+          decorations: false,
+          transparent: true,
+          resizable: false,
+          center: true,
+          skipTaskbar: false,
+        });
+        // Windows created via JS need to wait for ready or just show
+        await settingsWebview.show();
+      }
+    } catch (e) {
+      console.error("Failed to open settings window:", e);
+    }
+  }, []);
+
   const handleBloomClick = () => {
     if (isPlaying) {
       setBloomMode(prev => prev === 'music' ? 'status' : 'music');
@@ -496,6 +577,8 @@ function App() {
       resetTimer();
       return;
     }
+    if (!settingsCalendarEnabled) return;
+    
     setBloomMode(prev => {
       if (prev === 'calendar') {
         // Return to music mode if media is present and playing, otherwise status
@@ -507,9 +590,36 @@ function App() {
 
   // Music mode shows any time we have media info (playing or paused)
   const isMusicMode = mediaInfo.has_media && bloomMode === 'music';
+  
+  // Calculate width dynamically based on enabled features
+  const getDynamicWidth = () => {
+    if (isCalendarMode) return 480;
+    
+    // Narrow base is 140. 
+    // - Visualizer adds ~30px.
+    // - Album art adds ~30px.
+    // - Hover/expanded state adds more.
+    
+    let w = 140;
+    if (isMusicMode) {
+      w = 140;
+      if (settingsVisualizerEnabled && isPlaying) w += 30;
+      if (settingsAlbumArtEnabled) w += 30;
+      
+      if (isHovered) {
+        // Expanded music mode
+        w += 60; 
+      }
+    } else if (isHovered) {
+      w = 320;
+    }
+    
+    return w;
+  };
+
   const isCalendarMode = bloomMode === 'calendar';
 
-  if (windowLabel === 'bottom-corners') {
+  if (windowLabel === 'bottom-corners' && settingsScreenCornersEnabled) {
     return (
       <div className="screen">
         <AnimatePresence>
@@ -534,11 +644,13 @@ function App() {
     );
   }
 
+  if (windowLabel === 'bottom-corners') return null;
+
   return (
     <div className="screen" style={{ overflow: 'hidden' }}>
-      {/* Screen Corners */}
+      {/* Screen Corners (Top) */}
       <AnimatePresence>
-        {isVisible && (
+        {isVisible && settingsScreenCornersEnabled && (
           <>
             <motion.div 
               className="screen-corner top-left" 
@@ -560,11 +672,7 @@ function App() {
         className={`bloom ${isHovered ? 'expanded' : ''}`}
         initial={{ width: 140, y: -100 }}
         animate={{
-          width: isCalendarMode
-            ? 480
-            : isHovered
-                ? (isMusicMode ? 260 : 320)
-                : (isMusicMode ? 200 : 140),
+          width: getDynamicWidth(),
           height: isCalendarMode
             ? 275
             : isHovered && mediaInfo.has_media && isPlaying ? 64 : 36,
@@ -592,38 +700,49 @@ function App() {
       >
         <div className="main-row">
           {/* Left: visualizer (music) or wifi+notifs (status) */}
-          <div className="side-content left">
-            <AnimatePresence mode="wait">
-              {isMusicMode ? (
-                <motion.div
-                  key="visualizer"
-                  className="music-visualizer"
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                >
-                  <Visualizer isPlaying={isPlaying} audioData={audioData} />
-                </motion.div>
-              ) : (
-                isHovered && (
-                  <motion.div
-                    key="left-passive"
-                    className="passive-features-group"
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -10 }}
-                  >
-                    <div className="passive-feature clickable" onClick={openWifiSettings}>
-                      <WifiIcon connected={isOnline} />
-                    </div>
-                    <div className="passive-feature clickable" onClick={openNotificationCenter}>
-                      {isMuted ? <BellOffIcon /> : <BellIcon />}
-                    </div>
-                  </motion.div>
-                )
-              )}
-            </AnimatePresence>
-          </div>
+          {(isMusicMode && settingsVisualizerEnabled && isPlaying) || (!isMusicMode && isHovered) ? (
+            <div className="side-content left">
+              <AnimatePresence mode="wait">
+                {isMusicMode ? (
+                  <AnimatePresence>
+                    {isPlaying && settingsVisualizerEnabled && (
+                      <motion.div
+                        key="visualizer"
+                        initial={{ scale: 0.8, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.8, opacity: 0 }}
+                      >
+                        <Visualizer isPlaying={isPlaying} audioData={audioData} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                ) : (
+                  isHovered && (
+                    <motion.div
+                      key="left-passive"
+                      className="passive-features-group"
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -10 }}
+                    >
+                      <div className="passive-feature clickable" onClick={openWifiSettings}>
+                        <WifiIcon connected={isOnline} />
+                      </div>
+                      <div className="passive-feature clickable" onClick={openNotificationCenter}>
+                        {isMuted ? <BellOffIcon /> : <BellIcon />}
+                      </div>
+                      <div className="passive-feature clickable" onClick={openSettingsWindow}>
+                        <SettingsIcon />
+                      </div>
+                    </motion.div>
+                  )
+                )}
+              </AnimatePresence>
+            </div>
+          ) : (
+            /* Spacer to keep time centered if the OTHER side has content */
+            isMusicMode && settingsAlbumArtEnabled && <div className="side-content left" />
+          )}
 
           {/* Center - Time (always visible) */}
           <div className="time-flip-container" onClick={toggleCalendarMode}>
@@ -655,72 +774,77 @@ function App() {
           </div>
 
           {/* Right: album art (music) or battery+temp (status) */}
-          <div className="side-content right">
-            <AnimatePresence mode="wait">
-              {isMusicMode ? (
-                <motion.button
-                  key="album-art"
-                  className={`album-art${isHovered ? ' album-art-large' : ''}${!isPlaying ? ' paused' : ''}`}
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, y: -20, scale: 0.8, filter: "blur(8px)" }}
-                  transition={{ duration: 0.12 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    togglePlayPause();
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    skipNext();
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    skipPrevious();
-                  }}
-                >
-                  <div className="album-art-inner">
-                    {albumArtUrl ? (
-                      <img src={albumArtUrl} alt="Art" />
-                    ) : (
-                      <div className="album-art-placeholder">🎵</div>
-                    )}
-                    <div className="album-art-overlay">
-                      <div className="control-icon-small">
-                        {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                      </div>
-                    </div>
-                  </div>
-                </motion.button>
-              ) : (
-                isHovered && (
-                  <motion.div
-                    key="right-passive"
-                    className="passive-features-group"
-                    initial={{ opacity: 0, x: 10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 10 }}
+          {(isMusicMode && settingsAlbumArtEnabled) || (!isMusicMode && isHovered) ? (
+            <div className="side-content right">
+              <AnimatePresence mode="wait">
+                {isMusicMode && settingsAlbumArtEnabled ? (
+                  <motion.button
+                    key="album-art"
+                    className={`album-art${isHovered ? ' album-art-large' : ''}${!isPlaying ? ' paused' : ''}`}
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, y: -20, scale: 0.8, filter: "blur(8px)" }}
+                    transition={{ duration: 0.12 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      togglePlayPause();
+                    }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      skipNext();
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      skipPrevious();
+                    }}
                   >
-                    {temperature !== null && (
-                      <div className="passive-feature" title={weatherCondition}>
-                        <ThermometerIcon />
-                        <span className="label">{temperature}°</span>
+                    <div className="album-art-inner">
+                      {albumArtUrl ? (
+                        <img src={albumArtUrl} alt="Art" />
+                      ) : (
+                        <div className="album-art-placeholder">🎵</div>
+                      )}
+                      <div className="album-art-overlay">
+                        <div className="control-icon-small">
+                          {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                        </div>
                       </div>
-                    )}
-                    <div className="passive-feature">
-                      <BatteryIcon charging={isCharging} level={batteryLevel} />
-                      <span className="label">{batteryLevel}%</span>
                     </div>
-                  </motion.div>
-                )
-              )}
-            </AnimatePresence>
-          </div>
+                  </motion.button>
+                ) : (
+                  isHovered && (
+                    <motion.div
+                      key="right-passive"
+                      className="passive-features-group"
+                      initial={{ opacity: 0, x: 10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                    >
+                      {settingsWeatherEnabled && temperature !== null && (
+                        <div className="passive-feature" title={weatherCondition}>
+                          <ThermometerIcon />
+                          <span className="label">{temperature}°</span>
+                        </div>
+                      )}
+                      <div className="passive-feature">
+                        <BatteryIcon charging={isCharging} level={batteryLevel} />
+                        <span className="label">{batteryLevel}%</span>
+                      </div>
+                    </motion.div>
+                  )
+                )}
+              </AnimatePresence>
+            </div>
+          ) : (
+            /* Spacer to keep time centered if the OTHER side has content */
+            isMusicMode && settingsVisualizerEnabled && isPlaying && <div className="side-content right" />
+          )}
         </div>
 
         {/* Bottom row - Song details (only on hover when playing) */}
         <AnimatePresence>
-          {isHovered && isPlaying && mediaInfo.has_media && !isCalendarMode && (
+          {isHovered && isPlaying && mediaInfo.has_media && !isCalendarMode && settingsMediaDetailsEnabled && (
             <motion.div
               className="bottom-row"
               initial={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
@@ -739,7 +863,7 @@ function App() {
 
         {/* Calendar & Timer Split View */}
         <AnimatePresence>
-          {isCalendarMode && (
+          {settingsCalendarEnabled && isCalendarMode && (
             <motion.div
               className="calendar-timer-content split-view"
               onClick={e => e.stopPropagation()} /* Block mode switches when clicking inside */
