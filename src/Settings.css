@@ -212,3 +212,97 @@ input:checked + .slider {
 input:checked + .slider:before {
   transform: translateX(18px);
 }
+
+.weather-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.unit-toggle-minimal {
+  display: flex;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px;
+  border-radius: 6px;
+  gap: 2px;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.unit-toggle-minimal span {
+  font-size: 10px;
+  font-weight: 700;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.4);
+  transition: all 0.2s ease;
+}
+
+.unit-toggle-minimal span.active {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.manual-city-input {
+  position: relative;
+  margin: 4px 14px 4px 54px;
+}
+
+.manual-city-input input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  color: #fff;
+  padding: 4px 0;
+  outline: none;
+}
+
+.manual-city-input input::placeholder {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.searching-spinner {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: translateY(-50%) rotate(360deg); }
+}
+
+.settings-select {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: white;
+  font-size: 11px;
+  border-radius: 6px;
+  padding: 4px 8px;
+  outline: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  min-width: 80px;
+  text-align: center;
+}
+
+.settings-select:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.settings-select option {
+  background: #1a1a1a;
+  color: white;
+}

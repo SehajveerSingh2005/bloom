@@ -62,25 +62,38 @@ fn set_ignore_cursor_events(window: tauri::Window, ignore: bool) {
 }
 
 #[tauri::command]
-fn toggle_corners_window(app: tauri::AppHandle, show: bool) {
-    if let Some(win) = app.get_webview_window("bottom-corners") {
-        if show {
-            // Position at bottom of primary monitor
-            if let Ok(Some(monitor)) = win.primary_monitor() {
+fn toggle_corners_window(app_handle: tauri::AppHandle, mode: String) {
+    if let Some(bc_win) = app_handle.get_webview_window("bottom-corners") {
+        if mode == "all" {
+            if let Ok(Some(monitor)) = bc_win.primary_monitor() {
                 let size = monitor.size();
-                let _ = win.set_position(tauri::PhysicalPosition::new(0, (size.height - 40) as i32));
-                let _ = win.set_size(tauri::PhysicalSize::new(size.width, 40));
+                let pos = monitor.position();
+                let hwnd = bc_win.hwnd().unwrap();
+                
+                unsafe {
+                    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_SHOWWINDOW};
+                    // Use 48px as requested/found for better alignment consistency with appbar
+                    let _ = SetWindowPos(
+                        hwnd,
+                        None,
+                        pos.x,
+                        pos.y + (size.height as i32 - 48),
+                        size.width as i32,
+                        48,
+                        SWP_NOZORDER | SWP_SHOWWINDOW
+                    );
+                }
             }
-            let _ = win.show();
-            let _ = win.set_always_on_top(true);
+            let _ = bc_win.show();
+            let _ = bc_win.set_always_on_top(true);
         } else {
-            let _ = win.hide();
+            let _ = bc_win.hide();
         }
     }
 }
 
 #[tauri::command]
-fn broadcast_setting(app: tauri::AppHandle, key: String, value: bool) {
+fn broadcast_setting(app: tauri::AppHandle, key: String, value: serde_json::Value) {
     let _ = app.emit("settings-changed", serde_json::json!({ "key": key, "value": value }));
 }
 
@@ -168,6 +181,49 @@ fn media_previous() {
     unsafe {
         if let Some(ref sender) = COMMAND_SENDER {
             let _ = sender.send(SystemCommand::MediaPrevious);
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_location_from_ip() -> Result<String, String> {
+    println!("Bloom Rust: Fetching location via ipapi.co...");
+    // Use common User-Agent to avoid 403 Forbidden from default tool headers
+    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("try {{ (Invoke-RestMethod -Uri 'https://ipapi.co/json/' -UserAgent '{}' -TimeoutSec 5) | ConvertTo-Json }} catch {{ throw $_ }}", ua)
+        ])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            println!("Bloom Rust: Location fetch success (ipapi.co)");
+            Ok(String::from_utf8_lossy(&out.stdout).to_string())
+        }
+        _ => {
+            println!("Bloom Rust: ipapi.co fallback... trying ip-api.com");
+            // Fallback to ip-api.com which is generally more permissive
+            let output = std::process::Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "try { (Invoke-RestMethod -Uri 'http://ip-api.com/json/?fields=status,lat,lon,city,country' -TimeoutSec 5) | ConvertTo-Json } catch { throw $_ }"
+                ])
+                .output();
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    println!("Bloom Rust: Location fetch success (ip-api.com)");
+                    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+                }
+                _ => {
+                    println!("Bloom Rust: All location sources failed.");
+                    Err("All sources failed".to_string())
+                }
+            }
         }
     }
 }
@@ -677,7 +733,8 @@ fn main() {
             hide_volume_overlay,
             media_play_pause,
             media_next,
-            media_previous
+            media_previous,
+            get_location_from_ip
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
@@ -687,11 +744,8 @@ fn main() {
             // Configure bottom corners window (it is already created by tauri.conf.json)
             if let Some(bc_win) = app.get_webview_window("bottom-corners") {
                 let _ = bc_win.set_ignore_cursor_events(true);
-                if let Ok(Some(monitor)) = bc_win.primary_monitor() {
-                   let size = monitor.size();
-                   let _ = bc_win.set_position(tauri::PhysicalPosition::new(0, (size.height - 40) as i32));
-                   let _ = bc_win.set_size(tauri::PhysicalSize::new(size.width, 40));
-                }
+                let hwnd = bc_win.hwnd().unwrap();
+                register_bottom_appbar(hwnd);
             }
 
             let tx = setup_system_worker(app.handle().clone());
@@ -717,6 +771,46 @@ fn main() {
                 });
             }
 
+            // System tray icon with context menu
+            {
+                use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
+                use tauri::menu::{Menu, MenuItem};
+
+                let quit_item = MenuItem::with_id(app, "quit", "Quit Bloom", true, None::<&str>)?;
+                let settings_item = MenuItem::with_id(app, "settings", "Open Settings", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&settings_item, &quit_item])?;
+
+                let app_handle_tray = app.handle().clone();
+                TrayIconBuilder::new()
+                    .icon(app.default_window_icon().unwrap().clone())
+                    .tooltip("Bloom")
+                    .menu(&menu)
+                    .on_menu_event(move |_tray, event| {
+                        match event.id().as_ref() {
+                            "quit" => {
+                                app_handle_tray.exit(0);
+                            }
+                            "settings" => {
+                                if let Some(win) = app_handle_tray.get_webview_window("settings") {
+                                    let _ = win.show();
+                                    let _ = win.set_focus();
+                                }
+                            }
+                            _ => {}
+                        }
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                            let app = tray.app_handle();
+                            if let Some(win) = app.get_webview_window("settings") {
+                                let _ = win.show();
+                                let _ = win.set_focus();
+                            }
+                        }
+                    })
+                    .build(app)?;
+            }
+
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -725,9 +819,11 @@ fn main() {
 
 fn register_appbar(hwnd: HWND) {
     unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::SetWindowPos;
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, GetSystemMetrics, SM_CXSCREEN};
         use windows::Win32::UI::WindowsAndMessaging::SWP_NOZORDER;
         use windows::Win32::Foundation::RECT;
+
+        let screen_width = GetSystemMetrics(SM_CXSCREEN);
 
         let mut abd = APPBARDATA::default();
         abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
@@ -740,8 +836,8 @@ fn register_appbar(hwnd: HWND) {
         abd.rc = RECT {
             left: 0,
             top: 0,
-            right: 1920,
-            bottom: 48, // Slightly more headroom
+            right: screen_width,
+            bottom: 48,
         };
 
         SHAppBarMessage(ABM_SETPOS, &mut abd);
@@ -752,8 +848,47 @@ fn register_appbar(hwnd: HWND) {
             abd.rc.left,
             abd.rc.top,
             abd.rc.right - abd.rc.left,
-            40, // Match reserved height
+            40,
             SWP_NOZORDER,
+        );
+    }
+}
+
+fn register_bottom_appbar(hwnd: HWND) {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+        use windows::Win32::UI::WindowsAndMessaging::SWP_NOZORDER;
+        use windows::Win32::Foundation::RECT;
+
+        let screen_width = GetSystemMetrics(SM_CXSCREEN);
+        let screen_height = GetSystemMetrics(SM_CYSCREEN);
+
+        let mut abd = APPBARDATA::default();
+        abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
+        abd.hWnd = hwnd;
+
+        SHAppBarMessage(ABM_NEW, &mut abd);
+
+        abd.uEdge = windows::Win32::UI::Shell::ABE_BOTTOM;
+
+        // Register at the absolute bottom with 0 height reserved
+        abd.rc = RECT {
+            left: 0,
+            top: screen_height - 1,
+            right: screen_width,
+            bottom: screen_height,
+        };
+
+        SHAppBarMessage(ABM_SETPOS, &mut abd);
+
+        let _ = SetWindowPos(
+            hwnd, 
+            None, 
+            0, 
+            screen_height - 48, 
+            screen_width, 
+            48, 
+            SWP_NOZORDER
         );
     }
 }

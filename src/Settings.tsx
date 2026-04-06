@@ -15,7 +15,10 @@ function SettingsApp() {
   const [mediaVisualizerEnabled, setMediaVisualizerEnabled] = useState(true);
   const [mediaAlbumArtEnabled, setMediaAlbumArtEnabled] = useState(true);
   const [mediaDetailsEnabled, setMediaDetailsEnabled] = useState(true);
-  const [screenCornersEnabled, setScreenCornersEnabled] = useState(false);
+  const [cornersMode, setCornersMode] = useState(() => localStorage.getItem("bloom-corners-mode") || "top");
+  const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
+  const [cityName, setCityName] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
 
   // Initialize autostart state and set background effects
   useEffect(() => {
@@ -65,8 +68,14 @@ function SettingsApp() {
     const details = localStorage.getItem("bloom-media-details-enabled");
     if (details !== null) setMediaDetailsEnabled(details === "true");
 
-    const corners = localStorage.getItem("bloom-screen-corners-enabled");
-    if (corners !== null) setScreenCornersEnabled(corners === "true");
+    const mode = localStorage.getItem("bloom-corners-mode");
+    if (mode !== null) setCornersMode(mode);
+
+    const tempUnit = localStorage.getItem("bloom-temp-unit");
+    if (tempUnit !== null) setTempUnitFahrenheit(tempUnit === "fahrenheit");
+
+    const savedCity = localStorage.getItem("bloom-weather-city");
+    if (savedCity) setCityName(savedCity);
   }, []);
 
   const handleClose = async (e: React.MouseEvent) => {
@@ -94,8 +103,8 @@ function SettingsApp() {
     }
   };
 
-  const notifyChange = async (key: string, value: boolean) => {
-    await invoke("broadcast_setting", { key, value });
+  const notifyChange = (key: string, value: string | boolean | number) => {
+    invoke("broadcast_setting", { key, value });
   };
 
   const toggleWeather = () => {
@@ -140,11 +149,50 @@ function SettingsApp() {
     notifyChange("media-details", newVal);
   };
 
-  const toggleCorners = () => {
-    const newVal = !screenCornersEnabled;
-    setScreenCornersEnabled(newVal);
-    localStorage.setItem("bloom-screen-corners-enabled", String(newVal));
-    notifyChange("screen-corners", newVal);
+  const toggleCornersMode = (mode: string) => {
+    setCornersMode(mode);
+    localStorage.setItem("bloom-corners-mode", mode);
+    notifyChange("corners-mode", mode);
+  };
+
+  const toggleTempUnit = () => {
+    const newVal = !tempUnitFahrenheit;
+    setTempUnitFahrenheit(newVal);
+    localStorage.setItem("bloom-temp-unit", newVal ? "fahrenheit" : "celsius");
+    notifyChange("temp-unit", newVal);
+  };
+
+  const handleCityChange = async (newCity: string) => {
+    setCityName(newCity);
+    if (newCity.trim() === "") {
+      localStorage.removeItem("bloom-weather-city");
+      localStorage.removeItem("bloom-weather-lat");
+      localStorage.removeItem("bloom-weather-lon");
+      notifyChange("weather-refresh", true);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      // Use Open-Meteo Geocoding API (free, no key)
+      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(newCity)}&count=1&language=en&format=json`);
+      const data = await res.json();
+      if (data.results && data.results.length > 0) {
+        const { latitude, longitude, name } = data.results[0];
+        console.log(`Geocoding: Found ${name} at ${latitude}, ${longitude}`);
+        localStorage.setItem("bloom-weather-city", name);
+        localStorage.setItem("bloom-weather-lat", latitude.toString());
+        localStorage.setItem("bloom-weather-lon", longitude.toString());
+        setCityName(name);
+        notifyChange("weather-refresh", true);
+      } else {
+        console.warn(`Geocoding: No results found for ${newCity}`);
+      }
+    } catch (e) {
+      console.error("Geocoding failed:", e);
+    } finally {
+      setIsSearching(false);
+    }
   };
 
   return (
@@ -188,12 +236,17 @@ function SettingsApp() {
             </div>
             <div className="setting-info">
               <span className="setting-label">Screen Corners</span>
-              <span className="setting-desc">Add rounded screen edges</span>
+              <span className="setting-desc">Rounded screen edges</span>
             </div>
-            <label className="toggle-switch">
-              <input type="checkbox" checked={screenCornersEnabled} onChange={toggleCorners} />
-              <span className="slider"></span>
-            </label>
+            <select 
+              className="settings-select" 
+              value={cornersMode} 
+              onChange={(e) => toggleCornersMode(e.target.value)}
+            >
+              <option value="none">None</option>
+              <option value="top">Top Only</option>
+              <option value="all">All Corners</option>
+            </select>
           </div>
         </div>
 
@@ -210,10 +263,30 @@ function SettingsApp() {
               <span className="setting-label">Weather Status</span>
               <span className="setting-desc">Passive temperature info</span>
             </div>
-            <label className="toggle-switch">
-              <input type="checkbox" checked={weatherEnabled} onChange={toggleWeather} />
-              <span className="slider"></span>
-            </label>
+            <div className="weather-controls">
+              <div className="unit-toggle-minimal" onClick={toggleTempUnit}>
+                <span className={!tempUnitFahrenheit ? "active" : ""}>C</span>
+                <span className={tempUnitFahrenheit ? "active" : ""}>F</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={weatherEnabled} onChange={toggleWeather} />
+                <span className="slider"></span>
+              </label>
+            </div>
+          </div>
+          
+          <div className="setting-divider" />
+
+          <div className="manual-city-input">
+            <input 
+              type="text" 
+              placeholder="Enter city manually..." 
+              value={cityName}
+              onChange={(e) => setCityName(e.target.value)}
+              onBlur={() => handleCityChange(cityName)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCityChange(cityName)}
+            />
+            {isSearching && <div className="searching-spinner" />}
           </div>
           
           <div className="setting-divider" />

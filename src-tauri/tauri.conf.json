@@ -76,7 +76,7 @@
         "title": "Screen Corners",
         "url": "index.html",
         "width": 1920,
-        "height": 40,
+        "height": 48,
         "decorations": false,
         "transparent": true,
         "resizable": false,

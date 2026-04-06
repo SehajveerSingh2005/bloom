@@ -161,7 +161,15 @@ function App() {
   const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-media-visualizer-enabled") !== "false");
   const [settingsAlbumArtEnabled, setSettingsAlbumArtEnabled] = useState(() => localStorage.getItem("bloom-media-album-art-enabled") !== "false");
   const [settingsMediaDetailsEnabled, setSettingsMediaDetailsEnabled] = useState(() => localStorage.getItem("bloom-media-details-enabled") !== "false");
-  const [settingsScreenCornersEnabled, setSettingsScreenCornersEnabled] = useState(() => localStorage.getItem("bloom-screen-corners-enabled") === "true");
+  const [settingsCornersMode, setSettingsCornersMode] = useState(() => localStorage.getItem("bloom-corners-mode") || "top");
+  const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
+
+  useEffect(() => {
+    // On startup, sync the corners window visibility
+    if (windowLabel === 'main') {
+      invoke("toggle_corners_window", { mode: settingsCornersMode });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // Disable context menu globally
@@ -172,7 +180,7 @@ function App() {
       setIsVisible(event.payload);
     });
     
-    const unlistenSettings = listen<{ key: string, value: boolean }>("settings-changed", (event) => {
+    const unlistenSettings = listen<{ key: string, value: any }>("settings-changed", (event) => {
       console.log("App received settings-changed:", event.payload);
       const { key, value } = event.payload;
       if (key === "weather") setSettingsWeatherEnabled(value);
@@ -180,11 +188,15 @@ function App() {
       if (key === "visualizer") setSettingsVisualizerEnabled(value);
       if (key === "album-art") setSettingsAlbumArtEnabled(value);
       if (key === "media-details") setSettingsMediaDetailsEnabled(value);
-      if (key === "screen-corners") {
-        setSettingsScreenCornersEnabled(value);
-        // Specifically show/hide the corners window
+      if (key === "temp-unit") setTempUnit(value ? "fahrenheit" : "celsius");
+      if (key === "weather-refresh") {
+          // Re-trigger the init function or just update from localStorage
+          window.dispatchEvent(new CustomEvent("refresh-weather"));
+      }
+      if (key === "corners-mode") {
+        setSettingsCornersMode(value);
         if (windowLabel === 'main') {
-          invoke("toggle_corners_window", { show: value });
+           invoke("toggle_corners_window", { mode: value });
         }
       }
     });
@@ -364,75 +376,88 @@ function App() {
 
   // Weather API (Open-Meteo - free, no API key needed)
   useEffect(() => {
-    const fetchWeather = async () => {
+    const fetchWeather = async (latitude: number, longitude: number) => {
       try {
-        // Get location from browser (if permitted)
-        if ("geolocation" in navigator) {
-          navigator.geolocation.getCurrentPosition(
-            async (position) => {
-              const { latitude, longitude } = position.coords;
-              const response = await fetch(
-                `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`
-              );
-              const data = await response.json();
-              setTemperature(Math.round(data.current_weather.temperature));
-
-              // Simple weather code mapping
-              const code = data.current_weather.weathercode;
-              const conditions: Record<number, string> = {
-                0: "Clear",
-                1: "Mostly Clear",
-                2: "Partly Cloudy",
-                3: "Overcast",
-                45: "Foggy",
-                48: "Foggy",
-                51: "Drizzle",
-                53: "Drizzle",
-                55: "Drizzle",
-                61: "Rainy",
-                63: "Rainy",
-                65: "Rainy",
-                71: "Snowy",
-                73: "Snowy",
-                75: "Snowy",
-                95: "Stormy",
-                96: "Stormy",
-                99: "Stormy",
-                224: "Stormy",
-              };
-              setWeatherCondition(conditions[code] || "Unknown");
-            },
-            () => {
-              // Default to New York if location denied
-              fetchDefaultWeather();
-            }
-          );
-        } else {
-          fetchDefaultWeather();
-        }
-      } catch (e) {
-        console.log("Weather fetch failed");
-        fetchDefaultWeather();
-      }
-    };
-
-    const fetchDefaultWeather = async () => {
-      try {
+        const unitParam = tempUnit === "fahrenheit" ? "&temperature_unit=fahrenheit" : "";
         const response = await fetch(
-          "https://api.open-meteo.com/v1/forecast?latitude=40.7128&longitude=-74.0060&current_weather=true"
+          `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,is_day&timezone=auto${unitParam}`
         );
         const data = await response.json();
-        setTemperature(Math.round(data.current_weather.temperature));
+        const temp = data.current.temperature_2m;
+        console.log(`Weather: Received temperature ${temp} for ${latitude}, ${longitude}`);
+        setTemperature(Math.round(temp));
+
+        // Simple weather code mapping
+        const code = data.current.weather_code;
+        const conditions: Record<number, string> = {
+          0: "Clear",
+          1: "Mostly Clear",
+          2: "Partly Cloudy",
+          3: "Overcast",
+          45: "Foggy",
+          48: "Foggy",
+          51: "Drizzle",
+          53: "Drizzle",
+          55: "Drizzle",
+          61: "Rainy",
+          63: "Rainy",
+          65: "Rainy",
+          71: "Snowy",
+          73: "Snowy",
+          75: "Snowy",
+          95: "Stormy",
+          96: "Stormy",
+          99: "Stormy",
+          224: "Stormy",
+        };
+        setWeatherCondition(conditions[code] || "Unknown");
       } catch (e) {
-        setTemperature(72); // Fallback
+        console.log("Weather fetch failed");
       }
     };
 
-    fetchWeather();
+    const init = async () => {
+      try {
+        // Check for manual coordinates first
+        const savedLat = localStorage.getItem("bloom-weather-lat");
+        const savedLon = localStorage.getItem("bloom-weather-lon");
+        if (savedLat && savedLon) {
+          console.log(`Weather: Manual coordinates found: ${savedLat}, ${savedLon}`);
+          await fetchWeather(parseFloat(savedLat), parseFloat(savedLon));
+          return;
+        }
+
+        console.log("Weather: Fetching location via Rust...");
+        const jsonStr: string = await invoke("get_location_from_ip");
+        const data = JSON.parse(jsonStr);
+        const lat = data.latitude || data.lat;
+        const lon = data.longitude || data.lon;
+        if (lat && lon) {
+          console.log(`Weather: Location found (${data.city}): ${lat}, ${lon}`);
+          await fetchWeather(lat, lon);
+        } else {
+          throw new Error("Rust location data missing lat/lon fields");
+        }
+      } catch (e) {
+        console.warn("Weather: Rust location fetch failed, falling back to Delhi.", e);
+        // Fall back to Delhi (safe bet for UTC+5:30)
+        await fetchWeather(28.6139, 77.2090);
+      }
+    };
+
+    init();
+
+    // Listen for manual refreshes from settings
+    const handleRefresh = () => init();
+    window.addEventListener("refresh-weather", handleRefresh);
+
     // Refresh weather every 30 minutes
-    const interval = setInterval(fetchWeather, 30 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
+    const interval = setInterval(init, 30 * 60 * 1000);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("refresh-weather", handleRefresh);
+    };
+  }, [tempUnit]);
 
   // Native Windows Media Controls - Listen for updates from background worker
   useEffect(() => {
@@ -619,9 +644,10 @@ function App() {
 
   const isCalendarMode = bloomMode === 'calendar';
 
-  if (windowLabel === 'bottom-corners' && settingsScreenCornersEnabled) {
+  if (windowLabel === 'bottom-corners') {
+    if (settingsCornersMode !== 'all') return null;
     return (
-      <div className="screen">
+      <div className="screen" style={{ alignItems: 'flex-end' }}>
         <AnimatePresence>
           {isVisible && (
             <>
@@ -650,7 +676,7 @@ function App() {
     <div className="screen" style={{ overflow: 'hidden' }}>
       {/* Screen Corners (Top) */}
       <AnimatePresence>
-        {isVisible && settingsScreenCornersEnabled && (
+        {isVisible && settingsCornersMode !== 'none' && (
           <>
             <motion.div 
               className="screen-corner top-left" 
@@ -824,7 +850,7 @@ function App() {
                       {settingsWeatherEnabled && temperature !== null && (
                         <div className="passive-feature" title={weatherCondition}>
                           <ThermometerIcon />
-                          <span className="label">{temperature}°</span>
+                          <span className="label">{temperature}°{tempUnit === "fahrenheit" ? "F" : "C"}</span>
                         </div>
                       )}
                       <div className="passive-feature">
