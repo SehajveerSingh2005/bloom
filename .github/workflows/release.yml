@@ -34,6 +34,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      - name: Update version from tag
+        shell: bash
+        run: |
+          # Extract version from tag (e.g., v2.1 -> 2.1)
+          VERSION="${GITHUB_REF_NAME#v}"
+          
+          # If it's a 2-part version (like 2.1), normalize it to 3-part (2.1.0) for semver compatibility
+          if [[ $VERSION =~ ^[0-9]+\.[0-9]+$ ]]; then
+            VERSION="$VERSION.0"
+          fi
+          
+          echo "Syncing files to version $VERSION"
+          
+          # Update package.json
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
+          
+          # Update tauri.conf.json
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+          
+          # Update Cargo.toml (first occurrence of 'version = ...')
+          sed -i "0,/^version = \".*\"/{s/^version = \".*\"/version = \"$VERSION\"/}" src-tauri/Cargo.toml
+
       - name: Install frontend dependencies
         run: bun install
 
@@ -44,24 +66,5 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Bloom ${{ github.ref_name }}"
-          releaseBody: |
-            ## Bloom v2.0.0 Refined Edition
-            
-            This major update transforms Bloom into a fully configurable, native-feeling Windows utility.
-            
-            ### New Features
-            - **Floating Settings Panel**: A beautiful, translucent settings hub that syncs in real-time.
-            - **Windows Mica Integration**: Modern Windows 11 blur effects on the settings window.
-            - **Dynamic Side-Content**: The Island now intelligentlly shrinks and expands based on active visualizers/artwork.
-            - **OLED Screen Corners**: Passive rounded screen edges (toggleable and persistent).
-            - **Enhanced Privacy**: Globally disabled browser context menus for a truly native feel.
-            - **Aggressive OSD Suppression**: Improved background hunter that kills the native Windows volume HUD instantly.
-            
-            ### Improvements
-            - Stable inter-window communication (broadcast system).
-            - Excluded Windows Desktop from fullscreen detection (no more accidental hiding).
-            - High-resolution icon pack with transparency.
-            
-            Enjoy the new Bloom!
           releaseDraft: false
           releasePrerelease: false
