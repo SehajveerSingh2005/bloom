@@ -422,24 +422,31 @@ function App() {
         const savedLat = localStorage.getItem("bloom-weather-lat");
         const savedLon = localStorage.getItem("bloom-weather-lon");
         if (savedLat && savedLon) {
-          console.log(`Weather: Manual coordinates found: ${savedLat}, ${savedLon}`);
           await fetchWeather(parseFloat(savedLat), parseFloat(savedLon));
           return;
         }
 
-        console.log("Weather: Fetching location via Rust...");
-        const jsonStr: string = await invoke("get_location_from_ip");
-        const data = JSON.parse(jsonStr);
+        // Fetch location directly via JS instead of using a hidden rust process
+        const response = await fetch('https://ipapi.co/json/');
+        if (!response.ok) throw new Error("Primary location source failed");
+        
+        const data = await response.json();
         const lat = data.latitude || data.lat;
         const lon = data.longitude || data.lon;
+        
         if (lat && lon) {
-          console.log(`Weather: Location found (${data.city}): ${lat}, ${lon}`);
           await fetchWeather(lat, lon);
         } else {
-          throw new Error("Rust location data missing lat/lon fields");
+          // Fallback to second source if fields are missing
+          const fallbackRes = await fetch('http://ip-api.com/json/?fields=status,lat,lon,city,country');
+          const fallbackData = await fallbackRes.json();
+          if (fallbackData.lat && fallbackData.lon) {
+            await fetchWeather(fallbackData.lat, fallbackData.lon);
+          } else {
+            throw new Error("All location sources failed");
+          }
         }
       } catch (e) {
-        console.warn("Weather: Rust location fetch failed, falling back to Delhi.", e);
         // Fall back to Delhi (safe bet for UTC+5:30)
         await fetchWeather(28.6139, 77.2090);
       }

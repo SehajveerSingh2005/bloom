@@ -185,48 +185,7 @@ fn media_previous() {
     }
 }
 
-#[tauri::command]
-async fn get_location_from_ip() -> Result<String, String> {
-    println!("Bloom Rust: Fetching location via ipapi.co...");
-    // Use common User-Agent to avoid 403 Forbidden from default tool headers
-    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-    let output = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!("try {{ (Invoke-RestMethod -Uri 'https://ipapi.co/json/' -UserAgent '{}' -TimeoutSec 5) | ConvertTo-Json }} catch {{ throw $_ }}", ua)
-        ])
-        .output();
 
-    match output {
-        Ok(out) if out.status.success() => {
-            println!("Bloom Rust: Location fetch success (ipapi.co)");
-            Ok(String::from_utf8_lossy(&out.stdout).to_string())
-        }
-        _ => {
-            println!("Bloom Rust: ipapi.co fallback... trying ip-api.com");
-            // Fallback to ip-api.com which is generally more permissive
-            let output = std::process::Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-Command",
-                    "try { (Invoke-RestMethod -Uri 'http://ip-api.com/json/?fields=status,lat,lon,city,country' -TimeoutSec 5) | ConvertTo-Json } catch { throw $_ }"
-                ])
-                .output();
-
-            match output {
-                Ok(out) if out.status.success() => {
-                    println!("Bloom Rust: Location fetch success (ip-api.com)");
-                    Ok(String::from_utf8_lossy(&out.stdout).to_string())
-                }
-                _ => {
-                    println!("Bloom Rust: All location sources failed.");
-                    Err("All sources failed".to_string())
-                }
-            }
-        }
-    }
-}
 
 // WASAPI Audio capture for visualization
 fn setup_audio_visualization(app_handle: AppHandle) {
@@ -447,8 +406,8 @@ fn setup_audio_visualization(app_handle: AppHandle) {
                 CoUninitialize();
             }
 
-            if let Err(e) = result {
-                eprintln!("Audio visualization error: {}", e);
+            if let Err(_e) = result {
+                // Silently handle error in release
             }
         }
     });
@@ -733,8 +692,7 @@ fn main() {
             hide_volume_overlay,
             media_play_pause,
             media_next,
-            media_previous,
-            get_location_from_ip
+            media_previous
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
@@ -777,8 +735,9 @@ fn main() {
                 use tauri::menu::{Menu, MenuItem};
 
                 let quit_item = MenuItem::with_id(app, "quit", "Quit Bloom", true, None::<&str>)?;
+                let restart_item = MenuItem::with_id(app, "restart", "Restart Bloom", true, None::<&str>)?;
                 let settings_item = MenuItem::with_id(app, "settings", "Open Settings", true, None::<&str>)?;
-                let menu = Menu::with_items(app, &[&settings_item, &quit_item])?;
+                let menu = Menu::with_items(app, &[&settings_item, &restart_item, &quit_item])?;
 
                 let app_handle_tray = app.handle().clone();
                 TrayIconBuilder::new()
@@ -789,6 +748,9 @@ fn main() {
                         match event.id().as_ref() {
                             "quit" => {
                                 app_handle_tray.exit(0);
+                            }
+                            "restart" => {
+                                app_handle_tray.restart();
                             }
                             "settings" => {
                                 if let Some(win) = app_handle_tray.get_webview_window("settings") {
