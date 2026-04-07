@@ -17,6 +17,15 @@ use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Storage::Streams::DataReader;
 use base64::{Engine as _, engine::general_purpose};
 use std::sync::mpsc::{channel, Sender};
+use wmi::{COMLibrary, WMIConnection};
+use serde::Deserialize;
+
+#[derive(Deserialize, Debug)]
+#[serde(rename = "WmiMonitorBrightness")]
+#[serde(rename_all = "PascalCase")]
+struct WmiMonitorBrightness {
+    current_brightness: u8,
+}
 
 // Audio visualization event
 #[derive(Clone, serde::Serialize)]
@@ -42,6 +51,8 @@ enum SystemCommand {
     MediaNext,
     MediaPrevious,
     ToggleVisibility(bool),
+    BrightnessUp,
+    BrightnessDown,
 }
 
 static mut COMMAND_SENDER: Option<Sender<SystemCommand>> = None;
@@ -119,6 +130,13 @@ fn open_settings_window(app: tauri::AppHandle) {
 #[tauri::command]
 fn hide_volume_overlay(app: tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("volume-overlay") {
+        let _ = win.hide();
+    }
+}
+
+#[tauri::command]
+fn hide_brightness_overlay(app: tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("brightness-overlay") {
         let _ = win.hide();
     }
 }
@@ -414,6 +432,23 @@ fn setup_audio_visualization(app_handle: AppHandle) {
 }
 
 
+// Brightness event
+#[derive(Clone, serde::Serialize)]
+struct BrightnessChangeEvent {
+    brightness: u32,
+}
+
+static BRIGHTNESS_SENDER: std::sync::OnceLock<std::sync::mpsc::Sender<u32>> = std::sync::OnceLock::new();
+static CURRENT_BRIGHTNESS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(50);
+static LAST_BRIGHTNESS_CHANGE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+fn get_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
 // Refactored handle_volume_key to just send a command
 fn handle_volume_key_event(vk_code: VIRTUAL_KEY) {
     unsafe {
@@ -426,6 +461,24 @@ fn handle_volume_key_event(vk_code: VIRTUAL_KEY) {
             };
             if let Some(cmd) = cmd {
                 // println!("Bloom Hook: Sending volume command: {:?}", vk_code);
+                let _ = sender.send(cmd);
+            }
+        }
+    }
+}
+
+fn handle_brightness_key_event(vk_code: VIRTUAL_KEY) {
+    unsafe {
+        if let Some(ref sender) = COMMAND_SENDER {
+            let cmd = if vk_code.0 == 0x216 || vk_code.0 == 0x7A { // 0x7A = VK_F11
+                Some(SystemCommand::BrightnessDown)
+            } else if vk_code.0 == 0x217 || vk_code.0 == 0x7B { // 0x7B = VK_F12
+                Some(SystemCommand::BrightnessUp)
+            } else {
+                None
+            };
+            if let Some(cmd) = cmd {
+                // println!("Bloom Hook: Sending brightness command: {:?}", vk_code);
                 let _ = sender.send(cmd);
             }
         }
@@ -519,6 +572,29 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                     if visible { let _ = w.show(); } else { let _ = w.hide(); }
                                 }
                             }
+                            SystemCommand::BrightnessUp => {
+                                let new_val = (CURRENT_BRIGHTNESS.load(std::sync::atomic::Ordering::Relaxed) + 10).min(100);
+                                CURRENT_BRIGHTNESS.store(new_val, std::sync::atomic::Ordering::Relaxed);
+                                LAST_BRIGHTNESS_CHANGE.store(get_now_ms(), std::sync::atomic::Ordering::Relaxed);
+                                let _ = handle.emit("brightness-change", BrightnessChangeEvent { brightness: new_val });
+                                
+                                if let Some(tx) = BRIGHTNESS_SENDER.get() {
+                                    let _ = tx.send(new_val);
+                                }
+                                hide_osd();
+                            }
+                            SystemCommand::BrightnessDown => {
+                                let current = CURRENT_BRIGHTNESS.load(std::sync::atomic::Ordering::Relaxed);
+                                let new_val = if current > 10 { current - 10 } else { 0 };
+                                CURRENT_BRIGHTNESS.store(new_val, std::sync::atomic::Ordering::Relaxed);
+                                LAST_BRIGHTNESS_CHANGE.store(get_now_ms(), std::sync::atomic::Ordering::Relaxed);
+                                let _ = handle.emit("brightness-change", BrightnessChangeEvent { brightness: new_val });
+                                
+                                if let Some(tx) = BRIGHTNESS_SENDER.get() {
+                                    let _ = tx.send(new_val);
+                                }
+                                hide_osd();
+                            }
                         }
                     }
                 }
@@ -591,6 +667,49 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
         }
     });
 
+    // Dedicated brightness polling thread to prevent blocking the system worker
+    let handle_brightness = app_handle.clone();
+    std::thread::spawn(move || {
+        let com_lib = match COMLibrary::new() {
+            Ok(lib) => lib,
+            Err(_) => return,
+        };
+
+        let wmi_con = match WMIConnection::with_namespace_path("root\\WMI", com_lib) {
+            Ok(con) => con,
+            Err(_) => return,
+        };
+
+        // Initial fetch
+        let mut last_brightness = match wmi_con.query::<WmiMonitorBrightness>() {
+            Ok(results) => results.first().map(|b| b.current_brightness as u32).unwrap_or(50),
+            Err(_) => 50,
+        };
+        CURRENT_BRIGHTNESS.store(last_brightness, std::sync::atomic::Ordering::Relaxed);
+
+        loop {
+            // Ignore poller if a manual change was made recently (2 second cooldown)
+            let now = get_now_ms();
+            let last_change = LAST_BRIGHTNESS_CHANGE.load(std::sync::atomic::Ordering::Relaxed);
+            if now - last_change < 2000 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                continue;
+            }
+
+            if let Ok(results) = wmi_con.query::<WmiMonitorBrightness>() {
+                if let Some(b) = results.first() {
+                    let brightness = b.current_brightness as u32;
+                    if brightness != last_brightness {
+                        last_brightness = brightness;
+                        CURRENT_BRIGHTNESS.store(brightness, std::sync::atomic::Ordering::Relaxed);
+                        let _ = handle_brightness.emit("brightness-change", BrightnessChangeEvent { brightness });
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        }
+    });
+
     // Spawn a dedicated thread for fullscreen detection
     let tx_clone = tx.clone();
     std::thread::spawn(move || {
@@ -652,6 +771,13 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: windows::Win32::
             }
             return windows::Win32::Foundation::LRESULT(1);
         }
+
+        if vk_code.0 == 0x216 || vk_code.0 == 0x217 || vk_code.0 == 0x7A || vk_code.0 == 0x7B {
+            if wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize {
+                handle_brightness_key_event(vk_code);
+            }
+            return windows::Win32::Foundation::LRESULT(1);
+        }
     }
 
     windows::Win32::UI::WindowsAndMessaging::CallNextHookEx(None, code, wparam, lparam)
@@ -673,7 +799,45 @@ struct VolumeChangeEvent {
     is_muted: bool,
 }
 
+fn setup_brightness_worker() {
+    let (tx, rx) = channel::<u32>();
+    let _ = BRIGHTNESS_SENDER.set(tx);
+
+    std::thread::spawn(move || {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let child = Command::new("powershell")
+            .args(&["-NoProfile", "-NoLogo", "-Command", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok();
+
+        if let Some(mut child) = child {
+            if let Some(mut stdin) = child.stdin.take() {
+                // Pre-cache the WMI monitor methods instance for instant future calls
+                let init_cmd = "$m = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods\n";
+                let _ = stdin.write_all(init_cmd.as_bytes());
+                let _ = stdin.flush();
+
+                while let Ok(brightness) = rx.recv() {
+                    // Use the cached instance to change brightness instantly
+                    let cmd = format!("$m | Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{{Brightness={}; Timeout=0}}\n", brightness);
+                    let _ = stdin.write_all(cmd.as_bytes());
+                    let _ = stdin.flush();
+                }
+            }
+            let _ = child.kill();
+        }
+    });
+}
+
 fn main() {
+    // Initialize brightness worker before anything else
+    setup_brightness_worker();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
@@ -690,6 +854,7 @@ fn main() {
             set_ignore_cursor_events,
             set_window_height,
             hide_volume_overlay,
+            hide_brightness_overlay,
             media_play_pause,
             media_next,
             media_previous
@@ -704,6 +869,22 @@ fn main() {
                 let _ = bc_win.set_ignore_cursor_events(true);
                 let hwnd = bc_win.hwnd().unwrap();
                 register_bottom_appbar(hwnd);
+            }
+
+            if let Some(br_win) = app.get_webview_window("brightness-overlay") {
+                if let Ok(Some(monitor)) = br_win.primary_monitor() {
+                    let size = monitor.size();
+                    let pos = monitor.position();
+                    let scale = monitor.scale_factor();
+                    let physical_width = (200.0 * scale) as i32;
+                    let physical_height = (400.0 * scale) as i32;
+                    let physical_y = pos.y + (size.height as i32 / 2) - (physical_height / 2);
+                    
+                    let _ = br_win.set_position(tauri::PhysicalPosition::new(
+                        pos.x + (size.width as i32 - physical_width),
+                        physical_y
+                    ));
+                }
             }
 
             let tx = setup_system_worker(app.handle().clone());

@@ -72,6 +72,27 @@
         "visible": false
       },
       {
+        "label": "brightness-overlay",
+        "title": "Brightness",
+        "url": "brightness-overlay.html",
+        "width": 200,
+        "height": 400,
+        "x": 1720,
+        "y": 40,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "focus": false,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": false
+      },
+      {
         "label": "bottom-corners",
         "title": "Screen Corners",
         "url": "index.html",

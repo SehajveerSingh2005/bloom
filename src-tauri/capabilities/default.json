@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for all windows",
-  "windows": ["main", "volume-overlay", "settings"],
+  "windows": ["main", "volume-overlay", "settings", "brightness-overlay"],
   "permissions": [
     "core:default",
     "opener:default",
