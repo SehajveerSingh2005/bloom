@@ -15,6 +15,8 @@ Bloom translates the concept of the Dynamic Island into a high-performance, nati
 
 ### Showcase
 
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/44acd0f8-77e6-4d10-b623-10523466687e" />
+
 ---
 
 ### Core Module
