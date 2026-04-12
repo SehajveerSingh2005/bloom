@@ -223,7 +223,7 @@ function App() {
     } else {
       // Wait for the spring animation to finish before snapping the OS window bounds
       timeout = setTimeout(() => {
-        invoke("set_window_height", { height: 40 });
+        invoke("set_window_height", { height: 48 });
       }, 400);
     }
     return () => clearTimeout(timeout);
@@ -473,13 +473,18 @@ function App() {
       if (!info) return;
 
       setMediaInfo(prev => {
-        // Deep-ish check for changes to prevent unnecessary re-renders/glitches
-        const isSame = prev.title === info.title && 
-                       prev.artist === info.artist && 
-                       prev.is_playing === info.is_playing && 
-                       prev.has_media === info.has_media;
-        
-        if (isSame) return prev;
+        // Find if artwork changed by checking the first element
+        const prevArt = prev.artwork?.[0];
+        const nextArt = info.artwork?.[0];
+        const artChanged = prevArt !== nextArt;
+
+        if (prev.title === info.title && 
+            prev.artist === info.artist && 
+            prev.is_playing === info.is_playing && 
+            prev.has_media === info.has_media &&
+            !artChanged) {
+          return prev;
+        }
         
         // Update playing state separately for the hook triggers
         setIsPlaying(info.is_playing);
@@ -503,8 +508,10 @@ function App() {
   // Audio visualization - receive data from backend
   useEffect(() => {
     const unlisten = listen<{ frequencies: number[] }>("audio-visualization", (event) => {
+      // Only update if we are playing, to avoid background noise/renders
+      if (!lastPlayingRef.current) return;
+      
       const frequencies = event.payload.frequencies;
-      // Just use the smoothed values from backend directly
       setAudioData(frequencies);
     });
 
@@ -733,12 +740,12 @@ function App() {
       >
         <div className="main-row">
           {/* Left: visualizer (music) or wifi+notifs (status) */}
-          {(isMusicMode && settingsVisualizerEnabled && isPlaying) || (!isMusicMode && isHovered) ? (
+          {(isMusicMode && settingsVisualizerEnabled) || (!isMusicMode && isHovered) ? (
             <div className="side-content left">
               <AnimatePresence mode="wait">
                 {isMusicMode ? (
                   <AnimatePresence>
-                    {isPlaying && settingsVisualizerEnabled && (
+                    {settingsVisualizerEnabled && (
                       <motion.div
                         key="visualizer"
                         initial={{ scale: 0.8, opacity: 0 }}

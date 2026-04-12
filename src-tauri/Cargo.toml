@@ -1,9 +1,9 @@
 [package]
 name = "bloom"
-version = "2.2"
-description = "A Tauri App"
-authors = ["you"]
-edition = "2021"
+version = "2.3.0"
+description = ""
+authors = ["sehaz"]
+edition = "2026"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

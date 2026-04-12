@@ -19,6 +19,7 @@ use base64::{Engine as _, engine::general_purpose};
 use std::sync::mpsc::{channel, Sender};
 use wmi::{COMLibrary, WMIConnection};
 use serde::Deserialize;
+use std::os::windows::process::CommandExt;
 
 #[derive(Deserialize, Debug)]
 #[serde(rename = "WmiMonitorBrightness")]
@@ -280,9 +281,8 @@ fn setup_audio_visualization(app_handle: AppHandle) {
                 // Simple frequency bands for visualization (5 bands)
                 const NUM_BANDS: usize = 5;
                 
-                // Per-band gain to balance visual output
-                
-                // History for smoothing
+                // Adaptive normalization state
+                let mut max_band_energies = [0.01f32; NUM_BANDS];
                 let mut prev_values = [0.1f32; NUM_BANDS];
 
                 // Main visualization loop
@@ -323,7 +323,7 @@ fn setup_audio_visualization(app_handle: AppHandle) {
                             for frame in 0..num_frames as usize {
                                 let frame_offset = frame * stride;
 
-                                // Read and mix channels - use wrapping to prevent overflow
+                                // Read and mix channels
                                 let mut sample_val: i64 = 0;
                                 for ch in 0..channels {
                                     let sample_offset = frame_offset + ch * bytes_per_sample;
@@ -352,24 +352,24 @@ fn setup_audio_visualization(app_handle: AppHandle) {
 
                                 // Process FFT when buffer is full
                                 if buffer_pos >= FFT_SIZE {
-                                    // Simple DFT for frequency analysis (5 bands)
-                                    let mut bands = [0.0f32; NUM_BANDS];
-                                    
-                                    // Shifted bands lower to better capture music frequencies (93Hz per bin at 48kHz)
+                                    // Balanced log-ish frequency bands
                                     let band_ranges = [
-                                        (1, 3),    // Bass / Beat
-                                        (3, 10),   // Low-mids / Vocals
-                                        (10, 30),  // Mids / Snare
-                                        (30, 80),  // High-mids / Perk
-                                        (80, 250), // Highs / Cymbals
+                                        (1, 2),    // Sub-bass (93Hz)
+                                        (2, 6),    // Bass/Low-mids (187-562Hz)
+                                        (6, 18),   // Mids (562-1687Hz)
+                                        (18, 60),  // High-mids (1687-5625Hz)
+                                        (60, 200), // Highs (5625-18750Hz)
                                     ];
 
-                                    for (band_idx, (bin_start, bin_end)) in band_ranges.iter().enumerate() {
-                                        let mut peak_mag = 0.0f32;
+                                    let mut output = [0.0f32; NUM_BANDS];
+                                    
+                                    for (band_idx, &(bin_start, bin_end)) in band_ranges.iter().enumerate() {
+                                        let mut total_mag = 0.0f32;
                                         
-                                        for bin in *bin_start..*bin_end {
+                                        for bin in bin_start..bin_end {
                                             if bin >= FFT_SIZE / 2 { break; }
                                             
+                                            // Single-bin DFT
                                             let freq = 2.0 * std::f32::consts::PI * bin as f32 / FFT_SIZE as f32;
                                             let mut real = 0.0f32;
                                             let mut imag = 0.0f32;
@@ -381,32 +381,51 @@ fn setup_audio_visualization(app_handle: AppHandle) {
                                             }
                                             
                                             let mag = (real * real + imag * imag).sqrt();
-                                            if mag > peak_mag {
-                                                peak_mag = mag;
-                                            }
+                                            total_mag += mag;
                                         }
                                         
-                                        // Peak normalization and band gains
-                                        let normalization = 110.0; 
-                                        let gain_multiplier = [2.0, 1.8, 2.2, 3.5, 5.5];
-                                        bands[band_idx] = (peak_mag / normalization) * gain_multiplier[band_idx];
+                                        // Average magnitude in band
+                                        let band_size = (bin_end - bin_start) as f32;
+                                        let mut avg_mag = total_mag / band_size;
+
+                                        // Apply sensitivity weighting (premium re-balance)
+                                        let weighting = [1.2, 1.2, 1.5, 2.8, 5.0];
+                                        avg_mag *= weighting[band_idx];
+
+                                        // Adaptive Normalization (AGC) - Purely Independent
+                                        if avg_mag > max_band_energies[band_idx] {
+                                            max_band_energies[band_idx] = avg_mag;
+                                        } else {
+                                            // Stable decay (approx 0.7s to reset half sensitivity)
+                                            max_band_energies[band_idx] *= 0.99;
+                                        }
+                                        
+                                        // Ensure a sensible floor for max energy
+                                        let active_max = max_band_energies[band_idx].max(0.12);
+                                        let normalized_val = (avg_mag / active_max).min(1.0);
+                                        
+                                        // Map to dynamic range with restored variance (higher powf = more dynamic)
+                                        let target = normalized_val.powf(0.75);
+                                        
+                                        // Premium smoothing: High-inertia rise, elegant fall
+                                        let is_rising = target > prev_values[band_idx];
+                                        let smooth_factor = if is_rising {
+                                            0.10 // Snappy rise
+                                        } else {
+                                            0.20 // Fluid, graceful fall
+                                        };
+                                        
+                                        output[band_idx] = prev_values[band_idx] * smooth_factor + target * (1.0 - smooth_factor);
+                                        output[band_idx] = output[band_idx].min(1.0).max(0.18);
+                                        prev_values[band_idx] = output[band_idx];
                                     }
 
-                                    // Apply response curve and smoothing
-                                    let mut output = [0.0f32; NUM_BANDS];
-                                    for i in 0..NUM_BANDS {
-                                        // More aggressive response to keep bars dancing
-                                        let target = (bands[i] * 1.5).powf(0.5);
-                                        // Snappy 20/80 smoothing for high reactivity
-                                        output[i] = prev_values[i] * 0.2 + target * 0.8;
-                                        output[i] = output[i].min(1.0).max(0.18);
-                                        prev_values[i] = output[i];
+                                    // Emit to frontend only if media is playing
+                                    if ANY_MEDIA_PLAYING.load(std::sync::atomic::Ordering::Relaxed) {
+                                        let _ = app_handle.emit("audio-visualization", AudioVisualizationData {
+                                            frequencies: output.to_vec(),
+                                        });
                                     }
-
-                                    // Emit to frontend (one event per full FFT buffer)
-                                    let _ = app_handle.emit("audio-visualization", AudioVisualizationData {
-                                        frequencies: output.to_vec(),
-                                    });
 
                                     // Reset buffer for next batch
                                     buffer_pos = 0;
@@ -441,6 +460,7 @@ struct BrightnessChangeEvent {
 static BRIGHTNESS_SENDER: std::sync::OnceLock<std::sync::mpsc::Sender<u32>> = std::sync::OnceLock::new();
 static CURRENT_BRIGHTNESS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(50);
 static LAST_BRIGHTNESS_CHANGE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static ANY_MEDIA_PLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn get_now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -504,6 +524,7 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
             let mut manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().and_then(|op| op.get()).ok();
 
             let mut last_processed_media = std::time::Instant::now();
+            let mut last_emitted_info: Option<(String, String, bool, bool, Option<String>)> = None;
             let mut last_volume: f32 = -1.0;
             let mut last_muted: bool = false;
 
@@ -617,12 +638,12 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                 if last_processed_media.elapsed().as_millis() >= 2000 {
                     last_processed_media = std::time::Instant::now();
                     
-                    let mut media_emitted = false;
+                    let mut best_session_info: Option<MediaInfo> = None;
+                    
                     if let Some(ref mgr) = manager {
-                        let sessions = mgr.GetSessions().ok();
-                        if let Some(sessions) = sessions {
+                        if let Ok(sessions) = mgr.GetSessions() {
                             let count = sessions.Size().unwrap_or(0);
-                             for i in 0..count {
+                            for i in 0..count {
                                 if let Ok(session) = sessions.GetAt(i) {
                                     let playback_info = session.GetPlaybackInfo().ok();
                                     let is_playing = playback_info.and_then(|p| p.PlaybackStatus().ok()) == Some(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
@@ -632,7 +653,8 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                         let artist = media_props.Artist().unwrap_or_default().to_string();
                                         let has_media = !title.is_empty();
 
-                                        if has_media && (is_playing || !media_emitted) {
+                                        if has_media {
+                                            // Extract artwork if possible
                                             let artwork = (|| -> Option<Vec<String>> {
                                                 let thumb = media_props.Thumbnail().ok()?;
                                                 let stream = thumb.OpenReadAsync().ok()?.get().ok()?;
@@ -646,19 +668,47 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                                 Some(vec![format!("data:{};base64,{}", mime, general_purpose::STANDARD.encode(bytes))])
                                             })();
 
-                                            let _ = handle.emit("media-update", MediaInfo { title, artist, is_playing, has_media, artwork });
-                                            media_emitted = true;
-                                            if is_playing { break; } // Prioritize playing session
+                                            let info = MediaInfo { title, artist, is_playing, has_media, artwork };
+                                            
+                                            if is_playing {
+                                                best_session_info = Some(info);
+                                                break; // Prioritize playing session
+                                            } else if best_session_info.is_none() {
+                                                best_session_info = Some(info);
+                                            }
                                         }
                                     }
                                 }
-                             }
+                            }
                         }
                     }
 
-                    if !media_emitted {
-                        // println!("Bloom Media: No media active");
-                        let _ = handle.emit("media-update", MediaInfo { title: "".into(), artist: "".into(), is_playing: false, has_media: false, artwork: None });
+                    let current_info = best_session_info.unwrap_or(MediaInfo { 
+                        title: "".into(), artist: "".into(), is_playing: false, has_media: false, artwork: None 
+                    });
+
+                    let artwork_str = current_info.artwork.as_ref().and_then(|a| a.first()).cloned();
+                    let needs_emit = match &last_emitted_info {
+                        Some((t, a, p, h, art)) => {
+                            t != &current_info.title || 
+                            a != &current_info.artist || 
+                            p != &current_info.is_playing || 
+                            h != &current_info.has_media || 
+                            art != &artwork_str
+                        },
+                        None => true
+                    };
+
+                    if needs_emit {
+                        let _ = handle.emit("media-update", current_info.clone());
+                        ANY_MEDIA_PLAYING.store(current_info.is_playing, std::sync::atomic::Ordering::Relaxed);
+                        last_emitted_info = Some((
+                            current_info.title, 
+                            current_info.artist, 
+                            current_info.is_playing, 
+                            current_info.has_media, 
+                            artwork_str
+                        ));
                     }
                 }
 
@@ -809,6 +859,7 @@ fn setup_brightness_worker() {
 
         let child = Command::new("powershell")
             .args(&["-NoProfile", "-NoLogo", "-Command", "-"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -991,7 +1042,7 @@ fn register_appbar(hwnd: HWND) {
             abd.rc.left,
             abd.rc.top,
             abd.rc.right - abd.rc.left,
-            40,
+            48, // Match reservation height
             SWP_NOZORDER,
         );
     }
