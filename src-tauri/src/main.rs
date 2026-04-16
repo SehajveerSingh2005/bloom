@@ -104,6 +104,7 @@ fn toggle_dock(app: tauri::AppHandle, enable: bool) {
         } else {
             let _ = dock_win.hide();
             unregister_appbar_native(hwnd);
+            DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
             set_taskbar_visibility(true);
             // Re-sync other appbars to ensure they stay in place
             if let Some(main_win) = app.get_webview_window("main") {
@@ -131,6 +132,7 @@ fn change_dock_mode(app: tauri::AppHandle, mode: String) {
             register_dock_appbar(dock_win.clone());
         } else {
             unregister_appbar_native(hwnd);
+            DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
             if let Ok(Some(monitor)) = dock_win.primary_monitor() {
                 let m_size = monitor.size();
                 let m_pos = monitor.position();
@@ -772,9 +774,12 @@ fn register_appbar(window: tauri::WebviewWindow) {
             abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
             abd.hWnd = hwnd;
             
-            // Clean slate registration
-            SHAppBarMessage(ABM_REMOVE, &mut abd);
-            SHAppBarMessage(ABM_NEW, &mut abd);
+            // ONLY ABM_NEW if not already registered
+            if !MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                SHAppBarMessage(ABM_NEW, &mut abd);
+                MAIN_APPBAR_REGISTERED.store(true, Ordering::Relaxed);
+            }
+
             abd.uEdge = ABE_TOP;
             abd.rc = RECT { 
                 left: m_pos.x, 
@@ -786,10 +791,11 @@ fn register_appbar(window: tauri::WebviewWindow) {
             SHAppBarMessage(ABM_SETPOS, &mut abd);
             
             let _ = window.show();
-            MAIN_APPBAR_REGISTERED.store(true, Ordering::Relaxed);
         }
     }
 }
+
+static DOCK_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
 
 fn register_dock_appbar(window: tauri::WebviewWindow) {
     if let Ok(Some(monitor)) = window.primary_monitor() {
@@ -817,9 +823,12 @@ fn register_dock_appbar(window: tauri::WebviewWindow) {
             abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
             abd.hWnd = hwnd;
             
-            // Clean slate registration
-            SHAppBarMessage(ABM_REMOVE, &mut abd);
-            SHAppBarMessage(ABM_NEW, &mut abd);
+            // ONLY ABM_NEW if not already registered
+            if !DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                SHAppBarMessage(ABM_NEW, &mut abd);
+                DOCK_APPBAR_REGISTERED.store(true, Ordering::Relaxed);
+            }
+
             abd.uEdge = ABE_BOTTOM;
             abd.rc = RECT { 
                 left: m_pos.x, 
