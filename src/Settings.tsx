@@ -303,7 +303,6 @@ function SettingsApp() {
                   onChange={(e) => toggleDockMode(e.target.value)}
                 >
                   <option value="fixed">Fixed (Reserves Space)</option>
-                  <option value="floating">Floating (Overlay)</option>
                   <option value="auto-hide">Auto Hide</option>
                 </select>
               </div>

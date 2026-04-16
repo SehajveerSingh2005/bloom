@@ -53,14 +53,23 @@ const APPS = [
 export default function Dock() {
   const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "fixed");
   const [isHovered, setIsHovered] = useState(false);
+  const [isOverlapped, setIsOverlapped] = useState(false);
 
   useEffect(() => {
-    const unlisten = listen<{ key: string, value: any }>("settings-changed", (event) => {
+    const unlistenSettings = listen<{ key: string, value: any }>("settings-changed", (event) => {
       if (event.payload.key === "dock-mode") {
         setDockMode(event.payload.value);
       }
     });
-    return () => { unlisten.then(f => f()) };
+
+    const unlistenOverlap = listen<boolean>("dock-overlap", (event) => {
+      setIsOverlapped(event.payload);
+    });
+
+    return () => { 
+      unlistenSettings.then(f => f());
+      unlistenOverlap.then(f => f());
+    };
   }, []);
 
   const handleAppClick = async (appId: string) => {
@@ -75,24 +84,29 @@ export default function Dock() {
     }
   };
 
-  let targetY = 0;
-  if (dockMode === 'auto-hide' && !isHovered) {
-    targetY = 40; // hide most of it, leave roughly 14px trigger area (assuming ~54px dock height)
+  // Logic: 
+  // - Auto-hide: Hidden if (Overlapped AND NOT Hovered)
+  let isHidden = false;
+  if (dockMode === 'auto-hide') {
+    if (isOverlapped && !isHovered) {
+      isHidden = true;
+    }
   }
 
   return (
     <div 
       className="dock-container" 
-      data-tauri-drag-region
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
       <motion.div 
         className="dock"
         initial={{ y: 100, opacity: 0 }}
-        animate={{ y: targetY, opacity: 1 }}
-        transition={{ type: "spring", stiffness: 300, damping: 25 }}
-        data-tauri-drag-region
+        animate={{ 
+          y: isHidden ? 80 : 0, 
+          opacity: 1
+        }}
+        transition={{ type: "spring", stiffness: 300, damping: 30 }}
       >
         {APPS.map((app) => (
           <div 

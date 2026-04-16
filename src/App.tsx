@@ -215,9 +215,9 @@ function App() {
            invoke("toggle_dock", { enable: value });
            if (value) {
              invoke("change_dock_mode", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
-             // Prevent topbar displacement when adding dock
-             setTimeout(() => invoke("sync_appbar"), 200);
            }
+           // Always re-sync topbar to prevent displacement when dock state changes
+           setTimeout(() => invoke("sync_appbar"), 200);
         }
       }
       if (key === "dock-mode") {
