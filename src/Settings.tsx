@@ -19,6 +19,8 @@ function SettingsApp() {
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
   const [cityName, setCityName] = useState("");
   const [isSearching, setIsSearching] = useState(false);
+  const [dockEnabled, setDockEnabled] = useState(false);
+  const [dockMode, setDockMode] = useState("fixed");
 
   // Initialize autostart state and set background effects
   useEffect(() => {
@@ -76,6 +78,12 @@ function SettingsApp() {
 
     const savedCity = localStorage.getItem("bloom-weather-city");
     if (savedCity) setCityName(savedCity);
+
+    const dock = localStorage.getItem("bloom-dock-enabled");
+    if (dock !== null) setDockEnabled(dock === "true");
+
+    const dMode = localStorage.getItem("bloom-dock-mode");
+    if (dMode) setDockMode(dMode);
   }, []);
 
   const handleClose = async (e: React.MouseEvent) => {
@@ -160,6 +168,19 @@ function SettingsApp() {
     setTempUnitFahrenheit(newVal);
     localStorage.setItem("bloom-temp-unit", newVal ? "fahrenheit" : "celsius");
     notifyChange("temp-unit", newVal);
+  };
+
+  const toggleDock = () => {
+    const newVal = !dockEnabled;
+    setDockEnabled(newVal);
+    localStorage.setItem("bloom-dock-enabled", String(newVal));
+    notifyChange("dock-enabled", newVal);
+  };
+
+  const toggleDockMode = (newMode: string) => {
+    setDockMode(newMode);
+    localStorage.setItem("bloom-dock-mode", newMode);
+    notifyChange("dock-mode", newMode);
   };
 
   const handleCityChange = async (newCity: string) => {
@@ -248,6 +269,46 @@ function SettingsApp() {
               <option value="all">All Corners</option>
             </select>
           </div>
+
+          <div className="setting-divider" />
+
+          <div className="setting-item">
+            <div className="setting-icon-bg" style={{ background: '#34c759' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                <line x1="8" y1="21" x2="16" y2="21" />
+                <line x1="12" y1="17" x2="12" y2="21" />
+              </svg>
+            </div>
+            <div className="setting-info">
+              <span className="setting-label">macOS Dock</span>
+              <span className="setting-desc">Replace Windows taskbar</span>
+            </div>
+            <label className="toggle-switch">
+              <input type="checkbox" checked={dockEnabled} onChange={toggleDock} />
+              <span className="slider"></span>
+            </label>
+          </div>
+
+          {dockEnabled && (
+            <>
+              <div className="setting-divider" />
+              <div className="setting-item">
+                <div className="setting-info" style={{ marginLeft: '42px' }}>
+                  <span className="setting-label">Behavior</span>
+                </div>
+                <select 
+                  className="settings-select" 
+                  value={dockMode} 
+                  onChange={(e) => toggleDockMode(e.target.value)}
+                >
+                  <option value="fixed">Fixed (Reserves Space)</option>
+                  <option value="floating">Floating (Overlay)</option>
+                  <option value="auto-hide">Auto Hide</option>
+                </select>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="setting-group-label">Feature Modules</div>

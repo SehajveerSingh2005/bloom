@@ -38,6 +38,7 @@ export default defineConfig(async () => ({
         "volume-overlay": "volume-overlay.html",
         "brightness-overlay": "brightness-overlay.html",
         settings: "settings.html",
+        dock: "dock.html",
       },
     },
   },

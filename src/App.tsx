@@ -168,6 +168,17 @@ function App() {
     // On startup, sync the corners window visibility
     if (windowLabel === 'main') {
       invoke("toggle_corners_window", { mode: settingsCornersMode });
+      
+      // Add a small delay to ensure windows are created and ready
+      setTimeout(() => {
+        const dockEnabled = localStorage.getItem("bloom-dock-enabled") === "true";
+        if (dockEnabled) {
+          invoke("toggle_dock", { enable: true });
+          invoke("change_dock_mode", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
+          // Re-sync topbar to prevent displacement
+          invoke("sync_appbar");
+        }
+      }, 1000);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -197,6 +208,22 @@ function App() {
         setSettingsCornersMode(value);
         if (windowLabel === 'main') {
            invoke("toggle_corners_window", { mode: value });
+        }
+      }
+      if (key === "dock-enabled") {
+        if (windowLabel === 'main') {
+           invoke("toggle_dock", { enable: value });
+           if (value) {
+             invoke("change_dock_mode", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
+             // Prevent topbar displacement when adding dock
+             setTimeout(() => invoke("sync_appbar"), 200);
+           }
+        }
+      }
+      if (key === "dock-mode") {
+        if (windowLabel === 'main') {
+          invoke("change_dock_mode", { mode: value });
+          setTimeout(() => invoke("sync_appbar"), 200);
         }
       }
     });

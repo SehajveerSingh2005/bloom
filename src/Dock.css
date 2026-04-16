@@ -1,0 +1,147 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.dock-container {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  box-sizing: border-box;
+}
+
+.dock {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 18px 18px 0 0;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: none;
+  color: white;
+  position: relative;
+  transform-origin: bottom center;
+}
+
+.dock::before,
+.dock::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    width: 13px;
+    height: 13px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(20px);
+    pointer-events: none;
+}
+
+.dock::before {
+    left: -13px;
+    -webkit-mask-image: radial-gradient(circle at 0 0, transparent 13px, black 13px);
+    mask-image: radial-gradient(circle at 0 0, transparent 13px, black 13px);
+    background:
+        radial-gradient(circle at 0 0,
+            transparent 13px,
+            rgba(255, 255, 255, 0.1) 13px,
+            rgba(255, 255, 255, 0.1) 14px,
+            transparent 14.1px),
+        rgba(0, 0, 0, 0.8);
+}
+
+.dock::after {
+    right: -13px;
+    -webkit-mask-image: radial-gradient(circle at 13px 0, transparent 13px, black 13px);
+    mask-image: radial-gradient(circle at 13px 0, transparent 13px, black 13px);
+    background:
+        radial-gradient(circle at 13px 0,
+            transparent 13px,
+            rgba(255, 255, 255, 0.1) 13px,
+            rgba(255, 255, 255, 0.1) 14px,
+            transparent 14.1px),
+        rgba(0, 0, 0, 0.8);
+}
+
+.dock-icon-wrapper {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.dock-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.05) 100%);
+  color: white;
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  transition: opacity 0.2s ease;
+}
+
+.dock-icon img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.dock-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke: rgba(255, 255, 255, 0.9);
+}
+
+/* Specific icon styles */
+.dock-icon.bloom-start img {
+  width: 24px;
+  height: 24px;
+}
+.dock-icon.terminal {
+  background: linear-gradient(135deg, #2b2b2b, #1a1a1a);
+}
+.dock-icon.vscode {
+  background: linear-gradient(135deg, #007acc, #005999);
+}
+.dock-icon.browser {
+  background: linear-gradient(135deg, #4285f4, #1967d2);
+}
+.dock-icon.explorer {
+  background: linear-gradient(135deg, #fbbc04, #ea4335); /* Using Google colors, can be changed later */
+}
+
+/* Tooltip */
+.tooltip {
+  position: absolute;
+  top: -36px;
+  left: 50%;
+  transform: translate(-50%, 4px) scale(0.95);
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  pointer-events: none;
+  opacity: 0;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.dock-icon-wrapper:hover .tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}

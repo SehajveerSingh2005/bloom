@@ -105,6 +105,79 @@ fn toggle_corners_window(app_handle: tauri::AppHandle, mode: String) {
 }
 
 #[tauri::command]
+fn toggle_dock(app: tauri::AppHandle, enable: bool) {
+    if let Some(dock_win) = app.get_webview_window("dock") {
+        let hwnd = dock_win.hwnd().unwrap();
+        unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE, SW_SHOW};
+            let tray_class = windows::core::PCSTR(b"Shell_TrayWnd\0".as_ptr());
+            if let Ok(tray_hwnd) = FindWindowA(tray_class, windows::core::PCSTR::null()) {
+                if enable {
+                    let _ = ShowWindow(tray_hwnd, SW_HIDE);
+                    let _ = dock_win.show();
+                    let _ = dock_win.set_always_on_top(true);
+                } else {
+                    let _ = dock_win.hide();
+                    unregister_dock_appbar(hwnd);
+                    let _ = ShowWindow(tray_hwnd, SW_SHOW);
+                }
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn sync_appbar(window: tauri::Window) {
+    let hwnd = window.hwnd().unwrap();
+    register_appbar(hwnd);
+}
+
+#[tauri::command]
+fn change_dock_mode(app: tauri::AppHandle, mode: String) {
+    if let Some(dock_win) = app.get_webview_window("dock") {
+        let hwnd = dock_win.hwnd().unwrap();
+        if mode == "fixed" {
+            register_dock_appbar(hwnd);
+        } else {
+            unregister_dock_appbar(hwnd);
+            unsafe {
+                use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SWP_NOZORDER};
+                let screen_width = GetSystemMetrics(SM_CXSCREEN);
+                let screen_height = GetSystemMetrics(SM_CYSCREEN);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    screen_height - 120,
+                    screen_width,
+                    120,
+                    SWP_NOZORDER,
+                );
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn open_app(app_name: String) {
+    use std::process::Command;
+    match app_name.as_str() {
+        "start" => {
+            unsafe {
+                use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, VK_LWIN, KEYEVENTF_KEYUP};
+                keybd_event(VK_LWIN.0 as u8, 0, Default::default(), 0);
+                keybd_event(VK_LWIN.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+            }
+        }
+        "explorer" => { let _ = Command::new("explorer").spawn(); }
+        "terminal" => { let _ = Command::new("wt.exe").spawn(); }
+        "vscode" => { let _ = Command::new("cmd").args(["/C", "code"]).spawn(); }
+        "browser" => { let _ = Command::new("cmd").args(["/C", "start", "https://google.com"]).spawn(); }
+        _ => {}
+    }
+}
+
+#[tauri::command]
 fn broadcast_setting(app: tauri::AppHandle, key: String, value: serde_json::Value) {
     let _ = app.emit("settings-changed", serde_json::json!({ "key": key, "value": value }));
 }
@@ -908,7 +981,11 @@ fn main() {
             hide_brightness_overlay,
             media_play_pause,
             media_next,
-            media_previous
+            media_previous,
+            toggle_dock,
+            change_dock_mode,
+            sync_appbar,
+            open_app
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
@@ -1084,5 +1161,51 @@ fn register_bottom_appbar(hwnd: HWND) {
             48, 
             SWP_NOZORDER
         );
+    }
+}
+
+fn register_dock_appbar(hwnd: windows::Win32::Foundation::HWND) {
+    unsafe {
+        use windows::Win32::UI::Shell::{SHAppBarMessage, APPBARDATA, ABM_NEW, ABM_SETPOS, ABE_BOTTOM};
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SWP_NOZORDER};
+        use windows::Win32::Foundation::RECT;
+
+        let screen_width = GetSystemMetrics(SM_CXSCREEN);
+        let screen_height = GetSystemMetrics(SM_CYSCREEN);
+
+        let mut abd = APPBARDATA::default();
+        abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
+        abd.hWnd = hwnd;
+
+        SHAppBarMessage(ABM_NEW, &mut abd);
+        abd.uEdge = ABE_BOTTOM;
+        abd.rc = RECT {
+            left: 0,
+            top: screen_height - 60,
+            right: screen_width,
+            bottom: screen_height,
+        };
+
+        SHAppBarMessage(ABM_SETPOS, &mut abd);
+
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            screen_height - 120,
+            screen_width,
+            120,
+            SWP_NOZORDER,
+        );
+    }
+}
+
+fn unregister_dock_appbar(hwnd: windows::Win32::Foundation::HWND) {
+    unsafe {
+        use windows::Win32::UI::Shell::{SHAppBarMessage, APPBARDATA, ABM_REMOVE};
+        let mut abd = APPBARDATA::default();
+        abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
+        abd.hWnd = hwnd;
+        SHAppBarMessage(ABM_REMOVE, &mut abd);
     }
 }
