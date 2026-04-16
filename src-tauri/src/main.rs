@@ -4,7 +4,7 @@
 use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::UI::Shell::{
     SHAppBarMessage, APPBARDATA,
-    ABM_NEW, ABM_SETPOS, ABM_REMOVE,
+    ABM_NEW, ABM_SETPOS, ABM_REMOVE, ABM_QUERYPOS,
     ABE_TOP, ABE_BOTTOM,
 };
 use windows::Win32::UI::Shell::ShellExecuteA;
@@ -77,35 +77,6 @@ fn set_ignore_cursor_events(window: tauri::Window, ignore: bool) {
     let _ = window.set_ignore_cursor_events(ignore);
 }
 
-#[tauri::command]
-fn toggle_corners_window(app_handle: tauri::AppHandle, mode: String) {
-    if let Some(bc_win) = app_handle.get_webview_window("bottom-corners") {
-        if mode == "all" {
-            if let Ok(Some(monitor)) = bc_win.primary_monitor() {
-                let size = monitor.size();
-                let pos = monitor.position();
-                let hwnd = bc_win.hwnd().unwrap();
-                
-                unsafe {
-                    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_SHOWWINDOW};
-                    let _ = SetWindowPos(
-                        hwnd,
-                        None,
-                        pos.x,
-                        pos.y + (size.height as i32 - 48),
-                        size.width as i32,
-                        48,
-                        SWP_NOZORDER | SWP_SHOWWINDOW
-                    );
-                }
-            }
-            let _ = bc_win.show();
-            let _ = bc_win.set_always_on_top(true);
-        } else {
-            let _ = bc_win.hide();
-        }
-    }
-}
 
 fn set_taskbar_visibility(visible: bool) {
     unsafe {
@@ -147,36 +118,45 @@ fn sync_appbar(window: tauri::WebviewWindow) {
     let label = window.label().to_string();
     if label == "main" {
         register_appbar(window);
-    } else if label == "bottom-corners" {
-        register_bottom_appbar(window);
     }
 }
 
 #[tauri::command]
 fn change_dock_mode(app: tauri::AppHandle, mode: String) {
     if let Some(dock_win) = app.get_webview_window("dock") {
+        let hwnd = dock_win.hwnd().unwrap();
+        let scale = dock_win.scale_factor().unwrap_or(1.0);
+        
         if mode == "fixed" {
-            register_dock_appbar(dock_win);
+            register_dock_appbar(dock_win.clone());
         } else {
-            let hwnd = dock_win.hwnd().unwrap();
             unregister_appbar_native(hwnd);
-            if let Ok(Some(monitor)) = dock_win.current_monitor() {
-                let size = monitor.size();
-                let pos = monitor.position();
+            if let Ok(Some(monitor)) = dock_win.primary_monitor() {
+                let m_size = monitor.size();
+                let m_pos = monitor.position();
+                let ph = (100.0 * scale) as i32;
+                
                 unsafe {
-                    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_FRAMECHANGED};
+                    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE as WS_EX_NA};
+                    // Apply tool window styles to ignore work area pushes
+                    let mut ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as usize;
+                    ex_style |= (WS_EX_TOOLWINDOW.0 | WS_EX_NA.0) as usize;
+                    let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style as isize);
+
                     let _ = SetWindowPos(
                         hwnd,
                         None,
-                        pos.x,
-                        pos.y + (size.height as i32 - 100),
-                        size.width as i32,
-                        100,
-                        SWP_NOZORDER | SWP_FRAMECHANGED,
+                        m_pos.x,
+                        m_pos.y + m_size.height as i32 - ph,
+                        m_size.width as i32,
+                        ph,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
                     );
+                    let _ = dock_win.show();
                 }
             }
         }
+        let _ = dock_win.set_always_on_top(true);
     }
 }
 
@@ -489,7 +469,7 @@ fn handle_brightness_key_event(vk_code: VIRTUAL_KEY) {
 
 fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
     let (tx, rx) = channel::<SystemCommand>();
-    let handle = app_handle.clone();
+    let handle_system = app_handle.clone();
     std::thread::spawn(move || {
         use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
         use windows::Win32::Media::Audio::{IMMDeviceEnumerator, eRender, eConsole};
@@ -523,14 +503,14 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                             SystemCommand::MediaNext => { if let Some(ref mgr) = manager { if let Ok(session) = mgr.GetCurrentSession() { let _ = session.TrySkipNextAsync(); } } }
                             SystemCommand::MediaPrevious => { if let Some(ref mgr) = manager { if let Ok(session) = mgr.GetCurrentSession() { let _ = session.TrySkipPreviousAsync(); } } }
                             SystemCommand::ToggleVisibility(visible) => {
-                                let _ = handle.emit("visibility-change", visible);
-                                if let Some(w) = handle.get_webview_window("bottom-corners") { if visible { let _ = w.show(); } else { let _ = w.hide(); } }
+                                let _ = handle_system.emit("visibility-change", visible);
+                                if let Some(w) = handle_system.get_webview_window("bottom-corners") { if visible { let _ = w.show(); } else { let _ = w.hide(); } }
                             }
                             SystemCommand::BrightnessUp => {
                                 let new_val = (CURRENT_BRIGHTNESS.load(Ordering::Relaxed) + 10).min(100);
                                 CURRENT_BRIGHTNESS.store(new_val, Ordering::Relaxed);
                                 LAST_BRIGHTNESS_CHANGE.store(get_now_ms(), Ordering::Relaxed);
-                                let _ = handle.emit("brightness-change", BrightnessChangeEvent { brightness: new_val });
+                                let _ = handle_system.emit("brightness-change", BrightnessChangeEvent { brightness: new_val });
                                 if let Some(tx) = BRIGHTNESS_SENDER.get() { let _ = tx.send(new_val); }
                                 hide_osd();
                             }
@@ -539,7 +519,7 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                 let new_val = if current > 10 { current - 10 } else { 0 };
                                 CURRENT_BRIGHTNESS.store(new_val, Ordering::Relaxed);
                                 LAST_BRIGHTNESS_CHANGE.store(get_now_ms(), Ordering::Relaxed);
-                                let _ = handle.emit("brightness-change", BrightnessChangeEvent { brightness: new_val });
+                                let _ = handle_system.emit("brightness-change", BrightnessChangeEvent { brightness: new_val });
                                 if let Some(tx) = BRIGHTNESS_SENDER.get() { let _ = tx.send(new_val); }
                                 hide_osd();
                             }
@@ -551,7 +531,7 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                         let is_muted: bool = muted.into();
                         if (vol - last_volume).abs() > 0.001 || is_muted != last_muted {
                             last_volume = vol; last_muted = is_muted;
-                            let _ = handle.emit("volume-change", VolumeChangeEvent { volume: vol, is_muted });
+                        let _ = handle_system.emit("volume-change", VolumeChangeEvent { volume: vol, is_muted });
                             hide_osd();
                         }
                     }
@@ -586,7 +566,7 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     let current = best_info.unwrap_or(MediaInfo { title: "".into(), artist: "".into(), is_playing: false, has_media: false, artwork: None });
                     let art_str = current.artwork.as_ref().and_then(|a| a.first()).cloned();
                     if last_emitted_info.as_ref().map_or(true, |(t, a, p, h, art)| t != &current.title || a != &current.artist || p != &current.is_playing || h != &current.has_media || art != &art_str) {
-                        let _ = handle.emit("media-update", current.clone());
+                        let _ = handle_system.emit("media-update", current.clone());
                         ANY_MEDIA_PLAYING.store(current.is_playing, Ordering::Relaxed);
                         last_emitted_info = Some((current.title, current.artist, current.is_playing, current.has_media, art_str));
                     }
@@ -613,10 +593,12 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
         }
     });
     let tx_clone = tx.clone();
+    let handle_visibility = app_handle.clone();
     std::thread::spawn(move || {
-        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, IsZoomed};
         use windows::Win32::Foundation::RECT;
         let mut last_visible = true;
+        let mut last_dock_overlap = false;
         loop {
             unsafe {
                 let hwnd = GetForegroundWindow();
@@ -628,9 +610,23 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     let mut rect = RECT::default();
                     if GetWindowRect(hwnd, &mut rect).is_ok() && !is_desktop {
                         let is_fs = rect.left <= 0 && rect.top <= 0 && rect.right >= GetSystemMetrics(SM_CXSCREEN) && rect.bottom >= GetSystemMetrics(SM_CYSCREEN);
+                        
+                        // Dock overlap detection: FS, Maximized, or physically overlapping the bottom 100px
+                        let is_maximized = IsZoomed(hwnd).as_bool();
+                        let overlaps_dock = rect.bottom > (GetSystemMetrics(SM_CYSCREEN) - 100);
+                        let should_overlap = is_fs || is_maximized || overlaps_dock;
+
+                        if should_overlap != last_dock_overlap {
+                            let _ = handle_visibility.emit("dock-overlap", should_overlap);
+                            last_dock_overlap = should_overlap;
+                        }
+
                         if is_fs && last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(false)); last_visible = false; }
                         else if !is_fs && !last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(true)); last_visible = true; }
-                    } else if is_desktop && !last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(true)); last_visible = true; }
+                    } else if is_desktop {
+                        if !last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(true)); last_visible = true; }
+                        if last_dock_overlap { let _ = handle_visibility.emit("dock-overlap", false); last_dock_overlap = false; }
+                    }
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -697,7 +693,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![])))
         .invoke_handler(tauri::generate_handler![
-            broadcast_setting, hide_native_osd, open_settings_window, toggle_corners_window, open_wifi_settings,
+            broadcast_setting, hide_native_osd, open_settings_window, open_wifi_settings,
             open_notification_center, set_ignore_cursor_events, set_window_height, hide_volume_overlay,
             hide_brightness_overlay, media_play_pause, media_next, media_previous, toggle_dock, change_dock_mode,
             sync_appbar, open_app
@@ -705,10 +701,6 @@ fn main() {
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
             register_appbar(window.clone());
-            if let Some(bc_win) = app.get_webview_window("bottom-corners") {
-                let _ = bc_win.set_ignore_cursor_events(true);
-                register_bottom_appbar(bc_win);
-            }
             if let Some(br_win) = app.get_webview_window("brightness-overlay") {
                 if let Ok(Some(monitor)) = br_win.primary_monitor() {
                     let size = monitor.size();
@@ -756,77 +748,87 @@ fn main() {
 }
 
 fn register_appbar(window: tauri::WebviewWindow) {
-    if let Ok(Some(monitor)) = window.current_monitor() {
-        let size = monitor.size();
-        let pos = monitor.position();
+    if let Ok(Some(monitor)) = window.primary_monitor() {
+        let m_size = monitor.size();
+        let m_pos = monitor.position();
         let hwnd = window.hwnd().unwrap();
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let ph = (48.0 * scale) as i32;
+        let pr = (40.0 * scale) as i32;
+        
         unsafe {
-            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER};
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE as WS_EX_NA, SWP_FRAMECHANGED};
             use windows::Win32::Foundation::RECT;
+            
+            // Set styles first
+            let mut ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as usize;
+            ex_style |= (WS_EX_TOOLWINDOW.0 | WS_EX_NA.0) as usize;
+            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style as isize);
+            
+            // Set position before registering
+            let _ = SetWindowPos(hwnd, None, m_pos.x, m_pos.y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
             let mut abd = APPBARDATA::default();
             abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
             abd.hWnd = hwnd;
+            
+            // Clean slate registration
+            SHAppBarMessage(ABM_REMOVE, &mut abd);
             SHAppBarMessage(ABM_NEW, &mut abd);
             abd.uEdge = ABE_TOP;
             abd.rc = RECT { 
-                left: pos.x, 
-                top: pos.y, 
-                right: pos.x + size.width as i32, 
-                bottom: pos.y + 48 
+                left: m_pos.x, 
+                top: m_pos.y, 
+                right: m_pos.x + m_size.width as i32, 
+                bottom: m_pos.y + pr
             };
+            SHAppBarMessage(ABM_QUERYPOS, &mut abd);
             SHAppBarMessage(ABM_SETPOS, &mut abd);
-            let _ = SetWindowPos(hwnd, None, pos.x, pos.y, size.width as i32, 48, SWP_NOZORDER);
+            
+            let _ = window.show();
             MAIN_APPBAR_REGISTERED.store(true, Ordering::Relaxed);
         }
     }
 }
 
-fn register_bottom_appbar(window: tauri::WebviewWindow) {
-    if let Ok(Some(monitor)) = window.current_monitor() {
-        let size = monitor.size();
-        let pos = monitor.position();
-        let hwnd = window.hwnd().unwrap();
-        unsafe {
-            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER};
-            use windows::Win32::Foundation::RECT;
-            let mut abd = APPBARDATA::default();
-            abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
-            abd.hWnd = hwnd;
-            SHAppBarMessage(ABM_NEW, &mut abd);
-            abd.uEdge = ABE_BOTTOM;
-            abd.rc = RECT { 
-                left: pos.x, 
-                top: pos.y + size.height as i32 - 1, 
-                right: pos.x + size.width as i32, 
-                bottom: pos.y + size.height as i32 
-            };
-            SHAppBarMessage(ABM_SETPOS, &mut abd);
-            let _ = SetWindowPos(hwnd, None, pos.x, pos.y + size.height as i32 - 48, size.width as i32, 48, SWP_NOZORDER);
-        }
-    }
-}
-
 fn register_dock_appbar(window: tauri::WebviewWindow) {
-    if let Ok(Some(monitor)) = window.current_monitor() {
-        let size = monitor.size();
-        let pos = monitor.position();
+    if let Ok(Some(monitor)) = window.primary_monitor() {
+        let m_size = monitor.size();
+        let m_pos = monitor.position();
         let hwnd = window.hwnd().unwrap();
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let ph = (100.0 * scale) as i32;
+        let pr = (56.0 * scale) as i32;
+        
         unsafe {
-            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER};
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE as WS_EX_NA, SWP_FRAMECHANGED};
             use windows::Win32::Foundation::RECT;
+
+            // Set styles first
+            let mut ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as usize;
+            ex_style |= (WS_EX_TOOLWINDOW.0 | WS_EX_NA.0) as usize;
+            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style as isize);
+
+            // Set position before showing
+            let _ = SetWindowPos(hwnd, None, m_pos.x, m_pos.y + m_size.height as i32 - ph, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            let _ = window.show();
+
             let mut abd = APPBARDATA::default();
             abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
             abd.hWnd = hwnd;
+            
+            // Clean slate registration
+            SHAppBarMessage(ABM_REMOVE, &mut abd);
             SHAppBarMessage(ABM_NEW, &mut abd);
             abd.uEdge = ABE_BOTTOM;
             abd.rc = RECT { 
-                left: pos.x, 
-                top: pos.y + size.height as i32 - 72, 
-                right: pos.x + size.width as i32, 
-                bottom: pos.y + size.height as i32 
+                left: m_pos.x, 
+                top: m_pos.y + m_size.height as i32 - pr, 
+                right: m_pos.x + m_size.width as i32, 
+                bottom: m_pos.y + m_size.height as i32 
             };
+            SHAppBarMessage(ABM_QUERYPOS, &mut abd);
             SHAppBarMessage(ABM_SETPOS, &mut abd);
-            let _ = SetWindowPos(hwnd, None, pos.x, pos.y + size.height as i32 - 100, size.width as i32, 100, SWP_NOZORDER);
         }
     }
 }

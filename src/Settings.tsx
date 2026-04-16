@@ -15,7 +15,7 @@ function SettingsApp() {
   const [mediaVisualizerEnabled, setMediaVisualizerEnabled] = useState(true);
   const [mediaAlbumArtEnabled, setMediaAlbumArtEnabled] = useState(true);
   const [mediaDetailsEnabled, setMediaDetailsEnabled] = useState(true);
-  const [cornersMode, setCornersMode] = useState(() => localStorage.getItem("bloom-corners-mode") || "top");
+  const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") !== "false");
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
   const [cityName, setCityName] = useState("");
   const [isSearching, setIsSearching] = useState(false);
@@ -70,8 +70,8 @@ function SettingsApp() {
     const details = localStorage.getItem("bloom-media-details-enabled");
     if (details !== null) setMediaDetailsEnabled(details === "true");
 
-    const mode = localStorage.getItem("bloom-corners-mode");
-    if (mode !== null) setCornersMode(mode);
+    const corners = localStorage.getItem("bloom-corners-enabled");
+    if (corners !== null) setCornersEnabled(corners === "true");
 
     const tempUnit = localStorage.getItem("bloom-temp-unit");
     if (tempUnit !== null) setTempUnitFahrenheit(tempUnit === "fahrenheit");
@@ -157,10 +157,11 @@ function SettingsApp() {
     notifyChange("media-details", newVal);
   };
 
-  const toggleCornersMode = (mode: string) => {
-    setCornersMode(mode);
-    localStorage.setItem("bloom-corners-mode", mode);
-    notifyChange("corners-mode", mode);
+  const toggleCorners = () => {
+    const newVal = !cornersEnabled;
+    setCornersEnabled(newVal);
+    localStorage.setItem("bloom-corners-enabled", String(newVal));
+    notifyChange("corners-enabled", newVal);
   };
 
   const toggleTempUnit = () => {
@@ -257,17 +258,12 @@ function SettingsApp() {
             </div>
             <div className="setting-info">
               <span className="setting-label">Screen Corners</span>
-              <span className="setting-desc">Rounded screen edges</span>
+              <span className="setting-desc">Rounded top edges</span>
             </div>
-            <select 
-              className="settings-select" 
-              value={cornersMode} 
-              onChange={(e) => toggleCornersMode(e.target.value)}
-            >
-              <option value="none">None</option>
-              <option value="top">Top Only</option>
-              <option value="all">All Corners</option>
-            </select>
+            <label className="toggle-switch">
+              <input type="checkbox" checked={cornersEnabled} onChange={toggleCorners} />
+              <span className="slider"></span>
+            </label>
           </div>
 
           <div className="setting-divider" />

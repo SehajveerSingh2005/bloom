@@ -161,13 +161,12 @@ function App() {
   const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-media-visualizer-enabled") !== "false");
   const [settingsAlbumArtEnabled, setSettingsAlbumArtEnabled] = useState(() => localStorage.getItem("bloom-media-album-art-enabled") !== "false");
   const [settingsMediaDetailsEnabled, setSettingsMediaDetailsEnabled] = useState(() => localStorage.getItem("bloom-media-details-enabled") !== "false");
-  const [settingsCornersMode, setSettingsCornersMode] = useState(() => localStorage.getItem("bloom-corners-mode") || "top");
+  const [settingsCornersEnabled, setSettingsCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") !== "false");
   const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
 
   useEffect(() => {
-    // On startup, sync the corners window visibility
+    // On startup, we don't need to call toggle_corners_window anymore as it's built-in
     if (windowLabel === 'main') {
-      invoke("toggle_corners_window", { mode: settingsCornersMode });
       
       // Add a small delay to ensure windows are created and ready
       setTimeout(() => {
@@ -175,10 +174,12 @@ function App() {
         if (dockEnabled) {
           invoke("toggle_dock", { enable: true });
           invoke("change_dock_mode", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
-          // Re-sync topbar to prevent displacement
-          invoke("sync_appbar");
         }
-      }, 1000);
+        // Re-sync topbar to prevent displacement (Always do this on launch)
+        invoke("sync_appbar");
+        // Secondary sync to catch any shell-level work-area jumps
+        setTimeout(() => invoke("sync_appbar"), 800);
+      }, 1500);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -204,11 +205,8 @@ function App() {
           // Re-trigger the init function or just update from localStorage
           window.dispatchEvent(new CustomEvent("refresh-weather"));
       }
-      if (key === "corners-mode") {
-        setSettingsCornersMode(value);
-        if (windowLabel === 'main') {
-           invoke("toggle_corners_window", { mode: value });
-        }
+      if (key === "corners-enabled") {
+        setSettingsCornersEnabled(value as boolean);
       }
       if (key === "dock-enabled") {
         if (windowLabel === 'main') {
@@ -685,39 +683,13 @@ function App() {
 
   const isCalendarMode = bloomMode === 'calendar';
 
-  if (windowLabel === 'bottom-corners') {
-    if (settingsCornersMode !== 'all') return null;
-    return (
-      <div className="screen" style={{ alignItems: 'flex-end' }}>
-        <AnimatePresence>
-          {isVisible && (
-            <>
-              <motion.div 
-                className="screen-corner bottom-left" 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1, filter: "blur(0px)" }}
-                exit={{ opacity: 0, filter: "blur(10px)" }}
-              />
-              <motion.div 
-                className="screen-corner bottom-right" 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1, filter: "blur(0px)" }}
-                exit={{ opacity: 0, filter: "blur(10px)" }}
-              />
-            </>
-          )}
-        </AnimatePresence>
-      </div>
-    );
-  }
 
-  if (windowLabel === 'bottom-corners') return null;
 
   return (
     <div className="screen" style={{ overflow: 'hidden' }}>
       {/* Screen Corners (Top) */}
       <AnimatePresence>
-        {isVisible && settingsCornersMode !== 'none' && (
+        {isVisible && settingsCornersEnabled && (
           <>
             <motion.div 
               className="screen-corner top-left" 

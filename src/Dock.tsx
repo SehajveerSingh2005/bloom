@@ -101,10 +101,11 @@ export default function Dock() {
     >
       <motion.div 
         className="dock"
-        initial={{ y: 100, opacity: 0 }}
+        initial={{ y: 20, opacity: 0, scale: 0.98 }}
         animate={{ 
-          y: isHidden ? 80 : 0, 
-          opacity: 1
+          y: isHidden ? 100 : 0, 
+          opacity: 1,
+          scale: 1
         }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
       >
