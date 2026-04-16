@@ -104,24 +104,33 @@ fn toggle_corners_window(app_handle: tauri::AppHandle, mode: String) {
     }
 }
 
+fn set_taskbar_visibility(visible: bool) {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE, SW_SHOW};
+        let tray_class = windows::core::PCSTR(b"Shell_TrayWnd\0".as_ptr());
+        let secondary_tray_class = windows::core::PCSTR(b"Shell_SecondaryTrayWnd\0".as_ptr());
+
+        if let Ok(tray_hwnd) = FindWindowA(tray_class, windows::core::PCSTR::null()) {
+            let _ = ShowWindow(tray_hwnd, if visible { SW_SHOW } else { SW_HIDE });
+        }
+        if let Ok(secondary_tray_hwnd) = FindWindowA(secondary_tray_class, windows::core::PCSTR::null()) {
+            let _ = ShowWindow(secondary_tray_hwnd, if visible { SW_SHOW } else { SW_HIDE });
+        }
+    }
+}
+
 #[tauri::command]
 fn toggle_dock(app: tauri::AppHandle, enable: bool) {
     if let Some(dock_win) = app.get_webview_window("dock") {
         let hwnd = dock_win.hwnd().unwrap();
-        unsafe {
-            use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE, SW_SHOW};
-            let tray_class = windows::core::PCSTR(b"Shell_TrayWnd\0".as_ptr());
-            if let Ok(tray_hwnd) = FindWindowA(tray_class, windows::core::PCSTR::null()) {
-                if enable {
-                    let _ = ShowWindow(tray_hwnd, SW_HIDE);
-                    let _ = dock_win.show();
-                    let _ = dock_win.set_always_on_top(true);
-                } else {
-                    let _ = dock_win.hide();
-                    unregister_dock_appbar(hwnd);
-                    let _ = ShowWindow(tray_hwnd, SW_SHOW);
-                }
-            }
+        if enable {
+            set_taskbar_visibility(false);
+            let _ = dock_win.show();
+            let _ = dock_win.set_always_on_top(true);
+        } else {
+            let _ = dock_win.hide();
+            unregister_dock_appbar(hwnd);
+            set_taskbar_visibility(true);
         }
     }
 }
@@ -148,9 +157,9 @@ fn change_dock_mode(app: tauri::AppHandle, mode: String) {
                     hwnd,
                     None,
                     0,
-                    screen_height - 120,
+                    screen_height - 100,
                     screen_width,
-                    120,
+                    100,
                     SWP_NOZORDER,
                 );
             }
@@ -1056,9 +1065,11 @@ fn main() {
                     .on_menu_event(move |_tray, event| {
                         match event.id().as_ref() {
                             "quit" => {
+                                set_taskbar_visibility(true);
                                 app_handle_tray.exit(0);
                             }
                             "restart" => {
+                                set_taskbar_visibility(true);
                                 app_handle_tray.restart();
                             }
                             "settings" => {
@@ -1181,7 +1192,7 @@ fn register_dock_appbar(hwnd: windows::Win32::Foundation::HWND) {
         abd.uEdge = ABE_BOTTOM;
         abd.rc = RECT {
             left: 0,
-            top: screen_height - 60,
+            top: screen_height - 72,
             right: screen_width,
             bottom: screen_height,
         };
@@ -1192,9 +1203,9 @@ fn register_dock_appbar(hwnd: windows::Win32::Foundation::HWND) {
             hwnd,
             None,
             0,
-            screen_height - 120,
+            screen_height - 100,
             screen_width,
-            120,
+            100,
             SWP_NOZORDER,
         );
     }

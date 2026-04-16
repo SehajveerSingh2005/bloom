@@ -20,7 +20,7 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  padding: 8px 12px;
+  padding: 8px 8px;
   border-radius: 18px 18px 0 0;
   background: rgba(0, 0, 0, 0.8);
   backdrop-filter: blur(20px);
@@ -85,7 +85,7 @@ html, body {
   display: flex;
   justify-content: center;
   align-items: center;
-  border-radius: 10px;
+  border-radius: 12px;
   background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.05) 100%);
   color: white;
   border: 1px solid rgba(255,255,255,0.1);
@@ -94,21 +94,21 @@ html, body {
 }
 
 .dock-icon img {
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   object-fit: contain;
 }
 
 .dock-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   stroke: rgba(255, 255, 255, 0.9);
 }
 
 /* Specific icon styles */
 .dock-icon.bloom-start img {
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
 }
 .dock-icon.terminal {
   background: linear-gradient(135deg, #2b2b2b, #1a1a1a);
