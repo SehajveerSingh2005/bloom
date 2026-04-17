@@ -1,5 +1,6 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 
 use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::UI::Shell::{
@@ -634,11 +635,21 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
                     let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
                     
+                    let mut rect = RECT::default();
                     let is_bloom = class_str.contains("Bloom") || class_str.contains("bloom"); 
                     let is_desktop = class_str == "Progman" || class_str == "WorkerW";
                     
-                    let mut rect = RECT::default();
-                    if GetWindowRect(hwnd, &mut rect).is_ok() && !is_desktop && !is_bloom {
+                    let mut is_valid_window = false;
+                    if !is_desktop && !is_bloom {
+                        let dwm_res = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut _ as *mut _, std::mem::size_of::<RECT>() as u32);
+                        if dwm_res.is_ok() {
+                            is_valid_window = true;
+                        } else if GetWindowRect(hwnd, &mut rect).is_ok() {
+                            is_valid_window = true;
+                        }
+                    }
+
+                    if is_valid_window {
                         let h_monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
                         let mut mi = MONITORINFO::default();
                         mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
@@ -651,8 +662,9 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                             let is_maximized = IsZoomed(hwnd).as_bool();
                             
                             // Tight threshold: only hide if truly overlapping the reservation area (56px logical)
+                            // Use a slight offset to be less aggressive with shadows/borders
                             let scale = if let Some(monitor) = handle_visibility.primary_monitor().ok().flatten() { monitor.scale_factor() } else { 1.0 };
-                            let dock_reserve_physical = (56.0 * scale) as i32;
+                            let dock_reserve_physical = (50.0 * scale) as i32; // Reduced from 56 to 50 for better feel
                             let overlaps_dock = rect.bottom > (screen_rect.bottom - dock_reserve_physical);
                             
                             let should_overlap = is_fs || is_maximized || overlaps_dock;
