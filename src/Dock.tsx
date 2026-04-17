@@ -77,10 +77,47 @@ export default function Dock() {
     };
     window.addEventListener('storage', handleStorage);
 
-    return () => { 
+    return () => {
       unlistenSettings.then(f => f());
       unlistenOverlap.then(f => f());
       window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    const updateRegion = () => {
+      const dockElement = document.querySelector('.dock');
+      if (dockElement) {
+        const rect = dockElement.getBoundingClientRect();
+        invoke('update_dock_rect', {
+          rect: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height)
+          }
+        }).catch(err => console.error("[Dock] Failed to update region:", err));
+      }
+    };
+
+    updateRegion();
+    window.addEventListener('resize', updateRegion);
+    
+    // Also update when dock size might change due to animations or items
+    const observer = new ResizeObserver(() => {
+        updateRegion();
+    });
+    
+    const dockElement = document.querySelector('.dock');
+    if (dockElement) observer.observe(dockElement);
+    
+    // Periodically update just in case (e.g. during animations)
+    const interval = setInterval(updateRegion, 500);
+
+    return () => {
+      window.removeEventListener('resize', updateRegion);
+      observer.disconnect();
+      clearInterval(interval);
     };
   }, []);
 
@@ -100,20 +137,47 @@ export default function Dock() {
   const isHidden = dockMode === 'auto-hide' && isOverlapped && !isCurrentlyHovered;
 
   useEffect(() => {
-    console.log("[Dock] State Change:", { 
-      isHidden, 
-      isOverlapped, 
-      isCurrentlyHovered, 
+    invoke('set_dock_hovered', { hovered: isCurrentlyHovered })
+      .catch(err => console.error("[Dock] Failed to set hover state:", err));
+  }, [isCurrentlyHovered]);
+
+  useEffect(() => {
+    // Force region update when visibility changes
+    const timeout = setTimeout(() => {
+        const updateRegion = () => {
+          const dockElement = document.querySelector('.dock');
+          if (dockElement) {
+            const rect = dockElement.getBoundingClientRect();
+            invoke('update_dock_rect', {
+              rect: {
+                x: Math.round(rect.x),
+                y: Math.round(rect.y),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height)
+              }
+            }).catch(err => console.error("[Dock] Failed to update region:", err));
+          }
+        };
+        updateRegion();
+    }, 100); // Small delay to allow animation to start/complete
+    return () => clearTimeout(timeout);
+  }, [isHidden]);
+
+  useEffect(() => {
+    console.log("[Dock] State Change:", {
+      isHidden,
+      isOverlapped,
+      isCurrentlyHovered,
       dockMode,
       isDockHovered,
-      isEdgeHovered 
+      isEdgeHovered
     });
   }, [isHidden, isOverlapped, isCurrentlyHovered, dockMode, isDockHovered, isEdgeHovered]);
 
   return (
     <div className="dock-container">
       {/* Invisible trigger zone at the very bottom edge of the monitor */}
-      <div 
+      <div
         className="activation-zone"
         onMouseEnter={() => {
           console.log("[Dock] Edge hover ENTER");
@@ -125,7 +189,7 @@ export default function Dock() {
         }}
       />
 
-      <motion.div 
+      <motion.div
         className="dock"
         onMouseEnter={() => {
           console.log("[Dock] Dock hover ENTER");
@@ -137,7 +201,7 @@ export default function Dock() {
           setIsEdgeHovered(false);
         }}
         initial={{ y: 0, opacity: 1, scale: 1 }}
-        animate={{ 
+        animate={{
           y: isHidden ? 120 : 0,
           opacity: 1,
           scale: 1
@@ -145,13 +209,13 @@ export default function Dock() {
         transition={{ type: "spring", stiffness: 300, damping: 35 }}
       >
         {APPS.map((app) => (
-          <div 
-            key={app.id} 
+          <div
+            key={app.id}
             className="dock-icon-wrapper"
             onClick={() => handleAppClick(app.id)}
           >
             <div className="tooltip">{app.label}</div>
-            <motion.div 
+            <motion.div
               className={`dock-icon ${app.iconClass}`}
               transition={{ type: "spring", stiffness: 400, damping: 25, mass: 0.8 }}
             >

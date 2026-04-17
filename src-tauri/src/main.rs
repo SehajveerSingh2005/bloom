@@ -22,7 +22,8 @@ use std::sync::mpsc::{channel, Sender};
 use wmi::{COMLibrary, WMIConnection};
 use serde::Deserialize;
 use std::os::windows::process::CommandExt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering, AtomicI32};
+use std::time::{Instant, Duration};
 
 #[derive(Deserialize, Debug)]
 #[serde(rename = "WmiMonitorBrightness")]
@@ -61,6 +62,23 @@ enum SystemCommand {
 
 static mut COMMAND_SENDER: Option<Sender<SystemCommand>> = None;
 static MAIN_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy, serde::Deserialize, Debug)]
+pub struct IntRect { pub x: i32, pub y: i32, pub width: i32, pub height: i32 }
+static DOCK_RECT: std::sync::Mutex<Option<IntRect>> = std::sync::Mutex::new(None);
+static DOCK_IS_HOVERED: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn set_dock_hovered(hovered: bool) {
+    DOCK_IS_HOVERED.store(hovered, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn update_dock_rect(rect: IntRect) {
+    if let Ok(mut r) = DOCK_RECT.lock() {
+        *r = Some(rect);
+    }
+}
 
 #[tauri::command]
 fn set_window_height(window: tauri::Window, height: f64) {
@@ -159,6 +177,11 @@ fn change_dock_mode(app: tauri::AppHandle, mode: String) {
             }
         }
         let _ = dock_win.set_always_on_top(true);
+        // Sync the current overlap state immediately to the frontend
+        let current = CURRENT_DOCK_OVERLAP.load(Ordering::Relaxed);
+        if current != -1 {
+            let _ = app.emit("dock-overlap", current == 1);
+        }
     }
 }
 
@@ -597,10 +620,11 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
     let tx_clone = tx.clone();
     let handle_visibility = app_handle.clone();
     std::thread::spawn(move || {
-        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, IsZoomed};
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, IsZoomed};
         use windows::Win32::Foundation::RECT;
         let mut last_visible = true;
         let mut last_dock_overlap: Option<bool> = None;
+        let mut last_emit = Instant::now();
         loop {
             unsafe {
                 use windows::Win32::Graphics::Gdi::{MonitorFromWindow, GetMonitorInfoA, MONITORINFO, MONITOR_DEFAULTTONEAREST};
@@ -621,9 +645,6 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                         
                         if GetMonitorInfoA(h_monitor, &mut mi).as_bool() {
                             let screen_rect = mi.rcMonitor;
-                            let screen_h = screen_rect.bottom - screen_rect.top;
-                            let screen_w = screen_rect.right - screen_rect.left;
-                            
                             let is_fs = rect.left <= screen_rect.left && rect.top <= screen_rect.top && 
                                         rect.right >= screen_rect.right && rect.bottom >= screen_rect.bottom;
                             
@@ -636,25 +657,29 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                             
                             let should_overlap = is_fs || is_maximized || overlaps_dock;
 
-                            if Some(should_overlap) != last_dock_overlap {
-                                println!("DEBUG: Dock overlap changed! [FS: {}, Max: {}, Overlap: {}] -> Final: {}", is_fs, is_maximized, overlaps_dock, should_overlap);
+                            CURRENT_DOCK_OVERLAP.store(if should_overlap { 1 } else { 0 }, Ordering::Relaxed);
+
+                            if Some(should_overlap) != last_dock_overlap || last_emit.elapsed() >= Duration::from_secs(3) {
                                 let _ = handle_visibility.emit("dock-overlap", should_overlap);
                                 last_dock_overlap = Some(should_overlap);
+                                last_emit = Instant::now();
                             }
 
                             if is_fs && last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(false)); last_visible = false; }
                             else if !is_fs && !last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(true)); last_visible = true; }
                         }
                     } else if is_desktop || is_bloom {
+                        CURRENT_DOCK_OVERLAP.store(0, Ordering::Relaxed);
                         if !last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(true)); last_visible = true; }
-                        if last_dock_overlap != Some(false) { 
-                            println!("DEBUG: Dock overlap reset to: false (Bloom or Desktop focused)");
-                            let _ = handle_visibility.emit("dock-overlap", false); last_dock_overlap = Some(false); 
+                        if last_dock_overlap != Some(false) || last_emit.elapsed() >= Duration::from_secs(3) { 
+                            let _ = handle_visibility.emit("dock-overlap", false); 
+                            last_dock_overlap = Some(false);
+                            last_emit = Instant::now();
                         }
                     }
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::thread::sleep(std::time::Duration::from_millis(400)); // Lower frequency for visibility checks
         }
     });
     tx
@@ -721,7 +746,7 @@ fn main() {
             broadcast_setting, hide_native_osd, open_settings_window, open_wifi_settings,
             open_notification_center, set_ignore_cursor_events, set_window_height, hide_volume_overlay,
             hide_brightness_overlay, media_play_pause, media_next, media_previous, toggle_dock, change_dock_mode,
-            sync_appbar, open_app
+            sync_appbar, open_app, update_dock_rect, set_dock_hovered
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
@@ -736,6 +761,7 @@ fn main() {
                     let _ = br_win.set_position(tauri::PhysicalPosition::new(pos.x + (size.width as i32 - pw), pos.y + (size.height as i32 / 2) - (ph / 2)));
                 }
             }
+            setup_cursor_monitor(app.handle().clone());
             let tx = setup_system_worker(app.handle().clone());
             unsafe { COMMAND_SENDER = Some(tx.clone()); }
             let _hook = setup_keyboard_hook();
@@ -819,6 +845,7 @@ fn register_appbar(window: tauri::WebviewWindow) {
 }
 
 static DOCK_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
+static CURRENT_DOCK_OVERLAP: AtomicI32 = AtomicI32::new(-1);
 
 fn register_dock_appbar(window: tauri::WebviewWindow) {
     if let Ok(Some(monitor)) = window.primary_monitor() {
@@ -872,4 +899,100 @@ fn unregister_appbar_native(hwnd: HWND) {
         abd.hWnd = hwnd;
         SHAppBarMessage(ABM_REMOVE, &mut abd);
     }
+}
+
+fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        use windows::Win32::Foundation::POINT;
+        
+        let mut last_main_ignore = None;
+        let mut last_dock_ignore = None;
+        let mut dock_interaction_expiry = Instant::now();
+        
+        let main_win_handle = app_handle.get_webview_window("main");
+        let dock_win_handle = app_handle.get_webview_window("dock");
+
+        loop {
+            let now = Instant::now();
+            let mut pt = POINT::default();
+            unsafe {
+                if GetCursorPos(&mut pt).is_ok() {
+                    // --- Dock Interaction ---
+                    if let Some(ref dock_win) = dock_win_handle {
+                        if let Ok(visible) = dock_win.is_visible() {
+                            if visible {
+                                let mut is_interactive = DOCK_IS_HOVERED.load(Ordering::Relaxed);
+                                
+                                if !is_interactive {
+                                    if let (Ok(win_pos), Ok(win_size)) = (dock_win.outer_position(), dock_win.outer_size()) {
+                                        // 1. General check if mouse is within window boundaries
+                                        let in_window = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
+                                                        pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
+                                        
+                                        if in_window {
+                                            // 2. Hot-Edge check (lower 15px of window)
+                                            if pt.y >= (win_pos.y + win_size.height as i32 - 15) {
+                                                is_interactive = true;
+                                            }
+                                            
+                                            // 3. Precise region check
+                                            if !is_interactive {
+                                                if let Ok(region) = DOCK_RECT.try_lock() {
+                                                    if let Some(r) = *region {
+                                                        let scale = dock_win.scale_factor().unwrap_or(1.0);
+                                                        let rx = win_pos.x + (r.x as f64 * scale) as i32 - 12;
+                                                        let ry = win_pos.y + (r.y as f64 * scale) as i32 - 12;
+                                                        let rw = (r.width as f64 * scale) as i32 + 24;
+                                                        let rh = (r.height as f64 * scale) as i32 + 24;
+                                                        
+                                                        if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
+                                                            is_interactive = true;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if is_interactive {
+                                    dock_interaction_expiry = now + Duration::from_millis(250);
+                                }
+                                
+                                let should_ignore = now > dock_interaction_expiry;
+                                if Some(should_ignore) != last_dock_ignore {
+                                    let _ = dock_win.set_ignore_cursor_events(should_ignore);
+                                    last_dock_ignore = Some(should_ignore);
+                                }
+                            }
+                        }
+                    }
+
+                    // --- TopBar Interaction (Optimized) ---
+                    if let Some(ref main_win) = main_win_handle {
+                        let near_top = pt.y < 120; // Only process if mouse is near top
+                        if near_top {
+                            if let Ok(visible) = main_win.is_visible() {
+                                if visible {
+                                    if let (Ok(win_pos), Ok(win_size)) = (main_win.outer_position(), main_win.outer_size()) {
+                                        let in_bar = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
+                                                     pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
+                                        if Some(!in_bar) != last_main_ignore {
+                                            let _ = main_win.set_ignore_cursor_events(!in_bar);
+                                            last_main_ignore = Some(!in_bar);
+                                        }
+                                    }
+                                }
+                            }
+                        } else if last_main_ignore != Some(true) {
+                            let _ = main_win.set_ignore_cursor_events(true);
+                            last_main_ignore = Some(true);
+                        }
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(32)); // ~30fps is sufficient for interactivity checks
+        }
+    });
 }
