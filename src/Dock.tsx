@@ -142,7 +142,7 @@ export default function Dock() {
           opacity: 1,
           scale: 1
         }}
-        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+        transition={{ type: "spring", stiffness: 300, damping: 35 }}
       >
         {APPS.map((app) => (
           <div 
