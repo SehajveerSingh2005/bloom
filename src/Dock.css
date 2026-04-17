@@ -12,6 +12,20 @@ html, body {
   justify-content: center;
   align-items: flex-end;
   box-sizing: border-box;
+  position: relative;
+  pointer-events: none; /* Allow clicks to pass through to desktop/apps behind the 100px zone */
+}
+
+/* Hidden but active zone at the very bottom of the screen to trigger the dock */
+.activation-zone {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 10px; /* Hot-edge trigger distance */
+  background: transparent;
+  pointer-events: auto;
+  z-index: 1;
 }
 
 .dock {
@@ -30,6 +44,7 @@ html, body {
   color: white;
   position: relative;
   transform-origin: bottom center;
+  pointer-events: auto; /* Re-enable pointer events for the dock itself */
 }
 
 .dock::before,

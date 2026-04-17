@@ -600,38 +600,61 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
         use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, IsZoomed};
         use windows::Win32::Foundation::RECT;
         let mut last_visible = true;
-        let mut last_dock_overlap = false;
+        let mut last_dock_overlap: Option<bool> = None;
         loop {
             unsafe {
+                use windows::Win32::Graphics::Gdi::{MonitorFromWindow, GetMonitorInfoA, MONITORINFO, MONITOR_DEFAULTTONEAREST};
                 let hwnd = GetForegroundWindow();
                 if !hwnd.is_invalid() {
                     let mut class_name = [0u8; 256];
                     let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
                     let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
+                    
+                    let is_bloom = class_str.contains("Bloom") || class_str.contains("bloom"); 
                     let is_desktop = class_str == "Progman" || class_str == "WorkerW";
+                    
                     let mut rect = RECT::default();
-                    if GetWindowRect(hwnd, &mut rect).is_ok() && !is_desktop {
-                        let is_fs = rect.left <= 0 && rect.top <= 0 && rect.right >= GetSystemMetrics(SM_CXSCREEN) && rect.bottom >= GetSystemMetrics(SM_CYSCREEN);
+                    if GetWindowRect(hwnd, &mut rect).is_ok() && !is_desktop && !is_bloom {
+                        let h_monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                        let mut mi = MONITORINFO::default();
+                        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
                         
-                        // Dock overlap detection: FS, Maximized, or physically overlapping the bottom 100px
-                        let is_maximized = IsZoomed(hwnd).as_bool();
-                        let overlaps_dock = rect.bottom > (GetSystemMetrics(SM_CYSCREEN) - 100);
-                        let should_overlap = is_fs || is_maximized || overlaps_dock;
+                        if GetMonitorInfoA(h_monitor, &mut mi).as_bool() {
+                            let screen_rect = mi.rcMonitor;
+                            let screen_h = screen_rect.bottom - screen_rect.top;
+                            let screen_w = screen_rect.right - screen_rect.left;
+                            
+                            let is_fs = rect.left <= screen_rect.left && rect.top <= screen_rect.top && 
+                                        rect.right >= screen_rect.right && rect.bottom >= screen_rect.bottom;
+                            
+                            let is_maximized = IsZoomed(hwnd).as_bool();
+                            
+                            // Tight threshold: only hide if truly overlapping the reservation area (56px logical)
+                            let scale = if let Some(monitor) = handle_visibility.primary_monitor().ok().flatten() { monitor.scale_factor() } else { 1.0 };
+                            let dock_reserve_physical = (56.0 * scale) as i32;
+                            let overlaps_dock = rect.bottom > (screen_rect.bottom - dock_reserve_physical);
+                            
+                            let should_overlap = is_fs || is_maximized || overlaps_dock;
 
-                        if should_overlap != last_dock_overlap {
-                            let _ = handle_visibility.emit("dock-overlap", should_overlap);
-                            last_dock_overlap = should_overlap;
+                            if Some(should_overlap) != last_dock_overlap {
+                                println!("DEBUG: Dock overlap changed! [FS: {}, Max: {}, Overlap: {}] -> Final: {}", is_fs, is_maximized, overlaps_dock, should_overlap);
+                                let _ = handle_visibility.emit("dock-overlap", should_overlap);
+                                last_dock_overlap = Some(should_overlap);
+                            }
+
+                            if is_fs && last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(false)); last_visible = false; }
+                            else if !is_fs && !last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(true)); last_visible = true; }
                         }
-
-                        if is_fs && last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(false)); last_visible = false; }
-                        else if !is_fs && !last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(true)); last_visible = true; }
-                    } else if is_desktop {
+                    } else if is_desktop || is_bloom {
                         if !last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(true)); last_visible = true; }
-                        if last_dock_overlap { let _ = handle_visibility.emit("dock-overlap", false); last_dock_overlap = false; }
+                        if last_dock_overlap != Some(false) { 
+                            println!("DEBUG: Dock overlap reset to: false (Bloom or Desktop focused)");
+                            let _ = handle_visibility.emit("dock-overlap", false); last_dock_overlap = Some(false); 
+                        }
                     }
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_millis(200));
         }
     });
     tx

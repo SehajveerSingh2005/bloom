@@ -52,23 +52,35 @@ const APPS = [
 
 export default function Dock() {
   const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "fixed");
-  const [isHovered, setIsHovered] = useState(false);
+  const [isDockHovered, setIsDockHovered] = useState(false);
+  const [isEdgeHovered, setIsEdgeHovered] = useState(false);
   const [isOverlapped, setIsOverlapped] = useState(false);
 
   useEffect(() => {
     const unlistenSettings = listen<{ key: string, value: any }>("settings-changed", (event) => {
+      console.log("[Dock] Settings change received:", event.payload);
       if (event.payload.key === "dock-mode") {
         setDockMode(event.payload.value);
       }
     });
 
     const unlistenOverlap = listen<boolean>("dock-overlap", (event) => {
+      console.log("[Dock] Overlap event received:", event.payload);
       setIsOverlapped(event.payload);
     });
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'bloom-dock-mode') {
+        console.log("[Dock] LocalStorage change detected:", e.newValue);
+        setDockMode(e.newValue || 'fixed');
+      }
+    };
+    window.addEventListener('storage', handleStorage);
 
     return () => { 
       unlistenSettings.then(f => f());
       unlistenOverlap.then(f => f());
+      window.removeEventListener('storage', handleStorage);
     };
   }, []);
 
@@ -84,26 +96,49 @@ export default function Dock() {
     }
   };
 
-  // Logic: 
-  // - Auto-hide: Hidden if (Overlapped AND NOT Hovered)
-  let isHidden = false;
-  if (dockMode === 'auto-hide') {
-    if (isOverlapped && !isHovered) {
-      isHidden = true;
-    }
-  }
+  const isCurrentlyHovered = isDockHovered || isEdgeHovered;
+  const isHidden = dockMode === 'auto-hide' && isOverlapped && !isCurrentlyHovered;
+
+  useEffect(() => {
+    console.log("[Dock] State Change:", { 
+      isHidden, 
+      isOverlapped, 
+      isCurrentlyHovered, 
+      dockMode,
+      isDockHovered,
+      isEdgeHovered 
+    });
+  }, [isHidden, isOverlapped, isCurrentlyHovered, dockMode, isDockHovered, isEdgeHovered]);
 
   return (
-    <div 
-      className="dock-container" 
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
+    <div className="dock-container">
+      {/* Invisible trigger zone at the very bottom edge of the monitor */}
+      <div 
+        className="activation-zone"
+        onMouseEnter={() => {
+          console.log("[Dock] Edge hover ENTER");
+          setIsEdgeHovered(true);
+        }}
+        onMouseLeave={() => {
+          console.log("[Dock] Edge hover LEAVE");
+          setIsEdgeHovered(false);
+        }}
+      />
+
       <motion.div 
         className="dock"
-        initial={{ y: 20, opacity: 0, scale: 0.98 }}
+        onMouseEnter={() => {
+          console.log("[Dock] Dock hover ENTER");
+          setIsDockHovered(true);
+        }}
+        onMouseLeave={() => {
+          console.log("[Dock] Dock hover LEAVE");
+          setIsDockHovered(false);
+          setIsEdgeHovered(false);
+        }}
+        initial={{ y: 0, opacity: 1, scale: 1 }}
         animate={{ 
-          y: isHidden ? 100 : 0, 
+          y: isHidden ? 120 : 0,
           opacity: 1,
           scale: 1
         }}
