@@ -718,8 +718,9 @@ function App() {
         }}
         onHoverStart={() => setIsHovered(true)}
         onHoverEnd={() => {
-          if (!isCalendarMode) {
-            setIsHovered(false);
+          setIsHovered(false);
+          if (bloomMode === 'calendar') {
+            setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'status');
           }
         }}
         style={{ originY: 0 }}
