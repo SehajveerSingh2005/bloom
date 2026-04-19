@@ -1,6 +1,5 @@
-
 import { useState, useEffect, useMemo, useRef, memo } from 'react';
-import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
+import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import './Dock.css';
@@ -27,6 +26,8 @@ const Dock = memo(function Dock() {
   const [showAddPopup, setShowAddPopup] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, app: AppInfo | null } | null>(null);
   const [activeOrder, setActiveOrder] = useState<string[]>([]); // Track order of windows by path
+  const [isDragging, setIsDragging] = useState(false);
+  const [hoveredApp, setHoveredApp] = useState<string | null>(null);
   
   const dockRef = useRef<HTMLDivElement>(null);
 
@@ -85,6 +86,9 @@ const Dock = memo(function Dock() {
   // Poll for active windows
   useEffect(() => {
     const poll = async () => {
+      // Avoid updating apps while dragging to prevent stuttering/freezes
+      if (isDragging) return;
+
       const running = await invoke<AppInfo[]>('get_active_windows');
       setActiveApps(running);
       
@@ -103,7 +107,7 @@ const Dock = memo(function Dock() {
     const interval = setInterval(poll, 2000);
     poll();
     return () => clearInterval(interval);
-  }, []);
+  }, [isDragging]);
 
   const fetchIcon = async (path: string, hwnd?: number) => {
     const cacheKey = hwnd ? `${path}-${hwnd}` : path;
@@ -124,12 +128,12 @@ const Dock = memo(function Dock() {
   const handleAppClick = async (app: AppInfo) => {
     try {
       if (app.path === 'start') {
-        await invoke('open_app', { appName: 'start' });
+        await invoke('open_app', { app_name: 'start' });
       } else if (app.hwnd) {
         // Toggle focus/minimize for active windows
         await invoke('focus_window', { hwnd: app.hwnd });
       } else {
-        await invoke('open_app', { appName: app.path });
+        await invoke('open_app', { app_name: app.path });
       }
     } catch (e) {
       console.error(`Failed to interact with ${app.name}:`, e);
@@ -185,9 +189,7 @@ const Dock = memo(function Dock() {
       };
       open = true;
     } else if (showAddPopup) {
-      // For the popup, we use the actual popup dimensions if available, 
-      // but ensure the overlay area (whole window) is also interactive 
-      // if we want to support clicking outside to close.
+      // For the popup, we use full window rect so clicking background works
       rect = {
         x: 0,
         y: 0,
@@ -236,55 +238,110 @@ const Dock = memo(function Dock() {
     return [...pinned, ...unpinned];
   }, [pinnedApps, activeApps, activeOrder]);
 
+  const handleReorder = (newItems: AppInfo[]) => {
+    // Ensure 'start' is always at index 0
+    let sortedItems = [...newItems];
+    const startIndex = sortedItems.findIndex(i => i.path === 'start');
+    if (startIndex !== 0 && startIndex !== -1) {
+      const start = sortedItems.splice(startIndex, 1)[0];
+      sortedItems.unshift(start);
+    }
+
+    // Extract paths to check for changes
+    const newPinned = sortedItems.filter(item => item.is_pinned && item.path !== 'start');
+    const newPinnedPaths = newPinned.map(p => p.path);
+    const oldPinnedPaths = pinnedApps.map(p => p.path);
+
+    // Only update if order actually changed
+    if (JSON.stringify(newPinnedPaths) !== JSON.stringify(oldPinnedPaths)) {
+      setPinnedApps(newPinned);
+    }
+
+    const newActivePaths = sortedItems.filter(item => !item.is_pinned).map(item => item.path);
+    if (newActivePaths.length > 0) {
+      const pinnedPaths = newPinned.map(p => p.path);
+      const unpinnedOnly = newActivePaths.filter(p => !pinnedPaths.includes(p));
+      
+      if (JSON.stringify(unpinnedOnly) !== JSON.stringify(activeOrder)) {
+        setActiveOrder(unpinnedOnly);
+      }
+    }
+  };
+
+  const handleDragEnd = () => {
+    setIsDragging(false);
+    // Save to disk only when dragging finishes
+    invoke('save_pinned_apps', { apps: pinnedApps }).catch(console.error);
+  };
+
   useEffect(() => {
     invoke('set_dock_hovered', { hovered: isCurrentlyHovered }).catch(() => {});
   }, [isCurrentlyHovered]);
 
+  const iconVariants = {
+    idle: { y: 0, scale: 1 },
+    hover: { y: -5, scale: 1.1 },
+    drag: { scale: 1.2, y: -10 }
+  };
+
+
   return (
-    <div className="dock-container" onClick={closeMenu}>
-      <LayoutGroup>
+    <div className={`dock-container ${isDragging ? 'dragging' : ''}`} onClick={closeMenu}>
         <motion.div
           ref={dockRef}
           className="dock"
-          layout
           onMouseEnter={() => setIsDockHovered(true)}
-          onMouseLeave={() => { setIsDockHovered(false); setIsEdgeHovered(false); }}
-          animate={{ y: isHidden ? 120 : 0 }}
-          transition={{ type: "spring", stiffness: 300, damping: 35 }}
+          onMouseLeave={() => { setIsDockHovered(false); setIsEdgeHovered(false); setHoveredApp(null); }}
+          initial={{ y: 100, opacity: 0 }}
+          animate={{ y: isHidden ? 100 : 0, opacity: 1 }}
+          transition={{ 
+            y: { type: "spring", stiffness: 300, damping: 35 },
+            opacity: { duration: 0.5 }
+          }}
           onContextMenu={(e) => handleContextMenu(e, null)}
         >
-          <AnimatePresence mode="popLayout">
+          <Reorder.Group
+            as="div"
+            axis="x"
+            values={dockItems}
+            onReorder={handleReorder}
+            className="dock-reorder-container"
+          >
             {dockItems.map((app) => (
-              <motion.div
+              <Reorder.Item
+                as="div"
                 key={app.path}
+                value={app}
+                dragListener={!!app.is_pinned && app.path !== 'start'}
                 layout
-                initial={{ opacity: 0, scale: 0.5 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.5 }}
                 className="dock-icon-wrapper"
-                onClick={() => handleAppClick(app)}
                 onContextMenu={(e) => handleContextMenu(e, app)}
+                onMouseEnter={() => setHoveredApp(app.path)}
+                onMouseLeave={() => setHoveredApp(null)}
+                onDragStart={() => { if (app.is_pinned && app.path !== 'start') { setIsDragging(true); setHoveredApp(null); } }}
+                onDragEnd={handleDragEnd}
               >
                 <div className="tooltip">{app.name}</div>
                 <motion.div 
                   className="dock-icon"
-                  whileHover={{ y: -5, scale: 1.1 }}
-                  whileTap={{ scale: 0.9 }}
+                  variants={iconVariants}
+                  animate={hoveredApp === app.path && !isDragging ? "hover" : "idle"}
+                  whileDrag={app.is_pinned && app.path !== 'start' ? "drag" : "idle"}
+                  onTap={() => handleAppClick(app)}
                 >
                   {app.path === 'start' ? (
-                    <img src="/bloom.png" alt="Bloom" />
+                    <img src="/bloom.png" alt="Bloom" draggable={false} />
                   ) : iconsRef.current[app.path] ? (
-                    <img src={iconsRef.current[app.path]} alt={app.name} />
+                    <img src={iconsRef.current[app.path]} alt={app.name} draggable={false} />
                   ) : (
                     <div className="fallback-icon">{app.name[0]}</div>
                   )}
                 </motion.div>
                 {app.is_running && <div className="active-indicator" />}
-              </motion.div>
+              </Reorder.Item>
             ))}
-          </AnimatePresence>
+          </Reorder.Group>
         </motion.div>
-      </LayoutGroup>
 
       {contextMenu && (
         <div 
@@ -351,6 +408,21 @@ function AddAppPopup({ onClose, onAdd, containerRef }: {
     const timer = setTimeout(() => setDebouncedSearch(search), 150);
     return () => clearTimeout(timer);
   }, [search]);
+
+  // Handle ESC key and Focus loss
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    const handleBlur = () => onClose();
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [onClose]);
 
   useEffect(() => {
     const load = async () => {
@@ -454,7 +526,7 @@ function AddAppPopup({ onClose, onAdd, containerRef }: {
                 <div className="app-list-info">
                   <div className="app-list-icon">
                     {listIcons[app.path] ? (
-                      <img src={listIcons[app.path]} alt="" />
+                      <img src={listIcons[app.path]} alt="" draggable={false} />
                     ) : (
                       <div className="app-icon-placeholder">{app.name[0]}</div>
                     )}

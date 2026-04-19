@@ -213,8 +213,8 @@ fn change_dock_mode(app: tauri::AppHandle, mode: String) {
 }
 
 #[tauri::command]
-fn open_app(appName: String) {
-    if appName == "start" {
+fn open_app(app_name: String) {
+    if app_name == "start" {
         unsafe {
             use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, VK_LWIN, KEYEVENTF_KEYUP};
             keybd_event(VK_LWIN.0 as u8, 0, Default::default(), 0);
@@ -223,7 +223,7 @@ fn open_app(appName: String) {
         return;
     }
     
-    let path = appName;
+    let path = app_name;
     unsafe {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -540,11 +540,16 @@ static IS_SCANNING: AtomicBool = AtomicBool::new(false);
 async fn get_installed_apps() -> Vec<AppInfo> {
     let cache = INSTALLED_APPS_CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()));
     
-    // Non-blocking: triggering a scan if empty, but returning immediately
-    // The frontend should handle the case where the list is initially empty.
+    // If empty and not scanning, trigger one
     let is_empty = if let Ok(lock) = cache.lock() { lock.is_empty() } else { true };
     if is_empty && !IS_SCANNING.load(Ordering::Relaxed) {
         trigger_app_scan();
+    }
+    
+    // Wait for scanning to finish if it's in progress (max 5 seconds to avoid hanging frontend)
+    let start = Instant::now();
+    while IS_SCANNING.load(Ordering::Relaxed) && start.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     
     if let Ok(cache_lock) = cache.lock() {

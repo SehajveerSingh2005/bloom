@@ -46,4 +46,5 @@ base64 = "0.22"
 tauri-plugin-autostart = "2.5.1"
 window-vibrancy = "0.7.1"
 wmi = "0.14"
+tokio = { version = "1", features = ["time"] }
 

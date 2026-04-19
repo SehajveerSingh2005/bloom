@@ -308,6 +308,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-opener",
+ "tokio",
  "window-vibrancy 0.7.1",
  "windows 0.61.3",
  "wmi",
