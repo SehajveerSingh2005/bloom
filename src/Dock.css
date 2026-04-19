@@ -1,4 +1,5 @@
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
   overflow: hidden;
@@ -13,130 +14,13 @@ html, body {
   align-items: flex-end;
   box-sizing: border-box;
   position: relative;
-  pointer-events: none; /* Allow clicks to pass through to desktop/apps behind the 100px zone */
-}
-
-/* Hidden but active zone at the very bottom of the screen to trigger the dock */
-.activation-zone {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 10px; /* Hot-edge trigger distance */
-  background: transparent;
   pointer-events: auto;
-  z-index: 1;
+  /* Handled by backend ignore_cursor_events */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
-.dock {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 8px 8px;
-  border-radius: 18px 18px 0 0;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-bottom: none;
-  color: white;
-  position: relative;
-  transform-origin: bottom center;
-  pointer-events: auto; /* Re-enable pointer events for the dock itself */
-}
+/* Dock Bar */
 
-.dock::before,
-.dock::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    width: 13px;
-    height: 13px;
-    background: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(20px);
-    pointer-events: none;
-}
-
-.dock::before {
-    left: -13px;
-    -webkit-mask-image: radial-gradient(circle at 0 0, transparent 13px, black 13px);
-    mask-image: radial-gradient(circle at 0 0, transparent 13px, black 13px);
-    background:
-        radial-gradient(circle at 0 0,
-            transparent 13px,
-            rgba(255, 255, 255, 0.1) 13px,
-            rgba(255, 255, 255, 0.1) 14px,
-            transparent 14.1px),
-        rgba(0, 0, 0, 0.8);
-}
-
-.dock::after {
-    right: -13px;
-    -webkit-mask-image: radial-gradient(circle at 13px 0, transparent 13px, black 13px);
-    mask-image: radial-gradient(circle at 13px 0, transparent 13px, black 13px);
-    background:
-        radial-gradient(circle at 13px 0,
-            transparent 13px,
-            rgba(255, 255, 255, 0.1) 13px,
-            rgba(255, 255, 255, 0.1) 14px,
-            transparent 14.1px),
-        rgba(0, 0, 0, 0.8);
-}
-
-.dock-icon-wrapper {
-  position: relative;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-}
-
-.dock-icon {
-  width: 36px;
-  height: 36px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  border-radius: 12px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.05) 100%);
-  color: white;
-  border: 1px solid rgba(255,255,255,0.1);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  transition: opacity 0.2s ease;
-}
-
-.dock-icon img {
-  width: 28px;
-  height: 28px;
-  object-fit: contain;
-}
-
-.dock-icon svg {
-  width: 24px;
-  height: 24px;
-  stroke: rgba(255, 255, 255, 0.9);
-}
-
-/* Specific icon styles */
-.dock-icon.bloom-start img {
-  width: 32px;
-  height: 32px;
-}
-.dock-icon.terminal {
-  background: linear-gradient(135deg, #2b2b2b, #1a1a1a);
-}
-.dock-icon.vscode {
-  background: linear-gradient(135deg, #007acc, #005999);
-}
-.dock-icon.browser {
-  background: linear-gradient(135deg, #4285f4, #1967d2);
-}
-.dock-icon.explorer {
-  background: linear-gradient(135deg, #fbbc04, #ea4335); /* Using Google colors, can be changed later */
-}
 
 /* Tooltip */
 .tooltip {
@@ -160,3 +44,370 @@ html, body {
   opacity: 1;
   transform: translate(-50%, 0) scale(1);
 }
+
+.dock {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 8px;
+  border-radius: 18px 18px 0 0;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: none;
+  color: white;
+  position: relative;
+  transform-origin: bottom center;
+  pointer-events: auto;
+  /* Re-enable pointer events for the dock itself */
+}
+
+.dock::before,
+.dock::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 13px;
+  height: 13px;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(20px);
+  pointer-events: none;
+}
+
+.dock::before {
+  left: -13px;
+  -webkit-mask-image: radial-gradient(circle at 0 0, transparent 13px, black 13px);
+  mask-image: radial-gradient(circle at 0 0, transparent 13px, black 13px);
+  background:
+    radial-gradient(circle at 0 0,
+      transparent 13px,
+      rgba(255, 255, 255, 0.1) 13px,
+      rgba(255, 255, 255, 0.1) 14px,
+      transparent 14.1px),
+    rgba(0, 0, 0, 0.8);
+}
+
+.dock::after {
+  right: -13px;
+  -webkit-mask-image: radial-gradient(circle at 13px 0, transparent 13px, black 13px);
+  mask-image: radial-gradient(circle at 13px 0, transparent 13px, black 13px);
+  background:
+    radial-gradient(circle at 13px 0,
+      transparent 13px,
+      rgba(255, 255, 255, 0.1) 13px,
+      rgba(255, 255, 255, 0.1) 14px,
+      transparent 14.1px),
+    rgba(0, 0, 0, 0.8);
+}
+
+.dock-icon-wrapper {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.dock-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.05) 100%);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: opacity 0.2s ease;
+}
+
+.dock-icon img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.dock-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke: rgba(255, 255, 255, 0.9);
+}
+
+/* Active application indicator */
+.active-indicator {
+  position: absolute;
+  bottom: -4px;
+  width: 4px;
+  height: 4px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
+}
+
+.start-icon-inner {
+  display: none;
+}
+
+.grid-dot {
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  opacity: 0.9;
+}
+
+.grid-dot.blue {
+  background: #0078d4;
+}
+
+.grid-dot.yellow {
+  background: #ffb900;
+}
+
+.grid-dot.green {
+  background: #107c10;
+}
+
+.grid-dot.orange {
+  background: #d83b01;
+}
+
+.fallback-icon {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+}
+
+/* Context Menu */
+.context-menu {
+  position: fixed;
+  background: rgba(40, 40, 40, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 6px;
+  z-index: 9999;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  min-width: 160px;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  font-family: inherit;
+}
+
+.menu-item {
+  padding: 8px 12px;
+  color: white;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.menu-item:hover {
+  background: #3b82f6;
+}
+
+.menu-item.quit:hover {
+  background: #ef4444;
+}
+
+.menu-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 4px 8px;
+}
+
+/* Add App Popup */
+.popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10000;
+  pointer-events: auto;
+}
+
+.add-app-popup {
+  position: fixed;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30, 30, 30, 0.98);
+  width: 440px;
+  max-height: 480px;
+  /* More compact height */
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.7);
+  font-family: inherit !important;
+}
+
+.add-app-popup *, .context-menu * {
+  font-family: inherit !important;
+}
+
+.popup-header {
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.popup-header h3 {
+  margin: 0 0 16px 0;
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.search-container {
+  position: relative;
+}
+
+.popup-header input {
+  width: 100%;
+  background: rgba(40, 40, 40, 1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 12px 16px;
+  border-radius: 10px;
+  color: white;
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+  font-family: inherit;
+}
+
+.popup-header input:focus {
+  border-color: #3b82f6;
+}
+
+.apps-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.app-list-item {
+  padding: 8px 12px;
+  color: #e5e7eb;
+  cursor: pointer;
+  border-radius: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-bottom: 4px;
+}
+
+.app-list-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.app-list-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.app-list-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(40, 40, 40, 1);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.app-list-icon img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.app-icon-placeholder {
+  font-size: 14px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+}
+
+.app-name {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-add-button {
+  padding: 4px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #a1a1aa;
+  transition: all 0.2s;
+}
+
+.app-list-item:hover .app-add-button {
+  background: #3b82f6;
+  color: white;
+}
+
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #71717a;
+  gap: 16px;
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.no-results {
+  padding: 40px;
+  text-align: center;
+  color: #71717a;
+  font-size: 14px;
+}
+
+.apps-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.apps-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}

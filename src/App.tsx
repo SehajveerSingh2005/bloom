@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, memo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -71,8 +71,24 @@ function BatteryIcon({ charging, level }: { charging: boolean; level: number }) 
   );
 }
 
-// Horizontal music visualizer bars (like iPhone Dynamic Island)
-function Visualizer({ isPlaying, audioData }: { isPlaying: boolean; audioData: number[] }) {
+export const Visualizer = memo(function Visualizer({ isPlaying }: { isPlaying: boolean }) {
+  const [audioData, setAudioData] = useState<number[]>(new Array(5).fill(0.18));
+
+  useEffect(() => {
+    if (!isPlaying) {
+      setAudioData(new Array(5).fill(0.18));
+      return;
+    }
+
+    const unlisten = listen<{ frequencies: number[] }>("audio-visualization", (event) => {
+      setAudioData(event.payload.frequencies);
+    });
+
+    return () => {
+      unlisten.then(fn => fn());
+    };
+  }, [isPlaying]);
+
   return (
     <div className="visualizer-horizontal">
       {audioData.map((value, i) => (
@@ -93,7 +109,7 @@ function Visualizer({ isPlaying, audioData }: { isPlaying: boolean; audioData: n
       ))}
     </div>
   );
-}
+});
 
 interface MediaInfo {
   title: string;
@@ -158,7 +174,7 @@ function App() {
   // Settings state
   const [settingsWeatherEnabled, setSettingsWeatherEnabled] = useState(() => localStorage.getItem("bloom-weather-enabled") !== "false");
   const [settingsCalendarEnabled, setSettingsCalendarEnabled] = useState(() => localStorage.getItem("bloom-calendar-enabled") !== "false");
-  const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-media-visualizer-enabled") !== "false");
+  const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-visualizer-enabled") !== "false");
   const [settingsAlbumArtEnabled, setSettingsAlbumArtEnabled] = useState(() => localStorage.getItem("bloom-media-album-art-enabled") !== "false");
   const [settingsMediaDetailsEnabled, setSettingsMediaDetailsEnabled] = useState(() => localStorage.getItem("bloom-media-details-enabled") !== "false");
   const [settingsCornersEnabled, setSettingsCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") !== "false");
@@ -167,7 +183,7 @@ function App() {
   useEffect(() => {
     // On startup, we don't need to call toggle_corners_window anymore as it's built-in
     if (windowLabel === 'main') {
-      
+
       // Add a small delay to ensure windows are created and ready
       setTimeout(() => {
         const dockEnabled = localStorage.getItem("bloom-dock-enabled") === "true";
@@ -191,7 +207,7 @@ function App() {
     const unlistenVisibility = listen<boolean>("visibility-change", (event) => {
       setIsVisible(event.payload);
     });
-    
+
     const unlistenSettings = listen<{ key: string, value: any }>("settings-changed", (event) => {
       console.log("App received settings-changed:", event.payload);
       const { key, value } = event.payload;
@@ -202,20 +218,20 @@ function App() {
       if (key === "media-details") setSettingsMediaDetailsEnabled(value);
       if (key === "temp-unit") setTempUnit(value ? "fahrenheit" : "celsius");
       if (key === "weather-refresh") {
-          // Re-trigger the init function or just update from localStorage
-          window.dispatchEvent(new CustomEvent("refresh-weather"));
+        // Re-trigger the init function or just update from localStorage
+        window.dispatchEvent(new CustomEvent("refresh-weather"));
       }
       if (key === "corners-enabled") {
         setSettingsCornersEnabled(value as boolean);
       }
       if (key === "dock-enabled") {
         if (windowLabel === 'main') {
-           invoke("toggle_dock", { enable: value });
-           if (value) {
-             invoke("change_dock_mode", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
-           }
-           // Always re-sync topbar to prevent displacement when dock state changes
-           setTimeout(() => invoke("sync_appbar"), 200);
+          invoke("toggle_dock", { enable: value });
+          if (value) {
+            invoke("change_dock_mode", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
+          }
+          // Always re-sync topbar to prevent displacement when dock state changes
+          setTimeout(() => invoke("sync_appbar"), 200);
         }
       }
       if (key === "dock-mode") {
@@ -231,8 +247,6 @@ function App() {
       unlistenSettings.then(f => f());
     };
   }, []);
-  // Audio visualization state
-  const [audioData, setAudioData] = useState<number[]>(new Array(5).fill(0.18));
 
   // New bloom mode state: 'status', 'music', or 'calendar'
   const [bloomMode, setBloomMode] = useState<'status' | 'music' | 'calendar'>('status');
@@ -302,13 +316,13 @@ function App() {
   useEffect(() => {
     const isNewTrackWhilePlaying = mediaInfo.title !== lastTrackRef.current && isPlaying;
     const justStartedPlaying = isPlaying && !lastPlayingRef.current;
-    
+
     // Only auto-switch if we are actually playing something new
     if (mediaInfo.has_media && isPlaying && bloomMode !== 'calendar' && (isNewTrackWhilePlaying || justStartedPlaying)) {
       console.log("Auto-switching to music mode. NewTrack:", isNewTrackWhilePlaying, "NewPlay:", justStartedPlaying);
       setBloomMode('music');
     }
-    
+
     lastTrackRef.current = mediaInfo.title;
     lastPlayingRef.current = isPlaying;
   }, [mediaInfo.has_media, isPlaying, mediaInfo.title]);
@@ -454,11 +468,11 @@ function App() {
         // Fetch location directly via JS instead of using a hidden rust process
         const response = await fetch('https://ipapi.co/json/');
         if (!response.ok) throw new Error("Primary location source failed");
-        
+
         const data = await response.json();
         const lat = data.latitude || data.lat;
         const lon = data.longitude || data.lon;
-        
+
         if (lat && lon) {
           await fetchWeather(lat, lon);
         } else {
@@ -503,24 +517,24 @@ function App() {
         const nextArt = info.artwork?.[0];
         const artChanged = prevArt !== nextArt;
 
-        if (prev.title === info.title && 
-            prev.artist === info.artist && 
-            prev.is_playing === info.is_playing && 
-            prev.has_media === info.has_media &&
-            !artChanged) {
+        if (prev.title === info.title &&
+          prev.artist === info.artist &&
+          prev.is_playing === info.is_playing &&
+          prev.has_media === info.has_media &&
+          !artChanged) {
           return prev;
         }
-        
+
         // Update playing state separately for the hook triggers
         setIsPlaying(info.is_playing);
-        
+
         if (info.artwork && info.artwork.length > 0) {
           const newArt = info.artwork[0];
           setAlbumArtUrl(prev => prev === newArt ? prev : newArt);
         } else {
           setAlbumArtUrl(null);
         }
-        
+
         return info;
       });
     });
@@ -529,28 +543,6 @@ function App() {
       unlisten.then(fn => fn());
     };
   }, []);
-
-  // Audio visualization - receive data from backend
-  useEffect(() => {
-    const unlisten = listen<{ frequencies: number[] }>("audio-visualization", (event) => {
-      // Only update if we are playing, to avoid background noise/renders
-      if (!lastPlayingRef.current) return;
-      
-      const frequencies = event.payload.frequencies;
-      setAudioData(frequencies);
-    });
-
-    return () => {
-      unlisten.then(fn => fn());
-    };
-  }, []);
-
-  // Reset visualization when not playing
-  useEffect(() => {
-    if (!isPlaying) {
-      setAudioData(new Array(5).fill(0.18));
-    }
-  }, [isPlaying]);
 
   // Media controls via Tauri commands
   const togglePlayPause = useCallback(async () => {
@@ -602,7 +594,7 @@ function App() {
     try {
       const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
       let settingsWebview = await WebviewWindow.getByLabel('settings');
-      
+
       if (settingsWebview) {
         console.log("Found existing settings window, showing...");
         await settingsWebview.show();
@@ -642,7 +634,7 @@ function App() {
       return;
     }
     if (!settingsCalendarEnabled) return;
-    
+
     setBloomMode(prev => {
       if (prev === 'calendar') {
         // Return to music mode if media is present and playing, otherwise status
@@ -654,30 +646,30 @@ function App() {
 
   // Music mode shows any time we have media info (playing or paused)
   const isMusicMode = mediaInfo.has_media && bloomMode === 'music';
-  
+
   // Calculate width dynamically based on enabled features
   const getDynamicWidth = () => {
     if (isCalendarMode) return 480;
-    
+
     // Narrow base is 140. 
     // - Visualizer adds ~30px.
     // - Album art adds ~30px.
     // - Hover/expanded state adds more.
-    
+
     let w = 140;
     if (isMusicMode) {
       w = 140;
       if (settingsVisualizerEnabled && isPlaying) w += 30;
       if (settingsAlbumArtEnabled) w += 30;
-      
+
       if (isHovered) {
         // Expanded music mode
-        w += 60; 
+        w += 60;
       }
     } else if (isHovered) {
       w = 320;
     }
-    
+
     return w;
   };
 
@@ -691,14 +683,14 @@ function App() {
       <AnimatePresence>
         {isVisible && settingsCornersEnabled && (
           <>
-            <motion.div 
-              className="screen-corner top-left" 
+            <motion.div
+              className="screen-corner top-left"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1, filter: "blur(0px)" }}
               exit={{ opacity: 0, filter: "blur(10px)" }}
             />
-            <motion.div 
-              className="screen-corner top-right" 
+            <motion.div
+              className="screen-corner top-right"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1, filter: "blur(0px)" }}
               exit={{ opacity: 0, filter: "blur(10px)" }}
@@ -732,7 +724,7 @@ function App() {
           }
         }}
         style={{ originY: 0 }}
-        transition={{ 
+        transition={{
           y: { type: "spring", stiffness: 400, damping: 40, mass: 0.8, restDelta: 0.001 },
           default: { type: "spring", stiffness: 400, damping: 25, mass: 0.8 }
         }}
@@ -751,7 +743,7 @@ function App() {
                         animate={{ scale: 1, opacity: 1 }}
                         exit={{ scale: 0.8, opacity: 0 }}
                       >
-                        <Visualizer isPlaying={isPlaying} audioData={audioData} />
+                        <Visualizer isPlaying={isPlaying} />
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -914,13 +906,13 @@ function App() {
               <div className="calendar-column">
                 <Calendar />
               </div>
-              
+
               <div className="timer-column">
                 <div className="timer-section-new">
                   <div className="timer-display-large">
                     <span className="timer-time-large">{formatTimerTime(timerSeconds)}</span>
                   </div>
-                  
+
                   <div className="timer-controls-new">
                     <button onClick={toggleTimer} className="timer-btn primary">
                       {isTimerRunning ? 'Pause' : 'Start'}
@@ -947,7 +939,7 @@ function App() {
 
 function Calendar() {
   const [date] = useState(new Date());
-  
+
   const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
   const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
 

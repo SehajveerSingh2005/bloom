@@ -34,9 +34,12 @@ windows = { version = "0.61", features = [
   "Win32_System_Threading",
   "Win32_System_Com_StructuredStorage",
   "Win32_System_Wmi",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Ole",
   "Storage_Streams",
   "Win32_System_Console",
   "Graphics_Imaging",
+  "Win32_Graphics_Imaging",
   "Win32_Graphics_Dwm",
 ] }
 base64 = "0.22"
