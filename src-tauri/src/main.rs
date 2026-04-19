@@ -194,40 +194,16 @@ fn sync_appbar(window: tauri::WebviewWindow) {
 #[tauri::command]
 fn change_dock_mode(app: tauri::AppHandle, mode: String) {
     if let Some(dock_win) = app.get_webview_window("dock") {
-        let hwnd = dock_win.hwnd().unwrap();
-        let scale = dock_win.scale_factor().unwrap_or(1.0);
-        
         if mode == "fixed" {
             register_dock_appbar(dock_win.clone());
-        } else {
+        } else if let Ok(hwnd) = dock_win.hwnd() {
             unregister_appbar_native(hwnd);
-            DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
-            if let Ok(Some(monitor)) = dock_win.primary_monitor() {
-                let m_size = monitor.size();
-                let m_pos = monitor.position();
-                let ph = (100.0 * scale) as i32;
-                
-                unsafe {
-                    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE as WS_EX_NA};
-                    // Apply tool window styles to ignore work area pushes
-                    let mut ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as usize;
-                    ex_style |= (WS_EX_TOOLWINDOW.0 | WS_EX_NA.0) as usize;
-                    let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style as isize);
-
-                    let _ = SetWindowPos(
-                        hwnd,
-                        None,
-                        m_pos.x,
-                        m_pos.y + m_size.height as i32 - ph,
-                        m_size.width as i32,
-                        ph,
-                        SWP_NOZORDER | SWP_NOACTIVATE,
-                    );
-                    let _ = dock_win.show();
-                }
-            }
         }
+        
+        // Ensure always on top and native taskbar stays hidden
         let _ = dock_win.set_always_on_top(true);
+        set_taskbar_visibility(false);
+        
         // Sync the current overlap state immediately to the frontend
         let current = CURRENT_DOCK_OVERLAP.load(Ordering::Relaxed);
         if current != -1 {
@@ -1328,8 +1304,8 @@ fn register_appbar(window: tauri::WebviewWindow) {
         let m_pos = monitor.position();
         let hwnd = window.hwnd().unwrap();
         let scale = window.scale_factor().unwrap_or(1.0);
-        let ph = (48.0 * scale) as i32;
-        let pr = (40.0 * scale) as i32;
+        let ph = (300.0 * scale) as i32; // Window is tall enough for calendar
+        let pr = (40.0 * scale) as i32;  // But only reserve 40px of screen space
         
         unsafe {
             use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE as WS_EX_NA, SWP_FRAMECHANGED};
@@ -1438,6 +1414,7 @@ fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
         let mut last_main_ignore = None;
         let mut last_dock_ignore = None;
         let mut dock_interaction_expiry = Instant::now();
+        let mut topbar_interaction_expiry = Instant::now();
         let mut last_handle_fetch = Instant::now() - Duration::from_secs(10);
         let mut main_win_handle = None;
         let mut dock_win_handle = None;
@@ -1518,21 +1495,24 @@ fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
 
                     // --- TopBar Interaction ---
                     if let Some(ref main_win) = main_win_handle {
-                        let near_top = pt.y < 120;
-                        if near_top {
-                            if main_win.is_visible().unwrap_or(false) {
-                                if let (Ok(win_pos), Ok(win_size)) = (main_win.outer_position(), main_win.outer_size()) {
-                                    let in_bar = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
-                                                 pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
-                                    if Some(!in_bar) != last_main_ignore {
-                                        let _ = main_win.set_ignore_cursor_events(!in_bar);
-                                        last_main_ignore = Some(!in_bar);
-                                    }
+                        if main_win.is_visible().unwrap_or(false) {
+                            if let (Ok(win_pos), Ok(win_size)) = (main_win.outer_position(), main_win.outer_size()) {
+                                let in_bar = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
+                                             pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
+                                
+                                // Optimization: If mouse is very far from top, we can likely ignore
+                                // But if it's currently interactive (e.g. calendar is open), keep it until mouse leaves
+                                if in_bar {
+                                    topbar_interaction_expiry = now + Duration::from_millis(200);
+                                }
+                                
+                                let should_ignore = now > topbar_interaction_expiry;
+                                
+                                if Some(should_ignore) != last_main_ignore {
+                                    let _ = main_win.set_ignore_cursor_events(should_ignore);
+                                    last_main_ignore = Some(should_ignore);
                                 }
                             }
-                        } else if last_main_ignore != Some(true) {
-                            let _ = main_win.set_ignore_cursor_events(true);
-                            last_main_ignore = Some(true);
                         }
                     }
                 }
