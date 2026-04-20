@@ -89,7 +89,7 @@ static MENU_RECT: std::sync::Mutex<Option<IntRect>> = std::sync::Mutex::new(None
 static ICON_CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
 
 #[tauri::command]
-fn set_menu_open(open: bool, rect: Option<IntRect>) {
+async fn set_menu_open(open: bool, rect: Option<IntRect>) {
     MENU_IS_OPEN.store(open, Ordering::Relaxed);
     if let Ok(mut r) = MENU_RECT.lock() {
         *r = rect;
@@ -120,12 +120,12 @@ fn resolve_shortcut(path: &str) -> Option<String> {
 }
 
 #[tauri::command]
-fn set_dock_hovered(hovered: bool) {
+async fn set_dock_hovered(hovered: bool) {
     DOCK_IS_HOVERED.store(hovered, Ordering::Relaxed);
 }
 
 #[tauri::command]
-fn update_dock_rect(rect: IntRect) {
+async fn update_dock_rect(rect: IntRect) {
     if let Ok(mut r) = DOCK_RECT.lock() {
         *r = Some(rect);
     }
@@ -213,7 +213,7 @@ fn change_dock_mode(app: tauri::AppHandle, mode: String) {
 }
 
 #[tauri::command]
-fn open_app(app_name: String) {
+async fn open_app(app_name: String) {
     if app_name == "start" {
         unsafe {
             use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, VK_LWIN, KEYEVENTF_KEYUP};
@@ -224,14 +224,14 @@ fn open_app(app_name: String) {
     }
     
     let path = app_name;
-    unsafe {
+    tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         
         let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
         let wide_open: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
         
-        ShellExecuteW(
+        let res = ShellExecuteW(
             None,
             windows::core::PCWSTR(wide_open.as_ptr()),
             windows::core::PCWSTR(wide_path.as_ptr()),
@@ -239,7 +239,11 @@ fn open_app(app_name: String) {
             None,
             SW_SHOWNORMAL,
         );
-    }
+        
+        if res.0 as usize <= 32 {
+            eprintln!("Failed to open app {}: error code {}", path, res.0 as usize);
+        }
+    });
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -253,12 +257,14 @@ pub struct AppInfo {
 }
 
 #[tauri::command]
-fn get_active_windows() -> Vec<AppInfo> {
-    let mut apps = Vec::new();
-    unsafe {
-        let _ = EnumWindows(Some(enum_windows_proc), LPARAM(&mut apps as *mut Vec<AppInfo> as isize));
-    }
-    apps
+async fn get_active_windows() -> Vec<AppInfo> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut apps = Vec::new();
+        unsafe {
+            let _ = EnumWindows(Some(enum_windows_proc), LPARAM(&mut apps as *mut Vec<AppInfo> as isize));
+        }
+        apps
+    }).await.unwrap_or_default()
 }
 
 unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -341,8 +347,8 @@ unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL 
 }
 
 #[tauri::command]
-fn focus_window(hwnd: isize) {
-    unsafe {
+async fn focus_window(hwnd: isize) {
+    tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, SW_MINIMIZE, IsIconic, GetForegroundWindow};
         let hwnd = HWND(hwnd as *mut _);
         let fg = GetForegroundWindow();
@@ -364,7 +370,7 @@ fn focus_window(hwnd: isize) {
                 let _ = SetForegroundWindow(hwnd);
             }
         }
-    }
+    }).await.unwrap_or_default();
 }
 
 #[tauri::command]
@@ -513,7 +519,7 @@ fn save_pinned_apps(app: tauri::AppHandle, apps: Vec<AppInfo>) -> Result<(), Str
 }
 
 #[tauri::command]
-fn load_pinned_apps(app: tauri::AppHandle) -> Vec<AppInfo> {
+async fn load_pinned_apps(app: tauri::AppHandle) -> Vec<AppInfo> {
     let path = app.path().app_config_dir().unwrap_or_default()
         .join("pinned_apps.json");
     
@@ -854,6 +860,21 @@ fn setup_audio_visualization(app_handle: AppHandle) {
 
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(32));
+                    
+                    // Skip all heavy processing if nothing is playing
+                    if !ANY_MEDIA_PLAYING.load(Ordering::Relaxed) {
+                        // Still gotta clear the buffer to avoid lag when it starts
+                        while let Ok(len) = capture_client.GetNextPacketSize() {
+                            if len == 0 { break; }
+                            let mut data_ptr: *mut u8 = std::ptr::null_mut();
+                            let mut num_frames = 0u32;
+                            let mut flags = 0u32;
+                            let _ = capture_client.GetBuffer(&mut data_ptr, &mut num_frames, &mut flags, None, None);
+                            let _ = capture_client.ReleaseBuffer(num_frames);
+                        }
+                        continue;
+                    }
+
                     loop {
                         let packet_length = match capture_client.GetNextPacketSize() {
                             Ok(len) => len,
@@ -898,36 +919,42 @@ fn setup_audio_visualization(app_handle: AppHandle) {
                                     let mut output = [0.0f32; NUM_BANDS];
                                     for (band_idx, &(bin_start, bin_end)) in band_ranges.iter().enumerate() {
                                         let mut total_mag = 0.0f32;
-                                        for bin in bin_start..bin_end {
+                                        // Optimization: Sample fewer bins in higher ranges where we have more of them
+                                        // This drastically reduces CPU usage for DFT
+                                        let step = if bin_end - bin_start > 20 { (bin_end - bin_start) / 10 } else { 1 };
+                                        let mut count = 0;
+                                        
+                                        for bin in (bin_start..bin_end).step_by(step) {
                                             if bin >= FFT_SIZE / 2 { break; }
                                             let freq = 2.0 * std::f32::consts::PI * bin as f32 / FFT_SIZE as f32;
                                             let mut real = 0.0f32;
                                             let mut imag = 0.0f32;
                                             for (sample_idx, &sample) in fft_buffer.iter().enumerate() {
+                                                if sample == 0.0 { continue; } // Tiny optimization
                                                 let phase = freq * sample_idx as f32;
                                                 real += sample * phase.cos();
                                                 imag -= sample * phase.sin();
                                             }
                                             total_mag += (real * real + imag * imag).sqrt();
+                                            count += 1;
                                         }
-                                        let mut avg_mag = total_mag / (bin_end - bin_start) as f32;
+                                        let avg_mag = total_mag / count.max(1) as f32;
+                                        let mut scaled_mag = avg_mag;
                                         let weighting = [1.2, 1.2, 1.5, 2.8, 5.0];
-                                        avg_mag *= weighting[band_idx];
-                                        if avg_mag > max_band_energies[band_idx] {
-                                            max_band_energies[band_idx] = avg_mag;
+                                        scaled_mag *= weighting[band_idx];
+                                        if scaled_mag > max_band_energies[band_idx] {
+                                            max_band_energies[band_idx] = scaled_mag;
                                         } else {
                                             max_band_energies[band_idx] *= 0.99;
                                         }
-                                        let target = (avg_mag / max_band_energies[band_idx].max(0.12)).min(1.0).powf(0.75);
+                                        let target = (scaled_mag / max_band_energies[band_idx].max(0.12)).min(1.0).powf(0.75);
                                         let is_rising = target > prev_values[band_idx];
                                         let smooth_factor = if is_rising { 0.10 } else { 0.20 };
                                         output[band_idx] = prev_values[band_idx] * smooth_factor + target * (1.0 - smooth_factor);
                                         output[band_idx] = output[band_idx].min(1.0).max(0.18);
                                         prev_values[band_idx] = output[band_idx];
                                     }
-                                    if ANY_MEDIA_PLAYING.load(Ordering::Relaxed) {
-                                        let _ = app_handle.emit("audio-visualization", AudioVisualizationData { frequencies: output.to_vec() });
-                                    }
+                                    let _ = app_handle.emit("audio-visualization", AudioVisualizationData { frequencies: output.to_vec() });
                                     buffer_pos = 0;
                                 }
                             }
@@ -1231,11 +1258,12 @@ unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
 }
 
 #[tauri::command]
-fn close_window(hwnd: isize) {
-    unsafe {
+async fn close_window(hwnd: isize) {
+    tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
-        let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
-    }
+        let hwnd = HWND(hwnd as *mut _);
+        let _ = PostMessageW(Some(hwnd), WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
+    }).await.unwrap_or_default();
 }
 
 fn main() {
@@ -1254,7 +1282,45 @@ fn main() {
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
+            let dock_win = app.get_webview_window("dock").unwrap();
             register_appbar(window.clone());
+            
+            // Sync window rects initially and on event
+            let win_clone = window.clone();
+            let update_main_rect = move || {
+                if let (Ok(p), Ok(s)) = (win_clone.outer_position(), win_clone.outer_size()) {
+                    if let Ok(mut lock) = MAIN_WINDOW_RECT.lock() {
+                        *lock = Some((p, s));
+                    }
+                }
+            };
+            
+            let dock_clone = dock_win.clone();
+            let update_dock_window_rect = move || {
+                if let (Ok(p), Ok(s)) = (dock_clone.outer_position(), dock_clone.outer_size()) {
+                    if let Ok(mut lock) = DOCK_WINDOW_RECT.lock() {
+                        *lock = Some((p, s));
+                    }
+                }
+            };
+
+            update_main_rect();
+            update_dock_window_rect();
+
+            let u_main = update_main_rect.clone();
+            window.on_window_event(move |e| {
+                if matches!(e, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
+                    u_main();
+                }
+            });
+
+            let u_dock = update_dock_window_rect.clone();
+            dock_win.on_window_event(move |e| {
+                if matches!(e, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
+                    u_dock();
+                }
+            });
+
             if let Some(br_win) = app.get_webview_window("brightness-overlay") {
                 if let Ok(Some(monitor)) = br_win.primary_monitor() {
                     let size = monitor.size();
@@ -1411,6 +1477,9 @@ fn unregister_appbar_native(hwnd: HWND) {
     }
 }
 
+static MAIN_WINDOW_RECT: std::sync::Mutex<Option<(tauri::PhysicalPosition<i32>, tauri::PhysicalSize<u32>)>> = std::sync::Mutex::new(None);
+static DOCK_WINDOW_RECT: std::sync::Mutex<Option<(tauri::PhysicalPosition<i32>, tauri::PhysicalSize<u32>)>> = std::sync::Mutex::new(None);
+
 fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
         use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
@@ -1420,67 +1489,60 @@ fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
         let mut last_dock_ignore = None;
         let mut dock_interaction_expiry = Instant::now();
         let mut topbar_interaction_expiry = Instant::now();
-        let mut last_handle_fetch = Instant::now() - Duration::from_secs(10);
-        let mut main_win_handle = None;
-        let mut dock_win_handle = None;
         
         loop {
             let now = Instant::now();
             let mut pt = POINT::default();
             unsafe {
                 if GetCursorPos(&mut pt).is_ok() {
-                    // Periodic handle refresh to avoid IPC overhead and stale handles
-                    if now.duration_since(last_handle_fetch).as_secs() >= 1 {
-                        main_win_handle = app_handle.get_webview_window("main");
-                        dock_win_handle = app_handle.get_webview_window("dock");
-                        last_handle_fetch = now;
-                    }
-
                     // --- Dock Interaction ---
-                    if let Some(ref dock_win) = dock_win_handle {
+                    if let Some(dock_win) = app_handle.get_webview_window("dock") {
                         if dock_win.is_visible().unwrap_or(false) {
                             let mut is_interactive = false;
                             
-                            if let (Ok(win_pos), Ok(win_size)) = (dock_win.outer_position(), dock_win.outer_size()) {
-                                let in_window = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
-                                                pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
-                                
-                                if in_window {
-                                    // 1. Check if over actual dock items (DOCK_RECT)
-                                    if let Ok(region) = DOCK_RECT.try_lock() {
-                                        if let Some(r) = *region {
-                                            let scale = dock_win.scale_factor().unwrap_or(1.0);
-                                            let rx = win_pos.x + (r.x as f64 * scale) as i32 - 10;
-                                            let ry = win_pos.y + (r.y as f64 * scale) as i32 - 10;
-                                            let rw = (r.width as f64 * scale) as i32 + 20;
-                                            let rh = (r.height as f64 * scale) as i32 + 20;
-                                            if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
-                                                is_interactive = true;
-                                            }
-                                        }
-                                    }
-
-                                    // 2. Check if over an open menu
-                                    if !is_interactive && MENU_IS_OPEN.load(Ordering::Relaxed) {
-                                        if let Ok(rect) = MENU_RECT.try_lock() {
-                                            if let Some(r) = *rect {
+                            // Use cached rect instead of polling IPC
+                            if let Ok(lock) = DOCK_WINDOW_RECT.lock() {
+                                if let Some((win_pos, win_size)) = *lock {
+                                    let in_window = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
+                                                    pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
+                                    
+                                    if in_window {
+                                        // 1. Check if over actual dock items (DOCK_RECT)
+                                        if let Ok(region) = DOCK_RECT.try_lock() {
+                                            if let Some(r) = *region {
                                                 let scale = dock_win.scale_factor().unwrap_or(1.0);
-                                                let rx = (r.x as f64 * scale) as i32 - 5;
-                                                let ry = (r.y as f64 * scale) as i32 - 5;
-                                                let rw = (r.width as f64 * scale) as i32 + 10;
-                                                let rh = (r.height as f64 * scale) as i32 + 10;
+                                                let rx = win_pos.x + (r.x as f64 * scale) as i32 - 10;
+                                                let ry = win_pos.y + (r.y as f64 * scale) as i32 - 10;
+                                                let rw = (r.width as f64 * scale) as i32 + 20;
+                                                let rh = (r.height as f64 * scale) as i32 + 20;
                                                 if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
                                                     is_interactive = true;
                                                 }
                                             }
                                         }
-                                    }
 
-                                    // 3. Hot-edge trigger
-                                    if !is_interactive {
-                                        let monitor_bottom = win_pos.y + win_size.height as i32;
-                                        if pt.y >= (monitor_bottom - 40) {
-                                            is_interactive = true;
+                                        // 2. Check if over an open menu
+                                        if !is_interactive && MENU_IS_OPEN.load(Ordering::Relaxed) {
+                                            if let Ok(rect) = MENU_RECT.try_lock() {
+                                                if let Some(r) = *rect {
+                                                    let scale = dock_win.scale_factor().unwrap_or(1.0);
+                                                    let rx = win_pos.x + (r.x as f64 * scale) as i32 - 5;
+                                                    let ry = win_pos.y + (r.y as f64 * scale) as i32 - 5;
+                                                    let rw = (r.width as f64 * scale) as i32 + 10;
+                                                    let rh = (r.height as f64 * scale) as i32 + 10;
+                                                    if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
+                                                        is_interactive = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // 3. Hot-edge trigger
+                                        if !is_interactive {
+                                            let monitor_bottom = win_pos.y + win_size.height as i32;
+                                            if pt.y >= (monitor_bottom - 40) {
+                                                is_interactive = true;
+                                            }
                                         }
                                     }
                                 }
@@ -1499,23 +1561,23 @@ fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                     }
 
                     // --- TopBar Interaction ---
-                    if let Some(ref main_win) = main_win_handle {
+                    if let Some(main_win) = app_handle.get_webview_window("main") {
                         if main_win.is_visible().unwrap_or(false) {
-                            if let (Ok(win_pos), Ok(win_size)) = (main_win.outer_position(), main_win.outer_size()) {
-                                let in_bar = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
-                                             pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
-                                
-                                // Optimization: If mouse is very far from top, we can likely ignore
-                                // But if it's currently interactive (e.g. calendar is open), keep it until mouse leaves
-                                if in_bar {
-                                    topbar_interaction_expiry = now + Duration::from_millis(200);
-                                }
-                                
-                                let should_ignore = now > topbar_interaction_expiry;
-                                
-                                if Some(should_ignore) != last_main_ignore {
-                                    let _ = main_win.set_ignore_cursor_events(should_ignore);
-                                    last_main_ignore = Some(should_ignore);
+                            if let Ok(lock) = MAIN_WINDOW_RECT.lock() {
+                                if let Some((win_pos, win_size)) = *lock {
+                                    let in_bar = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
+                                                 pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
+                                    
+                                    if in_bar {
+                                        topbar_interaction_expiry = now + Duration::from_millis(200);
+                                    }
+                                    
+                                    let should_ignore = now > topbar_interaction_expiry;
+                                    
+                                    if Some(should_ignore) != last_main_ignore {
+                                        let _ = main_win.set_ignore_cursor_events(should_ignore);
+                                        last_main_ignore = Some(should_ignore);
+                                    }
                                 }
                             }
                         }

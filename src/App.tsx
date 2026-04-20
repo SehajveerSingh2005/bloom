@@ -207,9 +207,7 @@ function App() {
     const unlistenVisibility = listen<boolean>("visibility-change", (event) => {
       setIsVisible(event.payload);
     });
-
     const unlistenSettings = listen<{ key: string, value: any }>("settings-changed", (event) => {
-      console.log("App received settings-changed:", event.payload);
       const { key, value } = event.payload;
       if (key === "weather") setSettingsWeatherEnabled(value);
       if (key === "calendar") setSettingsCalendarEnabled(value);
@@ -319,7 +317,6 @@ function App() {
 
     // Only auto-switch if we are actually playing something new
     if (mediaInfo.has_media && isPlaying && bloomMode !== 'calendar' && (isNewTrackWhilePlaying || justStartedPlaying)) {
-      console.log("Auto-switching to music mode. NewTrack:", isNewTrackWhilePlaying, "NewPlay:", justStartedPlaying);
       setBloomMode('music');
     }
 
@@ -392,7 +389,7 @@ function App() {
           battery.removeEventListener("chargingchange", updateBattery);
         };
       } catch (e) {
-        console.log("Battery API not supported");
+        // Battery API not supported
       }
     };
 
@@ -423,7 +420,6 @@ function App() {
         );
         const data = await response.json();
         const temp = data.current.temperature_2m;
-        console.log(`Weather: Received temperature ${temp} for ${latitude}, ${longitude}`);
         setTemperature(Math.round(temp));
 
         // Simple weather code mapping
@@ -596,12 +592,10 @@ function App() {
       let settingsWebview = await WebviewWindow.getByLabel('settings');
 
       if (settingsWebview) {
-        console.log("Found existing settings window, showing...");
         await settingsWebview.show();
         await settingsWebview.unminimize();
         await settingsWebview.setFocus();
       } else {
-        console.log("Settings window not found, creating new one...");
         settingsWebview = new WebviewWindow('settings', {
           url: 'settings.html',
           title: 'Settings',

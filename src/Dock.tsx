@@ -128,12 +128,12 @@ const Dock = memo(function Dock() {
   const handleAppClick = async (app: AppInfo) => {
     try {
       if (app.path === 'start') {
-        await invoke('open_app', { app_name: 'start' });
+        await invoke('open_app', { appName: 'start' });
       } else if (app.hwnd) {
         // Toggle focus/minimize for active windows
         await invoke('focus_window', { hwnd: app.hwnd });
       } else {
-        await invoke('open_app', { app_name: app.path });
+        await invoke('open_app', { appName: app.path });
       }
     } catch (e) {
       console.error(`Failed to interact with ${app.name}:`, e);
@@ -313,6 +313,8 @@ const Dock = memo(function Dock() {
                 key={app.path}
                 value={app}
                 dragListener={!!app.is_pinned && app.path !== 'start'}
+                dragMomentum={false}
+                dragElastic={0.1}
                 layout
                 className="dock-icon-wrapper"
                 onContextMenu={(e) => handleContextMenu(e, app)}
@@ -323,11 +325,14 @@ const Dock = memo(function Dock() {
               >
                 <div className="tooltip">{app.name}</div>
                 <motion.div 
-                  className="dock-icon"
-                  variants={iconVariants}
-                  animate={hoveredApp === app.path && !isDragging ? "hover" : "idle"}
-                  whileDrag={app.is_pinned && app.path !== 'start' ? "drag" : "idle"}
-                  onTap={() => handleAppClick(app)}
+                   className="dock-icon"
+                   variants={iconVariants}
+                   animate={hoveredApp === app.path && !isDragging ? "hover" : "idle"}
+                   whileTap={{ scale: 0.9 }}
+                   whileDrag={app.is_pinned && app.path !== 'start' ? "drag" : "idle"}
+                   onTap={() => {
+                     handleAppClick(app);
+                   }}
                 >
                   {app.path === 'start' ? (
                     <img src="/bloom.png" alt="Bloom" draggable={false} />

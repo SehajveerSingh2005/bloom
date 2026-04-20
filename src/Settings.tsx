@@ -36,7 +36,6 @@ function SettingsApp() {
           state: "active" as any
         });
       } catch (e) {
-        console.log("Window effects not supported", e);
       }
     };
     enableBlur();
@@ -46,7 +45,6 @@ function SettingsApp() {
         const enabled = await isEnabled();
         setAutostart(enabled);
       } catch (err) {
-        console.error("Failed to check autostart:", err);
       }
     }
     checkAutostart();
@@ -92,7 +90,6 @@ function SettingsApp() {
     try {
       await appWindow.hide();
     } catch(e) {
-      console.error("Failed to hide window:", e);
     }
   };
 
@@ -107,7 +104,6 @@ function SettingsApp() {
         setAutostart(true);
       }
     } catch (err) {
-      console.error("Failed to toggle autostart:", err);
     }
   };
 
@@ -201,7 +197,6 @@ function SettingsApp() {
       const data = await res.json();
       if (data.results && data.results.length > 0) {
         const { latitude, longitude, name } = data.results[0];
-        console.log(`Geocoding: Found ${name} at ${latitude}, ${longitude}`);
         localStorage.setItem("bloom-weather-city", name);
         localStorage.setItem("bloom-weather-lat", latitude.toString());
         localStorage.setItem("bloom-weather-lon", longitude.toString());
