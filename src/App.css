@@ -137,8 +137,8 @@ body {
 }
 
 /* Concave top corners ("bridge" to screen edge) */
-.bloom::before,
-.bloom::after {
+.bloom.is-impacted::before,
+.bloom.is-impacted::after {
     content: "";
     position: absolute;
     top: 0;
@@ -147,9 +147,15 @@ body {
     background: rgba(0, 0, 0, 0.8);
     backdrop-filter: blur(20px);
     pointer-events: none;
+    opacity: 0;
+    animation: corner-fade-in 0.2s forwards;
 }
 
-.bloom::before {
+@keyframes corner-fade-in {
+    to { opacity: 1; }
+}
+
+.bloom.is-impacted::before {
     left: -13px;
     -webkit-mask-image: radial-gradient(circle at 0 13px,
             transparent 13px,
@@ -165,7 +171,7 @@ body {
         rgba(0, 0, 0, 0.8);
 }
 
-.bloom::after {
+.bloom.is-impacted::after {
     right: -13px;
     -webkit-mask-image: radial-gradient(circle at 13px 13px,
             transparent 13px,

@@ -170,6 +170,44 @@ function App() {
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
   const [windowLabel] = useState<string>(getCurrentWebviewWindow().label);
   const [isVisible, setIsVisible] = useState(true);
+  const [isReady, setIsReady] = useState(false);
+  const [isImpacted, setIsImpacted] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  useEffect(() => {
+    // Only animate the main top-bar
+    if (windowLabel !== 'main') {
+      setIsReady(true);
+      setIsImpacted(true);
+      setIsExpanded(true);
+      return;
+    }
+
+    const checkVisibility = async () => {
+      try {
+        const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+        const win = getCurrentWebviewWindow();
+        const visible = await win.isVisible();
+        if (visible) {
+          setIsReady(true);
+          // Impact and Expansion start together once it reaches the top
+          setTimeout(() => {
+            setIsImpacted(true);
+            setIsExpanded(true);
+          }, 240);
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    };
+
+    const interval = setInterval(async () => {
+      if (await checkVisibility()) clearInterval(interval);
+    }, 100);
+    
+    checkVisibility();
+    return () => clearInterval(interval);
+  }, [windowLabel]);
 
   // Settings state
   const [settingsWeatherEnabled, setSettingsWeatherEnabled] = useState(() => localStorage.getItem("bloom-weather-enabled") !== "false");
@@ -194,8 +232,8 @@ function App() {
         // Re-sync topbar to prevent displacement (Always do this on launch)
         invoke("sync_appbar");
         // Secondary sync to catch any shell-level work-area jumps
-        setTimeout(() => invoke("sync_appbar"), 800);
-      }, 800);
+        setTimeout(() => invoke("sync_appbar"), 1000);
+      }, 1000);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -252,6 +290,7 @@ function App() {
 
   // Reset window height when state changes
   useEffect(() => {
+    if (!isExpanded) return;
     let timeout: any;
     if (bloomMode === 'calendar') {
       invoke("set_window_height", { height: 275 });
@@ -261,10 +300,10 @@ function App() {
       // Wait for the spring animation to finish before snapping the OS window bounds
       timeout = setTimeout(() => {
         invoke("set_window_height", { height: 48 });
-      }, 400);
+      }, 800);
     }
     return () => clearTimeout(timeout);
-  }, [isHovered, bloomMode === 'calendar']);
+  }, [isHovered, bloomMode === 'calendar', isExpanded]);
 
   // Timer state
   const [timerSeconds, setTimerSeconds] = useState(0);
@@ -694,16 +733,21 @@ function App() {
       </AnimatePresence>
 
       <motion.div
-        className={`bloom ${isHovered ? 'expanded' : ''}`}
-        initial={{ width: 140, y: -100 }}
+        className={`bloom ${isHovered ? 'expanded' : ''} ${isImpacted ? 'is-impacted' : ''}`}
+        initial={{ y: 250, width: 34, height: 34, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 18, borderBottomRightRadius: 18, scaleX: 0.9, scaleY: 1.3, opacity: 0 }}
         animate={{
-          width: getDynamicWidth(),
-          height: isCalendarMode
-            ? 275
-            : isHovered && mediaInfo.has_media && isPlaying ? 64 : 36,
-          y: isVisible ? 0 : -80,
+          width: isExpanded ? getDynamicWidth() : 34,
+          height: isExpanded
+            ? (isCalendarMode ? 275 : (isHovered && mediaInfo.has_media && isPlaying ? 64 : 36))
+            : 34,
+          y: !isReady ? 250 : (isVisible ? 0 : -80),
           opacity: isVisible ? 1 : 0,
-          scale: isVisible ? 1 : 0.95,
+          scaleX: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 1.15 : 0.9)),
+          scaleY: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 0.85 : 1.3)),
+          borderTopLeftRadius: isImpacted ? 0 : 18,
+          borderTopRightRadius: isImpacted ? 0 : 18,
+          borderBottomLeftRadius: 18,
+          borderBottomRightRadius: 18,
           filter: isVisible ? "blur(0px)" : "blur(8px)"
         }}
         onClick={() => {
@@ -719,210 +763,229 @@ function App() {
         }}
         style={{ originY: 0 }}
         transition={{
-          y: { type: "spring", stiffness: 400, damping: 40, mass: 0.8, restDelta: 0.001 },
-          default: { type: "spring", stiffness: 400, damping: 25, mass: 0.8 }
+          y: { type: "spring", stiffness: 650, damping: 35, mass: 0.7, restDelta: 0.001 },
+          width: { type: "spring", stiffness: 500, damping: 22, mass: 0.8 },
+          height: { type: "spring", stiffness: 500, damping: 22, mass: 0.8 },
+          scaleX: { type: "spring", stiffness: 600, damping: 18 },
+          scaleY: { type: "spring", stiffness: 600, damping: 18 },
+          borderTopLeftRadius: { type: "spring", stiffness: 1000, damping: 40 },
+          borderTopRightRadius: { type: "spring", stiffness: 1000, damping: 40 },
+          default: { type: "spring", stiffness: 500, damping: 30, mass: 1 }
         }}
       >
-        <div className="main-row">
-          {/* Left: visualizer (music) or wifi+notifs (status) */}
-          {(isMusicMode && settingsVisualizerEnabled) || (!isMusicMode && isHovered) ? (
-            <div className="side-content left">
-              <AnimatePresence mode="wait">
-                {isMusicMode ? (
-                  <AnimatePresence>
-                    {settingsVisualizerEnabled && (
-                      <motion.div
-                        key="visualizer"
-                        initial={{ scale: 0.8, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        exit={{ scale: 0.8, opacity: 0 }}
+        <AnimatePresence mode="wait">
+          {isExpanded && (
+            <motion.div
+              key="bloom-content"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ duration: 0.2 }}
+              style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}
+            >
+              <div className="main-row">
+                {/* Left: visualizer (music) or wifi+notifs (status) */}
+                {(isMusicMode && settingsVisualizerEnabled) || (!isMusicMode && isHovered) ? (
+                  <div className="side-content left">
+                    <AnimatePresence mode="wait">
+                      {isMusicMode ? (
+                        <AnimatePresence>
+                          {settingsVisualizerEnabled && (
+                            <motion.div
+                              key="visualizer"
+                              initial={{ scale: 0.8, opacity: 0 }}
+                              animate={{ scale: 1, opacity: 1 }}
+                              exit={{ scale: 0.8, opacity: 0 }}
+                            >
+                              <Visualizer isPlaying={isPlaying} />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      ) : (
+                        isHovered && (
+                          <motion.div
+                            key="left-passive"
+                            className="passive-features-group"
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -10 }}
+                          >
+                            <div className="passive-feature clickable" onClick={openWifiSettings}>
+                              <WifiIcon connected={isOnline} />
+                            </div>
+                            <div className="passive-feature clickable" onClick={openNotificationCenter}>
+                              {isMuted ? <BellOffIcon /> : <BellIcon />}
+                            </div>
+                            <div className="passive-feature clickable" onClick={openSettingsWindow}>
+                              <SettingsIcon />
+                            </div>
+                          </motion.div>
+                        )
+                      )}
+                    </AnimatePresence>
+                  </div>
+                ) : (
+                  /* Spacer to keep time centered if the OTHER side has content */
+                  isMusicMode && settingsAlbumArtEnabled && <div className="side-content left" />
+                )}
+
+                {/* Center - Time (always visible) */}
+                <div className="time-flip-container" onClick={toggleCalendarMode}>
+                  <AnimatePresence initial={false}>
+                    {isCompactTimerVisible || isTimerFinished ? (
+                      <motion.span
+                        key="timer"
+                        className={`time compact-timer ${isTimerFinished ? 'timer-finished' : ''}`}
+                        initial={{ rotateX: -90, opacity: 0 }}
+                        animate={{ rotateX: 0, opacity: 1 }}
+                        exit={{ rotateX: 90, opacity: 0 }}
+                        transition={{ type: "spring", stiffness: 600, damping: 30 }}
                       >
-                        <Visualizer isPlaying={isPlaying} />
-                      </motion.div>
+                        {formatTimerTime(timerSeconds)}
+                      </motion.span>
+                    ) : (
+                      <motion.span
+                        key="clock"
+                        className="time"
+                        initial={{ rotateX: -90, opacity: 0 }}
+                        animate={{ rotateX: 0, opacity: 1 }}
+                        exit={{ rotateX: 90, opacity: 0 }}
+                        transition={{ type: "spring", stiffness: 600, damping: 30 }}
+                      >
+                        {time}
+                      </motion.span>
                     )}
                   </AnimatePresence>
+                </div>
+
+                {/* Right: album art (music) or battery+temp (status) */}
+                {(isMusicMode && settingsAlbumArtEnabled) || (!isMusicMode && isHovered) ? (
+                  <div className="side-content right">
+                    <AnimatePresence mode="wait">
+                      {isMusicMode && settingsAlbumArtEnabled ? (
+                        <motion.button
+                          key="album-art"
+                          className={`album-art${isHovered ? ' album-art-large' : ''}${!isPlaying ? ' paused' : ''}`}
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, y: -20, scale: 0.8, filter: "blur(8px)" }}
+                          transition={{ duration: 0.12 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            togglePlayPause();
+                          }}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            skipNext();
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            skipPrevious();
+                          }}
+                        >
+                          <div className="album-art-inner">
+                            {albumArtUrl ? (
+                              <img src={albumArtUrl} alt="Art" />
+                            ) : (
+                              <div className="album-art-placeholder">🎵</div>
+                            )}
+                            <div className="album-art-overlay">
+                              <div className="control-icon-small">
+                                {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                              </div>
+                            </div>
+                          </div>
+                        </motion.button>
+                      ) : (
+                        isHovered && (
+                          <motion.div
+                            key="right-passive"
+                            className="passive-features-group"
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 10 }}
+                          >
+                            {settingsWeatherEnabled && temperature !== null && (
+                              <div className="passive-feature" title={weatherCondition}>
+                                <ThermometerIcon />
+                                <span className="label">{temperature}°{tempUnit === "fahrenheit" ? "F" : "C"}</span>
+                              </div>
+                            )}
+                            <div className="passive-feature">
+                              <BatteryIcon charging={isCharging} level={batteryLevel} />
+                              <span className="label">{batteryLevel}%</span>
+                            </div>
+                          </motion.div>
+                        )
+                      )}
+                    </AnimatePresence>
+                  </div>
                 ) : (
-                  isHovered && (
-                    <motion.div
-                      key="left-passive"
-                      className="passive-features-group"
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -10 }}
-                    >
-                      <div className="passive-feature clickable" onClick={openWifiSettings}>
-                        <WifiIcon connected={isOnline} />
-                      </div>
-                      <div className="passive-feature clickable" onClick={openNotificationCenter}>
-                        {isMuted ? <BellOffIcon /> : <BellIcon />}
-                      </div>
-                      <div className="passive-feature clickable" onClick={openSettingsWindow}>
-                        <SettingsIcon />
-                      </div>
-                    </motion.div>
-                  )
+                  /* Spacer to keep time centered if the OTHER side has content */
+                  isMusicMode && settingsVisualizerEnabled && isPlaying && <div className="side-content right" />
                 )}
-              </AnimatePresence>
-            </div>
-          ) : (
-            /* Spacer to keep time centered if the OTHER side has content */
-            isMusicMode && settingsAlbumArtEnabled && <div className="side-content left" />
-          )}
+              </div>
 
-          {/* Center - Time (always visible) */}
-          <div className="time-flip-container" onClick={toggleCalendarMode}>
-            <AnimatePresence initial={false}>
-              {isCompactTimerVisible || isTimerFinished ? (
-                <motion.span
-                  key="timer"
-                  className={`time compact-timer ${isTimerFinished ? 'timer-finished' : ''}`}
-                  initial={{ rotateX: -90, opacity: 0 }}
-                  animate={{ rotateX: 0, opacity: 1 }}
-                  exit={{ rotateX: 90, opacity: 0 }}
-                  transition={{ type: "spring", stiffness: 600, damping: 30 }}
-                >
-                  {formatTimerTime(timerSeconds)}
-                </motion.span>
-              ) : (
-                <motion.span
-                  key="clock"
-                  className="time"
-                  initial={{ rotateX: -90, opacity: 0 }}
-                  animate={{ rotateX: 0, opacity: 1 }}
-                  exit={{ rotateX: 90, opacity: 0 }}
-                  transition={{ type: "spring", stiffness: 600, damping: 30 }}
-                >
-                  {time}
-                </motion.span>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* Right: album art (music) or battery+temp (status) */}
-          {(isMusicMode && settingsAlbumArtEnabled) || (!isMusicMode && isHovered) ? (
-            <div className="side-content right">
-              <AnimatePresence mode="wait">
-                {isMusicMode && settingsAlbumArtEnabled ? (
-                  <motion.button
-                    key="album-art"
-                    className={`album-art${isHovered ? ' album-art-large' : ''}${!isPlaying ? ' paused' : ''}`}
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, y: -20, scale: 0.8, filter: "blur(8px)" }}
-                    transition={{ duration: 0.12 }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      togglePlayPause();
-                    }}
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      skipNext();
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      skipPrevious();
+              {/* Bottom row - Song details (only on hover when playing) */}
+              <AnimatePresence>
+                {isHovered && isPlaying && mediaInfo.has_media && !isCalendarMode && settingsMediaDetailsEnabled && (
+                  <motion.div
+                    className="bottom-row"
+                    initial={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
+                    animate={{ opacity: 1, height: 28, scale: 1, filter: "blur(0px)" }}
+                    exit={{ opacity: 0, height: 0, y: -15, scale: 0.95, filter: "blur(8px)" }}
+                    transition={{
+                      default: { type: "spring", stiffness: 400, damping: 25, mass: 0.8 },
+                      opacity: { duration: 0.2, ease: "easeOut" },
+                      filter: { duration: 0.2, ease: "easeOut" }
                     }}
                   >
-                    <div className="album-art-inner">
-                      {albumArtUrl ? (
-                        <img src={albumArtUrl} alt="Art" />
-                      ) : (
-                        <div className="album-art-placeholder">🎵</div>
-                      )}
-                      <div className="album-art-overlay">
-                        <div className="control-icon-small">
-                          {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                    <MarqueeText title={mediaInfo.title} artist={mediaInfo.artist} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Calendar & Timer Split View */}
+              <AnimatePresence>
+                {settingsCalendarEnabled && isCalendarMode && (
+                  <motion.div
+                    className="calendar-timer-content split-view"
+                    onClick={e => e.stopPropagation()} /* Block mode switches when clicking inside */
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, y: -40, scale: 0.9, filter: "blur(12px)", transition: { duration: 0.2 } }}
+                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  >
+                    <div className="calendar-column">
+                      <Calendar />
+                    </div>
+
+                    <div className="timer-column">
+                      <div className="timer-section-new">
+                        <div className="timer-display-large">
+                          <span className="timer-time-large">{formatTimerTime(timerSeconds)}</span>
+                        </div>
+
+                        <div className="timer-controls-new">
+                          <button onClick={toggleTimer} className="timer-btn primary">
+                            {isTimerRunning ? 'Pause' : 'Start'}
+                          </button>
+                          <button onClick={resetTimer} className="timer-btn secondary">Reset</button>
+                        </div>
+
+                        <div className="timer-presets-new">
+                          {[5, 15, 25, 50].map(mins => (
+                            <button key={mins} onClick={() => startTimer(mins)} className="preset-btn-small">
+                              {mins}m
+                            </button>
+                          ))}
                         </div>
                       </div>
                     </div>
-                  </motion.button>
-                ) : (
-                  isHovered && (
-                    <motion.div
-                      key="right-passive"
-                      className="passive-features-group"
-                      initial={{ opacity: 0, x: 10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 10 }}
-                    >
-                      {settingsWeatherEnabled && temperature !== null && (
-                        <div className="passive-feature" title={weatherCondition}>
-                          <ThermometerIcon />
-                          <span className="label">{temperature}°{tempUnit === "fahrenheit" ? "F" : "C"}</span>
-                        </div>
-                      )}
-                      <div className="passive-feature">
-                        <BatteryIcon charging={isCharging} level={batteryLevel} />
-                        <span className="label">{batteryLevel}%</span>
-                      </div>
-                    </motion.div>
-                  )
+                  </motion.div>
                 )}
               </AnimatePresence>
-            </div>
-          ) : (
-            /* Spacer to keep time centered if the OTHER side has content */
-            isMusicMode && settingsVisualizerEnabled && isPlaying && <div className="side-content right" />
-          )}
-        </div>
-
-        {/* Bottom row - Song details (only on hover when playing) */}
-        <AnimatePresence>
-          {isHovered && isPlaying && mediaInfo.has_media && !isCalendarMode && settingsMediaDetailsEnabled && (
-            <motion.div
-              className="bottom-row"
-              initial={{ opacity: 0, height: 0, scale: 0.95, filter: "blur(4px)" }}
-              animate={{ opacity: 1, height: 28, scale: 1, filter: "blur(0px)" }}
-              exit={{ opacity: 0, height: 0, y: -15, scale: 0.95, filter: "blur(8px)" }}
-              transition={{
-                default: { type: "spring", stiffness: 400, damping: 25, mass: 0.8 },
-                opacity: { duration: 0.2, ease: "easeOut" },
-                filter: { duration: 0.2, ease: "easeOut" }
-              }}
-            >
-              <MarqueeText title={mediaInfo.title} artist={mediaInfo.artist} />
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Calendar & Timer Split View */}
-        <AnimatePresence>
-          {settingsCalendarEnabled && isCalendarMode && (
-            <motion.div
-              className="calendar-timer-content split-view"
-              onClick={e => e.stopPropagation()} /* Block mode switches when clicking inside */
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, y: -40, scale: 0.9, filter: "blur(12px)", transition: { duration: 0.2 } }}
-              transition={{ type: "spring", stiffness: 400, damping: 30 }}
-            >
-              <div className="calendar-column">
-                <Calendar />
-              </div>
-
-              <div className="timer-column">
-                <div className="timer-section-new">
-                  <div className="timer-display-large">
-                    <span className="timer-time-large">{formatTimerTime(timerSeconds)}</span>
-                  </div>
-
-                  <div className="timer-controls-new">
-                    <button onClick={toggleTimer} className="timer-btn primary">
-                      {isTimerRunning ? 'Pause' : 'Start'}
-                    </button>
-                    <button onClick={resetTimer} className="timer-btn secondary">Reset</button>
-                  </div>
-
-                  <div className="timer-presets-new">
-                    {[5, 15, 25, 50].map(mins => (
-                      <button key={mins} onClick={() => startTimer(mins)} className="preset-btn-small">
-                        {mins}m
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
             </motion.div>
           )}
         </AnimatePresence>

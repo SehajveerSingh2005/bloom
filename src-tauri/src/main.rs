@@ -1488,8 +1488,8 @@ fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
         
         let mut last_main_ignore = None;
         let mut last_dock_ignore = None;
-        let mut dock_interaction_expiry = Instant::now();
-        let mut topbar_interaction_expiry = Instant::now();
+        let mut dock_interaction_expiry = Instant::now() - Duration::from_secs(1);
+        let mut topbar_interaction_expiry = Instant::now() - Duration::from_secs(1);
         
         loop {
             let now = Instant::now();
