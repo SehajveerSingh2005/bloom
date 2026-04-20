@@ -38,10 +38,22 @@ Modernize your display with rounded screen boundaries.
 - **Mica Integration**: Uses Windows 11 backdrop effects for a seamless blend.
 - **Non-Intrusive**: Operates as a separate transparent layer that respects fullscreen applications.
 
+#### High-Fidelity Dock
+A macOS-inspired taskbar replacement with mechanical fluidity.
+- **Icon Extraction**: Advanced window-aware icon retrieval, including high-res PWA branding.
+- **Drag-to-Reorder**: Native feeling, physics-based app reordering with persistent state.
+- **Intelligent Auto-Hide**: Dynamically hides on window overlap and reveal on hot-edge hover.
+- **Pinned & Active**: Seamlessly manages both static shortcuts and running application instances.
+
 #### Floating Settings Hub
 A glassmorphic control center for real-time personalization.
 - **Instant Sync**: Changes propagate across all Bloom windows without restarts.
-- **Module Control**: Toggle visualizers, artwork, or secondary HUDs on the fly.
+- **Module Control**: Toggle visualizers, artwork, or the dock system on the fly.
+
+#### Mechanical Fluidity
+Every interaction in Bloom is powered by high-performance physics-based motion.
+- **Splash Entrance**: A multi-phased "stick-and-expand" launch sequence for the TopBar and Dock.
+- **Spring Transitions**: Zero-jank animations that respond instantly to system state changes.
 
 ---
 
