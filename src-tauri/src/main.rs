@@ -994,8 +994,8 @@ fn handle_volume_key_event(vk_code: VIRTUAL_KEY) {
 fn handle_brightness_key_event(vk_code: VIRTUAL_KEY) {
     unsafe {
         if let Some(ref sender) = COMMAND_SENDER {
-            let cmd = if vk_code.0 == 0x216 || vk_code.0 == 0x7A { Some(SystemCommand::BrightnessDown) }
-            else if vk_code.0 == 0x217 || vk_code.0 == 0x7B { Some(SystemCommand::BrightnessUp) }
+            let cmd = if vk_code.0 == 0x216 { Some(SystemCommand::BrightnessDown) }
+            else if vk_code.0 == 0x217 { Some(SystemCommand::BrightnessUp) }
             else { None };
             if let Some(cmd) = cmd { let _ = sender.send(cmd); }
         }
@@ -1214,7 +1214,7 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: windows::Win32::
             if wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize { handle_volume_key_event(vk_code); }
             return windows::Win32::Foundation::LRESULT(1);
         }
-        if vk_code.0 == 0x216 || vk_code.0 == 0x217 || vk_code.0 == 0x7A || vk_code.0 == 0x7B {
+        if vk_code.0 == 0x216 || vk_code.0 == 0x217 {
             if wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize { handle_brightness_key_event(vk_code); }
             return windows::Win32::Foundation::LRESULT(1);
         }
