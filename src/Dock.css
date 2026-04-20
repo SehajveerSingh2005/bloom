@@ -83,6 +83,13 @@ body {
   background: rgba(0, 0, 0, 0.8);
   backdrop-filter: blur(20px);
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.dock.dock-expanded::before,
+.dock.dock-expanded::after {
+  opacity: 1;
 }
 
 .dock::before {

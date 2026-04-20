@@ -29,11 +29,44 @@ const Dock = memo(function Dock() {
   const [isDragging, setIsDragging] = useState(false);
   const [hoveredApp, setHoveredApp] = useState<string | null>(null);
   const [pressedApp, setPressedApp] = useState<string | null>(null);
-  
+  const [isReady, setIsReady] = useState(false);
+  const [isImpacted, setIsImpacted] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const dockRef = useRef<HTMLDivElement>(null);
 
   const isCurrentlyHovered = isDockHovered || isEdgeHovered;
   const isHidden = dockMode === 'auto-hide' && isOverlapped && !isCurrentlyHovered;
+
+  useEffect(() => {
+    // Poll for visibility to trigger entrance animation
+    const checkVisibility = async () => {
+      try {
+        const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+        const win = getCurrentWebviewWindow();
+        const visible = await win.isVisible();
+        if (visible) {
+          setIsReady(true);
+          
+          // Overlap phases for fluidity
+          // Impact starts as it reaches the bottom
+          setTimeout(() => setIsImpacted(true), 280);
+          
+          // Expand starts almost immediately after impact to look "liquid"
+          setTimeout(() => setIsExpanded(true), 350);
+          
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    };
+
+    const interval = setInterval(async () => {
+      if (await checkVisibility()) clearInterval(interval);
+    }, 100);
+    
+    checkVisibility();
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const updateRect = () => {
@@ -251,62 +284,95 @@ const Dock = memo(function Dock() {
   return (
     <div className={`dock-container ${isDragging ? 'dragging' : ''}`} onClick={closeMenu}>
       <motion.div
+        layout
         ref={dockRef}
-        className="dock"
+        className={`dock ${(isImpacted || isExpanded) && !isHidden ? 'dock-expanded' : ''}`}
         onMouseEnter={() => setIsDockHovered(true)}
         onMouseLeave={() => { setIsDockHovered(false); setIsEdgeHovered(false); setHoveredApp(null); setPressedApp(null); }}
-        initial={{ y: 100, opacity: 0 }}
-        animate={{ y: isHidden ? 100 : 0, opacity: 1 }}
-        transition={{ y: { type: "spring", stiffness: 300, damping: 35 }, opacity: { duration: 0.5 } }}
+        initial={{ y: -450, opacity: 1, width: 34, height: 34, borderTopLeftRadius: 17, borderTopRightRadius: 17, borderBottomLeftRadius: 17, borderBottomRightRadius: 17, scaleX: 0.9, scaleY: 1.3 }}
+        animate={{ 
+          y: !isReady || isHidden ? -450 : 0, 
+          width: isExpanded && !isHidden ? 'auto' : 34,
+          height: isExpanded && !isHidden ? 'auto' : 34,
+          borderTopLeftRadius: isExpanded && !isHidden ? 18 : 17,
+          borderTopRightRadius: isExpanded && !isHidden ? 18 : 17,
+          borderBottomLeftRadius: (isImpacted || isExpanded) && !isHidden ? 0 : 17,
+          borderBottomRightRadius: (isImpacted || isExpanded) && !isHidden ? 0 : 17,
+          scaleX: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 1.15 : 0.9)),
+          scaleY: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 0.85 : 1.3)),
+          opacity: 1,
+        }}
+        transition={{ 
+          y: { type: "spring", stiffness: 550, damping: 45, mass: 0.8, restDelta: 0.001 },
+          width: { type: "spring", stiffness: 450, damping: 25, mass: 0.8 },
+          height: { type: "spring", stiffness: 450, damping: 25, mass: 0.8 },
+          scaleX: { type: "spring", stiffness: 500, damping: 20 },
+          scaleY: { type: "spring", stiffness: 500, damping: 20 },
+          default: { type: "spring", stiffness: 500, damping: 30, mass: 1 }
+        }}
+        style={{ originY: 1, minWidth: 34 }}
         onContextMenu={(e) => handleContextMenu(e, null)}
       >
-        <div className="dock-reorder-container">
-          {startItem && (
-            <div 
-              className="dock-icon-wrapper"
-              onContextMenu={(e) => handleContextMenu(e, startItem)}
-              onMouseEnter={() => setHoveredApp(startItem.path)}
-              onMouseLeave={() => { setHoveredApp(null); setPressedApp(null); }}
+        <AnimatePresence mode="wait">
+          {isExpanded && (
+            <motion.div 
+              key="dock-content"
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              className="dock-reorder-container"
+              variants={{
+                show: { transition: { staggerChildren: 0.04 } }
+              }}
             >
-              <div className="tooltip">{startItem.name}</div>
-              <motion.div 
-                className="dock-icon"
-                variants={iconVariants}
-                animate={pressedApp === startItem.path ? "tap" : (hoveredApp === startItem.path ? "hover" : "idle")}
-                onPointerDown={() => setPressedApp(startItem.path)}
-                onPointerUp={() => setPressedApp(null)}
-                onPointerCancel={() => setPressedApp(null)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleAppClick(startItem);
-                }}
-              >
-                <img src="/bloom.png" alt="Bloom" draggable={false} />
-              </motion.div>
-            </div>
-          )}
-          
-          <Reorder.Group
-            as="div"
-            axis="x"
-            values={otherItems}
-            onReorder={handleReorder}
-            className="dock-reorder-group"
-          >
-            {otherItems.map((app) => (
-              <Reorder.Item
+              {startItem && (
+                <motion.div 
+                  variants={{ hide: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}
+                  className="dock-icon-wrapper"
+                  onContextMenu={(e) => handleContextMenu(e, startItem)}
+                  onMouseEnter={() => setHoveredApp(startItem.path)}
+                  onMouseLeave={() => { setHoveredApp(null); setPressedApp(null); }}
+                >
+                  <div className="tooltip">{startItem.name}</div>
+                  <motion.div 
+                    className="dock-icon"
+                    variants={iconVariants}
+                    animate={pressedApp === startItem.path ? "tap" : (hoveredApp === startItem.path ? "hover" : "idle")}
+                    onPointerDown={() => setPressedApp(startItem.path)}
+                    onPointerUp={() => setPressedApp(null)}
+                    onPointerCancel={() => setPressedApp(null)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAppClick(startItem);
+                    }}
+                  >
+                    <img src="/bloom.png" alt="Bloom" draggable={false} />
+                  </motion.div>
+                </motion.div>
+              )}
+              
+              <Reorder.Group
                 as="div"
-                key={app.path}
-                value={app}
-                dragListener={!!app.is_pinned}
-                layout
-                className="dock-icon-wrapper"
-                onContextMenu={(e) => handleContextMenu(e, app)}
-                onMouseEnter={() => setHoveredApp(app.path)}
-                onMouseLeave={() => { setHoveredApp(null); setPressedApp(null); }}
-                onDragStart={() => { if (app.is_pinned) { setIsDragging(true); setHoveredApp(null); setPressedApp(null); } }}
-                onDragEnd={handleDragEnd}
+                axis="x"
+                values={otherItems}
+                onReorder={handleReorder}
+                className="dock-reorder-group"
               >
+                {otherItems.map((app) => (
+                  <Reorder.Item
+                    as="div"
+                    key={app.path}
+                    value={app}
+                    dragListener={!!app.is_pinned}
+                    layout
+                    variants={{ hide: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}
+                    className="dock-icon-wrapper"
+                    onContextMenu={(e) => handleContextMenu(e, app)}
+                    onMouseEnter={() => setHoveredApp(app.path)}
+                    onMouseLeave={() => { setHoveredApp(null); setPressedApp(null); }}
+                    onDragStart={() => { if (app.is_pinned) { setIsDragging(true); setHoveredApp(null); setPressedApp(null); } }}
+                    onDragEnd={handleDragEnd}
+                  >
                 <div className="tooltip">{app.name}</div>
                 <motion.div 
                   className="dock-icon"
@@ -328,9 +394,11 @@ const Dock = memo(function Dock() {
                 </motion.div>
                 {app.is_running && <div className="active-indicator" />}
               </Reorder.Item>
-            ))}
-          </Reorder.Group>
-        </div>
+                ))}
+              </Reorder.Group>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
 
       {contextMenu && (

@@ -195,7 +195,7 @@ function App() {
         invoke("sync_appbar");
         // Secondary sync to catch any shell-level work-area jumps
         setTimeout(() => invoke("sync_appbar"), 800);
-      }, 1500);
+      }, 800);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

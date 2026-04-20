@@ -163,16 +163,17 @@ fn set_taskbar_visibility(visible: bool) {
 }
 
 #[tauri::command]
-fn toggle_dock(app: tauri::AppHandle, enable: bool) {
+async fn toggle_dock(app: tauri::AppHandle, enable: bool) {
     if let Some(dock_win) = app.get_webview_window("dock") {
-        let hwnd = dock_win.hwnd().unwrap();
         if enable {
             set_taskbar_visibility(false);
-            let _ = dock_win.show();
             let _ = dock_win.set_always_on_top(true);
+            let _ = dock_win.show();
         } else {
             let _ = dock_win.hide();
-            unregister_appbar_native(hwnd);
+            if let Ok(hwnd) = dock_win.hwnd() {
+                unregister_appbar_native(hwnd);
+            }
             DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
             set_taskbar_visibility(true);
             // Re-sync other appbars to ensure they stay in place
@@ -184,7 +185,7 @@ fn toggle_dock(app: tauri::AppHandle, enable: bool) {
 }
 
 #[tauri::command]
-fn sync_appbar(window: tauri::WebviewWindow) {
+async fn sync_appbar(window: tauri::WebviewWindow) {
     let label = window.label().to_string();
     if label == "main" {
         register_appbar(window);
@@ -192,12 +193,13 @@ fn sync_appbar(window: tauri::WebviewWindow) {
 }
 
 #[tauri::command]
-fn change_dock_mode(app: tauri::AppHandle, mode: String) {
+async fn change_dock_mode(app: tauri::AppHandle, mode: String) {
     if let Some(dock_win) = app.get_webview_window("dock") {
         if mode == "fixed" {
             register_dock_appbar(dock_win.clone());
         } else if let Ok(hwnd) = dock_win.hwnd() {
             unregister_appbar_native(hwnd);
+            DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
         }
         
         // Ensure always on top and native taskbar stays hidden
@@ -1428,22 +1430,21 @@ fn register_dock_appbar(window: tauri::WebviewWindow) {
         let pr = (56.0 * scale) as i32;
         
         unsafe {
-            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE as WS_EX_NA, SWP_FRAMECHANGED, GWL_STYLE, WS_POPUP, WS_VISIBLE, WS_CAPTION};
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE as WS_EX_NA, SWP_FRAMECHANGED};
             use windows::Win32::Foundation::RECT;
             
-            // Force borderless popup style
-            let mut style = GetWindowLongPtrW(hwnd, GWL_STYLE) as usize;
-            style &= !WS_CAPTION.0 as usize;
-            style |= WS_POPUP.0 as usize | WS_VISIBLE.0 as usize;
-            let _ = SetWindowLongPtrW(hwnd, GWL_STYLE, style as isize);
-
+            // Set extended styles (ToolWindow and NoActivate)
             let mut ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as usize;
             ex_style |= (WS_EX_TOOLWINDOW.0 | WS_EX_NA.0) as usize;
             let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style as isize);
 
-            // Set position before showing
+            // Set position before showing to avoid jumps
             let _ = SetWindowPos(hwnd, None, m_pos.x, m_pos.y + m_size.height as i32 - ph, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-            let _ = window.show();
+            
+            // Re-show only if not already visible to avoid flickering
+            if !window.is_visible().unwrap_or(false) {
+                let _ = window.show();
+            }
 
             let mut abd = APPBARDATA::default();
             abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
