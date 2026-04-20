@@ -185,10 +185,14 @@ async fn toggle_dock(app: tauri::AppHandle, enable: bool) {
 }
 
 #[tauri::command]
-async fn sync_appbar(window: tauri::WebviewWindow) {
-    let label = window.label().to_string();
-    if label == "main" {
-        register_appbar(window);
+async fn sync_appbar(app: tauri::AppHandle) {
+    if let Some(main_win) = app.get_webview_window("main") {
+        register_appbar(main_win);
+    }
+    if let Some(dock_win) = app.get_webview_window("dock") {
+        if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) && dock_win.is_visible().unwrap_or(false) {
+            register_dock_appbar(dock_win);
+        }
     }
 }
 
@@ -211,6 +215,15 @@ async fn change_dock_mode(app: tauri::AppHandle, mode: String) {
         if current != -1 {
             let _ = app.emit("dock-overlap", current == 1);
         }
+
+        // Double sync after a short delay to catch any layout changes
+        let dock_clone = dock_win.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                register_dock_appbar(dock_clone);
+            }
+        });
     }
 }
 
@@ -1426,7 +1439,11 @@ fn register_dock_appbar(window: tauri::WebviewWindow) {
         let m_pos = monitor.position();
         let hwnd = window.hwnd().unwrap();
         let scale = window.scale_factor().unwrap_or(1.0);
-        let ph = window.outer_size().map(|s| s.height as i32).unwrap_or((100.0 * scale) as i32);
+        
+        // Ensure we have a valid height (fallback to 100 if 0)
+        let mut ph = window.outer_size().map(|s| s.height as i32).unwrap_or(0);
+        if ph <= 0 { ph = (100.0 * scale) as i32; }
+        
         let pr = (56.0 * scale) as i32;
         
         unsafe {
@@ -1438,19 +1455,14 @@ fn register_dock_appbar(window: tauri::WebviewWindow) {
             ex_style |= (WS_EX_TOOLWINDOW.0 | WS_EX_NA.0) as usize;
             let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style as isize);
 
-            // Set position before showing to avoid jumps
-            let _ = SetWindowPos(hwnd, None, m_pos.x, m_pos.y + m_size.height as i32 - ph, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-            
-            // Re-show only if not already visible to avoid flickering
-            if !window.is_visible().unwrap_or(false) {
-                let _ = window.show();
-            }
+            // Hide native taskbar first to free up space (though it's just a hide, it helps)
+            set_taskbar_visibility(false);
 
+            // Register or update appbar
             let mut abd = APPBARDATA::default();
             abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
             abd.hWnd = hwnd;
             
-            // ONLY ABM_NEW if not already registered
             if !DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
                 SHAppBarMessage(ABM_NEW, &mut abd);
                 DOCK_APPBAR_REGISTERED.store(true, Ordering::Relaxed);
@@ -1459,12 +1471,23 @@ fn register_dock_appbar(window: tauri::WebviewWindow) {
             abd.uEdge = ABE_BOTTOM;
             abd.rc = RECT { 
                 left: m_pos.x, 
+                // We always claim the bottom-most rectangle regardless of work area
                 top: m_pos.y + m_size.height as i32 - pr, 
                 right: m_pos.x + m_size.width as i32, 
                 bottom: m_pos.y + m_size.height as i32 
             };
+            
             SHAppBarMessage(ABM_QUERYPOS, &mut abd);
             SHAppBarMessage(ABM_SETPOS, &mut abd);
+            
+            // Critical: Force the window to the actual bottom of the screen, 
+            // ignoring what ABM_SETPOS might have tried to "correct" (like stacking on invisible taskbar)
+            let final_y = m_pos.y + m_size.height as i32 - ph;
+            let _ = SetWindowPos(hwnd, None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            
+            if !window.is_visible().unwrap_or(false) {
+                let _ = window.show();
+            }
         }
     }
 }
