@@ -18,20 +18,23 @@ const Dock = memo(function Dock() {
   const [pinnedApps, setPinnedApps] = useState<AppInfo[]>([]);
   const [activeApps, setActiveApps] = useState<AppInfo[]>([]);
   const iconsRef = useRef<Record<string, string>>({});
-  const [, setIconsTick] = useState(0); // For forcing re-renders when icons change
+  const [, setIconsTick] = useState(0); 
   const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "fixed");
   const [isDockHovered, setIsDockHovered] = useState(false);
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
   const [isOverlapped, setIsOverlapped] = useState(false);
   const [showAddPopup, setShowAddPopup] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, app: AppInfo | null } | null>(null);
-  const [activeOrder, setActiveOrder] = useState<string[]>([]); // Track order of windows by path
+  const [activeOrder, setActiveOrder] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [hoveredApp, setHoveredApp] = useState<string | null>(null);
+  const [pressedApp, setPressedApp] = useState<string | null>(null);
   
   const dockRef = useRef<HTMLDivElement>(null);
 
-  // Sync geometry to backend for precise interaction tracking
+  const isCurrentlyHovered = isDockHovered || isEdgeHovered;
+  const isHidden = dockMode === 'auto-hide' && isOverlapped && !isCurrentlyHovered;
+
   useEffect(() => {
     const updateRect = () => {
       if (dockRef.current) {
@@ -56,15 +59,12 @@ const Dock = memo(function Dock() {
       window.removeEventListener('resize', updateRect);
       observer.disconnect();
     };
-  }, [pinnedApps, activeApps]);
+  }, [pinnedApps, activeApps, isHidden]);
 
-  // Load pinned apps on mount
   useEffect(() => {
     const init = async () => {
       const pinned = await invoke<AppInfo[]>('load_pinned_apps');
       setPinnedApps(pinned.map(a => ({ ...a, is_pinned: true })));
-      
-      // Initial fetch for icons
       pinned.forEach(app => fetchIcon(app.path));
     };
     init();
@@ -83,16 +83,12 @@ const Dock = memo(function Dock() {
     };
   }, []);
 
-  // Poll for active windows
   useEffect(() => {
     const poll = async () => {
-      // Avoid updating apps while dragging to prevent stuttering/freezes
       if (isDragging) return;
-
       const running = await invoke<AppInfo[]>('get_active_windows');
       setActiveApps(running);
       
-      // Maintain stable order
       setActiveOrder(prev => {
         const newPaths = running.map(r => r.path);
         const existingPaths = prev.filter(p => newPaths.includes(p));
@@ -100,7 +96,6 @@ const Dock = memo(function Dock() {
         return [...existingPaths, ...addedPaths];
       });
 
-      // Fetch icons for any new active apps
       running.forEach(app => fetchIcon(app.path, app.hwnd));
     };
 
@@ -112,7 +107,6 @@ const Dock = memo(function Dock() {
   const fetchIcon = async (path: string, hwnd?: number) => {
     const cacheKey = hwnd ? `${path}-${hwnd}` : path;
     if (iconsRef.current[cacheKey]) return;
-    
     try {
       const icon = await invoke<string | null>('get_app_icon', { path, hwnd: hwnd || null });
       if (icon) {
@@ -130,7 +124,6 @@ const Dock = memo(function Dock() {
       if (app.path === 'start') {
         await invoke('open_app', { appName: 'start' });
       } else if (app.hwnd) {
-        // Toggle focus/minimize for active windows
         await invoke('focus_window', { hwnd: app.hwnd });
       } else {
         await invoke('open_app', { appName: app.path });
@@ -145,7 +138,6 @@ const Dock = memo(function Dock() {
     if (app.is_pinned) {
       newPinned = pinnedApps.filter(a => a.path !== app.path);
     } else {
-      // Ensure we don't duplicate
       if (pinnedApps.find(a => a.path === app.path)) return;
       newPinned = [...pinnedApps, { ...app, is_pinned: true, is_running: false, hwnd: undefined }];
       fetchIcon(app.path); 
@@ -174,40 +166,23 @@ const Dock = memo(function Dock() {
     invoke('set_menu_open', { open: false, rect: null }).catch(() => {});
   };
 
-  // Sync menu/popup state to backend for interactivity
   useEffect(() => {
     let open = false;
     let rect = null;
 
     if (contextMenu && menuRef.current) {
       const r = menuRef.current.getBoundingClientRect();
-      rect = {
-        x: Math.round(r.x),
-        y: Math.round(r.y),
-        width: Math.round(r.width),
-        height: Math.round(r.height)
-      };
+      rect = { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
       open = true;
     } else if (showAddPopup) {
-      // For the popup, we use full window rect so clicking background works
-      rect = {
-        x: 0,
-        y: 0,
-        width: window.innerWidth,
-        height: window.innerHeight
-      };
+      rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
       open = true;
     }
 
     invoke('set_menu_open', { open, rect }).catch(() => {});
-  }, [contextMenu, showAddPopup, pinnedApps, activeApps]); // Also re-sync on list changes
+  }, [contextMenu, showAddPopup, pinnedApps, activeApps]);
 
-  const isCurrentlyHovered = isDockHovered || isEdgeHovered;
-  const isHidden = dockMode === 'auto-hide' && isOverlapped && !isCurrentlyHovered;
-
-  // Merge lists: Pinned first, then running but not pinned
   const dockItems = useMemo(() => {
-    // Helper to get a stable ID for an app (filename or full path)
     const getAppId = (p: string) => {
       if (!p) return "";
       const normalized = p.toLowerCase().replace(/\\/g, '/');
@@ -238,39 +213,27 @@ const Dock = memo(function Dock() {
     return [...pinned, ...unpinned];
   }, [pinnedApps, activeApps, activeOrder]);
 
-  const handleReorder = (newItems: AppInfo[]) => {
-    // Ensure 'start' is always at index 0
-    let sortedItems = [...newItems];
-    const startIndex = sortedItems.findIndex(i => i.path === 'start');
-    if (startIndex !== 0 && startIndex !== -1) {
-      const start = sortedItems.splice(startIndex, 1)[0];
-      sortedItems.unshift(start);
-    }
+  const startItem = useMemo(() => dockItems.find(i => i.path === 'start') as AppInfo, [dockItems]);
+  const otherItems = useMemo(() => dockItems.filter(i => i.path !== 'start'), [dockItems]);
 
-    // Extract paths to check for changes
-    const newPinned = sortedItems.filter(item => item.is_pinned && item.path !== 'start');
+  const handleReorder = (newItems: AppInfo[]) => {
+    const newPinned = newItems.filter(item => item.is_pinned);
     const newPinnedPaths = newPinned.map(p => p.path);
     const oldPinnedPaths = pinnedApps.map(p => p.path);
 
-    // Only update if order actually changed
     if (JSON.stringify(newPinnedPaths) !== JSON.stringify(oldPinnedPaths)) {
       setPinnedApps(newPinned);
     }
 
-    const newActivePaths = sortedItems.filter(item => !item.is_pinned).map(item => item.path);
-    if (newActivePaths.length > 0) {
-      const pinnedPaths = newPinned.map(p => p.path);
-      const unpinnedOnly = newActivePaths.filter(p => !pinnedPaths.includes(p));
-      
-      if (JSON.stringify(unpinnedOnly) !== JSON.stringify(activeOrder)) {
-        setActiveOrder(unpinnedOnly);
-      }
+    const newActivePaths = newItems.filter(item => !item.is_pinned).map(item => item.path);
+    if (newActivePaths.length > 0 && JSON.stringify(newActivePaths) !== JSON.stringify(activeOrder)) {
+      setActiveOrder(newActivePaths);
     }
   };
 
   const handleDragEnd = () => {
     setIsDragging(false);
-    // Save to disk only when dragging finishes
+    setPressedApp(null);
     invoke('save_pinned_apps', { apps: pinnedApps }).catch(console.error);
   };
 
@@ -281,62 +244,83 @@ const Dock = memo(function Dock() {
   const iconVariants = {
     idle: { y: 0, scale: 1 },
     hover: { y: -5, scale: 1.1 },
-    drag: { scale: 1.2, y: -10 }
+    drag: { y: -10, scale: 1.1, opacity: 0.8 },
+    tap: { scale: 0.95 }
   };
-
 
   return (
     <div className={`dock-container ${isDragging ? 'dragging' : ''}`} onClick={closeMenu}>
-        <motion.div
-          ref={dockRef}
-          className="dock"
-          onMouseEnter={() => setIsDockHovered(true)}
-          onMouseLeave={() => { setIsDockHovered(false); setIsEdgeHovered(false); setHoveredApp(null); }}
-          initial={{ y: 100, opacity: 0 }}
-          animate={{ y: isHidden ? 100 : 0, opacity: 1 }}
-          transition={{ 
-            y: { type: "spring", stiffness: 300, damping: 35 },
-            opacity: { duration: 0.5 }
-          }}
-          onContextMenu={(e) => handleContextMenu(e, null)}
-        >
+      <motion.div
+        ref={dockRef}
+        className="dock"
+        onMouseEnter={() => setIsDockHovered(true)}
+        onMouseLeave={() => { setIsDockHovered(false); setIsEdgeHovered(false); setHoveredApp(null); setPressedApp(null); }}
+        initial={{ y: 100, opacity: 0 }}
+        animate={{ y: isHidden ? 100 : 0, opacity: 1 }}
+        transition={{ y: { type: "spring", stiffness: 300, damping: 35 }, opacity: { duration: 0.5 } }}
+        onContextMenu={(e) => handleContextMenu(e, null)}
+      >
+        <div className="dock-reorder-container">
+          {startItem && (
+            <div 
+              className="dock-icon-wrapper"
+              onContextMenu={(e) => handleContextMenu(e, startItem)}
+              onMouseEnter={() => setHoveredApp(startItem.path)}
+              onMouseLeave={() => { setHoveredApp(null); setPressedApp(null); }}
+            >
+              <div className="tooltip">{startItem.name}</div>
+              <motion.div 
+                className="dock-icon"
+                variants={iconVariants}
+                animate={pressedApp === startItem.path ? "tap" : (hoveredApp === startItem.path ? "hover" : "idle")}
+                onPointerDown={() => setPressedApp(startItem.path)}
+                onPointerUp={() => setPressedApp(null)}
+                onPointerCancel={() => setPressedApp(null)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleAppClick(startItem);
+                }}
+              >
+                <img src="/bloom.png" alt="Bloom" draggable={false} />
+              </motion.div>
+            </div>
+          )}
+          
           <Reorder.Group
             as="div"
             axis="x"
-            values={dockItems}
+            values={otherItems}
             onReorder={handleReorder}
-            className="dock-reorder-container"
+            className="dock-reorder-group"
           >
-            {dockItems.map((app) => (
+            {otherItems.map((app) => (
               <Reorder.Item
                 as="div"
                 key={app.path}
                 value={app}
-                dragListener={!!app.is_pinned && app.path !== 'start'}
-                dragMomentum={false}
-                dragElastic={0.1}
+                dragListener={!!app.is_pinned}
                 layout
                 className="dock-icon-wrapper"
                 onContextMenu={(e) => handleContextMenu(e, app)}
                 onMouseEnter={() => setHoveredApp(app.path)}
-                onMouseLeave={() => setHoveredApp(null)}
-                onDragStart={() => { if (app.is_pinned && app.path !== 'start') { setIsDragging(true); setHoveredApp(null); } }}
+                onMouseLeave={() => { setHoveredApp(null); setPressedApp(null); }}
+                onDragStart={() => { if (app.is_pinned) { setIsDragging(true); setHoveredApp(null); setPressedApp(null); } }}
                 onDragEnd={handleDragEnd}
               >
                 <div className="tooltip">{app.name}</div>
                 <motion.div 
-                   className="dock-icon"
-                   variants={iconVariants}
-                   animate={hoveredApp === app.path && !isDragging ? "hover" : "idle"}
-                   whileTap={{ scale: 0.9 }}
-                   whileDrag={app.is_pinned && app.path !== 'start' ? "drag" : "idle"}
-                   onTap={() => {
-                     handleAppClick(app);
-                   }}
+                  className="dock-icon"
+                  variants={iconVariants}
+                  animate={pressedApp === app.path ? "tap" : (isDragging && !app.is_pinned ? "idle" : (hoveredApp === app.path && !isDragging ? "hover" : "idle"))}
+                  whileDrag="drag"
+                  onPointerDown={() => setPressedApp(app.path)}
+                  onPointerUp={() => setPressedApp(null)}
+                  onPointerCancel={() => setPressedApp(null)}
+                  onTap={() => {
+                    if (!isDragging) handleAppClick(app);
+                  }}
                 >
-                  {app.path === 'start' ? (
-                    <img src="/bloom.png" alt="Bloom" draggable={false} />
-                  ) : iconsRef.current[app.path] ? (
+                  {iconsRef.current[app.path] ? (
                     <img src={iconsRef.current[app.path]} alt={app.name} draggable={false} />
                   ) : (
                     <div className="fallback-icon">{app.name[0]}</div>
@@ -346,7 +330,8 @@ const Dock = memo(function Dock() {
               </Reorder.Item>
             ))}
           </Reorder.Group>
-        </motion.div>
+        </div>
+      </motion.div>
 
       {contextMenu && (
         <div 
@@ -408,19 +393,16 @@ function AddAppPopup({ onClose, onAdd, containerRef }: {
   const [loading, setLoading] = useState(true);
   const [listIcons, setListIcons] = useState<Record<string, string>>({});
 
-  // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 150);
     return () => clearTimeout(timer);
   }, [search]);
 
-  // Handle ESC key and Focus loss
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     const handleBlur = () => onClose();
-
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('blur', handleBlur);
     return () => {
@@ -433,7 +415,6 @@ function AddAppPopup({ onClose, onAdd, containerRef }: {
     const load = async () => {
       try {
         const res = await invoke<AppInfo[]>('get_installed_apps');
-        // Sort alphabetically
         setApps(res.sort((a, b) => a.name.localeCompare(b.name)));
       } finally {
         setLoading(false);
@@ -445,30 +426,23 @@ function AddAppPopup({ onClose, onAdd, containerRef }: {
   const filtered = useMemo(() => {
     const s = debouncedSearch.toLowerCase();
     if (!s) return apps.slice(0, 15);
-    return apps
-      .filter(a => a.name.toLowerCase().includes(s))
-      .slice(0, 50);
+    return apps.filter(a => a.name.toLowerCase().includes(s)).slice(0, 50);
   }, [apps, debouncedSearch]);
 
-  // Batched icon fetching
   useEffect(() => {
     let active = true;
     const fetchVisibleIcons = async () => {
       let batch: Record<string, string> = {};
       let count = 0;
-
       for (const app of filtered) {
         if (!active) break;
         if (!listIcons[app.path]) {
-          // Slightly slower polling to keep system responsive
           await new Promise(r => setTimeout(r, 25)); 
           try {
             const icon = await invoke<string | null>('get_app_icon', { path: app.path });
             if (icon && active) {
               batch[app.path] = icon;
               count++;
-              
-              // Apply in batches of 4 to balance responsiveness and visual updates
               if (count >= 4) {
                 setListIcons(prev => ({ ...prev, ...batch }));
                 batch = {};
@@ -480,61 +454,30 @@ function AddAppPopup({ onClose, onAdd, containerRef }: {
           }
         }
       }
-      
-      // Final batch
-      if (active && count > 0) {
-        setListIcons(prev => ({ ...prev, ...batch }));
-      }
+      if (active && count > 0) setListIcons(prev => ({ ...prev, ...batch }));
     };
     fetchVisibleIcons();
     return () => { active = false; };
   }, [filtered]);
 
   return (
-    <motion.div 
-      className="popup-overlay"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      onClick={onClose}
-    >
-      <motion.div 
-        ref={containerRef}
-        className="add-app-popup"
-        layout
-        initial={{ scale: 0.95, opacity: 0, y: 20 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        exit={{ scale: 0.95, opacity: 0, y: 20 }}
-        onClick={(e) => e.stopPropagation()}
-      >
+    <motion.div className="popup-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
+      <motion.div ref={containerRef} className="add-app-popup" layout initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} onClick={(e) => e.stopPropagation()}>
         <div className="popup-header">
           <h3>Add to Dock</h3>
           <div className="search-container">
-            <input 
-              type="text" 
-              placeholder="Search applications..." 
-              autoFocus 
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+            <input type="text" placeholder="Search applications..." autoFocus value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
         </div>
         <div className="apps-list">
           {loading ? (
-             <div className="loading-state">
-               <div className="spinner"></div>
-               <p>Searching for apps...</p>
-             </div>
+             <div className="loading-state"><div className="spinner"></div><p>Searching for apps...</p></div>
           ) : filtered.length > 0 ? (
             filtered.map(app => (
               <div key={app.path} className="app-list-item" onClick={() => onAdd(app)}>
                 <div className="app-list-info">
                   <div className="app-list-icon">
-                    {listIcons[app.path] ? (
-                      <img src={listIcons[app.path]} alt="" draggable={false} />
-                    ) : (
-                      <div className="app-icon-placeholder">{app.name[0]}</div>
-                    )}
+                    {listIcons[app.path] ? <img src={listIcons[app.path]} alt="" draggable={false} /> : <div className="app-icon-placeholder">{app.name[0]}</div>}
                   </div>
                   <div className="app-name">{app.name}</div>
                 </div>

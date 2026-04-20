@@ -65,7 +65,8 @@ body {
   /* Re-enable pointer events for the dock itself */
 }
 
-.dock-reorder-container {
+.dock-reorder-container,
+.dock-reorder-group {
   display: flex;
   flex-direction: row;
   align-items: center;
