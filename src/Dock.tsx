@@ -35,7 +35,20 @@ const Dock = memo(function Dock() {
   const dockRef = useRef<HTMLDivElement>(null);
 
   const isCurrentlyHovered = isDockHovered || isEdgeHovered;
-  const isHidden = dockMode === 'auto-hide' && isOverlapped && !isCurrentlyHovered;
+  const [interactionState, setInteractionState] = useState<'active' | 'grace' | 'none'>('none');
+  const isAnyInteraction = isCurrentlyHovered || !!contextMenu || showAddPopup;
+
+  useEffect(() => {
+    if (isAnyInteraction) {
+      setInteractionState('active');
+    } else if (interactionState !== 'none') {
+      setInteractionState('grace');
+      const timer = setTimeout(() => setInteractionState('none'), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [isAnyInteraction]);
+
+  const isHidden = dockMode === 'auto-hide' && isOverlapped && interactionState === 'none';
 
   useEffect(() => {
     // Poll for visibility to trigger entrance animation
@@ -110,9 +123,14 @@ const Dock = memo(function Dock() {
       setIsOverlapped(event.payload);
     });
 
+    const unlistenEdgeHover = listen<boolean>("dock-edge-hover", (event) => {
+      setIsEdgeHovered(event.payload);
+    });
+
     return () => {
       unlistenSettings.then(f => f());
       unlistenOverlap.then(f => f());
+      unlistenEdgeHover.then(f => f());
     };
   }, []);
 
@@ -207,8 +225,9 @@ const Dock = memo(function Dock() {
       const r = menuRef.current.getBoundingClientRect();
       rect = { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
       open = true;
-    } else if (showAddPopup) {
-      rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+    } else if (showAddPopup && popupRef.current) {
+      const r = popupRef.current.getBoundingClientRect();
+      rect = { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
       open = true;
     }
 
@@ -288,10 +307,10 @@ const Dock = memo(function Dock() {
         ref={dockRef}
         className={`dock ${(isImpacted || isExpanded) && !isHidden ? 'dock-expanded' : ''}`}
         onMouseEnter={() => setIsDockHovered(true)}
-        onMouseLeave={() => { setIsDockHovered(false); setIsEdgeHovered(false); setHoveredApp(null); setPressedApp(null); }}
-        initial={{ y: -450, opacity: 1, width: 34, height: 34, borderTopLeftRadius: 17, borderTopRightRadius: 17, borderBottomLeftRadius: 17, borderBottomRightRadius: 17, scaleX: 0.9, scaleY: 1.3 }}
+        onMouseLeave={() => { setIsDockHovered(false); setHoveredApp(null); setPressedApp(null); }}
+        initial={{ y: -800, opacity: 1, width: 34, height: 34, borderTopLeftRadius: 17, borderTopRightRadius: 17, borderBottomLeftRadius: 17, borderBottomRightRadius: 17, scaleX: 0.9, scaleY: 1.3 }}
         animate={{ 
-          y: !isReady ? -450 : (isHidden ? 100 : 0), 
+          y: !isReady ? -800 : (isHidden ? 100 : 0), 
           width: isExpanded && !isHidden ? 'auto' : 34,
           height: isExpanded && !isHidden ? 'auto' : 34,
           borderTopLeftRadius: isExpanded && !isHidden ? 18 : 17,

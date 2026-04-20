@@ -204,6 +204,19 @@ async fn change_dock_mode(app: tauri::AppHandle, mode: String) {
         } else if let Ok(hwnd) = dock_win.hwnd() {
             unregister_appbar_native(hwnd);
             DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
+            
+            // Force position even in auto-hide mode to ensure it's at the screen bottom
+            if let Ok(Some(monitor)) = dock_win.primary_monitor() {
+                let m_size = monitor.size();
+                let m_pos = monitor.position();
+                let scale = dock_win.scale_factor().unwrap_or(1.0);
+                let ph = dock_win.outer_size().map(|s| s.height as i32).unwrap_or((600.0 * scale) as i32);
+                let final_y = m_pos.y + m_size.height as i32 - ph;
+                unsafe {
+                    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED};
+                    let _ = SetWindowPos(hwnd, None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                }
+            }
         }
         
         // Ensure always on top and native taskbar stays hidden
@@ -1158,13 +1171,19 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     let mut class_name = [0u8; 256];
                     let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
                     let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
-                    
+                    let mut text = [0u16; 512];
+                    let text_len = windows::Win32::UI::WindowsAndMessaging::GetWindowTextW(hwnd, &mut text);
+                    let title = String::from_utf16_lossy(&text[..text_len as usize]);
+
                     let mut rect = RECT::default();
-                    let is_bloom = class_str.contains("Bloom") || class_str.contains("bloom"); 
+                    let is_bloom = class_str.contains("Bloom") || class_str.contains("bloom") || title.contains("Bloom") || title.contains("bloom"); 
                     let is_desktop = class_str == "Progman" || class_str == "WorkerW";
+                    let is_start = (class_str == "Windows.UI.Core.CoreWindow" || class_str == "SimpleWindow") && 
+                                   (title == "Start" || title == "Search");
+                    let is_shell = class_str == "Shell_TrayWnd" || class_str == "Shell_SecondaryTrayWnd" || is_start;
                     
                     let mut is_valid_window = false;
-                    if !is_desktop && !is_bloom {
+                    if !is_desktop && !is_bloom && !is_shell {
                         let dwm_res = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut _ as *mut _, std::mem::size_of::<RECT>() as u32);
                         if dwm_res.is_ok() {
                             is_valid_window = true;
@@ -1204,7 +1223,7 @@ fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                             if is_fs && last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(false)); last_visible = false; }
                             else if !is_fs && !last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(true)); last_visible = true; }
                         }
-                    } else if is_desktop || is_bloom {
+                    } else if is_desktop || is_shell || is_bloom {
                         CURRENT_DOCK_OVERLAP.store(0, Ordering::Relaxed);
                         if !last_visible { let _ = tx_clone.send(SystemCommand::ToggleVisibility(true)); last_visible = true; }
                         if last_dock_overlap != Some(false) || last_emit.elapsed() >= Duration::from_secs(3) { 
@@ -1511,6 +1530,7 @@ fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
         
         let mut last_main_ignore = None;
         let mut last_dock_ignore = None;
+        let mut last_edge_hover = None;
         let mut dock_interaction_expiry = Instant::now() - Duration::from_secs(1);
         let mut topbar_interaction_expiry = Instant::now() - Duration::from_secs(1);
         
@@ -1522,9 +1542,9 @@ fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                     // --- Dock Interaction ---
                     if let Some(dock_win) = app_handle.get_webview_window("dock") {
                         if dock_win.is_visible().unwrap_or(false) {
-                            let mut is_interactive = false;
+                            let mut is_click_interactive = false;
+                            let mut is_hovered = false;
                             
-                            // Use cached rect instead of polling IPC
                             if let Ok(lock) = DOCK_WINDOW_RECT.lock() {
                                 if let Some((win_pos, win_size)) = *lock {
                                     let in_window = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
@@ -1540,13 +1560,13 @@ fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                                                 let rw = (r.width as f64 * scale) as i32 + 20;
                                                 let rh = (r.height as f64 * scale) as i32 + 20;
                                                 if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
-                                                    is_interactive = true;
+                                                    is_click_interactive = true;
                                                 }
                                             }
                                         }
 
                                         // 2. Check if over an open menu
-                                        if !is_interactive && MENU_IS_OPEN.load(Ordering::Relaxed) {
+                                        if !is_click_interactive && MENU_IS_OPEN.load(Ordering::Relaxed) {
                                             if let Ok(rect) = MENU_RECT.try_lock() {
                                                 if let Some(r) = *rect {
                                                     let scale = dock_win.scale_factor().unwrap_or(1.0);
@@ -1555,27 +1575,31 @@ fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                                                     let rw = (r.width as f64 * scale) as i32 + 10;
                                                     let rh = (r.height as f64 * scale) as i32 + 10;
                                                     if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
-                                                        is_interactive = true;
+                                                        is_click_interactive = true;
                                                     }
                                                 }
                                             }
                                         }
 
                                         // 3. Hot-edge trigger
-                                        if !is_interactive {
-                                            let monitor_bottom = win_pos.y + win_size.height as i32;
-                                            if pt.y >= (monitor_bottom - 40) {
-                                                is_interactive = true;
-                                            }
+                                        let monitor_bottom = win_pos.y + win_size.height as i32;
+                                        if pt.y >= (monitor_bottom - 60) {
+                                            is_hovered = true;
                                         }
                                     }
                                 }
                             }
                             
-                            if is_interactive {
+                            let total_hover = is_hovered || is_click_interactive;
+                            if is_click_interactive {
                                 dock_interaction_expiry = now + Duration::from_millis(150);
                             }
                             
+                            if Some(total_hover) != last_edge_hover {
+                                let _ = dock_win.emit("dock-edge-hover", total_hover);
+                                last_edge_hover = Some(total_hover);
+                            }
+
                             let should_ignore = now > dock_interaction_expiry && !MENU_IS_OPEN.load(Ordering::Relaxed);
                             if Some(should_ignore) != last_dock_ignore {
                                 let _ = dock_win.set_ignore_cursor_events(should_ignore);
