@@ -1377,7 +1377,7 @@ fn register_appbar(window: tauri::WebviewWindow) {
         let m_pos = monitor.position();
         let hwnd = window.hwnd().unwrap();
         let scale = window.scale_factor().unwrap_or(1.0);
-        let ph = (300.0 * scale) as i32; // Window is tall enough for calendar
+        let ph = window.outer_size().map(|s| s.height as i32).unwrap_or((48.0 * scale) as i32);
         let pr = (40.0 * scale) as i32;  // But only reserve 40px of screen space
         
         unsafe {
@@ -1426,7 +1426,7 @@ fn register_dock_appbar(window: tauri::WebviewWindow) {
         let m_pos = monitor.position();
         let hwnd = window.hwnd().unwrap();
         let scale = window.scale_factor().unwrap_or(1.0);
-        let ph = (600.0 * scale) as i32;
+        let ph = window.outer_size().map(|s| s.height as i32).unwrap_or((100.0 * scale) as i32);
         let pr = (56.0 * scale) as i32;
         
         unsafe {
