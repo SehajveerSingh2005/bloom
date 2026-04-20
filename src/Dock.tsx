@@ -291,7 +291,7 @@ const Dock = memo(function Dock() {
         onMouseLeave={() => { setIsDockHovered(false); setIsEdgeHovered(false); setHoveredApp(null); setPressedApp(null); }}
         initial={{ y: -450, opacity: 1, width: 34, height: 34, borderTopLeftRadius: 17, borderTopRightRadius: 17, borderBottomLeftRadius: 17, borderBottomRightRadius: 17, scaleX: 0.9, scaleY: 1.3 }}
         animate={{ 
-          y: !isReady || isHidden ? -450 : 0, 
+          y: !isReady ? -450 : (isHidden ? 100 : 0), 
           width: isExpanded && !isHidden ? 'auto' : 34,
           height: isExpanded && !isHidden ? 'auto' : 34,
           borderTopLeftRadius: isExpanded && !isHidden ? 18 : 17,
