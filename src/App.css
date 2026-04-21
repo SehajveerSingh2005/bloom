@@ -62,7 +62,30 @@ body {
     height: 36px;
     position: relative;
     flex-shrink: 0;
-    /* No overflow:hidden — it clips the concave ::before/::after corners */
+}
+
+.main-row-inner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    position: relative;
+}
+
+.power-pulse-content {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    height: 100%;
+}
+
+.power-pulse-content .label {
+    font-size: 13px;
+    font-weight: 600;
+    color: white;
 }
 
 .bottom-row {
