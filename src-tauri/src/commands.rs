@@ -225,9 +225,20 @@ pub async fn focus_window(hwnd: isize) {
 }
 
 #[tauri::command]
-pub async fn get_app_icon(path: String, hwnd: Option<isize>) -> Result<Option<String>, String> {
-    let cache = ICON_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> Result<Option<String>, String> {
+    let cache_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let cache_path = cache_dir.join("icons_cache.json");
     
+    let cache = ICON_CACHE.get_or_init(|| {
+        let mut map = std::collections::HashMap::new();
+        if let Ok(content) = std::fs::read_to_string(&cache_path) {
+            if let Ok(existing) = serde_json::from_str::<std::collections::HashMap<String, String>>(&content) {
+                map = existing;
+            }
+        }
+        std::sync::Mutex::new(map)
+    });
+
     // 1. Check cache first
     if let Ok(c) = cache.lock() {
         if let Some(icon) = c.get(&path) {
@@ -237,8 +248,11 @@ pub async fn get_app_icon(path: String, hwnd: Option<isize>) -> Result<Option<St
 
     // 2. Try to get icon from HWND if available (Best for PWAs/Netflix)
     if let Some(h) = hwnd {
-        unsafe {
+        let result = tauri::async_runtime::spawn_blocking(move || unsafe {
+            use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
             use windows::Win32::UI::WindowsAndMessaging::{GetClassLongPtrW, GCLP_HICON, WM_GETICON, ICON_BIG, SendMessageTimeoutW, SMTO_ABORTIFHUNG};
+            
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             let h_hwnd = HWND(h as *mut _);
             
             let mut h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(GetClassLongPtrW(h_hwnd, GCLP_HICON) as *mut _);
@@ -256,39 +270,64 @@ pub async fn get_app_icon(path: String, hwnd: Option<isize>) -> Result<Option<St
                 if res != 0 { h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(res as *mut _); }
             }
             
-            if !h_icon.is_invalid() {
-                if let Some(base64) = icon_to_base64(h_icon) {
-                    if let Ok(mut c) = cache.lock() {
-                        c.insert(path.clone(), base64.clone());
-                    }
-                    return Ok(Some(base64));
-                }
+            let res = if !h_icon.is_invalid() {
+                icon_to_base64(h_icon)
+            } else {
+                None
+            };
+            CoUninitialize();
+            res
+        }).await.unwrap_or(None);
+
+        if let Some(base64) = result {
+            if let Ok(mut c) = cache.lock() {
+                c.insert(path.clone(), base64.clone());
+                let _ = std::fs::create_dir_all(&cache_dir);
+                let _ = std::fs::write(&cache_path, serde_json::to_string(&*c).unwrap_or_default());
             }
+            return Ok(Some(base64));
         }
     }
 
-    // 3. Fallback to path-based extraction (run heavy shell ops in blocking thread)
+    // 3. Fallback to path-based extraction
     let path_clone = path.clone();
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
         use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
         use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
-        // Ensure COM is initialized for this thread
+        
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let result = {
-            let target_path = if path_clone.to_lowercase().ends_with(".lnk") {
+            let mut actual_path = if path_clone.to_lowercase().ends_with(".lnk") {
                 resolve_shortcut(&path_clone).unwrap_or(path_clone.clone())
             } else {
                 path_clone.clone()
             };
 
-            let mut actual_path = target_path.clone();
-            
-            // Special case for code.exe
-            if target_path.to_lowercase().contains("code.exe") || target_path.to_lowercase().ends_with("code") {
-                if let Ok(home) = std::env::var("USERPROFILE") {
-                    let p1 = format!("{}\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", home);
-                    if std::path::Path::new(&p1).exists() { actual_path = p1; }
+            // Enhanced path resolution for common names
+            if !std::path::Path::new(&actual_path).is_absolute() {
+                if actual_path.to_lowercase() == "code" || actual_path.to_lowercase() == "code.exe" {
+                    if let Ok(home) = std::env::var("USERPROFILE") {
+                        let p1 = format!("{}\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", home);
+                        if std::path::Path::new(&p1).exists() { actual_path = p1; }
+                    }
+                } else if actual_path.to_lowercase() == "wt" || actual_path.to_lowercase() == "wt.exe" {
+                   if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                        let p = format!("{}\\Microsoft\\WindowsApps\\wt.exe", local);
+                        if std::path::Path::new(&p).exists() { actual_path = p; }
+                   }
+                } else {
+                    let common_exes = vec![
+                        r"C:\Windows\explorer.exe",
+                        r"C:\Windows\System32\notepad.exe",
+                        r"C:\Windows\System32\cmd.exe",
+                    ];
+                    for p in common_exes {
+                        if p.to_lowercase().contains(&actual_path.to_lowercase()) {
+                            actual_path = p.to_string();
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -306,10 +345,9 @@ pub async fn get_app_icon(path: String, hwnd: Option<isize>) -> Result<Option<St
                 let base64_icon = icon_to_base64(shfi.hIcon);
                 let _ = DestroyIcon(shfi.hIcon);
                 if let Some(ref base64) = base64_icon {
-                    if let Some(c) = ICON_CACHE.get() {
-                        if let Ok(mut lock) = c.lock() {
-                            lock.insert(path_clone, base64.clone());
-                        }
+                    if let Ok(mut lock) = ICON_CACHE.get().unwrap().lock() {
+                        lock.insert(path_clone, base64.clone());
+                        let _ = std::fs::write(&cache_path, serde_json::to_string(&*lock).unwrap_or_default());
                     }
                 }
                 Some(base64_icon)
@@ -321,6 +359,7 @@ pub async fn get_app_icon(path: String, hwnd: Option<isize>) -> Result<Option<St
         Ok(result.flatten())
     }).await.map_err(|e| e.to_string())?
 }
+
 
 #[tauri::command]
 pub fn save_pinned_apps(app: AppHandle, apps: Vec<AppInfo>) -> Result<(), String> {

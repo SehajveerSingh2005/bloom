@@ -156,7 +156,7 @@ const Dock = memo(function Dock() {
     return () => clearInterval(interval);
   }, [isDragging]);
 
-  const fetchIcon = async (path: string, hwnd?: number) => {
+  const fetchIcon = async (path: string, hwnd?: number, retryCount = 0) => {
     const cacheKey = hwnd ? `${path}-${hwnd}` : path;
     if (iconsRef.current[cacheKey]) return;
     try {
@@ -165,9 +165,15 @@ const Dock = memo(function Dock() {
         iconsRef.current[cacheKey] = icon;
         iconsRef.current[path] = icon;
         setIconsTick(t => t + 1);
+      } else if (retryCount < 3 && !hwnd) {
+        // If it's a pinned app (no hwnd) and failed, retry with backoff
+        setTimeout(() => fetchIcon(path, undefined, retryCount + 1), 3000 * (retryCount + 1));
       }
     } catch (e) {
       console.error(`Failed to fetch icon for ${path}:`, e);
+      if (retryCount < 3 && !hwnd) {
+        setTimeout(() => fetchIcon(path, undefined, retryCount + 1), 3000 * (retryCount + 1));
+      }
     }
   };
 
