@@ -21,6 +21,7 @@ function SettingsApp() {
   const [isSearching, setIsSearching] = useState(false);
   const [dockEnabled, setDockEnabled] = useState(false);
   const [dockMode, setDockMode] = useState("fixed");
+  const [lowBatteryThreshold, setLowBatteryThreshold] = useState(20);
 
   // Initialize autostart state and set background effects
   useEffect(() => {
@@ -82,6 +83,9 @@ function SettingsApp() {
 
     const dMode = localStorage.getItem("bloom-dock-mode");
     if (dMode) setDockMode(dMode);
+
+    const threshold = localStorage.getItem("bloom-low-battery-threshold");
+    if (threshold !== null) setLowBatteryThreshold(parseInt(threshold));
   }, []);
 
   const handleClose = async (e: React.MouseEvent) => {
@@ -178,6 +182,12 @@ function SettingsApp() {
     setDockMode(newMode);
     localStorage.setItem("bloom-dock-mode", newMode);
     notifyChange("dock-mode", newMode);
+  };
+
+  const handleThresholdChange = (val: number) => {
+    setLowBatteryThreshold(val);
+    localStorage.setItem("bloom-low-battery-threshold", val.toString());
+    notifyChange("low-battery-threshold", val);
   };
 
   const handleCityChange = async (newCity: string) => {
@@ -299,6 +309,30 @@ function SettingsApp() {
               </div>
             </>
           )}
+
+          <div className="setting-divider" />
+
+          <div className="setting-item">
+            <div className="setting-icon-bg" style={{ background: '#ff9500' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                <rect x="2" y="7" width="16" height="10" rx="2" ry="2" />
+                <path d="M22 11v2" strokeLinecap="round" />
+              </svg>
+            </div>
+            <div className="setting-info">
+              <span className="setting-label">Low Battery Alert</span>
+              <span className="setting-desc">Trigger at {lowBatteryThreshold}%</span>
+            </div>
+            <input 
+              type="range" 
+              min="5" 
+              max="50" 
+              step="5" 
+              value={lowBatteryThreshold} 
+              onChange={(e) => handleThresholdChange(parseInt(e.target.value))} 
+              className="settings-slider"
+            />
+          </div>
         </div>
 
         <div className="setting-group-label">Feature Modules</div>

@@ -55,7 +55,7 @@ function SettingsIcon() {
   );
 }
 
-function BatteryIcon({ charging, level }: { charging: boolean; level: number }) {
+function BatteryIcon({ charging, level, threshold = 20 }: { charging: boolean; level: number; threshold?: number }) {
   const percentage = Math.min(Math.max(level, 0), 100);
   
   return (
@@ -82,7 +82,7 @@ function BatteryIcon({ charging, level }: { charging: boolean; level: number }) 
           x="3.8" y="2.5" 
           width={Math.max(0.5, (percentage / 100) * 10.4)} 
           height="5" rx="1" 
-          fill={charging ? "#32D74B" : (percentage <= 20 ? "#FF453A" : "white")} 
+          fill={charging ? "#32D74B" : (percentage <= threshold ? "#FF453A" : "white")} 
         />
       </svg>
       {/* Charging Bolt - Centered on the battery body */}
@@ -185,8 +185,11 @@ function App() {
   const [batteryLevel, setBatteryLevel] = useState(100);
   const [isCharging, setIsCharging] = useState(false);
   const [showPowerPulse, setShowPowerPulse] = useState(false);
+  const [showLowBatteryPulse, setShowLowBatteryPulse] = useState(false);
+  const [lowBatteryThreshold, setLowBatteryThreshold] = useState(() => parseInt(localStorage.getItem("bloom-low-battery-threshold") || "20"));
   const prevChargingRef = useRef<boolean | null>(null);
   const powerPulseTimeoutRef = useRef<any>(null);
+  const lowBatteryPulseShownRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (prevChargingRef.current !== null && prevChargingRef.current !== isCharging) {
@@ -198,6 +201,20 @@ function App() {
     }
     prevChargingRef.current = isCharging;
   }, [isCharging]);
+
+  useEffect(() => {
+    // Trigger pulse when dropping below threshold while discharging
+    if (batteryLevel <= lowBatteryThreshold && !isCharging && !lowBatteryPulseShownRef.current) {
+      setShowLowBatteryPulse(true);
+      lowBatteryPulseShownRef.current = true;
+      setTimeout(() => setShowLowBatteryPulse(false), 5000);
+    }
+    
+    // Reset the "shown" state if battery is charged or threshold is lowered
+    if (isCharging || batteryLevel > lowBatteryThreshold) {
+      lowBatteryPulseShownRef.current = false;
+    }
+  }, [batteryLevel, isCharging, lowBatteryThreshold]);
 
   // Weather state
   const [temperature, setTemperature] = useState<number | null>(null);
@@ -306,6 +323,9 @@ function App() {
       }
       if (key === "corners-enabled") {
         setSettingsCornersEnabled(value as boolean);
+      }
+      if (key === "low-battery-threshold") {
+        setLowBatteryThreshold(value);
       }
       if (key === "dock-enabled") {
         if (windowLabel === 'main') {
@@ -730,7 +750,7 @@ function App() {
   // Calculate width dynamically based on enabled features
   const getDynamicWidth = () => {
     if (isCalendarMode) return 480;
-    if (showPowerPulse && !isHovered) return 200;
+    if ((showPowerPulse || showLowBatteryPulse) && !isHovered) return 200;
 
     // Narrow base is 140. 
     // - Visualizer adds ~30px.
@@ -833,17 +853,17 @@ function App() {
             >
               <div className="main-row">
                 <AnimatePresence mode="wait">
-                  {showPowerPulse && !isHovered ? (
+                  {(showPowerPulse || showLowBatteryPulse) && !isHovered ? (
                     <motion.div
-                      key="power-pulse-view"
+                      key="pulse-view"
                       initial={{ opacity: 0, scale: 0.95, filter: "blur(4px)" }}
                       animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
                       exit={{ opacity: 0, scale: 1.05, filter: "blur(4px)" }}
                       className="power-pulse-content"
                     >
-                      <BatteryIcon charging={isCharging} level={batteryLevel} />
-                      <span className="label">
-                        {isCharging ? 'Charging' : 'On Battery'} • {batteryLevel}%
+                      <BatteryIcon charging={isCharging} level={batteryLevel} threshold={lowBatteryThreshold} />
+                      <span className="label" style={{ color: showLowBatteryPulse ? "#FF453A" : "inherit" }}>
+                        {showLowBatteryPulse ? "Low Battery" : (isCharging ? "Charging" : "On Battery")} • {batteryLevel}%
                       </span>
                     </motion.div>
                   ) : (
@@ -983,7 +1003,7 @@ function App() {
                                     </div>
                                   )}
                                   <div className="passive-feature">
-                                    <BatteryIcon charging={isCharging} level={batteryLevel} />
+                                    <BatteryIcon charging={isCharging} level={batteryLevel} threshold={lowBatteryThreshold} />
                                     <span className="label">{batteryLevel}%</span>
                                   </div>
                                 </motion.div>
