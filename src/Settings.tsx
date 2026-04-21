@@ -434,6 +434,35 @@ function SettingsApp() {
             </label>
           </div>
         </div>
+
+        <div className="setting-group-label">Bloom Management</div>
+        <div className="setting-group">
+          <div className="setting-item action" onClick={() => invoke('restart_bloom')}>
+             <div className="setting-icon-bg" style={{ background: '#8e8e93' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3" />
+              </svg>
+            </div>
+            <div className="setting-info">
+              <span className="setting-label">Restart Bloom</span>
+              <span className="setting-desc">Reinitialize all components</span>
+            </div>
+          </div>
+          
+          <div className="setting-divider" />
+
+          <div className="setting-item action danger" onClick={() => invoke('quit_bloom')}>
+             <div className="setting-icon-bg" style={{ background: '#ff3b30' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+              </svg>
+            </div>
+            <div className="setting-info">
+              <span className="setting-label">Quit Bloom</span>
+              <span className="setting-desc">Exit application completely</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

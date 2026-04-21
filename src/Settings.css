@@ -294,6 +294,7 @@ input:checked + .slider:before {
   outline: none;
   cursor: pointer;
   -webkit-appearance: none;
+  appearance: none;
   min-width: 80px;
   text-align: center;
 }
@@ -305,4 +306,29 @@ input:checked + .slider:before {
 .settings-select option {
   background: #1a1a1a;
   color: white;
+}
+
+.setting-item.action {
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.setting-item.action:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.setting-item.action:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.setting-item.action.danger:hover {
+  background: rgba(255, 59, 48, 0.15);
+}
+
+.setting-item.action.danger .setting-label {
+  color: #ff453a;
+}
+
+.setting-item.action.danger:hover .setting-label {
+  color: #ff3b30;
 }

@@ -242,6 +242,62 @@ body {
   margin: 4px 8px;
 }
 
+.menu-item.has-submenu {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: relative;
+}
+
+.submenu-arrow {
+  font-size: 8px;
+  opacity: 0.5;
+  margin-left: 10px;
+}
+
+.submenu {
+  position: absolute;
+  left: 100%;
+  bottom: -6px;
+  background: rgba(40, 40, 40, 0.98);
+  backdrop-filter: blur(25px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 6px;
+  min-width: 140px;
+  display: none;
+  flex-direction: column;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  z-index: 10000;
+}
+
+/* Bridge the gap to prevent losing hover */
+.submenu::before {
+  content: "";
+  position: absolute;
+  left: -20px;
+  top: -20px;
+  bottom: -20px;
+  width: 40px;
+  z-index: -1;
+}
+
+.menu-item.has-submenu:hover {
+  background: #3b82f6;
+}
+
+.menu-item.has-submenu:hover .submenu {
+  display: flex;
+}
+
+.menu-item.has-submenu .submenu .menu-item:hover {
+  background: #3b82f6;
+}
+
+.menu-item.has-submenu .submenu .menu-item.quit:hover {
+  background: #ef4444;
+}
+
 /* Add App Popup */
 .popup-overlay {
   position: fixed;

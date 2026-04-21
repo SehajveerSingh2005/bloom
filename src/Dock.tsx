@@ -25,6 +25,7 @@ const Dock = memo(function Dock() {
   const [isOverlapped, setIsOverlapped] = useState(false);
   const [showAddPopup, setShowAddPopup] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, app: AppInfo | null } | null>(null);
+  const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [hoveredApp, setHoveredApp] = useState<string | null>(null);
@@ -209,6 +210,7 @@ const Dock = memo(function Dock() {
 
   const closeMenu = () => {
     setContextMenu(null);
+    setActiveSubmenu(null);
     invoke('set_menu_open', { open: false, rect: null }).catch(() => {});
   };
 
@@ -223,7 +225,12 @@ const Dock = memo(function Dock() {
 
     if (contextMenu && menuRef.current) {
       const r = menuRef.current.getBoundingClientRect();
-      rect = { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
+      rect = { 
+        x: Math.round(r.x), 
+        y: Math.round(r.y), 
+        width: Math.round(r.width + (activeSubmenu ? 160 : 0)), 
+        height: Math.round(r.height) 
+      };
       open = true;
     } else if (showAddPopup && popupRef.current) {
       const r = popupRef.current.getBoundingClientRect();
@@ -232,7 +239,7 @@ const Dock = memo(function Dock() {
     }
 
     invoke('set_menu_open', { open, rect }).catch(() => {});
-  }, [contextMenu, showAddPopup, pinnedApps, activeApps]);
+  }, [contextMenu, showAddPopup, pinnedApps, activeApps, activeSubmenu]);
 
   const dockItems = useMemo(() => {
     const getAppId = (p: string) => {
@@ -424,7 +431,7 @@ const Dock = memo(function Dock() {
         <div 
           ref={menuRef}
           className="context-menu" 
-          style={{ left: contextMenu.x, top: contextMenu.y - (contextMenu.app ? 160 : 60) }}
+          style={{ left: contextMenu.x, top: contextMenu.y - (contextMenu.app ? 200 : 100) }}
           onClick={(e) => e.stopPropagation()}
         >
           {contextMenu.app ? (
@@ -436,22 +443,54 @@ const Dock = memo(function Dock() {
               <div className="menu-item" onClick={() => { setShowAddPopup(true); closeMenu(); }}>
                 Add App to Dock...
               </div>
-              <div className="menu-item" onClick={closeMenu}>Options</div>
-              {contextMenu.app.is_running && (
-                <div className="menu-item quit" onClick={async () => {
-                  if (contextMenu.app?.hwnd) {
-                    await invoke('close_window', { hwnd: contextMenu.app.hwnd });
-                    closeMenu();
-                  }
-                }}>
-                  Quit
+              <div 
+                className="menu-item has-submenu"
+                onMouseEnter={() => setActiveSubmenu('bloom')}
+                onMouseLeave={() => setActiveSubmenu(null)}
+              >
+                Bloom Options
+                <span className="submenu-arrow">▶</span>
+                <div className="submenu">
+                  <div className="menu-item" onClick={() => { invoke('open_settings_window'); closeMenu(); }}>Open Settings</div>
+                  <div className="menu-item" onClick={() => invoke('restart_bloom')}>Restart Bloom</div>
+                  <div className="menu-divider" />
+                  <div className="menu-item quit" onClick={() => invoke('quit_bloom')}>Quit Bloom</div>
                 </div>
+              </div>
+              {contextMenu.app.is_running && (
+                <>
+                  <div className="menu-divider" />
+                  <div className="menu-item quit" onClick={async () => {
+                    if (contextMenu.app?.hwnd) {
+                      await invoke('close_window', { hwnd: contextMenu.app.hwnd });
+                      closeMenu();
+                    }
+                  }}>
+                    Quit {contextMenu.app.name}
+                  </div>
+                </>
               )}
             </>
           ) : (
-            <div className="menu-item" onClick={() => { setShowAddPopup(true); closeMenu(); }}>
-              Add App to Dock...
-            </div>
+            <>
+              <div className="menu-item" onClick={() => { setShowAddPopup(true); closeMenu(); }}>
+                Add App to Dock...
+              </div>
+              <div 
+                className="menu-item has-submenu"
+                onMouseEnter={() => setActiveSubmenu('bloom')}
+                onMouseLeave={() => setActiveSubmenu(null)}
+              >
+                Bloom Options
+                <span className="submenu-arrow">▶</span>
+                <div className="submenu">
+                  <div className="menu-item" onClick={() => { invoke('open_settings_window'); closeMenu(); }}>Open Settings</div>
+                  <div className="menu-item" onClick={() => invoke('restart_bloom')}>Restart Bloom</div>
+                  <div className="menu-divider" />
+                  <div className="menu-item quit" onClick={() => invoke('quit_bloom')}>Quit Bloom</div>
+                </div>
+              </div>
+            </>
           )}
         </div>
       )}
