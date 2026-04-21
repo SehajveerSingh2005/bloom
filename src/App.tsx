@@ -180,6 +180,7 @@ function MarqueeText({ title, artist }: { title: string, artist: string }) {
 function App() {
   const [time, setTime] = useState("");
   const [isHovered, setIsHovered] = useState(false);
+  const [isReady, setIsReady] = useState(false);
 
   // Battery state
   const [batteryLevel, setBatteryLevel] = useState(100);
@@ -192,7 +193,7 @@ function App() {
   const lowBatteryPulseShownRef = useRef<boolean>(false);
 
   useEffect(() => {
-    if (prevChargingRef.current !== null && prevChargingRef.current !== isCharging) {
+    if (isReady && prevChargingRef.current !== null && prevChargingRef.current !== isCharging) {
       setShowPowerPulse(true);
       if (powerPulseTimeoutRef.current) clearTimeout(powerPulseTimeoutRef.current);
       powerPulseTimeoutRef.current = setTimeout(() => {
@@ -200,11 +201,11 @@ function App() {
       }, 4000);
     }
     prevChargingRef.current = isCharging;
-  }, [isCharging]);
+  }, [isCharging, isReady]);
 
   useEffect(() => {
     // Trigger pulse when dropping below threshold while discharging
-    if (batteryLevel <= lowBatteryThreshold && !isCharging && !lowBatteryPulseShownRef.current) {
+    if (isReady && batteryLevel <= lowBatteryThreshold && !isCharging && !lowBatteryPulseShownRef.current) {
       setShowLowBatteryPulse(true);
       lowBatteryPulseShownRef.current = true;
       setTimeout(() => setShowLowBatteryPulse(false), 5000);
@@ -214,7 +215,7 @@ function App() {
     if (isCharging || batteryLevel > lowBatteryThreshold) {
       lowBatteryPulseShownRef.current = false;
     }
-  }, [batteryLevel, isCharging, lowBatteryThreshold]);
+  }, [batteryLevel, isCharging, lowBatteryThreshold, isReady]);
 
   // Weather state
   const [temperature, setTemperature] = useState<number | null>(null);
@@ -234,7 +235,6 @@ function App() {
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
   const [windowLabel] = useState<string>(getCurrentWebviewWindow().label);
   const [isVisible, setIsVisible] = useState(true);
-  const [isReady, setIsReady] = useState(false);
   const [isImpacted, setIsImpacted] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
 
