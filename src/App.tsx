@@ -40,7 +40,7 @@ function BellIcon() {
 
 function ThermometerIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" />
     </svg>
   );
@@ -56,18 +56,51 @@ function SettingsIcon() {
 }
 
 function BatteryIcon({ charging, level }: { charging: boolean; level: number }) {
-  const fillWidth = (level / 100) * 10;
-
+  const percentage = Math.min(Math.max(level, 0), 100);
+  
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="7" width="16" height="10" rx="2" ry="2" />
-      <line x1="22" y1="11" x2="22" y2="13" />
-      {charging ? (
-        <path d="M11 10v4h2l-1 4" stroke="currentColor" fill="none" />
-      ) : (
-        <rect x="4" y="9" width={fillWidth} height="6" fill="currentColor" stroke="none" />
+    <div style={{ 
+      display: 'flex', 
+      alignItems: 'center', 
+      position: 'relative',
+      height: '14px',
+      justifyContent: 'center'
+    }}>
+      <svg width="20" height="10" viewBox="0 0 20 10" fill="none">
+        {/* Battery Shell - Centered at 9px within 20px width, ignoring the tip's offset */}
+        <rect 
+          x="2" y="0.75" width="14" height="8.5" rx="2.4" 
+          stroke="currentColor" strokeOpacity={0.35} strokeWidth="1.1"
+        />
+        {/* Battery Tip */}
+        <path 
+           d="M17.5 3.5V6.5" 
+           stroke="currentColor" strokeOpacity={0.35} strokeWidth="1.2" strokeLinecap="round" 
+        />
+        {/* Fill */}
+        <rect 
+          x="3.8" y="2.5" 
+          width={Math.max(0.5, (percentage / 100) * 10.4)} 
+          height="5" rx="1" 
+          fill={charging ? "#32D74B" : (percentage <= 20 ? "#FF453A" : "white")} 
+        />
+      </svg>
+      {/* Charging Bolt - Centered on the battery body */}
+      {charging && (
+        <div style={{ 
+          position: 'absolute', 
+          top: '50%', 
+          left: '9px', 
+          transform: 'translate(-50%, -50%)',
+          color: 'white',
+          filter: 'drop-shadow(0px 0px 1.5px rgba(0,0,0,0.8))'
+        }}>
+          <svg width="7" height="10" viewBox="0 0 8 12" fill="currentColor">
+            <path d="M4.5 0L0 7H3.5L2.5 12L8 5H4.5L5.5 0H4.5Z" />
+          </svg>
+        </div>
       )}
-    </svg>
+    </div>
   );
 }
 
