@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import { getCurrentWindow, Effect } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { check } from "@tauri-apps/plugin-updater";
+import { getVersion } from "@tauri-apps/api/app";
 import "./Settings.css";
 
 const appWindow = getCurrentWindow();
@@ -22,6 +24,9 @@ function SettingsApp() {
   const [dockEnabled, setDockEnabled] = useState(false);
   const [dockMode, setDockMode] = useState("fixed");
   const [lowBatteryThreshold, setLowBatteryThreshold] = useState(20);
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "uptodate" | "error" | "downloading">("idle");
+  const [updateVersion, setUpdateVersion] = useState("");
+  const [appVersion, setAppVersion] = useState("");
 
   // Initialize autostart state and set background effects
   useEffect(() => {
@@ -86,7 +91,43 @@ function SettingsApp() {
 
     const threshold = localStorage.getItem("bloom-low-battery-threshold");
     if (threshold !== null) setLowBatteryThreshold(parseInt(threshold));
+
+    getVersion().then(setAppVersion);
+    checkForUpdates(false);
   }, []);
+
+  const checkForUpdates = async (manual = true) => {
+    setUpdateStatus("checking");
+    try {
+      const update = await check();
+      if (update) {
+        setUpdateStatus("available");
+        setUpdateVersion(update.version);
+        if (manual) {
+          // You could show a prompt or just let the button handle it
+        }
+      } else {
+        setUpdateStatus("uptodate");
+      }
+    } catch (e) {
+      console.error(e);
+      setUpdateStatus("error");
+    }
+  };
+
+  const installUpdate = async () => {
+    try {
+      const update = await check();
+      if (update) {
+        setUpdateStatus("downloading");
+        await update.downloadAndInstall();
+        await invoke("restart_bloom");
+      }
+    } catch (e) {
+      console.error(e);
+      setUpdateStatus("error");
+    }
+  };
 
   const handleClose = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -494,6 +535,30 @@ function SettingsApp() {
             <div className="setting-info">
               <span className="setting-label">Quit Bloom</span>
               <span className="setting-desc">Exit application completely</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="setting-group-label">Software Update</div>
+        <div className="setting-group">
+          <div className="setting-item action" onClick={() => updateStatus === 'available' ? installUpdate() : checkForUpdates()}>
+             <div className="setting-icon-bg" style={{ background: updateStatus === 'available' ? '#34c759' : '#8e8e93' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+              </svg>
+            </div>
+            <div className="setting-info">
+              <span className="setting-label">
+                {updateStatus === 'idle' && "Check for Updates"}
+                {updateStatus === 'checking' && "Checking..."}
+                {updateStatus === 'available' && `Update Available (v${updateVersion})`}
+                {updateStatus === 'uptodate' && "Bloom is up to date"}
+                {updateStatus === 'downloading' && "Downloading Update..."}
+                {updateStatus === 'error' && "Error checking update"}
+              </span>
+              <span className="setting-desc">
+                {updateStatus === 'available' ? "Click to install and restart" : `Currently running v${appVersion}`}
+              </span>
             </div>
           </div>
         </div>
