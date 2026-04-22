@@ -157,30 +157,7 @@ interface MediaInfo {
   artwork?: string[];
 }
 
-function MarqueeText({ title, artist }: { title: string, artist: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [shouldMarquee, setShouldMarquee] = useState(false);
 
-  useEffect(() => {
-    if (containerRef.current && contentRef.current) {
-      setShouldMarquee(contentRef.current.scrollWidth > containerRef.current.clientWidth + 2);
-    }
-  }, [title, artist]);
-
-  return (
-    <div className="media-details" ref={containerRef}>
-      <div
-        className={`marquee-content ${shouldMarquee ? 'should-animate' : ''}`}
-        ref={contentRef}
-      >
-        <span className="title">{title}</span>
-        <span className="dot">•</span>
-        <span className="artist">{artist}</span>
-      </div>
-    </div>
-  );
-}
 
 function App() {
   const [time, setTime] = useState("");
@@ -238,6 +215,7 @@ function App() {
     has_media: false
   });
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
+  const [volume, setVolume] = useState(0.5);
   const [windowLabel] = useState<string>(getCurrentWebviewWindow().label);
   const [isVisible, setIsVisible] = useState(true);
   const [isImpacted, setIsImpacted] = useState(false);
@@ -283,7 +261,6 @@ function App() {
   const [settingsCalendarEnabled, setSettingsCalendarEnabled] = useState(() => localStorage.getItem("bloom-calendar-enabled") !== "false");
   const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-visualizer-enabled") !== "false");
   const [settingsAlbumArtEnabled, setSettingsAlbumArtEnabled] = useState(() => localStorage.getItem("bloom-media-album-art-enabled") !== "false");
-  const [settingsMediaDetailsEnabled, setSettingsMediaDetailsEnabled] = useState(() => localStorage.getItem("bloom-media-details-enabled") !== "false");
   const [settingsCornersEnabled, setSettingsCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") !== "false");
   const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
 
@@ -320,7 +297,6 @@ function App() {
       if (key === "calendar") setSettingsCalendarEnabled(value);
       if (key === "visualizer") setSettingsVisualizerEnabled(value);
       if (key === "album-art") setSettingsAlbumArtEnabled(value);
-      if (key === "media-details") setSettingsMediaDetailsEnabled(value);
       if (key === "temp-unit") setTempUnit(value ? "fahrenheit" : "celsius");
       if (key === "weather-refresh") {
         // Re-trigger the init function or just update from localStorage
@@ -368,7 +344,7 @@ function App() {
       invoke("set_window_height", { height: 300 });
     } else if (isHovered) {
       // Keep window tall if media is present to allow smooth toggling without clipping
-      const h = (mediaInfo.has_media) ? 130 : 64;
+      const h = (mediaInfo.has_media) ? 140 : 64;
       invoke("set_window_height", { height: h });
     } else {
       // Shorter timeout to reduce "glitchy" dead-zone feel
@@ -521,6 +497,14 @@ function App() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
+  }, []);
+
+  // Listen for Volume Changes
+  useEffect(() => {
+    const unlisten = listen<{ volume: number; is_muted: boolean }>("volume-change", (event) => {
+      setVolume(event.payload.volume);
+    });
+    return () => { unlisten.then(fn => fn()); };
   }, []);
 
   // Weather API (Open-Meteo - free, no API key needed)
@@ -680,6 +664,15 @@ function App() {
     }
   }, []);
 
+  const handleVolumeChange = useCallback(async (newVol: number) => {
+    setVolume(newVol);
+    try {
+      await invoke("set_volume", { volume: newVol });
+    } catch (e) {
+      console.error("Failed to set volume:", e);
+    }
+  }, []);
+
 
   // Open WiFi settings
   const openWifiSettings = useCallback(async () => {
@@ -757,7 +750,7 @@ function App() {
   // Calculate width dynamically based on enabled features
   const getDynamicWidth = () => {
     if (isCalendarMode) return 480;
-    if (isMusicMode && isHovered) return 380;
+    if (isMusicMode && isHovered) return 330;
     if ((showPowerPulse || showLowBatteryPulse) && !isHovered) return 200;
 
     let w = 140;
@@ -806,9 +799,9 @@ function App() {
         className={`bloom ${isHovered ? 'expanded' : ''} ${isImpacted ? 'is-impacted' : ''}`}
         initial={{ y: 250, width: 34, height: 34, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 18, borderBottomRightRadius: 18, scaleX: 0.9, scaleY: 1.3, opacity: 0 }}
         animate={{
-          width: isExpanded ? (isHovered && isMusicMode ? 380 : getDynamicWidth()) : 34,
+          width: isExpanded ? (isHovered && isMusicMode ? 330 : getDynamicWidth()) : 34,
           height: isExpanded
-            ? (isCalendarMode ? 275 : (isHovered && isMusicMode ? 100 : 36))
+            ? (isCalendarMode ? 275 : (isHovered && isMusicMode ? 120 : 36))
             : 34,
           y: !isReady ? 250 : (isVisible ? 0 : -80),
           opacity: isVisible ? 1 : 0,
@@ -881,42 +874,93 @@ function App() {
                       </div>
 
                       <div className="metadata-controls-section-middle">
-                        <div className="track-info-middle">
-                          <span className="premium-title">{mediaInfo.title}</span>
-                          <span className="premium-artist">{mediaInfo.artist}</span>
+                        <div className="track-header-row">
+                          <div className="track-info-middle">
+                            <span className="premium-title">{mediaInfo.title}</span>
+                            <span className="premium-artist">{mediaInfo.artist}</span>
+                          </div>
+                          <div className="header-visualizer">
+                            <Visualizer isPlaying={isPlaying} bars={5} height={18} />
+                          </div>
                         </div>
 
                         <div className="controls-row-sleek">
-                          <button className="sleek-btn" onClick={(e) => { e.stopPropagation(); skipPrevious(); }}>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                          <motion.button 
+                            className="sleek-btn previous-btn" 
+                            onClick={(e) => { e.stopPropagation(); skipPrevious(); }}
+                            whileHover={{ scale: 1.2 }}
+                            whileTap={{ scale: 0.9 }}
+                            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                          >
+                            <svg width="24" height="12" viewBox="0 0 66 32" fill="currentColor">
+                              <g transform="scale(-1,1) translate(-66,0)">
+                                <path d="M 7.54 0.06 C 8.12 0.06 8.78 0.36 9.23 0.64 L 31.66 13.83 C 32.11 14.09 32.48 14.45 32.63 14.93 L 32.63 2.55 C 32.63 0.81 33.68 0.06 34.71 0.06 C 35.27 0.06 35.94 0.36 36.39 0.64 L 58.84 13.83 C 59.46 14.2 59.91 14.78 59.91 15.59 C 59.91 16.41 59.51 16.9 58.84 17.31 L 36.39 30.5 C 35.9 30.78 35.27 31.08 34.71 31.08 C 33.68 31.08 32.63 30.33 32.63 28.57 L 32.63 16.26 C 32.48 16.71 32.14 17.03 31.66 17.31 L 9.23 30.5 C 8.74 30.78 8.12 31.08 7.54 31.08 C 6.5 31.08 5.47 30.33 5.47 28.57 L 5.47 2.55 C 5.47 0.81 6.5 0.06 7.54 0.06 Z" />
+                              </g>
                             </svg>
-                          </button>
+                          </motion.button>
                           
-                          <button className="sleek-btn play-pause-btn" onClick={(e) => { e.stopPropagation(); togglePlayPause(); }}>
-                            {isPlaying ? (
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                                <rect x="6" y="4" width="4" height="16" rx="1" />
-                                <rect x="14" y="4" width="4" height="16" rx="1" />
-                              </svg>
-                            ) : (
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M8 5v14l11-7z" />
-                              </svg>
-                            )}
-                          </button>
+                          <motion.button 
+                            className="sleek-btn play-pause-btn-floating" 
+                            onClick={(e) => { e.stopPropagation(); togglePlayPause(); }}
+                            whileHover={{ scale: 1.2 }}
+                            whileTap={{ scale: 0.95 }}
+                            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                          >
+                            <AnimatePresence mode="wait" initial={false}>
+                              <motion.div
+                                key={isPlaying ? "pause" : "play"}
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.8 }}
+                                transition={{ duration: 0.15 }}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              >
+                                {isPlaying ? (
+                                  <svg width="18" height="18" viewBox="0 0 33 35" fill="currentColor">
+                                    <path d="M 7.390625,0.81640625 L 11.880859375,0.81640625 C 13.234375,0.81640625 13.771484375,1.375 13.771484375,2.728515625 L 13.771484375,31.560546875 C 13.771484375,32.935546875 13.234375,33.47265625 11.880859375,33.47265625 L 7.390625,33.47265625 C 6.015625,33.47265625 5.478515625,32.935546875 5.478515625,31.560546875 L 5.478515625,2.728515625 C 5.478515625,1.375 6.015625,0.81640625 7.390625,0.81640625 Z M 20.8828125,0.81640625 L 25.373046875,0.81640625 C 26.748046875,0.81640625 27.28515625,1.375 27.28515625,2.728515625 L 27.28515625,31.560546875 C 27.28515625,32.935546875 26.748046875,33.47265625 25.373046875,33.47265625 L 20.8828125,33.47265625 C 19.529296875,33.47265625 18.9921875,32.935546875 18.9921875,31.560546875 L 18.9921875,2.728515625 C 18.9921875,1.375 19.529296875,0.81640625 20.8828125,0.81640625 Z" />
+                                  </svg>
+                                ) : (
+                                  <svg width="22" height="22" viewBox="0 0 42 41" fill="currentColor" style={{ marginLeft: '2px' }}>
+                                    <path d="M 6.91796875,2.298828125 C 7.34765625,2.298828125 7.669921875,2.40625 8.20703125,2.728515625 L 35.083984375,18.583984375 C 35.8359375,18.9921875 36.287109375,19.400390625 36.287109375,20.087890625 C 36.287109375,20.75390625 35.8359375,21.162109375 35.083984375,21.591796875 L 8.20703125,37.447265625 C 7.669921875,37.76953125 7.34765625,37.876953125 6.91796875,37.876953125 C 6.05859375,37.876953125 5.478515625,37.25390625 5.478515625,36.1796875 L 5.478515625,3.99609375 C 5.478515625,2.921875 6.05859375,2.298828125 6.91796875,2.298828125 Z" />
+                                  </svg>
+                                )}
+                              </motion.div>
+                            </AnimatePresence>
+                          </motion.button>
 
-                          <button className="sleek-btn" onClick={(e) => { e.stopPropagation(); skipNext(); }}>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M6 18l8.5-6L6 6zM16 6h2v12h-2z" />
+                          <motion.button 
+                            className="sleek-btn next-btn" 
+                            onClick={(e) => { e.stopPropagation(); skipNext(); }}
+                            whileHover={{ scale: 1.2 }}
+                            whileTap={{ scale: 0.9 }}
+                            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                          >
+                            <svg width="24" height="12" viewBox="0 0 66 32" fill="currentColor">
+                              <path d="M 7.54 0.06 C 8.12 0.06 8.78 0.36 9.23 0.64 L 31.66 13.83 C 32.11 14.09 32.48 14.45 32.63 14.93 L 32.63 2.55 C 32.63 0.81 33.68 0.06 34.71 0.06 C 35.27 0.06 35.94 0.36 36.39 0.64 L 58.84 13.83 C 59.46 14.2 59.91 14.78 59.91 15.59 C 59.91 16.41 59.51 16.9 58.84 17.31 L 36.39 30.5 C 35.9 30.78 35.27 31.08 34.71 31.08 C 33.68 31.08 32.63 30.33 32.63 28.57 L 32.63 16.26 C 32.48 16.71 32.14 17.03 31.66 17.31 L 9.23 30.5 C 8.74 30.78 8.12 31.08 7.54 31.08 C 6.5 31.08 5.47 30.33 5.47 28.57 L 5.47 2.55 C 5.47 0.81 6.5 0.06 7.54 0.06 Z" />
                             </svg>
-                          </button>
+                          </motion.button>
+                        </div>
+
+                        <div className="volume-slider-container">
+                          <VolumeLowIcon />
+                          <div className="slider-track-premium">
+                            <input 
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={volume}
+                              onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                              className="premium-slider"
+                            />
+                            <div className="slider-progress-fill" style={{ width: `${volume * 100}%` }} />
+                          </div>
+                          <VolumeHighIcon />
                         </div>
                       </div>
 
-                      <div className="visualizer-section-right">
-                        <Visualizer isPlaying={isPlaying} bars={5} height={22} />
-                      </div>
                     </div>
                   </motion.div>
                 ) : (
@@ -1197,17 +1241,34 @@ function Calendar() {
 
 function PlayIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M8 5v14l11-7z" />
+    <svg width="14" height="14" viewBox="0 0 42 41" fill="currentColor" style={{ marginLeft: '1px' }}>
+      <path d="M 6.91796875,2.298828125 C 7.34765625,2.298828125 7.669921875,2.40625 8.20703125,2.728515625 L 35.083984375,18.583984375 C 35.8359375,18.9921875 36.287109375,19.400390625 36.287109375,20.087890625 C 36.287109375,20.75390625 35.8359375,21.162109375 35.083984375,21.591796875 L 8.20703125,37.447265625 C 7.669921875,37.76953125 7.34765625,37.876953125 6.91796875,37.876953125 C 6.05859375,37.876953125 5.478515625,37.25390625 5.478515625,36.1796875 L 5.478515625,3.99609375 C 5.478515625,2.921875 6.05859375,2.298828125 6.91796875,2.298828125 Z" />
     </svg>
   );
 }
 
 function PauseIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-      <rect x="6" y="4" width="4" height="16" />
-      <rect x="14" y="4" width="4" height="16" />
+    <svg width="14" height="14" viewBox="0 0 33 35" fill="currentColor">
+      <path d="M 7.390625,0.81640625 L 11.880859375,0.81640625 C 13.234375,0.81640625 13.771484375,1.375 13.771484375,2.728515625 L 13.771484375,31.560546875 C 13.771484375,32.935546875 13.234375,33.47265625 11.880859375,33.47265625 L 7.390625,33.47265625 C 6.015625,33.47265625 5.478515625,32.935546875 5.478515625,31.560546875 L 5.478515625,2.728515625 C 5.478515625,1.375 6.015625,0.81640625 7.390625,0.81640625 Z M 20.8828125,0.81640625 L 25.373046875,0.81640625 C 26.748046875,0.81640625 27.28515625,1.375 27.28515625,2.728515625 L 27.28515625,31.560546875 C 27.28515625,32.935546875 26.748046875,33.47265625 25.373046875,33.47265625 L 20.8828125,33.47265625 C 19.529296875,33.47265625 18.9921875,32.935546875 18.9921875,31.560546875 L 18.9921875,2.728515625 C 18.9921875,1.375 19.529296875,0.81640625 20.8828125,0.81640625 Z" />
+    </svg>
+  );
+}
+
+function VolumeLowIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7 }}>
+      <path d="M11 5L6 9H2v6h4l5 4V5z" />
+    </svg>
+  );
+}
+
+function VolumeHighIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7 }}>
+      <path d="M11 5L6 9H2v6h4l5 4V5z" />
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
     </svg>
   );
 }

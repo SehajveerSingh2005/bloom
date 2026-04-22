@@ -529,6 +529,15 @@ pub fn media_previous() {
 }
 
 #[tauri::command]
+pub fn set_volume(volume: f32) {
+    unsafe {
+        if let Some(ref sender) = COMMAND_SENDER {
+            let _ = sender.send(crate::types::SystemCommand::SetVolume(volume));
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn quit_bloom(handle: AppHandle) {
     if let Some(w) = handle.get_webview_window("main") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
     if let Some(w) = handle.get_webview_window("dock") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }

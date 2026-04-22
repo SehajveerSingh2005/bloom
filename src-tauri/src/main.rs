@@ -62,7 +62,8 @@ fn main() {
             focus_window,
             close_window,
             quit_bloom,
-            restart_bloom
+            restart_bloom,
+            set_volume
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();

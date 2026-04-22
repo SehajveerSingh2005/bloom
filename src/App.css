@@ -663,7 +663,7 @@ body {
 .expanded-music-container {
     width: 100%;
     height: 100%;
-    padding: 12px 18px;
+    padding: 8px;
     box-sizing: border-box;
     display: flex;
     align-items: center;
@@ -672,10 +672,9 @@ body {
 .compact-premium-layout {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     width: 100%;
     height: 100%;
-    gap: 12px;
+    gap: 22px;
 }
 
 .album-art-section {
@@ -683,12 +682,12 @@ body {
 }
 
 .premium-album-art {
-    width: 60px;
-    height: 60px;
-    border-radius: 12px;
+    width: 96px;
+    height: 96px;
+    border-radius: 14px;
     overflow: hidden;
     background: rgba(255, 255, 255, 0.05);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.6);
     border: 0.5px solid rgba(255, 255, 255, 0.1);
 }
 
@@ -696,23 +695,37 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    align-items: center;
+    align-items: flex-start;
     flex: 1;
     min-width: 0;
     gap: 8px;
-    text-align: center;
+    text-align: left;
+}
+
+.track-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    width: 100%;
+    gap: 12px;
 }
 
 .track-info-middle {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     min-width: 0;
-    width: 100%;
+    flex: 1;
+    gap: 0;
+}
+
+.header-visualizer {
+    padding-top: 4px;
+    opacity: 0.8;
 }
 
 .premium-title {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     color: white;
     white-space: nowrap;
@@ -723,7 +736,7 @@ body {
 }
 
 .premium-artist {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 400;
     color: rgba(255, 255, 255, 0.5);
     white-space: nowrap;
@@ -738,44 +751,92 @@ body {
     object-fit: cover;
 }
 
-.visualizer-section-right {
-    flex-shrink: 0;
-    width: 60px;
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
+.layout-spacer-right {
+    display: none;
 }
 
 .controls-row-sleek {
     display: flex;
     align-items: center;
-    gap: 28px;
+    gap: 22px;
 }
 
 .sleek-btn {
-    background: transparent;
+    background: none;
     border: none;
-    color: rgba(255, 255, 255, 0.85);
+    color: white;
     cursor: pointer;
-    padding: 0;
+    padding: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    border-radius: 50%;
+    outline: none;
 }
 
-.sleek-btn:hover {
-    color: white;
-    transform: scale(1.1);
+.play-pause-btn-floating {
+    width: 40px;
+    height: 40px;
 }
 
-.sleek-btn:active {
-    transform: scale(0.95);
-    opacity: 0.7;
+.volume-slider-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 0;
+    height: 12px;
 }
 
-.play-pause-btn {
-    color: white;
+.slider-track-premium {
+    position: relative;
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+}
+
+.slider-progress-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    background: white;
+    border-radius: 3px;
+    pointer-events: none;
+    transition: width 0.1s ease-out;
+}
+
+.premium-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    cursor: pointer;
+    z-index: 2;
+    position: relative;
+    margin: 0;
+}
+
+/* Remove Grabber/Thumb */
+.premium-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 0;
+    height: 0;
+    background: transparent;
+    border: none;
+}
+
+.premium-slider::-moz-range-thumb {
+    width: 0;
+    height: 0;
+    background: transparent;
+    border: none;
 }
 
 .glow-cursor {
@@ -787,4 +848,4 @@ body {
     background: radial-gradient(circle, rgba(255, 255, 255, 0.8) 0%, rgba(168, 85, 247, 0.4) 70%, transparent 100%);
     filter: blur(1px);
 }
-
+
