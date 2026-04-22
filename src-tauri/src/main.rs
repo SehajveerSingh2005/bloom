@@ -10,6 +10,8 @@ use tauri::Manager;
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
 use windows::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
 use windows::core::BOOL;
+use std::sync::atomic::Ordering;
+
 
 use crate::state::*;
 use crate::utils::*;
@@ -19,6 +21,8 @@ use crate::commands::*;
 unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     if ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT {
         set_taskbar_visibility(true);
+        NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+
     }
     BOOL(0)
 }
@@ -126,7 +130,9 @@ fn main() {
                 COMMAND_SENDER = Some(tx.clone());
             }
             let _hook = services::setup_keyboard_hook();
+            setup_taskbar_hook();
             setup_audio_visualization(app.handle().clone());
+
             if let Some(settings_win) = app.get_webview_window("settings") {
                 #[cfg(target_os = "windows")]
                 {
@@ -163,6 +169,8 @@ fn main() {
                                 unregister_appbar_native(w.hwnd().unwrap());
                             }
                             set_taskbar_visibility(true);
+                            NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+
                             ah.exit(0);
                         }
                         "restart" => {
@@ -173,6 +181,8 @@ fn main() {
                                 unregister_appbar_native(w.hwnd().unwrap());
                             }
                             set_taskbar_visibility(true);
+                            NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+
                             ah.restart();
                         }
                         "settings" => {
@@ -205,6 +215,8 @@ fn main() {
     app.run(|_, event| {
         if let tauri::RunEvent::Exit = event {
             set_taskbar_visibility(true);
+            NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+
         }
     });
 }

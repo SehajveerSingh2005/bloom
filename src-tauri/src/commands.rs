@@ -48,6 +48,8 @@ pub async fn toggle_dock(app: AppHandle, enable: bool) {
     if let Some(dock_win) = app.get_webview_window("dock") {
         if enable {
             set_taskbar_visibility(false);
+            NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
+
             let _ = dock_win.set_always_on_top(true);
             let _ = dock_win.show();
         } else {
@@ -60,6 +62,8 @@ pub async fn toggle_dock(app: AppHandle, enable: bool) {
             }
             DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
             set_taskbar_visibility(true);
+            NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+
             // Re-sync other appbars to ensure they stay in place
             if let Some(main_win) = app.get_webview_window("main") {
                 register_appbar(main_win);
@@ -109,6 +113,8 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
         // Ensure always on top and native taskbar stays hidden
         let _ = dock_win.set_always_on_top(true);
         set_taskbar_visibility(false);
+        NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
+
         
         // Sync the current overlap state immediately to the frontend
         let current = CURRENT_DOCK_OVERLAP.load(Ordering::Relaxed);
@@ -542,6 +548,8 @@ pub async fn quit_bloom(handle: AppHandle) {
     if let Some(w) = handle.get_webview_window("main") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
     if let Some(w) = handle.get_webview_window("dock") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
     set_taskbar_visibility(true);
+    NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+
     handle.exit(0);
 }
 
@@ -550,6 +558,8 @@ pub async fn restart_bloom(handle: AppHandle) {
     if let Some(w) = handle.get_webview_window("main") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
     if let Some(w) = handle.get_webview_window("dock") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
     set_taskbar_visibility(true);
+    NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+
     handle.restart();
 }
 

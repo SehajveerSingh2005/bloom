@@ -8,6 +8,8 @@ pub static mut COMMAND_SENDER: Option<Sender<SystemCommand>> = None;
 pub static MAIN_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub static DOCK_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub static CURRENT_DOCK_OVERLAP: AtomicI32 = AtomicI32::new(-1);
+pub static NATIVE_TASKBAR_HIDDEN: AtomicBool = AtomicBool::new(false);
+
 
 pub static DOCK_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
 pub static DOCK_IS_HOVERED: AtomicBool = AtomicBool::new(false);

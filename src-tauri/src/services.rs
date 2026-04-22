@@ -61,6 +61,39 @@ use crate::types::*;
 use crate::state::*;
 use crate::utils::*;
 
+pub fn setup_taskbar_hook() {
+    unsafe {
+        use windows::Win32::UI::Accessibility::SetWinEventHook;
+        use windows::Win32::UI::WindowsAndMessaging::{EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE, WINEVENT_OUTOFCONTEXT};
+        
+        // Hook both "Show" and "Location Change" (happen when maximizing/switching apps)
+        let _show_hook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, None, Some(taskbar_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT);
+        let _loc_hook = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, None, Some(taskbar_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT);
+    }
+}
+
+unsafe extern "system" fn taskbar_event_proc(
+    _h_win_event_hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
+    _event: u32,
+    hwnd: HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _dw_event_thread: u32,
+    _dwms_event_time: u32,
+) {
+    if NATIVE_TASKBAR_HIDDEN.load(Ordering::Relaxed) {
+        let mut class_name = [0u8; 256];
+        let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
+        let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
+        
+        if class_str == "Shell_TrayWnd" || class_str == "Shell_SecondaryTrayWnd" {
+            // Taskbar is trying to show or move: slap it back down.
+            set_taskbar_visibility(false);
+        }
+    }
+}
+
+
 pub fn setup_audio_visualization(app_handle: AppHandle) {
     std::thread::spawn(move || {
         use windows::Win32::Media::Audio::{
@@ -482,12 +515,36 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     let _ = tx_clone.send(SystemCommand::ToggleVisibility(true));
                     last_visible = true;
                 }
+
+                // Enforce native taskbar hiding (periodic check)
+                if NATIVE_TASKBAR_HIDDEN.load(Ordering::Relaxed) {
+                    use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, IsWindowVisible};
+                    let tray_class = windows::core::PCSTR(b"Shell_TrayWnd\0".as_ptr());
+                    let secondary_tray_class = windows::core::PCSTR(b"Shell_SecondaryTrayWnd\0".as_ptr());
+                    
+                    let mut should_rehide = false;
+                    if let Ok(tray_hwnd) = FindWindowA(tray_class, windows::core::PCSTR::null()) {
+                        if IsWindowVisible(tray_hwnd).as_bool() { should_rehide = true; }
+                    }
+                    if !should_rehide {
+                        if let Ok(secondary_tray_hwnd) = FindWindowA(secondary_tray_class, windows::core::PCSTR::null()) {
+                            if IsWindowVisible(secondary_tray_hwnd).as_bool() { should_rehide = true; }
+                        }
+                    }
+
+                    if should_rehide {
+                        set_taskbar_visibility(false);
+                    }
+                }
             }
             std::thread::sleep(std::time::Duration::from_millis(150));
         }
     });
+
     tx
 }
+
+
 
 pub fn setup_brightness_worker() {
     let (tx, rx) = channel::<u32>();

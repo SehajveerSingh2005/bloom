@@ -31,17 +31,46 @@ pub fn resolve_shortcut(path: &str) -> Option<String> {
 pub fn set_taskbar_visibility(visible: bool) {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE, SW_SHOW};
+        use windows::Win32::UI::Shell::{SHAppBarMessage, APPBARDATA, ABM_SETSTATE};
+        
         let tray_class = windows::core::PCSTR(b"Shell_TrayWnd\0".as_ptr());
         let secondary_tray_class = windows::core::PCSTR(b"Shell_SecondaryTrayWnd\0".as_ptr());
 
+        // 1. Set the taskbar state (Auto-hide or Always-on-top)
+        // ABS_AUTOHIDE = 0x1, ABS_ALWAYSONTOP = 0x2
+        let mut abd = APPBARDATA::default();
+        abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
+        abd.lParam = windows::Win32::Foundation::LPARAM(if visible { 2 } else { 1 });
+        SHAppBarMessage(ABM_SETSTATE, &mut abd);
+
+        // 2. Control visibility of the primary taskbar
         if let Ok(tray_hwnd) = FindWindowA(tray_class, windows::core::PCSTR::null()) {
-            let _ = ShowWindow(tray_hwnd, if visible { SW_SHOW } else { SW_HIDE });
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE};
+            if visible {
+                let _ = ShowWindow(tray_hwnd, SW_SHOW);
+                // Restoration to 0,0 is usually handled by Windows shell when shown, 
+                // but we can be explicit if needed. Most taskbars are at the bottom.
+            } else {
+                let _ = ShowWindow(tray_hwnd, SW_HIDE);
+                // Move it far off-screen to prevent any "thin line" artifacts or flashes
+                let _ = SetWindowPos(tray_hwnd, None, -10000, -10000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
         }
+        
+        // 3. Control visibility of secondary taskbars (multi-monitor)
         if let Ok(secondary_tray_hwnd) = FindWindowA(secondary_tray_class, windows::core::PCSTR::null()) {
-            let _ = ShowWindow(secondary_tray_hwnd, if visible { SW_SHOW } else { SW_HIDE });
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE};
+            if visible {
+                let _ = ShowWindow(secondary_tray_hwnd, SW_SHOW);
+            } else {
+                let _ = ShowWindow(secondary_tray_hwnd, SW_HIDE);
+                let _ = SetWindowPos(secondary_tray_hwnd, None, -10000, -10000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
         }
+
     }
 }
+
 
 pub unsafe fn icon_to_base64(hicon: HICON) -> Option<String> {
     let factory: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
