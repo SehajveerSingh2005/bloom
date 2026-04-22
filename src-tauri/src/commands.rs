@@ -316,6 +316,14 @@ pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> 
                         let p = format!("{}\\Microsoft\\WindowsApps\\wt.exe", local);
                         if std::path::Path::new(&p).exists() { actual_path = p; }
                    }
+                } else if actual_path.to_lowercase() == "msedge" || actual_path.to_lowercase() == "msedge.exe" {
+                    let p = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
+                    if std::path::Path::new(p).exists() { 
+                        actual_path = p.to_string(); 
+                    } else {
+                        let p2 = r"C:\Program Files\Microsoft\Edge\Application\msedge.exe";
+                        if std::path::Path::new(p2).exists() { actual_path = p2.to_string(); }
+                    }
                 } else {
                     let common_exes = vec![
                         r"C:\Windows\explorer.exe",
@@ -389,8 +397,8 @@ pub async fn load_pinned_apps(app: AppHandle) -> Vec<AppInfo> {
     // Default apps if none saved
     vec![
         AppInfo { name: "File Explorer".into(), path: "C:\\Windows\\explorer.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("explorer.exe".into()) },
-        AppInfo { name: "Terminal".into(), path: "wt.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("wt.exe".into()) },
-        AppInfo { name: "VS Code".into(), path: "code".into(), icon: None, is_running: false, hwnd: None, executable: Some("code.exe".into()) },
+        AppInfo { name: "Microsoft Edge".into(), path: "msedge".into(), icon: None, is_running: false, hwnd: None, executable: Some("msedge.exe".into()) },
+        AppInfo { name: "Notepad".into(), path: "notepad.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("notepad.exe".into()) },
     ]
 }
 
