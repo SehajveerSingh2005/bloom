@@ -17,8 +17,14 @@ By blending high-performance engineering with "mechanical fluidity," Bloom trans
 
 ### Showcase
 
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/44acd0f8-77e6-4d10-b623-10523466687e" />
-
+<p align="center">
+<img width="1920" height="1080" alt="full" src="https://github.com/user-attachments/assets/556e7918-3a7d-42d8-afae-e91fba1b638a" />
+<br>
+<img width="430" height="70" alt="notch" src="https://github.com/user-attachments/assets/0d723558-9df4-4214-b20e-4a1f97eb1f22" />
+<br>
+<img width="576" height="102" alt="dock" src="https://github.com/user-attachments/assets/96229f0e-1246-4baf-b8ad-3e8f77142a12" />
+<br>
+</p>
 ---
 
 ### The Bloom Experience
