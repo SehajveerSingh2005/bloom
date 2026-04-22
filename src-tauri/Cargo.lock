@@ -299,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "bloom"
-version = "2.3.0"
+version = "3.1.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
