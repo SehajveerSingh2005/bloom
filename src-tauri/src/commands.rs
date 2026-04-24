@@ -199,7 +199,22 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
         unsafe {
             let _ = EnumWindows(Some(enum_windows_proc), LPARAM(&mut apps as *mut Vec<AppInfo> as isize));
         }
-        apps
+        // Deduplicate carefully: allow duplicates for host processes like msedge, chrome, explorer
+        let mut seen = std::collections::HashSet::new();
+        apps.into_iter().filter(|a: &AppInfo| {
+            let p = a.path.to_lowercase();
+            if p.contains("msedge.exe") || p.contains("chrome.exe") || p.contains("explorer.exe") || p.contains("applicationframehost.exe") {
+                // For these, use path + name as unique key
+                let key = format!("{}:{}", p, a.name);
+                if seen.contains(&key) { return false; }
+                seen.insert(key);
+                true
+            } else {
+                if seen.contains(&p) { return false; }
+                seen.insert(p);
+                true
+            }
+        }).collect()
     }).await.unwrap_or_default()
 }
 
@@ -261,7 +276,12 @@ pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> 
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             let h_hwnd = HWND(h as *mut _);
             
+            // Try different ways to get the icon from HWND
             let mut h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(GetClassLongPtrW(h_hwnd, GCLP_HICON) as *mut _);
+            if h_icon.is_invalid() {
+                h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(GetClassLongPtrW(h_hwnd, windows::Win32::UI::WindowsAndMessaging::GCL_HICON) as *mut _);
+            }
+
             if h_icon.is_invalid() {
                 let mut res = 0usize;
                 let _ = SendMessageTimeoutW(
@@ -270,7 +290,21 @@ pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> 
                     windows::Win32::Foundation::WPARAM(ICON_BIG as usize), 
                     windows::Win32::Foundation::LPARAM(0), 
                     SMTO_ABORTIFHUNG, 
-                    100, 
+                    250, // Increased timeout
+                    Some(&mut res)
+                );
+                if res != 0 { h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(res as *mut _); }
+            }
+            
+            if h_icon.is_invalid() {
+                let mut res = 0usize;
+                let _ = SendMessageTimeoutW(
+                    h_hwnd, 
+                    windows::Win32::UI::WindowsAndMessaging::WM_GETICON, 
+                    windows::Win32::Foundation::WPARAM(windows::Win32::UI::WindowsAndMessaging::ICON_SMALL as usize), 
+                    windows::Win32::Foundation::LPARAM(0), 
+                    SMTO_ABORTIFHUNG, 
+                    250, 
                     Some(&mut res)
                 );
                 if res != 0 { h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(res as *mut _); }
@@ -304,10 +338,10 @@ pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> 
         
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let result = {
-            let mut actual_path = if path_clone.to_lowercase().ends_with(".lnk") {
-                resolve_shortcut(&path_clone).unwrap_or(path_clone.clone())
+            let (mut actual_path, is_lnk) = if path_clone.to_lowercase().ends_with(".lnk") {
+                (resolve_shortcut(&path_clone).unwrap_or(path_clone.clone()), true)
             } else {
-                path_clone.clone()
+                (path_clone.clone(), false)
             };
 
             // Enhanced path resolution for common names
@@ -346,14 +380,31 @@ pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> 
             }
 
             let mut shfi: SHFILEINFOW = std::mem::zeroed();
-            let path_u16: Vec<u16> = actual_path.encode_utf16().chain(std::iter::once(0)).collect();
-            let res = SHGetFileInfoW(
-                windows::core::PCWSTR(path_u16.as_ptr()),
-                Default::default(),
-                Some(&mut shfi),
-                std::mem::size_of::<SHFILEINFOW>() as u32,
-                SHGFI_ICON | SHGFI_LARGEICON
-            );
+            
+            // If it's a .lnk, try getting the icon for the .lnk file first (contains custom icons for PWAs/Discord)
+            let mut res = 0usize;
+            if is_lnk {
+                let lnk_u16: Vec<u16> = path_clone.encode_utf16().chain(std::iter::once(0)).collect();
+                res = SHGetFileInfoW(
+                    windows::core::PCWSTR(lnk_u16.as_ptr()),
+                    Default::default(),
+                    Some(&mut shfi),
+                    std::mem::size_of::<SHFILEINFOW>() as u32,
+                    SHGFI_ICON | SHGFI_LARGEICON
+                );
+            }
+
+            // Fallback to actual_path if not a lnk or lnk icon fetch failed
+            if res == 0 || shfi.hIcon.is_invalid() {
+                let path_u16: Vec<u16> = actual_path.encode_utf16().chain(std::iter::once(0)).collect();
+                res = SHGetFileInfoW(
+                    windows::core::PCWSTR(path_u16.as_ptr()),
+                    Default::default(),
+                    Some(&mut shfi),
+                    std::mem::size_of::<SHFILEINFOW>() as u32,
+                    SHGFI_ICON | SHGFI_LARGEICON
+                );
+            }
 
             if res != 0 && !shfi.hIcon.is_invalid() {
                 let base64_icon = icon_to_base64(shfi.hIcon);

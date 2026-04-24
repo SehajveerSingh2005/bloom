@@ -414,8 +414,22 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
         loop {
             unsafe {
                 use windows::Win32::Graphics::Gdi::{MonitorFromWindow, GetMonitorInfoA, MONITORINFO, MONITOR_DEFAULTTONEAREST};
-                let hwnd = GetForegroundWindow();
+                let mut hwnd = GetForegroundWindow();
                 
+                // If Bloom windows are focused, look at the window behind them to determine overlap
+                let mut check_count = 0;
+                while !hwnd.is_invalid() && check_count < 5 {
+                    let mut class_name = [0u8; 256];
+                    let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
+                    let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
+                    if class_str.contains("Bloom") {
+                        hwnd = windows::Win32::UI::WindowsAndMessaging::GetWindow(hwnd, windows::Win32::UI::WindowsAndMessaging::GW_HWNDNEXT).unwrap_or_default();
+                        check_count += 1;
+                    } else {
+                        break;
+                    }
+                }
+
                 let mut should_overlap = last_dock_overlap.unwrap_or(false);
                 let mut current_is_fs = !last_visible;
 
@@ -428,13 +442,12 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     let text_len = windows::Win32::UI::WindowsAndMessaging::GetWindowTextW(hwnd, &mut text);
                     let title = String::from_utf16_lossy(&text[..text_len as usize]);
 
-                    let is_bloom = class_str.contains("Bloom") || title.contains("Bloom"); 
                     let is_desktop = class_str == "Progman" || class_str == "WorkerW";
                     let is_start = (class_str == "Windows.UI.Core.CoreWindow" || class_str == "SimpleWindow") && 
                                    (title == "Start" || title == "Search");
                     let is_shell = class_str == "Shell_TrayWnd" || class_str == "Shell_SecondaryTrayWnd" || is_start;
                     
-                    is_known_shell = is_desktop || is_shell || is_bloom;
+                    is_known_shell = is_desktop || is_shell; // Bloom is no longer "known shell" here because we skip it above
                 }
 
                 if !hwnd.is_invalid() {
@@ -442,11 +455,11 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                         should_overlap = false;
                         current_is_fs = false;
                     } else if !IsIconic(hwnd).as_bool() {
-                        use windows::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_CAPTION};
+                        use windows::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, WS_EX_TOOLWINDOW};
                         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
                         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
                         
-                        let is_transient = (ex_style & WS_EX_TOOLWINDOW.0) != 0 || (style & WS_CAPTION.0) == 0;
+                        let is_transient = (ex_style & WS_EX_TOOLWINDOW.0) != 0;
                         
                         if !is_transient {
                             let mut rect = RECT::default();
@@ -486,6 +499,10 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                     }
                                 }
                             }
+                        } else {
+                            // If transient, we shouldn't keep the previous overlap/fullscreen state
+                            should_overlap = false;
+                            current_is_fs = false;
                         }
                     } else {
                         should_overlap = false;
@@ -634,12 +651,12 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                             if let Ok(Some(monitor)) = dock_win.primary_monitor() {
                                 let m_pos = monitor.position();
                                 let m_size = monitor.size();
-                                let at_bottom_edge = pt.y >= (m_pos.y + m_size.height as i32 - 4) && 
+                                let at_bottom_edge = pt.y >= (m_pos.y + m_size.height as i32 - 2) && 
                                                      pt.x >= m_pos.x && pt.x <= (m_pos.x + m_size.width as i32);
                                 
                                 if at_bottom_edge || in_dock_hover {
                                     is_hovered = true;
-                                    dock_interaction_expiry = now + Duration::from_millis(1500);
+                                    dock_interaction_expiry = now + Duration::from_millis(500);
                                 }
                             }
 
@@ -943,10 +960,12 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
             let class_str = String::from_utf16_lossy(&class_name[..class_len as usize]);
             
             let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-            let style = GetWindowLongW(hwnd, windows::Win32::UI::WindowsAndMessaging::GWL_STYLE) as u32;
+            let _style = GetWindowLongW(hwnd, windows::Win32::UI::WindowsAndMessaging::GWL_STYLE) as u32;
             
             // Basic filter for top-level app windows
-            if (ex_style & WS_EX_TOOLWINDOW.0) != 0 || (style & windows::Win32::UI::WindowsAndMessaging::WS_CAPTION.0) == 0 {
+            // We include windows without captions if they don't have the ToolWindow style,
+            // as many games and modern apps (like Spotify/Valorant) lack WS_CAPTION.
+            if (ex_style & WS_EX_TOOLWINDOW.0) != 0 {
                 return true.into();
             }
 
@@ -983,8 +1002,11 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                         .unwrap_or(&title)
                         .replace(".exe", "");
 
-                    let final_name = if name == "msedge" && title.contains("Netflix") {
-                        "Netflix".to_string()
+                    let final_name = if (name == "msedge" || name == "chrome" || name == "ApplicationFrameHost") && !title.is_empty() {
+                        // Extract a cleaner name from the window title for host processes (PWAs, UWP apps)
+                        title.split(" - ").next().map(|s| s.trim()).unwrap_or(&title).to_string()
+                    } else if name == "explorer" && title.is_empty() {
+                        "File Explorer".to_string()
                     } else {
                         name
                     };

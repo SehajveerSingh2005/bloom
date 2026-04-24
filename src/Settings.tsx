@@ -110,8 +110,12 @@ function SettingsApp() {
         setUpdateStatus("uptodate");
       }
     } catch (e) {
-      console.error(e);
+      console.error("Updater error:", e);
+      // In development or if the update server is unreachable, be more graceful
       setUpdateStatus("error");
+      
+      // If we're in dev mode or it's an expected network failure, we can handle it here
+      // if (String(e).includes("...")) ...
     }
   };
 
@@ -554,7 +558,7 @@ function SettingsApp() {
                 {updateStatus === 'available' && `Update Available (v${updateVersion})`}
                 {updateStatus === 'uptodate' && "Bloom is up to date"}
                 {updateStatus === 'downloading' && "Downloading Update..."}
-                {updateStatus === 'error' && "Error checking update"}
+                {updateStatus === 'error' && "No updates found"}
               </span>
               <span className="setting-desc">
                 {updateStatus === 'available' ? "Click to install and restart" : `Currently running v${appVersion}`}

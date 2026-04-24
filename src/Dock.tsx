@@ -23,6 +23,7 @@ const Dock = memo(function Dock() {
   const [isDockHovered, setIsDockHovered] = useState(false);
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
   const [isOverlapped, setIsOverlapped] = useState(false);
+  const [isVisible, setIsVisible] = useState(true);
   const [showAddPopup, setShowAddPopup] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, app: AppInfo | null } | null>(null);
   const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
@@ -44,7 +45,7 @@ const Dock = memo(function Dock() {
       setInteractionState('active');
     } else if (interactionState !== 'none') {
       setInteractionState('grace');
-      const timer = setTimeout(() => setInteractionState('none'), 2000);
+      const timer = setTimeout(() => setInteractionState('none'), 800);
       return () => clearTimeout(timer);
     }
   }, [isAnyInteraction]);
@@ -128,10 +129,15 @@ const Dock = memo(function Dock() {
       setIsEdgeHovered(event.payload);
     });
 
+    const unlistenVisibility = listen<boolean>("visibility-change", (event) => {
+      setIsVisible(event.payload);
+    });
+
     return () => {
       unlistenSettings.then(f => f());
       unlistenOverlap.then(f => f());
       unlistenEdgeHover.then(f => f());
+      unlistenVisibility.then(f => f());
     };
   }, []);
 
@@ -303,8 +309,10 @@ const Dock = memo(function Dock() {
   };
 
   useEffect(() => {
-    invoke('set_dock_hovered', { hovered: isCurrentlyHovered }).catch(() => {});
-  }, [isCurrentlyHovered]);
+    // Only report true dock-window hover, not the edge-hover from Rust,
+    // to avoid a feedback loop that keeps the dock open.
+    invoke('set_dock_hovered', { hovered: isDockHovered }).catch(() => {});
+  }, [isDockHovered]);
 
   const iconVariants = {
     idle: { y: 0, scale: 1 },
@@ -323,16 +331,16 @@ const Dock = memo(function Dock() {
         onMouseLeave={() => { setIsDockHovered(false); setHoveredApp(null); setPressedApp(null); }}
         initial={{ y: -800, opacity: 1, width: 34, height: 34, borderTopLeftRadius: 17, borderTopRightRadius: 17, borderBottomLeftRadius: 17, borderBottomRightRadius: 17, scaleX: 0.9, scaleY: 1.3 }}
         animate={{ 
-          y: !isReady ? -800 : (isHidden ? 100 : 0), 
-          width: isExpanded && !isHidden ? 'auto' : 34,
-          height: isExpanded && !isHidden ? 'auto' : 34,
-          borderTopLeftRadius: isExpanded && !isHidden ? 18 : 17,
-          borderTopRightRadius: isExpanded && !isHidden ? 18 : 17,
-          borderBottomLeftRadius: (isImpacted || isExpanded) && !isHidden ? 0 : 17,
-          borderBottomRightRadius: (isImpacted || isExpanded) && !isHidden ? 0 : 17,
+          y: !isReady ? -800 : (isVisible ? (isHidden ? 100 : 0) : 150), 
+          width: isExpanded && !isHidden && isVisible ? 'auto' : 34,
+          height: isExpanded && !isHidden && isVisible ? 'auto' : 34,
+          borderTopLeftRadius: isExpanded && !isHidden && isVisible ? 18 : 17,
+          borderTopRightRadius: isExpanded && !isHidden && isVisible ? 18 : 17,
+          borderBottomLeftRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 0 : 17,
+          borderBottomRightRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 0 : 17,
           scaleX: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 1.15 : 0.9)),
           scaleY: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 0.85 : 1.3)),
-          opacity: 1,
+          opacity: isVisible ? 1 : 0,
         }}
         transition={{ 
           y: { type: "spring", stiffness: 550, damping: 45, mass: 0.8, restDelta: 0.001 },

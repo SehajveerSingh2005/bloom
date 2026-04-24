@@ -70,3 +70,5 @@ jobs:
           releaseName: "Bloom ${{ github.ref_name }}"
           releaseDraft: false
           releasePrerelease: false
+          includeUpdaterJson: true
+          updaterJsonKeepLatest: true

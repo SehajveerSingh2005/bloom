@@ -811,7 +811,8 @@ function App() {
           borderTopRightRadius: isImpacted ? 0 : 18,
           borderBottomLeftRadius: 18,
           borderBottomRightRadius: 18,
-          filter: isVisible ? "blur(0px)" : "blur(8px)"
+          filter: isVisible ? "blur(0px)" : "blur(8px)",
+          pointerEvents: isVisible ? 'auto' : 'none'
         }}
         onClick={() => {
           // Only toggle if not in calendar mode
@@ -828,7 +829,7 @@ function App() {
         transition={{
           width: { type: "spring", stiffness: 400, damping: 28 },
           height: { type: "spring", stiffness: 450, damping: 26 },
-          y: { type: "spring", stiffness: 400, damping: 30 },
+          y: { type: "spring", stiffness: 550, damping: 45, mass: 0.8, restDelta: 0.001 },
           opacity: { duration: 0.2 },
           scaleX: { type: "spring", stiffness: 600, damping: 18 },
           scaleY: { type: "spring", stiffness: 600, damping: 18 },
