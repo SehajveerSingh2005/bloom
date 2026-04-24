@@ -410,19 +410,35 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
         let mut last_hwnd = HWND(std::ptr::null_mut());
         let mut last_emit = Instant::now();
         let mut is_known_shell = false;
+        let my_process_id = std::process::id();
         
         loop {
             unsafe {
                 use windows::Win32::Graphics::Gdi::{MonitorFromWindow, GetMonitorInfoA, MONITORINFO, MONITOR_DEFAULTTONEAREST};
                 let mut hwnd = GetForegroundWindow();
                 
-                // If Bloom windows are focused, look at the window behind them to determine overlap
+                // Find the first meaningful window for overlap detection.
+                // We skip Bloom windows, invisible windows, minimized windows, and 'cloaked' system ghosts.
                 let mut check_count = 0;
-                while !hwnd.is_invalid() && check_count < 5 {
+                while !hwnd.is_invalid() && check_count < 15 {
+                    let mut process_id = 0u32;
+                    GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+                    
                     let mut class_name = [0u8; 256];
                     let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
                     let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
-                    if class_str.contains("Bloom") {
+                    
+                    let is_bloom = process_id == my_process_id || class_str.contains("Bloom");
+                    let is_visible = IsWindowVisible(hwnd).as_bool();
+                    let is_iconic = IsIconic(hwnd).as_bool();
+                    
+                    let mut cloaked = 0u32;
+                    let is_cloaked = DwmGetWindowAttribute(hwnd, windows::Win32::Graphics::Dwm::DWMWA_CLOAKED, &mut cloaked as *mut _ as *mut _, 4).is_ok() && cloaked != 0;
+
+                    let mut rect = RECT::default();
+                    let has_valid_rect = GetWindowRect(hwnd, &mut rect).is_ok() && (rect.right - rect.left) > 0 && (rect.bottom - rect.top) > 0;
+                    
+                    if is_bloom || !is_visible || is_iconic || is_cloaked || !has_valid_rect {
                         hwnd = windows::Win32::UI::WindowsAndMessaging::GetWindow(hwnd, windows::Win32::UI::WindowsAndMessaging::GW_HWNDNEXT).unwrap_or_default();
                         check_count += 1;
                     } else {
@@ -430,8 +446,8 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     }
                 }
 
-                let mut should_overlap = last_dock_overlap.unwrap_or(false);
-                let mut current_is_fs = !last_visible;
+                let mut should_overlap = false;
+                let mut current_is_fs = false;
 
                 if !hwnd.is_invalid() && (hwnd != last_hwnd || last_emit.elapsed() >= Duration::from_secs(3)) {
                     last_hwnd = hwnd;
@@ -447,14 +463,15 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                    (title == "Start" || title == "Search");
                     let is_shell = class_str == "Shell_TrayWnd" || class_str == "Shell_SecondaryTrayWnd" || is_start;
                     
-                    is_known_shell = is_desktop || is_shell; // Bloom is no longer "known shell" here because we skip it above
+                    is_known_shell = is_desktop || is_shell; 
                 }
 
                 if !hwnd.is_invalid() {
                     if is_known_shell {
                         should_overlap = false;
                         current_is_fs = false;
-                    } else if !IsIconic(hwnd).as_bool() {
+                    } else {
+                        // Current hwnd is now guaranteed to be visible, non-iconic and non-cloaked
                         use windows::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, WS_EX_TOOLWINDOW};
                         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
                         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
@@ -500,13 +517,9 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                 }
                             }
                         } else {
-                            // If transient, we shouldn't keep the previous overlap/fullscreen state
                             should_overlap = false;
                             current_is_fs = false;
                         }
-                    } else {
-                        should_overlap = false;
-                        current_is_fs = false;
                     }
                 } else {
                     last_hwnd = hwnd;
