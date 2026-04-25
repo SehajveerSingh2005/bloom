@@ -37,23 +37,17 @@ jobs:
       - name: Update version from tag
         shell: bash
         run: |
-          # Extract version from tag (e.g., v2.1 -> 2.1)
           VERSION="${GITHUB_REF_NAME#v}"
-          
-          # If it's a 2-part version (like 2.1), normalize it to 3-part (2.1.0) for semver compatibility
           if [[ $VERSION =~ ^[0-9]+\.[0-9]+$ ]]; then
             VERSION="$VERSION.0"
           fi
-          
           echo "Syncing files to version $VERSION"
           
-          # Update package.json
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
+          # Update package.json and tauri.conf.json using bun for safety
+          bun -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.version = '$VERSION'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
+          bun -e "const fs = require('fs'); const conf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8')); conf.version = '$VERSION'; fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(conf, null, 2));"
           
-          # Update tauri.conf.json
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
-          
-          # Update Cargo.toml (first occurrence of 'version = ...')
+          # Update Cargo.toml
           sed -i "0,/^version = \".*\"/{s/^version = \".*\"/version = \"$VERSION\"/}" src-tauri/Cargo.toml
 
       - name: Install frontend dependencies
@@ -72,3 +66,4 @@ jobs:
           releasePrerelease: false
           includeUpdaterJson: true
           updaterJsonKeepLatest: true
+          updaterJsonPreferNsis: true
