@@ -17,12 +17,13 @@ function SettingsApp() {
   const [mediaVisualizerEnabled, setMediaVisualizerEnabled] = useState(true);
   const [mediaAlbumArtEnabled, setMediaAlbumArtEnabled] = useState(true);
   const [mediaDetailsEnabled, setMediaDetailsEnabled] = useState(true);
-  const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") !== "false");
+  const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
   const [cityName, setCityName] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [dockEnabled, setDockEnabled] = useState(false);
-  const [dockMode, setDockMode] = useState("fixed");
+  const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "auto-hide");
+  const [notchMode, setNotchMode] = useState("fixed");
   const [lowBatteryThreshold, setLowBatteryThreshold] = useState(20);
   const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "uptodate" | "error" | "downloading">("idle");
   const [updateVersion, setUpdateVersion] = useState("");
@@ -91,6 +92,9 @@ function SettingsApp() {
 
     const threshold = localStorage.getItem("bloom-low-battery-threshold");
     if (threshold !== null) setLowBatteryThreshold(parseInt(threshold));
+
+    const nMode = localStorage.getItem("bloom-notch-mode");
+    if (nMode) setNotchMode(nMode);
 
     getVersion().then(setAppVersion);
     checkForUpdates(false);
@@ -229,6 +233,12 @@ function SettingsApp() {
     notifyChange("dock-mode", newMode);
   };
 
+  const toggleNotchMode = (newMode: string) => {
+    setNotchMode(newMode);
+    localStorage.setItem("bloom-notch-mode", newMode);
+    notifyChange("notch-mode", newMode);
+  };
+
   const handleThresholdChange = (val: number) => {
     setLowBatteryThreshold(val);
     localStorage.setItem("bloom-low-battery-threshold", val.toString());
@@ -314,6 +324,28 @@ function SettingsApp() {
               <input type="checkbox" checked={cornersEnabled} onChange={toggleCorners} />
               <span className="slider"></span>
             </label>
+          </div>
+
+          <div className="setting-divider" />
+
+          <div className="setting-item">
+            <div className="setting-icon-bg" style={{ background: '#ff375f' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+              </svg>
+            </div>
+            <div className="setting-info">
+              <span className="setting-label">Notch Behavior</span>
+              <span className="setting-desc">Auto-hide top bar</span>
+            </div>
+            <select 
+              className="settings-select" 
+              value={notchMode} 
+              onChange={(e) => toggleNotchMode(e.target.value)}
+            >
+              <option value="fixed">Fixed</option>
+              <option value="auto-hide">Auto Hide</option>
+            </select>
           </div>
 
           <div className="setting-divider" />

@@ -8,11 +8,14 @@ pub static mut COMMAND_SENDER: Option<Sender<SystemCommand>> = None;
 pub static MAIN_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub static DOCK_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub static CURRENT_DOCK_OVERLAP: AtomicI32 = AtomicI32::new(-1);
+pub static CURRENT_NOTCH_OVERLAP: AtomicI32 = AtomicI32::new(-1);
 pub static NATIVE_TASKBAR_HIDDEN: AtomicBool = AtomicBool::new(false);
 
 
 pub static DOCK_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
+pub static NOTCH_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
 pub static DOCK_IS_HOVERED: AtomicBool = AtomicBool::new(false);
+pub static NOTCH_IS_HOVERED: AtomicBool = AtomicBool::new(false);
 pub static MENU_IS_OPEN: AtomicBool = AtomicBool::new(false);
 pub static MENU_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
 pub static ICON_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();

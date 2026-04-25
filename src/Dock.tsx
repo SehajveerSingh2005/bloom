@@ -19,7 +19,7 @@ const Dock = memo(function Dock() {
   const [activeApps, setActiveApps] = useState<AppInfo[]>([]);
   const iconsRef = useRef<Record<string, string>>({});
   const [, setIconsTick] = useState(0); 
-  const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "fixed");
+  const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "auto-hide");
   const [isDockHovered, setIsDockHovered] = useState(false);
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
   const [isOverlapped, setIsOverlapped] = useState(false);

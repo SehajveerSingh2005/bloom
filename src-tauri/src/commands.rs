@@ -22,8 +22,20 @@ pub async fn set_dock_hovered(hovered: bool) {
 }
 
 #[tauri::command]
+pub async fn set_notch_hovered(hovered: bool) {
+    NOTCH_IS_HOVERED.store(hovered, Ordering::Relaxed);
+}
+
+#[tauri::command]
 pub async fn update_dock_rect(rect: IntRect) {
     if let Ok(mut r) = DOCK_RECT.lock() {
+        *r = Some(rect);
+    }
+}
+
+#[tauri::command]
+pub async fn update_notch_rect(rect: IntRect) {
+    if let Ok(mut r) = NOTCH_RECT.lock() {
         *r = Some(rect);
     }
 }
@@ -66,7 +78,9 @@ pub async fn toggle_dock(app: AppHandle, enable: bool) {
 
             // Re-sync other appbars to ensure they stay in place
             if let Some(main_win) = app.get_webview_window("main") {
-                register_appbar(main_win);
+                if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                    register_appbar(main_win);
+                }
             }
         }
     }
@@ -75,7 +89,9 @@ pub async fn toggle_dock(app: AppHandle, enable: bool) {
 #[tauri::command]
 pub async fn sync_appbar(app: AppHandle) {
     if let Some(main_win) = app.get_webview_window("main") {
-        register_appbar(main_win);
+        if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+            register_appbar(main_win);
+        }
     }
     if let Some(dock_win) = app.get_webview_window("dock") {
         if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) && dock_win.is_visible().unwrap_or(false) {
@@ -130,6 +146,26 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
                 register_dock_appbar(dock_clone);
             }
         });
+    }
+}
+
+#[tauri::command]
+pub async fn change_notch_mode(app: AppHandle, mode: String) {
+    if let Some(main_win) = app.get_webview_window("main") {
+        if mode == "fixed" {
+            register_appbar(main_win.clone());
+        } else if let Ok(hwnd) = main_win.hwnd() {
+            let hwnd_val = hwnd.0 as isize;
+            tauri::async_runtime::spawn_blocking(move || {
+                unregister_appbar_native(HWND(hwnd_val as *mut _));
+            });
+            MAIN_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
+        }
+        
+        let current = CURRENT_NOTCH_OVERLAP.load(Ordering::Relaxed);
+        if current != -1 {
+            let _ = app.emit("notch-overlap", current == 1);
+        }
     }
 }
 

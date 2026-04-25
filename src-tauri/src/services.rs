@@ -407,6 +407,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
         use windows::Win32::Foundation::RECT;
         let mut last_visible = true;
         let mut last_dock_overlap: Option<bool> = None;
+        let mut last_notch_overlap: Option<bool> = None;
         let mut last_hwnd = HWND(std::ptr::null_mut());
         let mut last_emit = Instant::now();
         let mut is_known_shell = false;
@@ -447,6 +448,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                 }
 
                 let mut should_overlap = false;
+                let mut should_notch_overlap = false;
                 let mut current_is_fs = false;
 
                 if !hwnd.is_invalid() && (hwnd != last_hwnd || last_emit.elapsed() >= Duration::from_secs(3)) {
@@ -490,13 +492,16 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                 
                                 if GetMonitorInfoA(h_monitor, &mut mi).as_bool() {
                                     let screen_rect = mi.rcMonitor;
-                                    current_is_fs = rect.left <= screen_rect.left && rect.top <= screen_rect.top && 
-                                                    rect.right >= screen_rect.right && rect.bottom >= screen_rect.bottom;
-                                    
                                     let is_maximized = IsZoomed(hwnd).as_bool() || (style & WS_MAXIMIZE.0) != 0;
+                                    let is_matches_screen = rect.left <= screen_rect.left && rect.top <= screen_rect.top && 
+                                                            rect.right >= screen_rect.right && rect.bottom >= screen_rect.bottom;
                                     
+                                    // Truly fullscreen means covering the screen AND not being a normal maximized window
+                                    current_is_fs = is_matches_screen && !is_maximized;
+
                                     if current_is_fs || is_maximized {
                                         should_overlap = true;
+                                        should_notch_overlap = true;
                                     } else {
                                         should_overlap = false;
                                         if let Ok(dock_rect_lock) = DOCK_RECT.lock() {
@@ -510,6 +515,21 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                                 if rect.left < d_right - 4 && rect.right > d_left + 4 && 
                                                    rect.bottom > trigger_y + 4 {
                                                     should_overlap = true;
+                                                }
+                                            }
+                                        }
+
+                                        if let Ok(notch_rect_lock) = NOTCH_RECT.lock() {
+                                            if let Some(nr) = *notch_rect_lock {
+                                                let scale = if let Some(m) = handle_visibility.primary_monitor().ok().flatten() { m.scale_factor() } else { 1.0 };
+                                                let n_left = (nr.x as f64 * scale) as i32;
+                                                let n_right = n_left + (nr.width as f64 * scale) as i32;
+                                                let res_h = (36.0 * scale) as i32;
+                                                let trigger_y = screen_rect.top + res_h;
+
+                                                if rect.left < n_right - 4 && rect.right > n_left + 4 && 
+                                                   rect.top < trigger_y - 4 {
+                                                    should_notch_overlap = true;
                                                 }
                                             }
                                         }
@@ -530,11 +550,17 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
 
                 // Update overlap state
                 CURRENT_DOCK_OVERLAP.store(if should_overlap { 1 } else { 0 }, Ordering::Relaxed);
+                CURRENT_NOTCH_OVERLAP.store(if should_notch_overlap { 1 } else { 0 }, Ordering::Relaxed);
                 
                 if Some(should_overlap) != last_dock_overlap || last_emit.elapsed() >= Duration::from_secs(3) {
                     let _ = handle_visibility.emit("dock-overlap", should_overlap);
                     last_dock_overlap = Some(should_overlap);
                     last_emit = Instant::now();
+                }
+
+                if Some(should_notch_overlap) != last_notch_overlap || last_emit.elapsed() >= Duration::from_secs(3) {
+                    let _ = handle_visibility.emit("notch-overlap", should_notch_overlap);
+                    last_notch_overlap = Some(should_notch_overlap);
                 }
 
                 // Update full-screen visibility (hides TopBar/Corners)
@@ -606,6 +632,7 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
         let mut last_main_ignore = None;
         let mut last_dock_ignore = None;
         let mut last_edge_hover = None;
+        let mut last_top_edge_hover = None;
         let mut dock_interaction_expiry = Instant::now() - Duration::from_secs(1);
         let mut topbar_interaction_expiry = Instant::now() - Duration::from_secs(1);
         
@@ -690,26 +717,51 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                     // --- Main (TopBar) Interaction ---
                     if let Some(main_win) = app_handle.get_webview_window("main") {
                         if main_win.is_visible().unwrap_or(false) {
-                            let mut is_interactive = false;
-                            
+                            // 3. Hot-edge detection (Top edge)
+                            let in_notch_hover = NOTCH_IS_HOVERED.load(Ordering::Relaxed);
+                            let mut is_notch_hovered = false;
+                            if let Ok(Some(monitor)) = main_win.primary_monitor() {
+                                let m_pos = monitor.position();
+                                let m_size = monitor.size();
+                                let at_top_edge = pt.y <= (m_pos.y + 2) && 
+                                                  pt.x >= m_pos.x && pt.x <= (m_pos.x + m_size.width as i32);
+                                
+                                if at_top_edge || in_notch_hover {
+                                    is_notch_hovered = true;
+                                    topbar_interaction_expiry = now + Duration::from_millis(500);
+                                }
+                            }
+
+                            let mut is_click_interactive = false;
                             if let Ok(lock) = MAIN_WINDOW_RECT.lock() {
                                 if let Some((win_pos, win_size)) = *lock {
                                     let in_window = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
                                                     pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
                                     
                                     if in_window {
-                                        // TopBar is usually interactive across its width but only for a small height
-                                        // or when a menu is open.
-                                        is_interactive = true;
+                                        if let Ok(region) = NOTCH_RECT.try_lock() {
+                                            if let Some(r) = *region {
+                                                let scale = main_win.scale_factor().unwrap_or(1.0);
+                                                let rx = win_pos.x + (r.x as f64 * scale) as i32 - 10;
+                                                let ry = win_pos.y + (r.y as f64 * scale) as i32 - 10;
+                                                let rw = (r.width as f64 * scale) as i32 + 20;
+                                                let rh = (r.height as f64 * scale) as i32 + 20;
+                                                if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
+                                                    is_click_interactive = true;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
 
-                            if is_interactive {
-                                topbar_interaction_expiry = now + Duration::from_millis(500);
+                            let final_notch_hover = is_notch_hovered || now < topbar_interaction_expiry;
+                            if last_top_edge_hover != Some(final_notch_hover) {
+                                let _ = app_handle.emit("notch-edge-hover", final_notch_hover);
+                                last_top_edge_hover = Some(final_notch_hover);
                             }
 
-                            let final_ignore = !is_interactive && now >= topbar_interaction_expiry;
+                            let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
                             if last_main_ignore != Some(final_ignore) {
                                 let _ = main_win.set_ignore_cursor_events(final_ignore);
                                 last_main_ignore = Some(final_ignore);

@@ -221,6 +221,58 @@ function App() {
   const [isImpacted, setIsImpacted] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
 
+  const [notchMode, setNotchMode] = useState(() => localStorage.getItem("bloom-notch-mode") || "fixed");
+  const [isNotchHovered, setIsNotchHovered] = useState(false);
+  const [isEdgeHovered, setIsEdgeHovered] = useState(false);
+  const [isOverlapped, setIsOverlapped] = useState(false);
+  const [interactionState, setInteractionState] = useState<'active' | 'grace' | 'none'>('none');
+  const bloomRef = useRef<HTMLDivElement>(null);
+
+  const isAnyInteraction = isHovered || isNotchHovered || isEdgeHovered;
+  const isHidden = notchMode === 'auto-hide' && isOverlapped && interactionState === 'none';
+
+  useEffect(() => {
+    if (isAnyInteraction) {
+      setInteractionState('active');
+    } else if (interactionState !== 'none') {
+      setInteractionState('grace');
+      const timer = setTimeout(() => setInteractionState('none'), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [isAnyInteraction]);
+
+  useEffect(() => {
+    if (windowLabel === 'main') {
+      invoke('set_notch_hovered', { hovered: isNotchHovered }).catch(() => {});
+    }
+  }, [isNotchHovered, windowLabel]);
+
+  useEffect(() => {
+    const updateRect = () => {
+      if (bloomRef.current && windowLabel === 'main') {
+        const rect = bloomRef.current.getBoundingClientRect();
+        invoke('update_notch_rect', {
+          rect: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height)
+          }
+        }).catch(() => {});
+      }
+    };
+
+    updateRect();
+    window.addEventListener('resize', updateRect);
+    const observer = new ResizeObserver(updateRect);
+    if (bloomRef.current) observer.observe(bloomRef.current);
+
+    return () => {
+      window.removeEventListener('resize', updateRect);
+      observer.disconnect();
+    };
+  }, [isExpanded, isHidden, windowLabel]);
+
   useEffect(() => {
     // Only animate the main top-bar
     if (windowLabel !== 'main') {
@@ -261,20 +313,36 @@ function App() {
   const [settingsCalendarEnabled, setSettingsCalendarEnabled] = useState(() => localStorage.getItem("bloom-calendar-enabled") !== "false");
   const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-visualizer-enabled") !== "false");
   const [settingsAlbumArtEnabled, setSettingsAlbumArtEnabled] = useState(() => localStorage.getItem("bloom-media-album-art-enabled") !== "false");
-  const [settingsCornersEnabled, setSettingsCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") !== "false");
+  const [settingsCornersEnabled, setSettingsCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
 
   useEffect(() => {
     // On startup, we don't need to call toggle_corners_window anymore as it's built-in
     if (windowLabel === 'main') {
+      // Handle first-run defaults
+      const firstRun = localStorage.getItem("bloom-first-run") === null;
+      if (firstRun) {
+        // Enable autostart by default for new users
+        import("@tauri-apps/plugin-autostart").then(({ enable, isEnabled }) => {
+          isEnabled().then(enabled => {
+            if (!enabled) enable().catch(() => {});
+          });
+        });
+        localStorage.setItem("bloom-first-run", "done");
+      }
 
       // Add a small delay to ensure windows are created and ready
       setTimeout(() => {
         const dockEnabled = localStorage.getItem("bloom-dock-enabled") === "true";
         if (dockEnabled) {
           invoke("toggle_dock", { enable: true });
-          invoke("change_dock_mode", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
+          invoke("change_dock_mode", { mode: localStorage.getItem("bloom-dock-mode") || "auto-hide" });
         }
+        
+        // Sync notch mode on startup
+        const savedNotchMode = localStorage.getItem("bloom-notch-mode") || "fixed";
+        invoke("change_notch_mode", { mode: savedNotchMode });
+
         // Re-sync topbar to prevent displacement (Always do this on launch)
         invoke("sync_appbar");
         // Secondary sync to catch any shell-level work-area jumps
@@ -324,11 +392,27 @@ function App() {
           setTimeout(() => invoke("sync_appbar"), 200);
         }
       }
+      if (key === "notch-mode") {
+        setNotchMode(value);
+        if (windowLabel === 'main') {
+          invoke("change_notch_mode", { mode: value });
+        }
+      }
+    });
+
+    const unlistenNotchOverlap = listen<boolean>("notch-overlap", (event) => {
+      setIsOverlapped(event.payload);
+    });
+
+    const unlistenNotchEdgeHover = listen<boolean>("notch-edge-hover", (event) => {
+      setIsEdgeHovered(event.payload);
     });
 
     return () => {
       unlistenVisibility.then(f => f());
       unlistenSettings.then(f => f());
+      unlistenNotchOverlap.then(f => f());
+      unlistenNotchEdgeHover.then(f => f());
     };
   }, []);
 
@@ -796,14 +880,15 @@ function App() {
       </AnimatePresence>
 
       <motion.div
+        ref={bloomRef}
         className={`bloom ${isHovered ? 'expanded' : ''} ${isImpacted ? 'is-impacted' : ''}`}
+        onMouseEnter={() => setIsNotchHovered(true)}
+        onMouseLeave={() => setIsNotchHovered(false)}
         initial={{ y: 250, width: 34, height: 34, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 18, borderBottomRightRadius: 18, scaleX: 0.9, scaleY: 1.3, opacity: 0 }}
         animate={{
-          width: isExpanded ? (isHovered && isMusicMode ? 330 : getDynamicWidth()) : 34,
-          height: isExpanded
-            ? (isCalendarMode ? 275 : (isHovered && isMusicMode ? 120 : 36))
-            : 34,
-          y: !isReady ? 250 : (isVisible ? 0 : -80),
+          y: !isReady ? 250 : (isVisible ? (isHidden ? -100 : 0) : -150),
+          width: isExpanded && isVisible && !isHidden ? getDynamicWidth() : 34,
+          height: isExpanded && isVisible && !isHidden ? (isHovered ? (bloomMode === 'calendar' ? 260 : (bloomMode === 'music' ? 120 : 34)) : (bloomMode === 'calendar' ? 260 : 34)) : 34,
           opacity: isVisible ? 1 : 0,
           scaleX: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 1.15 : 0.9)),
           scaleY: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 0.85 : 1.3)),

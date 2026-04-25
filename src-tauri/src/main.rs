@@ -54,10 +54,13 @@ fn main() {
             media_previous,
             toggle_dock,
             change_dock_mode,
+            change_notch_mode,
             sync_appbar,
             open_app,
             update_dock_rect,
+            update_notch_rect,
             set_dock_hovered,
+            set_notch_hovered,
             get_active_windows,
             get_app_icon,
             get_installed_apps,
@@ -73,7 +76,6 @@ fn main() {
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
             let dock_win = app.get_webview_window("dock").unwrap();
-            register_appbar(window.clone());
 
             // Sync window rects initially and on event
             let win_clone = window.clone();
