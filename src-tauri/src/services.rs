@@ -403,8 +403,9 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
     let tx_clone = tx.clone();
     let handle_visibility = app_handle.clone();
     std::thread::spawn(move || {
-        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, IsZoomed, IsIconic, GetWindowLongW, GWL_STYLE, WS_MAXIMIZE};
-        use windows::Win32::Foundation::RECT;
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, IsZoomed, IsIconic, GetWindowLongW, GWL_STYLE, WS_MAXIMIZE, GetClientRect};
+        use windows::Win32::Graphics::Gdi::ClientToScreen;
+        use windows::Win32::Foundation::{RECT, POINT};
         let mut last_visible = true;
         let mut last_dock_overlap: Option<bool> = None;
         let mut last_notch_overlap: Option<bool> = None;
@@ -493,11 +494,24 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                 if GetMonitorInfoA(h_monitor, &mut mi).as_bool() {
                                     let screen_rect = mi.rcMonitor;
                                     let is_maximized = IsZoomed(hwnd).as_bool() || (style & WS_MAXIMIZE.0) != 0;
+                                    
+                                    let mut is_client_fullscreen = false;
+                                    let mut client_rect = RECT::default();
+                                    if GetClientRect(hwnd, &mut client_rect).is_ok() {
+                                        let mut top_left = POINT { x: client_rect.left, y: client_rect.top };
+                                        let mut bottom_right = POINT { x: client_rect.right, y: client_rect.bottom };
+                                        let _ = ClientToScreen(hwnd, &mut top_left);
+                                        let _ = ClientToScreen(hwnd, &mut bottom_right);
+                                        
+                                        is_client_fullscreen = top_left.x <= screen_rect.left && top_left.y <= screen_rect.top &&
+                                                               bottom_right.x >= screen_rect.right && bottom_right.y >= screen_rect.bottom;
+                                    }
+
                                     let is_matches_screen = rect.left <= screen_rect.left && rect.top <= screen_rect.top && 
                                                             rect.right >= screen_rect.right && rect.bottom >= screen_rect.bottom;
                                     
-                                    // Truly fullscreen means covering the screen AND not being a normal maximized window
-                                    current_is_fs = is_matches_screen && !is_maximized;
+                                    // Truly fullscreen means client covers screen, OR window matches screen but is not just a standard maximized window
+                                    current_is_fs = is_client_fullscreen || (is_matches_screen && !is_maximized);
 
                                     if current_is_fs || is_maximized {
                                         should_overlap = true;
