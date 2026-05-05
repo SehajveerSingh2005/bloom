@@ -12,6 +12,8 @@
     "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
     "core:event:default",
-    "autostart:default"
+    "autostart:default",
+    "updater:allow-check",
+    "updater:allow-download-and-install"
   ]
 }
