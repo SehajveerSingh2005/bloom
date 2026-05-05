@@ -101,169 +101,212 @@ pub fn setup_audio_visualization(app_handle: AppHandle) {
             eRender, eConsole, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
         };
         use windows::Win32::System::Com::{
-            CoInitializeEx, CoUninitialize, CoTaskMemFree,
+            CoInitializeEx, CoTaskMemFree,
             COINIT_APARTMENTTHREADED, CoCreateInstance, CLSCTX_ALL
         };
-        use windows::Win32::Foundation::S_OK;
-
         unsafe {
-            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            let com_initialized = hr.is_ok() || hr == S_OK;
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
-            let _result: Result<(), String> = (|| {
-                let enumerator: IMMDeviceEnumerator =
-                    CoCreateInstance(&windows::Win32::Media::Audio::MMDeviceEnumerator, None, CLSCTX_ALL)
-                        .map_err(|e| format!("CoCreateInstance failed: {:?}", e))?;
+            const NUM_BANDS: usize = 5;
+            let mut max_band_energies = [0.01f32; NUM_BANDS];
+            let mut prev_values = [0.1f32; NUM_BANDS];
 
-                let device: IMMDevice = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
-                    .map_err(|e| format!("GetDefaultAudioEndpoint failed: {:?}", e))?;
+            loop {
+                let _result: Result<(), String> = (|| {
+                    let enumerator: IMMDeviceEnumerator =
+                        CoCreateInstance(&windows::Win32::Media::Audio::MMDeviceEnumerator, None, CLSCTX_ALL)
+                            .map_err(|e| format!("CoCreateInstance failed: {:?}", e))?;
 
-                let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)
-                    .map_err(|e| format!("Activate failed: {:?}", e))?;
+                    let device: IMMDevice = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
+                        .map_err(|e| format!("GetDefaultAudioEndpoint failed: {:?}", e))?;
 
-                let format_ptr = audio_client.GetMixFormat()
-                    .map_err(|e| format!("GetMixFormat failed: {:?}", e))?;
-                
-                let channels = (*format_ptr).nChannels as usize;
-                let bits_per_sample = (*format_ptr).wBitsPerSample;
-                let bytes_per_sample = (bits_per_sample / 8) as usize;
-                
-                if bytes_per_sample == 0 || channels == 0 || bytes_per_sample > 4 {
-                    CoTaskMemFree(Some(format_ptr as *const _));
-                    return Err(format!("Invalid audio format: channels={}, bits={}", channels, bits_per_sample));
-                }
-                
-                let buffer_duration = 10_000_000i64;
-                audio_client.Initialize(
-                    AUDCLNT_SHAREMODE_SHARED,
-                    AUDCLNT_STREAMFLAGS_LOOPBACK,
-                    buffer_duration,
-                    0,
-                    format_ptr,
-                    Some(std::ptr::null()),
-                ).map_err(|e| format!("Initialize failed: {:?}", e))?;
+                    let current_id_str = if let Ok(id) = device.GetId() {
+                        let id_str = windows::core::PCWSTR::from_raw(id.0).to_string().unwrap_or_default();
+                        CoTaskMemFree(Some(id.0 as *const _));
+                        id_str
+                    } else { String::new() };
 
-                CoTaskMemFree(Some(format_ptr as *const _));
+                    let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)
+                        .map_err(|e| format!("Activate failed: {:?}", e))?;
 
-                let capture_client: IAudioCaptureClient = audio_client.GetService()
-                    .map_err(|e| format!("GetService failed: {:?}", e))?;
-
-                audio_client.Start()
-                    .map_err(|e| format!("Start failed: {:?}", e))?;
-
-                const FFT_SIZE: usize = 512;
-                let mut fft_buffer = vec![0.0f32; FFT_SIZE];
-                let mut buffer_pos = 0;
-                const NUM_BANDS: usize = 5;
-                let mut max_band_energies = [0.01f32; NUM_BANDS];
-                let mut prev_values = [0.1f32; NUM_BANDS];
-
-                loop {
-                    std::thread::sleep(std::time::Duration::from_millis(32));
+                    let format_ptr = audio_client.GetMixFormat()
+                        .map_err(|e| format!("GetMixFormat failed: {:?}", e))?;
                     
-                    // Skip all heavy processing if nothing is playing
-                    if !ANY_MEDIA_PLAYING.load(Ordering::Relaxed) {
-                        // Still gotta clear the buffer to avoid lag when it starts
-                        while let Ok(len) = capture_client.GetNextPacketSize() {
-                            if len == 0 { break; }
+                    let channels = (*format_ptr).nChannels as usize;
+                    let bits_per_sample = (*format_ptr).wBitsPerSample;
+                    let bytes_per_sample = (bits_per_sample / 8) as usize;
+
+                    
+                    if bytes_per_sample == 0 || channels == 0 || bytes_per_sample > 4 {
+                        CoTaskMemFree(Some(format_ptr as *const _));
+                        return Err(format!("Invalid audio format: channels={}, bits={}", channels, bits_per_sample));
+                    }
+                    
+                    let buffer_duration = 10_000_000i64;
+                    audio_client.Initialize(
+                        AUDCLNT_SHAREMODE_SHARED,
+                        AUDCLNT_STREAMFLAGS_LOOPBACK,
+                        buffer_duration,
+                        0,
+                        format_ptr,
+                        Some(std::ptr::null()),
+                    ).map_err(|e| format!("Initialize failed: {:?}", e))?;
+
+                    CoTaskMemFree(Some(format_ptr as *const _));
+
+                    let capture_client: IAudioCaptureClient = audio_client.GetService()
+                        .map_err(|e| format!("GetService failed: {:?}", e))?;
+
+                    audio_client.Start()
+                        .map_err(|e| format!("Start failed: {:?}", e))?;
+
+                    const FFT_SIZE: usize = 512;
+                    let mut fft_buffer = vec![0.0f32; FFT_SIZE];
+                    let mut buffer_pos = 0;
+
+                    let mut last_device_check = std::time::Instant::now();
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(32));
+                        
+                        if last_device_check.elapsed().as_secs() >= 2 {
+                            last_device_check = std::time::Instant::now();
+                            if let Ok(new_device) = enumerator.GetDefaultAudioEndpoint(eRender, eConsole) {
+                                if let Ok(new_id) = new_device.GetId() {
+                                    let new_str = windows::core::PCWSTR::from_raw(new_id.0).to_string().unwrap_or_default();
+                                    CoTaskMemFree(Some(new_id.0 as *const _));
+                                    if current_id_str != new_str {
+                                        return Err("Default device changed".into());
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Skip all heavy processing if nothing is playing
+                        if !ANY_MEDIA_PLAYING.load(Ordering::Relaxed) {
+                            // Still gotta clear the buffer to avoid lag when it starts
+                            loop {
+                                let len = match capture_client.GetNextPacketSize() {
+                                    Ok(l) => l,
+                                    Err(_) => {
+                                        return Err("Device invalidated".into());
+                                    }
+                                };
+                                if len == 0 { break; }
+                                let mut data_ptr: *mut u8 = std::ptr::null_mut();
+                                let mut num_frames = 0u32;
+                                let mut flags = 0u32;
+                                if capture_client.GetBuffer(&mut data_ptr, &mut num_frames, &mut flags, None, None).is_err() {
+                                    return Err("Device invalidated".into());
+                                }
+                                let _ = capture_client.ReleaseBuffer(num_frames);
+                            }
+                            continue;
+                        }
+
+                        let mut device_invalidated = false;
+                        loop {
+                            let packet_length = match capture_client.GetNextPacketSize() {
+                                Ok(len) => len,
+                                Err(_) => { 
+                                    device_invalidated = true; 
+                                    break; 
+                                },
+                            };
+                            if packet_length == 0 { break; }
                             let mut data_ptr: *mut u8 = std::ptr::null_mut();
                             let mut num_frames = 0u32;
                             let mut flags = 0u32;
-                            let _ = capture_client.GetBuffer(&mut data_ptr, &mut num_frames, &mut flags, None, None);
-                            let _ = capture_client.ReleaseBuffer(num_frames);
-                        }
-                        continue;
-                    }
 
-                    loop {
-                        let packet_length = match capture_client.GetNextPacketSize() {
-                            Ok(len) => len,
-                            Err(_) => break,
-                        };
-                        if packet_length == 0 { break; }
-                        let mut data_ptr: *mut u8 = std::ptr::null_mut();
-                        let mut num_frames = 0u32;
-                        let mut flags = 0u32;
-
-                        if capture_client.GetBuffer(&mut data_ptr, &mut num_frames, &mut flags, None, None).is_err() {
-                            break;
-                        }
-
-                        if !data_ptr.is_null() && num_frames > 0 && bytes_per_sample > 0 && channels > 0 {
-                            let stride = channels * bytes_per_sample;
-                            for frame in 0..num_frames as usize {
-                                let frame_offset = frame * stride;
-                                let mut sample_val: i64 = 0;
-                                for ch in 0..channels {
-                                    let sample_offset = frame_offset + ch * bytes_per_sample;
-                                    let sample: i64 = match bytes_per_sample {
-                                        2 => *(data_ptr.add(sample_offset) as *const i16) as i64,
-                                        4 => *(data_ptr.add(sample_offset) as *const i32) as i64,
-                                        _ => 0,
-                                    };
-                                    sample_val = sample_val.wrapping_add(sample);
-                                }
-                                sample_val /= channels as i64;
-                                let normalized = match bytes_per_sample {
-                                    2 => (sample_val as f32) / 32768.0,
-                                    4 => (sample_val as f32) / 2147483648.0,
-                                    _ => 0.0,
-                                };
-                                if buffer_pos < FFT_SIZE {
-                                    let window = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * buffer_pos as f32 / FFT_SIZE as f32).cos());
-                                    fft_buffer[buffer_pos] = normalized * window;
-                                    buffer_pos += 1;
-                                }
-                                if buffer_pos >= FFT_SIZE {
-                                    let band_ranges = [(1, 2), (2, 6), (6, 18), (18, 60), (60, 200)];
-                                    let mut output = [0.0f32; NUM_BANDS];
-                                    for (band_idx, &(bin_start, bin_end)) in band_ranges.iter().enumerate() {
-                                        let mut total_mag = 0.0f32;
-                                        // Optimization: Sample fewer bins in higher ranges where we have more of them
-                                        // This drastically reduces CPU usage for DFT
-                                        let step = if bin_end - bin_start > 20 { (bin_end - bin_start) / 10 } else { 1 };
-                                        let mut count = 0;
-                                        
-                                        for bin in (bin_start..bin_end).step_by(step) {
-                                            if bin >= FFT_SIZE / 2 { break; }
-                                            let freq = 2.0 * std::f32::consts::PI * bin as f32 / FFT_SIZE as f32;
-                                            let mut real = 0.0f32;
-                                            let mut imag = 0.0f32;
-                                            for (sample_idx, &sample) in fft_buffer.iter().enumerate() {
-                                                if sample == 0.0 { continue; } // Tiny optimization
-                                                let phase = freq * sample_idx as f32;
-                                                real += sample * phase.cos();
-                                                imag -= sample * phase.sin();
-                                            }
-                                            total_mag += (real * real + imag * imag).sqrt();
-                                            count += 1;
-                                        }
-                                        let avg_mag = total_mag / count.max(1) as f32;
-                                        let mut scaled_mag = avg_mag;
-                                        let weighting = [1.2, 1.2, 1.5, 2.8, 5.0];
-                                        scaled_mag *= weighting[band_idx];
-                                        if scaled_mag > max_band_energies[band_idx] {
-                                            max_band_energies[band_idx] = scaled_mag;
-                                        } else {
-                                            max_band_energies[band_idx] *= 0.99;
-                                        }
-                                        let target = (scaled_mag / max_band_energies[band_idx].max(0.12)).min(1.0).powf(0.75);
-                                        let is_rising = target > prev_values[band_idx];
-                                        let smooth_factor = if is_rising { 0.10 } else { 0.20 };
-                                        output[band_idx] = prev_values[band_idx] * smooth_factor + target * (1.0 - smooth_factor);
-                                        output[band_idx] = output[band_idx].min(1.0).max(0.18);
-                                        prev_values[band_idx] = output[band_idx];
-                                    }
-                                    let _ = app_handle.emit("audio-visualization", AudioVisualizationData { frequencies: output.to_vec() });
-                                    buffer_pos = 0;
-                                }
+                            if capture_client.GetBuffer(&mut data_ptr, &mut num_frames, &mut flags, None, None).is_err() {
+                                device_invalidated = true;
+                                break;
                             }
-                            let _ = capture_client.ReleaseBuffer(num_frames);
+
+                            if !data_ptr.is_null() && num_frames > 0 && bytes_per_sample > 0 && channels > 0 {
+                                let stride = channels * bytes_per_sample;
+                                for frame in 0..num_frames as usize {
+                                    let frame_offset = frame * stride;
+                                    let mut sample_val: i64 = 0;
+                                    for ch in 0..channels {
+                                        let sample_offset = frame_offset + ch * bytes_per_sample;
+                                        let sample: i64 = match bytes_per_sample {
+                                            2 => *(data_ptr.add(sample_offset) as *const i16) as i64,
+                                            4 => *(data_ptr.add(sample_offset) as *const i32) as i64,
+                                            _ => 0,
+                                        };
+                                        sample_val = sample_val.wrapping_add(sample);
+                                    }
+                                    sample_val /= channels as i64;
+                                    let normalized = match bytes_per_sample {
+                                        2 => (sample_val as f32) / 32768.0,
+                                        4 => (sample_val as f32) / 2147483648.0,
+                                        _ => 0.0,
+                                    };
+                                    if buffer_pos < FFT_SIZE {
+                                        let window = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * buffer_pos as f32 / FFT_SIZE as f32).cos());
+                                        fft_buffer[buffer_pos] = normalized * window;
+                                        buffer_pos += 1;
+                                    }
+                                    if buffer_pos >= FFT_SIZE {
+                                        let band_ranges = [(1, 2), (2, 6), (6, 18), (18, 60), (60, 200)];
+                                        let mut output = [0.0f32; NUM_BANDS];
+                                        for (band_idx, &(bin_start, bin_end)) in band_ranges.iter().enumerate() {
+                                            let mut total_mag = 0.0f32;
+                                            // Optimization: Sample fewer bins in higher ranges where we have more of them
+                                            // This drastically reduces CPU usage for DFT
+                                            let step = if bin_end - bin_start > 20 { (bin_end - bin_start) / 10 } else { 1 };
+                                            let mut count = 0;
+                                            
+                                            for bin in (bin_start..bin_end).step_by(step) {
+                                                if bin >= FFT_SIZE / 2 { break; }
+                                                let freq = 2.0 * std::f32::consts::PI * bin as f32 / FFT_SIZE as f32;
+                                                let mut real = 0.0f32;
+                                                let mut imag = 0.0f32;
+                                                for (sample_idx, &sample) in fft_buffer.iter().enumerate() {
+                                                    if sample == 0.0 { continue; } // Tiny optimization
+                                                    let phase = freq * sample_idx as f32;
+                                                    real += sample * phase.cos();
+                                                    imag -= sample * phase.sin();
+                                                }
+                                                total_mag += (real * real + imag * imag).sqrt();
+                                                count += 1;
+                                            }
+                                            let avg_mag = total_mag / count.max(1) as f32;
+                                            let mut scaled_mag = avg_mag;
+                                            let weighting = [1.2, 1.2, 1.5, 2.8, 5.0];
+                                            scaled_mag *= weighting[band_idx];
+                                            if scaled_mag > max_band_energies[band_idx] {
+                                                max_band_energies[band_idx] = scaled_mag;
+                                            } else {
+                                                max_band_energies[band_idx] *= 0.99;
+                                            }
+                                            let target = (scaled_mag / max_band_energies[band_idx].max(0.12)).min(1.0).powf(0.75);
+                                            let is_rising = target > prev_values[band_idx];
+                                            let smooth_factor = if is_rising { 0.10 } else { 0.20 };
+                                            output[band_idx] = prev_values[band_idx] * smooth_factor + target * (1.0 - smooth_factor);
+                                            output[band_idx] = output[band_idx].min(1.0).max(0.18);
+                                            prev_values[band_idx] = output[band_idx];
+                                        }
+                                        let _ = app_handle.emit("audio-visualization", AudioVisualizationData { frequencies: output.to_vec() });
+                                        buffer_pos = 0;
+                                    }
+                                }
+                                let _ = capture_client.ReleaseBuffer(num_frames);
+                            }
+                        }
+                        
+                        if device_invalidated {
+                            return Err("Device invalidated".into());
                         }
                     }
-                }
-            })();
-            if com_initialized { CoUninitialize(); }
+                })();
+                
+                let _ = _result;
+                
+                // Wait before retrying (increased to 2500ms to allow Windows to fully update default endpoint)
+                std::thread::sleep(std::time::Duration::from_millis(2500));
+            }
+            // if com_initialized { CoUninitialize(); }
         }
     });
 }
