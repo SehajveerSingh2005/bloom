@@ -359,7 +359,7 @@ function SettingsApp() {
               </svg>
             </div>
             <div className="setting-info">
-              <span className="setting-label">macOS Dock</span>
+              <span className="setting-label">Bloom Dock</span>
               <span className="setting-desc">Replace Windows taskbar</span>
             </div>
             <label className="toggle-switch">
