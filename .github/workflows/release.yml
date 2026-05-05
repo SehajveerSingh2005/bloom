@@ -65,5 +65,4 @@ jobs:
           releaseDraft: false
           releasePrerelease: false
           includeUpdaterJson: true
-          updaterJsonKeepLatest: true
           updaterJsonPreferNsis: true

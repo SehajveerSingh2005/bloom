@@ -120,6 +120,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -133,7 +134,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/SehazveerSingh2005/bloom/releases/latest/download/latest.json"
+        "https://github.com/SehajveerSingh2005/bloom/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQzQTAzNTlBRUFFODRFMDUKUldRRlR1anFtaldnUThWRExWQ2ZDVmxhNGlFREFPYWZoV1BWbGdQNUxxdHpnbzZPbGh4SWxVMk0K"
     }
