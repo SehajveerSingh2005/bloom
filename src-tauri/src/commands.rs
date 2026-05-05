@@ -169,6 +169,38 @@ pub async fn change_notch_mode(app: AppHandle, mode: String) {
     }
 }
 
+fn get_uwp_launch_cmd(exe_path: &str) -> Option<String> {
+    let path = std::path::Path::new(exe_path);
+    let mut is_windows_apps = false;
+    let mut package_folder = String::new();
+    
+    for component in path.components() {
+        if let std::path::Component::Normal(s) = component {
+            let s_str = s.to_string_lossy();
+            if is_windows_apps {
+                package_folder = s_str.to_string();
+                break;
+            }
+            if s_str.eq_ignore_ascii_case("WindowsApps") {
+                is_windows_apps = true;
+            }
+        }
+    }
+    
+    if !package_folder.is_empty() {
+        // package_folder format: PackageName_Version_Architecture__PublisherId
+        // We want: PackageName_PublisherId!App
+        if let Some(publisher_idx) = package_folder.rfind("__") {
+            let publisher_id = &package_folder[publisher_idx + 2..];
+            if let Some(first_underscore) = package_folder.find('_') {
+                let package_name = &package_folder[..first_underscore];
+                return Some(format!("shell:AppsFolder\\{}_{}!App", package_name, publisher_id));
+            }
+        }
+    }
+    None
+}
+
 #[tauri::command]
 pub async fn open_app(app_name: String) {
     if app_name == "start" {
@@ -207,10 +239,68 @@ pub async fn open_app(app_name: String) {
     
     let path = app_name;
     tauri::async_runtime::spawn_blocking(move || unsafe {
+        let actual_path = if path.to_lowercase().ends_with(".lnk") {
+            crate::utils::resolve_shortcut(&path).unwrap_or_else(|| path.clone())
+        } else {
+            path.clone()
+        };
+
+        if let Some(uwp_cmd) = crate::commands::get_uwp_launch_cmd(&actual_path) {
+            use windows::Win32::UI::Shell::ShellExecuteW;
+            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+            let wide_open: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+            let wide_cmd: Vec<u16> = uwp_cmd.encode_utf16().chain(std::iter::once(0)).collect();
+            
+            let res = ShellExecuteW(
+                None,
+                windows::core::PCWSTR(wide_open.as_ptr()),
+                windows::core::PCWSTR(wide_cmd.as_ptr()),
+                None,
+                None,
+                SW_SHOWNORMAL,
+            );
+            
+            if res.0 as usize <= 32 {
+                eprintln!("Failed to open UWP app {}: error code {}", uwp_cmd, res.0 as usize);
+            }
+            return;
+        }
+
+        use std::path::Path;
+        let mut final_path = actual_path.clone();
+        
+        if !Path::new(&final_path).exists() {
+            let file_name = Path::new(&final_path).file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+            
+            // Handle Discord/Slack style auto-updaters (app-x.x.x folder structure)
+            if file_name == "discord.exe" || file_name == "slack.exe" || file_name == "githubdesktop.exe" {
+                if let Some(parent) = Path::new(&final_path).parent().and_then(|p| p.parent()) {
+                    if parent.exists() {
+                        if let Ok(entries) = std::fs::read_dir(parent) {
+                            let mut app_dirs = Vec::new();
+                            for entry in entries.flatten() {
+                                let name = entry.file_name().to_string_lossy().to_string();
+                                if name.starts_with("app-") && entry.path().is_dir() {
+                                    app_dirs.push(entry.path());
+                                }
+                            }
+                            app_dirs.sort();
+                            if let Some(latest) = app_dirs.last() {
+                                let exe = latest.join(Path::new(&final_path).file_name().unwrap());
+                                if exe.exists() {
+                                    final_path = exe.to_string_lossy().to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         
-        let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+        let wide_path: Vec<u16> = final_path.encode_utf16().chain(std::iter::once(0)).collect();
         let wide_open: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
         
         let res = ShellExecuteW(
@@ -223,7 +313,7 @@ pub async fn open_app(app_name: String) {
         );
         
         if res.0 as usize <= 32 {
-            eprintln!("Failed to open app {}: error code {}", path, res.0 as usize);
+            eprintln!("Failed to open app {}: error code {}", final_path, res.0 as usize);
         }
     });
 }
@@ -257,11 +347,15 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
 #[tauri::command]
 pub async fn focus_window(hwnd: isize) {
     tauri::async_runtime::spawn_blocking(move || unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, SW_MINIMIZE, IsIconic, GetForegroundWindow};
+        use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW, SW_MINIMIZE, IsIconic, GetForegroundWindow, IsWindowVisible};
         let hwnd = HWND(hwnd as *mut _);
         let fg = GetForegroundWindow();
         
-        if IsIconic(hwnd).as_bool() {
+        if !IsWindowVisible(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+            let _ = SetForegroundWindow(hwnd);
+        } else if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
             let _ = SetForegroundWindow(hwnd);
         } else if fg == hwnd {
