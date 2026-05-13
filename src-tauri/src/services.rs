@@ -315,8 +315,9 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
     let (tx, rx) = channel::<SystemCommand>();
     let handle_system = app_handle.clone();
     std::thread::spawn(move || {
-        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoCreateInstance, CLSCTX_ALL};
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoCreateInstance, CLSCTX_ALL, CoTaskMemFree};
         use windows::Win32::Media::Audio::{IMMDeviceEnumerator, eRender, eConsole};
+        use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
         use windows::Media::Control::{GlobalSystemMediaTransportControlsSessionManager, GlobalSystemMediaTransportControlsSessionPlaybackStatus};
         use base64::{Engine as _, engine::general_purpose};
         use windows::Storage::Streams::DataReader;
@@ -324,11 +325,20 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             let enumerator = CoCreateInstance::<_, IMMDeviceEnumerator>(&windows::Win32::Media::Audio::MMDeviceEnumerator, None, CLSCTX_ALL).ok();
-            let device = enumerator.as_ref().and_then(|e| e.GetDefaultAudioEndpoint(eRender, eConsole).ok());
-            use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
-            let audio_endpoint_volume: Option<IAudioEndpointVolume> = device.as_ref().and_then(|d| d.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok());
+            let mut device = enumerator.as_ref().and_then(|e| e.GetDefaultAudioEndpoint(eRender, eConsole).ok());
+            let mut audio_endpoint_volume: Option<IAudioEndpointVolume> = device.as_ref().and_then(|d| d.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok());
+            
+            let mut current_device_id = String::new();
+            if let Some(ref d) = device {
+                if let Ok(id) = d.GetId() {
+                    current_device_id = windows::core::PCWSTR::from_raw(id.0).to_string().unwrap_or_default();
+                    CoTaskMemFree(Some(id.0 as *const _));
+                }
+            }
+
             let mut manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().and_then(|op| op.get()).ok();
             let mut last_processed_media = std::time::Instant::now();
+            let mut last_device_check = std::time::Instant::now();
             let mut last_emitted_info: Option<(String, String, bool, bool, Option<String>)> = None;
             let mut last_volume: f32 = -1.0;
             let mut last_muted: bool = false;
@@ -340,14 +350,44 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
             };
 
             loop {
+                // Check for device change
+                if last_device_check.elapsed().as_secs() >= 2 {
+                    last_device_check = std::time::Instant::now();
+                    if let Some(ref enum_ref) = enumerator {
+                        if let Ok(new_device) = enum_ref.GetDefaultAudioEndpoint(eRender, eConsole) {
+                            if let Ok(id) = new_device.GetId() {
+                                let new_id = windows::core::PCWSTR::from_raw(id.0).to_string().unwrap_or_default();
+                                CoTaskMemFree(Some(id.0 as *const _));
+                                if new_id != current_device_id {
+                                    current_device_id = new_id;
+                                    device = Some(new_device);
+                                    audio_endpoint_volume = device.as_ref().and_then(|d| d.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok());
+                                    // Reset last_volume to force an update event
+                                    last_volume = -1.0;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if manager.is_none() { manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().and_then(|op| op.get()).ok(); }
                 while let Ok(cmd) = rx.try_recv() {
                     if let Some(ref aev) = audio_endpoint_volume {
                         match cmd {
                             SystemCommand::VolumeMute => { if let Ok(muted) = aev.GetMute() { let _ = aev.SetMute(!muted.as_bool(), std::ptr::null()); hide_osd(); } }
-                            SystemCommand::VolumeUp => { if let Ok(vol) = aev.GetMasterVolumeLevelScalar() { let _ = aev.SetMasterVolumeLevelScalar((vol + 0.05).min(1.0), std::ptr::null()); hide_osd(); } }
+                            SystemCommand::VolumeUp => { 
+                                if let (Ok(vol), Ok(muted)) = (aev.GetMasterVolumeLevelScalar(), aev.GetMute()) { 
+                                    let _ = aev.SetMasterVolumeLevelScalar((vol + 0.05).min(1.0), std::ptr::null()); 
+                                    if muted.as_bool() { let _ = aev.SetMute(false, std::ptr::null()); }
+                                    hide_osd(); 
+                                } 
+                            }
                             SystemCommand::VolumeDown => { if let Ok(vol) = aev.GetMasterVolumeLevelScalar() { let _ = aev.SetMasterVolumeLevelScalar((vol - 0.05).max(0.0), std::ptr::null()); hide_osd(); } }
-                            SystemCommand::SetVolume(volume) => { let _ = aev.SetMasterVolumeLevelScalar(volume.clamp(0.0, 1.0), std::ptr::null()); hide_osd(); }
+                            SystemCommand::SetVolume(volume) => { 
+                                let _ = aev.SetMasterVolumeLevelScalar(volume.clamp(0.0, 1.0), std::ptr::null()); 
+                                if volume > 0.0 { let _ = aev.SetMute(false, std::ptr::null()); }
+                                hide_osd(); 
+                            }
                             SystemCommand::MediaPlayPause => { if let Some(ref mgr) = manager { if let Ok(session) = mgr.GetCurrentSession() { let _ = session.TryTogglePlayPauseAsync(); } } }
                             SystemCommand::MediaNext => { if let Some(ref mgr) = manager { if let Ok(session) = mgr.GetCurrentSession() { let _ = session.TrySkipNextAsync(); } } }
                             SystemCommand::MediaPrevious => { if let Some(ref mgr) = manager { if let Ok(session) = mgr.GetCurrentSession() { let _ = session.TrySkipPreviousAsync(); } } }
