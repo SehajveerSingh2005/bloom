@@ -33,7 +33,11 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: windows::Win32::
 }
 
 fn handle_volume_key_event(vk_code: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) {
+    static mut LAST_TIME: u64 = 0;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
     unsafe {
+        if now - LAST_TIME < 50 { return; }
+        LAST_TIME = now;
         if let Some(ref sender) = COMMAND_SENDER {
             use windows::Win32::UI::Input::KeyboardAndMouse::{VK_VOLUME_MUTE, VK_VOLUME_UP, VK_VOLUME_DOWN};
             let cmd = match vk_code {
