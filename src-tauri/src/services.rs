@@ -1000,12 +1000,43 @@ fn scan_dir(path: &Path, apps: &mut Vec<AppInfo>, depth: i32) {
     }
 }
 
+pub fn sync_overlays(app: &AppHandle) {
+    if let Some(vol_win) = app.get_webview_window("volume-overlay") {
+        if let Ok(Some(monitor)) = vol_win.primary_monitor() {
+            let size = monitor.size();
+            let pos = monitor.position();
+            let scale = monitor.scale_factor();
+            let pw = (200.0 * scale) as i32;
+            let ph = (400.0 * scale) as i32;
+            let _ = vol_win.set_position(tauri::PhysicalPosition::new(
+                pos.x,
+                pos.y + (size.height as i32 / 2) - (ph / 2),
+            ));
+            let _ = vol_win.set_size(tauri::PhysicalSize::new(pw as u32, ph as u32));
+        }
+    }
+    if let Some(br_win) = app.get_webview_window("brightness-overlay") {
+        if let Ok(Some(monitor)) = br_win.primary_monitor() {
+            let size = monitor.size();
+            let pos = monitor.position();
+            let scale = monitor.scale_factor();
+            let pw = (200.0 * scale) as i32;
+            let ph = (400.0 * scale) as i32;
+            let _ = br_win.set_position(tauri::PhysicalPosition::new(
+                pos.x + (size.width as i32 - pw),
+                pos.y + (size.height as i32 / 2) - (ph / 2),
+            ));
+            let _ = br_win.set_size(tauri::PhysicalSize::new(pw as u32, ph as u32));
+        }
+    }
+}
+
 pub fn register_appbar(window: tauri::WebviewWindow) {
-    if let Ok(Some(monitor)) = window.primary_monitor() {
+    if let Ok(Some(monitor)) = window.app_handle().primary_monitor() {
         let m_size = monitor.size();
         let m_pos = monitor.position();
         let hwnd = window.hwnd().unwrap();
-        let scale = window.scale_factor().unwrap_or(1.0);
+        let scale = monitor.scale_factor();
         let ph = window.outer_size().map(|s| s.height as i32).unwrap_or((48.0 * scale) as i32);
         let pr = (40.0 * scale) as i32;  // But only reserve 40px of screen space
         
@@ -1019,14 +1050,10 @@ pub fn register_appbar(window: tauri::WebviewWindow) {
             ex_style |= (WS_EX_TOOLWINDOW.0 | WS_EX_NA.0) as usize;
             let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style as isize);
             
-            // Set position before registering
-            let _ = SetWindowPos(hwnd, None, m_pos.x, m_pos.y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-
             let mut abd = APPBARDATA::default();
             abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
             abd.hWnd = hwnd;
             
-            // ONLY ABM_NEW if not already registered
             if !MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
                 SHAppBarMessage(ABM_NEW, &mut abd);
                 MAIN_APPBAR_REGISTERED.store(true, Ordering::Relaxed);
@@ -1039,20 +1066,27 @@ pub fn register_appbar(window: tauri::WebviewWindow) {
                 right: m_pos.x + m_size.width as i32, 
                 bottom: m_pos.y + pr
             };
+            
             SHAppBarMessage(ABM_QUERYPOS, &mut abd);
             SHAppBarMessage(ABM_SETPOS, &mut abd);
             
-            let _ = window.show();
+            // Use the shell-approved rect for the final position, but keep our ph height for the window
+            let final_width = abd.rc.right - abd.rc.left;
+            let _ = SetWindowPos(hwnd, None, abd.rc.left, abd.rc.top, final_width, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            
+            if !window.is_visible().unwrap_or(false) {
+                let _ = window.show();
+            }
         }
     }
 }
 
 pub fn register_dock_appbar(window: tauri::WebviewWindow) {
-    if let Ok(Some(monitor)) = window.primary_monitor() {
+    if let Ok(Some(monitor)) = window.app_handle().primary_monitor() {
         let m_size = monitor.size();
         let m_pos = monitor.position();
         let hwnd = window.hwnd().unwrap();
-        let scale = window.scale_factor().unwrap_or(1.0);
+        let scale = monitor.scale_factor();
         
         // Ensure we have a valid height (fallback to 100 if 0)
         let mut ph = window.outer_size().map(|s| s.height as i32).unwrap_or(0);
@@ -1070,10 +1104,9 @@ pub fn register_dock_appbar(window: tauri::WebviewWindow) {
             ex_style |= (WS_EX_TOOLWINDOW.0 | WS_EX_NA.0) as usize;
             let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style as isize);
 
-            // Hide native taskbar first to free up space (though it's just a hide, it helps)
+            // Hide native taskbar first to free up space
             set_taskbar_visibility(false);
 
-            // Register or update appbar
             let mut abd = APPBARDATA::default();
             abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
             abd.hWnd = hwnd;
@@ -1086,7 +1119,6 @@ pub fn register_dock_appbar(window: tauri::WebviewWindow) {
             abd.uEdge = ABE_BOTTOM;
             abd.rc = RECT { 
                 left: m_pos.x, 
-                // We always claim the bottom-most rectangle regardless of work area
                 top: m_pos.y + m_size.height as i32 - pr, 
                 right: m_pos.x + m_size.width as i32, 
                 bottom: m_pos.y + m_size.height as i32 
@@ -1098,7 +1130,8 @@ pub fn register_dock_appbar(window: tauri::WebviewWindow) {
             // Critical: Force the window to the actual bottom of the screen, 
             // ignoring what ABM_SETPOS might have tried to "correct" (like stacking on invisible taskbar)
             let final_y = m_pos.y + m_size.height as i32 - ph;
-            let _ = SetWindowPos(hwnd, None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            let final_width = abd.rc.right - abd.rc.left;
+            let _ = SetWindowPos(hwnd, None, abd.rc.left, final_y, final_width, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             
             if !window.is_visible().unwrap_or(false) {
                 let _ = window.show();

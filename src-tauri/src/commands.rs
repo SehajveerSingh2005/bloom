@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use crate::types::{IntRect, AppInfo};
 use crate::state::*;
 use crate::utils::*;
-use crate::services::{register_appbar, register_dock_appbar, unregister_appbar_native, enum_windows_proc};
+use crate::services::{register_appbar, register_dock_appbar, sync_overlays, unregister_appbar_native, enum_windows_proc};
 
 #[tauri::command]
 pub async fn set_menu_open(open: bool, rect: Option<IntRect>) {
@@ -98,6 +98,7 @@ pub async fn sync_appbar(app: AppHandle) {
             register_dock_appbar(dock_win);
         }
     }
+    sync_overlays(&app);
 }
 
 #[tauri::command]

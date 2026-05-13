@@ -100,32 +100,69 @@ fn main() {
             update_dock_window_rect();
 
             let u_main = update_main_rect.clone();
+            let win_for_events = window.clone();
+            let handle_for_events = app.handle().clone();
             window.on_window_event(move |e| {
-                if matches!(e, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
-                    u_main();
+                match e {
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                        u_main();
+                        // Re-sync appbar if it's already registered, to handle monitor changes
+                        if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                            let w = win_for_events.clone();
+                            tauri::async_runtime::spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                register_appbar(w);
+                            });
+                        }
+                        sync_overlays(&handle_for_events);
+                    }
+                    tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                        let w = win_for_events.clone();
+                        let h = handle_for_events.clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            register_appbar(w);
+                            sync_overlays(&h);
+                        });
+                    }
+                    _ => {}
                 }
             });
 
             let u_dock = update_dock_window_rect.clone();
+            let dock_for_events = dock_win.clone();
+            let handle_for_dock_events = app.handle().clone();
             dock_win.on_window_event(move |e| {
-                if matches!(e, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
-                    u_dock();
+                match e {
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                        u_dock();
+                        if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                            let w = dock_for_events.clone();
+                            tauri::async_runtime::spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                register_dock_appbar(w);
+                            });
+                        }
+                        sync_overlays(&handle_for_dock_events);
+                    }
+                    tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                        let h = handle_for_dock_events.clone();
+                        if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                            let w = dock_for_events.clone();
+                            tauri::async_runtime::spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                register_dock_appbar(w);
+                                sync_overlays(&h);
+                            });
+                        } else {
+                             sync_overlays(&h);
+                        }
+                    }
+                    _ => {}
                 }
             });
 
-            if let Some(br_win) = app.get_webview_window("brightness-overlay") {
-                if let Ok(Some(monitor)) = br_win.primary_monitor() {
-                    let size = monitor.size();
-                    let pos = monitor.position();
-                    let scale = monitor.scale_factor();
-                    let pw = (200.0 * scale) as i32;
-                    let ph = (400.0 * scale) as i32;
-                    let _ = br_win.set_position(tauri::PhysicalPosition::new(
-                        pos.x + (size.width as i32 - pw),
-                        pos.y + (size.height as i32 / 2) - (ph / 2),
-                    ));
-                }
-            }
+            sync_overlays(app.handle());
             setup_cursor_monitor(app.handle().clone());
             trigger_app_scan();
             let tx = setup_system_worker(app.handle().clone());

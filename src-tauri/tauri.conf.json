@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "bloom",
-        "width": 1920,
-        "height": 300,
+        "width": 100,
+        "height": 100,
         "x": 0,
         "y": 0,
         "decorations": false,
@@ -28,7 +28,8 @@
         "visibleOnAllWorkspaces": true,
         "focus": false,
         "skipTaskbar": true,
-        "shadow": false
+        "shadow": false,
+        "visible": false
       },
       {
         "label": "settings",
@@ -96,8 +97,8 @@
         "label": "dock",
         "title": "Bloom Dock",
         "url": "dock.html",
-        "width": 1920,
-        "height": 600,
+        "width": 100,
+        "height": 100,
         "x": 0,
         "y": 480,
         "decorations": false,

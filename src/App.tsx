@@ -346,8 +346,8 @@ function App() {
         // Re-sync topbar to prevent displacement (Always do this on launch)
         invoke("sync_appbar");
         // Secondary sync to catch any shell-level work-area jumps
-        setTimeout(() => invoke("sync_appbar"), 1000);
-      }, 1000);
+        setTimeout(() => invoke("sync_appbar"), 800);
+      }, 200);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
