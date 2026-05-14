@@ -7,6 +7,7 @@ use crate::types::{IntRect, AppInfo};
 use crate::state::*;
 use crate::utils::*;
 use crate::services::{register_appbar, register_dock_appbar, sync_overlays, unregister_appbar_native, enum_windows_proc};
+use std::collections::HashMap;
 
 #[tauri::command]
 pub async fn set_menu_open(open: bool, rect: Option<IntRect>) {
@@ -752,4 +753,131 @@ pub async fn close_window(hwnd: isize) {
         let hwnd = HWND(hwnd as *mut _);
         let _ = PostMessageW(Some(hwnd), WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
     }).await.unwrap_or_default();
+}
+
+#[tauri::command]
+pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
+    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    
+    let mut settings = HashMap::new();
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(existing) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&content) {
+            settings = existing;
+        }
+    }
+    
+    settings.insert(key, value);
+    
+    let content = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
+    std::fs::write(path, content).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn load_settings(app: AppHandle) -> Result<HashMap<String, serde_json::Value>, String> {
+    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
+    
+    if let Ok(content) = std::fs::read_to_string(path) {
+        if let Ok(settings) = serde_json::from_str(&content) {
+            return Ok(settings);
+        }
+    }
+    
+    Ok(HashMap::new())
+}
+
+#[tauri::command]
+pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u32) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || unsafe {
+        use windows::Win32::Foundation::{HWND, RECT};
+        use windows::Win32::Graphics::Gdi::{
+            CreateCompatibleDC, CreateCompatibleBitmap, SelectObject, DeleteObject, DeleteDC, GetDC, ReleaseDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, BitBlt, SRCCOPY
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect};
+
+        let hwnd = HWND(hwnd as *mut _);
+        let mut rect = RECT::default();
+        if windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_err() {
+            return None;
+        }
+
+        let width = (rect.right - rect.left) as i32;
+        let height = (rect.bottom - rect.top) as i32;
+
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+
+        let hdc_screen = GetDC(None);
+        let hdc_window = GetDC(Some(hwnd));
+        let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
+        let hbm_mem = CreateCompatibleBitmap(hdc_screen, width, height);
+        
+        let h_old = SelectObject(hdc_mem, hbm_mem.into());
+
+        let success = BitBlt(hdc_mem, 0, 0, width, height, Some(hdc_window), 0, 0, SRCCOPY);
+        
+        let mut result = None;
+
+        if success.is_ok() {
+            let mut bmi = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: width,
+                    biHeight: -height, // top-down
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    biSizeImage: 0,
+                    biXPelsPerMeter: 0,
+                    biYPelsPerMeter: 0,
+                    biClrUsed: 0,
+                    biClrImportant: 0,
+                },
+                bmiColors: [windows::Win32::Graphics::Gdi::RGBQUAD::default(); 1],
+            };
+
+            let mut pixels = vec![0u8; (width * height * 4) as usize];
+            if GetDIBits(hdc_mem, hbm_mem, 0, height as u32, Some(pixels.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS) != 0 {
+                // BGRA to RGBA and force opaque
+                for chunk in pixels.chunks_exact_mut(4) {
+                    let b = chunk[0];
+                    let r = chunk[2];
+                    chunk[0] = r;
+                    chunk[2] = b;
+                    chunk[3] = 255; 
+                }
+
+                if let Ok(Some(png_base64)) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let Some(mut img) = image::RgbaImage::from_raw(width as u32, height as u32, pixels) {
+                        if img.width() > max_width || img.height() > max_height {
+                            let dyn_img = image::DynamicImage::ImageRgba8(img);
+                            img = dyn_img.resize(max_width, max_height, image::imageops::FilterType::Triangle).into_rgba8();
+                        }
+                        
+                        let mut buf = std::io::Cursor::new(Vec::new());
+                        if image::write_buffer_with_format(&mut buf, &img, img.width(), img.height(), image::ColorType::Rgba8, image::ImageFormat::Png).is_ok() {
+                            use base64::Engine;
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(buf.into_inner());
+                            return Some(format!("data:image/png;base64,{}", b64));
+                        }
+                    }
+                    None
+                })) {
+                    result = Some(png_base64);
+                }
+            }
+        }
+
+        SelectObject(hdc_mem, h_old);
+        DeleteObject(hbm_mem.into());
+        DeleteDC(hdc_mem);
+        ReleaseDC(None, hdc_screen);
+        ReleaseDC(Some(hwnd), hdc_window);
+
+        result
+    }).await.map_err(|e| e.to_string())
 }

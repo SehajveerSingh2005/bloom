@@ -39,6 +39,9 @@ const Dock = memo(function Dock() {
   const isCurrentlyHovered = isDockHovered || isEdgeHovered;
   const [interactionState, setInteractionState] = useState<'active' | 'grace' | 'none'>('none');
   const isAnyInteraction = isCurrentlyHovered || !!contextMenu || showAddPopup;
+  
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const previewTimerRef = useRef<any>(null);
 
   useEffect(() => {
     if (isAnyInteraction) {
@@ -111,6 +114,18 @@ const Dock = memo(function Dock() {
 
   useEffect(() => {
     const init = async () => {
+      const settings: any = await invoke('load_settings').catch(() => ({}));
+      const getVal = (key: string, fallback: string | null = null) => {
+        const val = settings[key];
+        if (val !== undefined && val !== null) return String(val);
+        const local = localStorage.getItem(key);
+        if (local !== null) return local;
+        return fallback;
+      };
+      
+      const dMode = getVal("bloom-dock-mode", "auto-hide");
+      setDockMode(dMode as string);
+
       const pinned = await invoke<AppInfo[]>('load_pinned_apps');
       setPinnedApps(pinned.map(a => ({ ...a, is_pinned: true })));
       pinned.forEach(app => fetchIcon(app.path));
@@ -214,6 +229,8 @@ const Dock = memo(function Dock() {
   const menuRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
 
+
+
   const handleContextMenu = (e: React.MouseEvent, app: AppInfo | null) => {
     e.stopPropagation();
     e.preventDefault();
@@ -314,6 +331,31 @@ const Dock = memo(function Dock() {
     invoke('set_dock_hovered', { hovered: isDockHovered }).catch(() => {});
   }, [isDockHovered]);
 
+  useEffect(() => {
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    setPreviewImage(null);
+
+    if (hoveredApp && !isDragging) {
+      const app = dockItems.find(a => a.path === hoveredApp);
+      if (app && app.hwnd && app.is_running) {
+        previewTimerRef.current = setTimeout(async () => {
+          try {
+            const base64 = await invoke<string | null>("capture_window_thumbnail", { hwnd: app.hwnd, maxWidth: 320, maxHeight: 200 });
+            if (base64) {
+              setPreviewImage(base64);
+            }
+          } catch (e) {
+            console.error("Failed to capture thumbnail:", e);
+          }
+        }, 400); // 400ms delay for hover preview
+      }
+    }
+
+    return () => {
+      if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    };
+  }, [hoveredApp, isDragging, dockItems]);
+
   const iconVariants = {
     idle: { y: 0, scale: 1 },
     hover: { y: -5, scale: 1.1 },
@@ -413,7 +455,14 @@ const Dock = memo(function Dock() {
                     onDragStart={() => { if (app.is_pinned) { setIsDragging(true); setHoveredApp(null); setPressedApp(null); } }}
                     onDragEnd={handleDragEnd}
                   >
-                <div className="tooltip">{app.name}</div>
+                {previewImage && hoveredApp === app.path ? (
+                  <motion.div className="preview-tooltip" initial={{opacity: 0, y: 10, scale: 0.95}} animate={{opacity: 1, y: 0, scale: 1}} exit={{opacity: 0, scale: 0.95}} transition={{duration: 0.15}}>
+                    <img src={previewImage} alt="Preview" />
+                    <div className="preview-label">{app.name}</div>
+                  </motion.div>
+                ) : (
+                  <div className="tooltip">{app.name}</div>
+                )}
                 <motion.div 
                   className="dock-icon"
                   variants={iconVariants}

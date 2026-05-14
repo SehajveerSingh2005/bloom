@@ -317,38 +317,54 @@ function App() {
   const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
 
   useEffect(() => {
-    // On startup, we don't need to call toggle_corners_window anymore as it's built-in
-    if (windowLabel === 'main') {
-      // Handle first-run defaults
-      const firstRun = localStorage.getItem("bloom-first-run") === null;
-      if (firstRun) {
-        // Enable autostart by default for new users
-        import("@tauri-apps/plugin-autostart").then(({ enable, isEnabled }) => {
-          isEnabled().then(enabled => {
-            if (!enabled) enable().catch(() => {});
+    invoke("load_settings").then((settings: any) => {
+      const getVal = (key: string, fallback: string | null = null) => {
+        const val = settings[key];
+        if (val !== undefined && val !== null) return String(val);
+        const local = localStorage.getItem(key);
+        if (local !== null) return local;
+        return fallback;
+      };
+      
+      setSettingsWeatherEnabled(getVal("bloom-weather-enabled", "true") !== "false");
+      setSettingsCalendarEnabled(getVal("bloom-calendar-enabled", "true") !== "false");
+      const viz = getVal("bloom-media-visualizer-enabled") ?? getVal("bloom-visualizer-enabled", "true");
+      setSettingsVisualizerEnabled(viz !== "false");
+      setSettingsAlbumArtEnabled(getVal("bloom-media-album-art-enabled", "true") !== "false");
+      setSettingsCornersEnabled(getVal("bloom-corners-enabled", "false") === "true");
+      setTempUnit(getVal("bloom-temp-unit", "celsius") as string);
+      
+      const thresholdStr = getVal("bloom-low-battery-threshold", "20");
+      if (thresholdStr) setLowBatteryThreshold(parseInt(thresholdStr as string));
+
+      const nMode = getVal("bloom-notch-mode", "fixed");
+      if (nMode) setNotchMode(nMode as string);
+
+      if (windowLabel === 'main') {
+        const firstRun = localStorage.getItem("bloom-first-run") === null;
+        if (firstRun) {
+          import("@tauri-apps/plugin-autostart").then(({ enable, isEnabled }) => {
+            isEnabled().then(enabled => {
+              if (!enabled) enable().catch(() => {});
+            });
           });
-        });
-        localStorage.setItem("bloom-first-run", "done");
-      }
-
-      // Add a small delay to ensure windows are created and ready
-      setTimeout(() => {
-        const dockEnabled = localStorage.getItem("bloom-dock-enabled") === "true";
-        if (dockEnabled) {
-          invoke("toggle_dock", { enable: true });
-          invoke("change_dock_mode", { mode: localStorage.getItem("bloom-dock-mode") || "auto-hide" });
+          localStorage.setItem("bloom-first-run", "done");
         }
-        
-        // Sync notch mode on startup
-        const savedNotchMode = localStorage.getItem("bloom-notch-mode") || "fixed";
-        invoke("change_notch_mode", { mode: savedNotchMode });
 
-        // Re-sync topbar to prevent displacement (Always do this on launch)
-        invoke("sync_appbar");
-        // Secondary sync to catch any shell-level work-area jumps
-        setTimeout(() => invoke("sync_appbar"), 800);
-      }, 200);
-    }
+        setTimeout(() => {
+          const dockEnabled = getVal("bloom-dock-enabled", "false") === "true";
+          if (dockEnabled) {
+            invoke("toggle_dock", { enable: true });
+            invoke("change_dock_mode", { mode: getVal("bloom-dock-mode", "auto-hide") });
+          }
+          
+          invoke("change_notch_mode", { mode: nMode });
+
+          invoke("sync_appbar");
+          setTimeout(() => invoke("sync_appbar"), 800);
+        }, 200);
+      }
+    }).catch(console.error);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

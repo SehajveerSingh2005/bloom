@@ -57,48 +57,67 @@ function SettingsApp() {
     checkAutostart();
 
     // Load all settings
-    const weather = localStorage.getItem("bloom-weather-enabled");
-    if (weather !== null) setWeatherEnabled(weather === "true");
+    invoke("load_settings").then((settings: any) => {
+      const getVal = (key: string) => {
+        const val = settings[key];
+        if (val !== undefined && val !== null) return String(val);
+        return localStorage.getItem(key);
+      };
 
-    const calendar = localStorage.getItem("bloom-calendar-enabled");
-    if (calendar !== null) setCalendarEnabled(calendar === "true");
+      const weather = getVal("bloom-weather-enabled");
+      if (weather !== null) setWeatherEnabled(weather === "true");
 
-    const volume = localStorage.getItem("bloom-volume-overlay-enabled");
-    if (volume !== null) setVolumeOverlayEnabled(volume === "true");
+      const calendar = getVal("bloom-calendar-enabled");
+      if (calendar !== null) setCalendarEnabled(calendar === "true");
 
-    const visualizer = localStorage.getItem("bloom-media-visualizer-enabled");
-    if (visualizer !== null) setMediaVisualizerEnabled(visualizer === "true");
+      const volume = getVal("bloom-volume-overlay-enabled");
+      if (volume !== null) setVolumeOverlayEnabled(volume === "true");
 
-    const art = localStorage.getItem("bloom-media-album-art-enabled");
-    if (art !== null) setMediaAlbumArtEnabled(art === "true");
+      const visualizer = getVal("bloom-media-visualizer-enabled");
+      if (visualizer !== null) setMediaVisualizerEnabled(visualizer === "true");
 
-    const details = localStorage.getItem("bloom-media-details-enabled");
-    if (details !== null) setMediaDetailsEnabled(details === "true");
+      const art = getVal("bloom-media-album-art-enabled");
+      if (art !== null) setMediaAlbumArtEnabled(art === "true");
 
-    const corners = localStorage.getItem("bloom-corners-enabled");
-    if (corners !== null) setCornersEnabled(corners === "true");
+      const details = getVal("bloom-media-details-enabled");
+      if (details !== null) setMediaDetailsEnabled(details === "true");
 
-    const tempUnit = localStorage.getItem("bloom-temp-unit");
-    if (tempUnit !== null) setTempUnitFahrenheit(tempUnit === "fahrenheit");
+      const corners = getVal("bloom-corners-enabled");
+      if (corners !== null) setCornersEnabled(corners === "true");
 
-    const savedCity = localStorage.getItem("bloom-weather-city");
-    if (savedCity) setCityName(savedCity);
+      const tempUnit = getVal("bloom-temp-unit");
+      if (tempUnit !== null) setTempUnitFahrenheit(tempUnit === "fahrenheit");
 
-    const dock = localStorage.getItem("bloom-dock-enabled");
-    if (dock !== null) setDockEnabled(dock === "true");
+      const savedCity = getVal("bloom-weather-city");
+      if (savedCity) setCityName(savedCity);
 
-    const dMode = localStorage.getItem("bloom-dock-mode");
-    if (dMode) setDockMode(dMode);
+      const dock = getVal("bloom-dock-enabled");
+      if (dock !== null) setDockEnabled(dock === "true");
 
-    const threshold = localStorage.getItem("bloom-low-battery-threshold");
-    if (threshold !== null) setLowBatteryThreshold(parseInt(threshold));
+      const dMode = getVal("bloom-dock-mode");
+      if (dMode) setDockMode(dMode);
 
-    const nMode = localStorage.getItem("bloom-notch-mode");
-    if (nMode) setNotchMode(nMode);
+      const threshold = getVal("bloom-low-battery-threshold");
+      if (threshold !== null) setLowBatteryThreshold(parseInt(threshold));
+
+      const nMode = getVal("bloom-notch-mode");
+      if (nMode) setNotchMode(nMode);
+    }).catch(console.error);
 
     getVersion().then(setAppVersion);
     checkForUpdates(false);
   }, []);
+
+  const broadcastSetting = (key: string, value: any) => {
+    invoke('broadcast_setting', { key, value });
+  };
+
+  const saveAndBroadcast = (key: string, value: any) => {
+    const stringValue = value.toString();
+    localStorage.setItem(key, stringValue);
+    invoke("save_setting", { key, value: stringValue }).catch(console.error);
+    broadcastSetting(key, value);
+  };
 
   const checkForUpdates = async (manual = true) => {
     setUpdateStatus("checking");
@@ -164,84 +183,89 @@ function SettingsApp() {
     invoke("broadcast_setting", { key, value });
   };
 
+  const saveAndLocal = (key: string, value: string) => {
+    localStorage.setItem(key, value);
+    invoke("save_setting", { key, value }).catch(console.error);
+  };
+
   const toggleWeather = () => {
     const newVal = !weatherEnabled;
     setWeatherEnabled(newVal);
-    localStorage.setItem("bloom-weather-enabled", String(newVal));
+    saveAndLocal("bloom-weather-enabled", String(newVal));
     notifyChange("weather", newVal);
   };
 
   const toggleCalendar = () => {
     const newVal = !calendarEnabled;
     setCalendarEnabled(newVal);
-    localStorage.setItem("bloom-calendar-enabled", String(newVal));
+    saveAndLocal("bloom-calendar-enabled", String(newVal));
     notifyChange("calendar", newVal);
   };
 
   const toggleVolumeOverlay = () => {
     const newVal = !volumeOverlayEnabled;
     setVolumeOverlayEnabled(newVal);
-    localStorage.setItem("bloom-volume-overlay-enabled", String(newVal));
+    saveAndLocal("bloom-volume-overlay-enabled", String(newVal));
     notifyChange("volume-overlay", newVal);
   };
 
   const toggleVisualizer = () => {
     const newVal = !mediaVisualizerEnabled;
     setMediaVisualizerEnabled(newVal);
-    localStorage.setItem("bloom-media-visualizer-enabled", String(newVal));
+    saveAndLocal("bloom-media-visualizer-enabled", String(newVal));
     notifyChange("visualizer", newVal);
   };
 
   const toggleAlbumArt = () => {
     const newVal = !mediaAlbumArtEnabled;
     setMediaAlbumArtEnabled(newVal);
-    localStorage.setItem("bloom-media-album-art-enabled", String(newVal));
+    saveAndLocal("bloom-media-album-art-enabled", String(newVal));
     notifyChange("album-art", newVal);
   };
 
   const toggleMediaDetails = () => {
     const newVal = !mediaDetailsEnabled;
     setMediaDetailsEnabled(newVal);
-    localStorage.setItem("bloom-media-details-enabled", String(newVal));
+    saveAndLocal("bloom-media-details-enabled", String(newVal));
     notifyChange("media-details", newVal);
   };
 
   const toggleCorners = () => {
     const newVal = !cornersEnabled;
     setCornersEnabled(newVal);
-    localStorage.setItem("bloom-corners-enabled", String(newVal));
+    saveAndLocal("bloom-corners-enabled", String(newVal));
     notifyChange("corners-enabled", newVal);
   };
 
   const toggleTempUnit = () => {
     const newVal = !tempUnitFahrenheit;
     setTempUnitFahrenheit(newVal);
-    localStorage.setItem("bloom-temp-unit", newVal ? "fahrenheit" : "celsius");
+    saveAndLocal("bloom-temp-unit", newVal ? "fahrenheit" : "celsius");
     notifyChange("temp-unit", newVal);
   };
 
   const toggleDock = () => {
     const newVal = !dockEnabled;
     setDockEnabled(newVal);
-    localStorage.setItem("bloom-dock-enabled", String(newVal));
+    saveAndLocal("bloom-dock-enabled", String(newVal));
     notifyChange("dock-enabled", newVal);
   };
 
   const toggleDockMode = (newMode: string) => {
     setDockMode(newMode);
-    localStorage.setItem("bloom-dock-mode", newMode);
+    saveAndLocal("bloom-dock-mode", newMode);
     notifyChange("dock-mode", newMode);
   };
 
   const toggleNotchMode = (newMode: string) => {
     setNotchMode(newMode);
-    localStorage.setItem("bloom-notch-mode", newMode);
+    saveAndLocal("bloom-notch-mode", newMode);
     notifyChange("notch-mode", newMode);
   };
 
   const handleThresholdChange = (val: number) => {
     setLowBatteryThreshold(val);
-    localStorage.setItem("bloom-low-battery-threshold", val.toString());
+    saveAndLocal("bloom-low-battery-threshold", val.toString());
     notifyChange("low-battery-threshold", val);
   };
 
@@ -262,9 +286,9 @@ function SettingsApp() {
       const data = await res.json();
       if (data.results && data.results.length > 0) {
         const { latitude, longitude, name } = data.results[0];
-        localStorage.setItem("bloom-weather-city", name);
-        localStorage.setItem("bloom-weather-lat", latitude.toString());
-        localStorage.setItem("bloom-weather-lon", longitude.toString());
+        saveAndLocal("bloom-weather-city", name);
+        saveAndLocal("bloom-weather-lat", latitude.toString());
+        saveAndLocal("bloom-weather-lon", longitude.toString());
         setCityName(name);
         notifyChange("weather-refresh", true);
       } else {
