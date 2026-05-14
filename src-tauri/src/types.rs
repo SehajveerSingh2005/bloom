@@ -50,6 +50,7 @@ pub struct AppInfo {
     pub is_running: bool,
     pub hwnd: Option<isize>,
     pub executable: Option<String>,
+    pub all_hwnds: Option<Vec<(isize, String)>>, // (hwnd, title)
 }
 
 #[derive(Clone, Serialize)]

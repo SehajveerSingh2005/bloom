@@ -7,7 +7,7 @@ use windows::Win32::UI::WindowsAndMessaging::HICON;
 use windows::Win32::Graphics::Imaging::{IWICImagingFactory, CLSID_WICImagingFactory, GUID_ContainerFormatPng, WICBitmapEncoderNoCache, GUID_WICPixelFormat32bppPBGRA};
 use base64::{Engine as _, engine::general_purpose};
 
-pub fn resolve_shortcut(path: &str) -> Option<String> {
+pub fn resolve_shortcut(path: &str) -> Option<(String, String)> {
     unsafe {
         let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_ALL).ok()?;
         let persist_file: IPersistFile = shell_link.cast().ok()?;
@@ -15,16 +15,19 @@ pub fn resolve_shortcut(path: &str) -> Option<String> {
         let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
         persist_file.Load(windows::core::PCWSTR(wide_path.as_ptr()), windows::Win32::System::Com::STGM(0)).ok()?;
         
-        // Use non-interactive flags to avoid hangs or "Searching for..." dialogs
         let _ = shell_link.Resolve(HWND(std::ptr::null_mut()), 1 | 16 | 32); 
         
         let mut buffer = [0u16; 260];
         let mut data = windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW::default();
         shell_link.GetPath(&mut buffer, &mut data, 0).ok()?;
         
-        let target = String::from_utf16_lossy(&buffer);
-        let trimmed = target.trim_matches(char::from(0)).to_string();
-        if trimmed.trim().is_empty() { None } else { Some(trimmed) }
+        let mut arg_buffer = [0u16; 1024];
+        let _ = shell_link.GetArguments(&mut arg_buffer);
+
+        let target = String::from_utf16_lossy(&buffer).trim_matches(char::from(0)).to_string();
+        let args = String::from_utf16_lossy(&arg_buffer).trim_matches(char::from(0)).to_string();
+        
+        if target.trim().is_empty() { None } else { Some((target, args)) }
     }
 }
 

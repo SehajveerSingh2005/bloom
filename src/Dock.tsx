@@ -12,6 +12,7 @@ interface AppInfo {
   is_pinned?: boolean;
   hwnd?: number;
   executable?: string;
+  all_hwnds?: [number, string][];
 }
 
 const Dock = memo(function Dock() {
@@ -21,7 +22,7 @@ const Dock = memo(function Dock() {
   const [, setIconsTick] = useState(0); 
   const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "auto-hide");
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(() => localStorage.getItem("bloom-dock-preview-enabled") !== "false");
-  const [previewData, setPreviewData] = useState<{ path: string, image: string } | null>(null);
+  const [previewData, setPreviewData] = useState<{ path: string, previews: { hwnd: number, title: string, image: string }[] } | null>(null);
   const [isDockHovered, setIsDockHovered] = useState(false);
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
   const [isOverlapped, setIsOverlapped] = useState(false);
@@ -42,7 +43,6 @@ const Dock = memo(function Dock() {
   const [interactionState, setInteractionState] = useState<'active' | 'grace' | 'none'>('none');
   const isAnyInteraction = isCurrentlyHovered || !!contextMenu || showAddPopup;
   
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const previewTimerRef = useRef<any>(null);
 
   useEffect(() => {
@@ -175,7 +175,7 @@ const Dock = memo(function Dock() {
         return [...existingPaths, ...addedPaths];
       });
 
-      running.forEach(app => fetchIcon(app.path, app.hwnd));
+      running.forEach(app => fetchIcon(app.path, app.name, app.hwnd));
     };
 
     const interval = setInterval(poll, 2000);
@@ -183,23 +183,24 @@ const Dock = memo(function Dock() {
     return () => clearInterval(interval);
   }, [isDragging]);
 
-  const fetchIcon = async (path: string, hwnd?: number, retryCount = 0) => {
-    const cacheKey = hwnd ? `${path}-${hwnd}` : path;
+  const fetchIcon = async (path: string, name?: string, hwnd?: number, retryCount = 0) => {
+    const isHost = path.toLowerCase().includes("msedge.exe") || path.toLowerCase().includes("chrome.exe") || path.toLowerCase().includes("applicationframehost.exe");
+    const cacheKey = isHost && name ? `${path}:${name.toLowerCase()}` : (hwnd ? `${path}-${hwnd}` : path);
+    
     if (iconsRef.current[cacheKey]) return;
     try {
-      const icon = await invoke<string | null>('get_app_icon', { path, hwnd: hwnd || null });
+      const icon = await invoke<string | null>('get_app_icon', { path, name: name || null, hwnd: hwnd || null });
       if (icon) {
         iconsRef.current[cacheKey] = icon;
-        iconsRef.current[path] = icon;
+        if (!isHost) iconsRef.current[path] = icon;
         setIconsTick(t => t + 1);
       } else if (retryCount < 3 && !hwnd) {
-        // If it's a pinned app (no hwnd) and failed, retry with backoff
-        setTimeout(() => fetchIcon(path, undefined, retryCount + 1), 3000 * (retryCount + 1));
+        setTimeout(() => fetchIcon(path, name, undefined, retryCount + 1), 3000 * (retryCount + 1));
       }
     } catch (e) {
       console.error(`Failed to fetch icon for ${path}:`, e);
       if (retryCount < 3 && !hwnd) {
-        setTimeout(() => fetchIcon(path, undefined, retryCount + 1), 3000 * (retryCount + 1));
+        setTimeout(() => fetchIcon(path, name, undefined, retryCount + 1), 3000 * (retryCount + 1));
       }
     }
   };
@@ -225,7 +226,7 @@ const Dock = memo(function Dock() {
     } else {
       if (pinnedApps.find(a => a.path === app.path)) return;
       newPinned = [...pinnedApps, { ...app, is_pinned: true, is_running: false, hwnd: undefined }];
-      fetchIcon(app.path); 
+      fetchIcon(app.path, app.name); 
     }
     setPinnedApps(newPinned);
     await invoke('save_pinned_apps', { apps: newPinned });
@@ -277,32 +278,32 @@ const Dock = memo(function Dock() {
   }, [contextMenu, showAddPopup, pinnedApps, activeApps, activeSubmenu]);
 
   const dockItems = useMemo(() => {
-    const getAppId = (p: string) => {
+    const getAppId = (p: string, executable?: string) => {
       if (!p) return "";
       const normalized = p.toLowerCase().replace(/\\/g, '/');
-      const filename = normalized.split('/').pop() || normalized;
-      return filename.replace('.lnk', '.exe');
+      if (executable) return `${normalized}:${executable.toLowerCase()}`;
+      return normalized;
     };
 
     const runningMap = new Map();
     activeApps.forEach(a => {
-      const id = getAppId(a.path);
+      const id = getAppId(a.path, a.executable);
       if (!runningMap.has(id)) runningMap.set(id, a);
     });
     
     const pinned = [
       { name: 'Start', path: 'start', icon: null, is_running: false, is_pinned: true },
       ...pinnedApps.map(p => {
-        const id = getAppId(p.path);
+        const id = getAppId(p.path, p.executable);
         const running = runningMap.get(id);
-        return { ...p, is_running: !!running, hwnd: running?.hwnd };
+        return { ...p, is_running: !!running, hwnd: running?.hwnd, all_hwnds: running?.all_hwnds };
       })
     ];
 
-    const pinnedIds = new Set(pinned.map(p => getAppId(p.path)));
+    const pinnedIds = new Set(pinned.map(p => getAppId(p.path, p.executable)));
     const unpinned = activeOrder
       .map(path => runningMap.get(getAppId(path)))
-      .filter((a): a is AppInfo => !!a && !pinnedIds.has(getAppId(a.path)));
+      .filter((a): a is AppInfo => !!a && !pinnedIds.has(getAppId(a.path, a.executable)));
 
     return [...pinned, ...unpinned];
   }, [pinnedApps, activeApps, activeOrder]);
@@ -347,17 +348,26 @@ const Dock = memo(function Dock() {
 
     if (hoveredApp && !isDragging) {
       const app = dockItems.find(a => a.path === hoveredApp);
-      if (app && app.hwnd && app.is_running) {
+      if (app && app.is_running) {
         previewTimerRef.current = setTimeout(async () => {
           try {
-            const base64 = await invoke<string | null>("capture_window_thumbnail", { hwnd: app.hwnd, maxWidth: 320, maxHeight: 200 });
-            if (base64) {
-              setPreviewData({ path: app.path, image: base64 });
+            const hwndsToCapture = app.all_hwnds || (app.hwnd ? [[app.hwnd, app.name]] : []);
+            const captured: { hwnd: number, title: string, image: string }[] = [];
+            
+            for (const [hwnd, title] of hwndsToCapture) {
+              const base64 = await invoke<string | null>("capture_window_thumbnail", { hwnd, maxWidth: 320, maxHeight: 200 });
+              if (base64) {
+                captured.push({ hwnd, title, image: base64 });
+              }
+            }
+
+            if (captured.length > 0) {
+              setPreviewData({ path: app.path, previews: captured });
             } else {
               setPreviewData(null);
             }
           } catch (e) {
-            console.error("Failed to capture thumbnail:", e);
+            console.error("Failed to capture thumbnails:", e);
             setPreviewData(null);
           }
         }, 400); 
@@ -474,9 +484,21 @@ const Dock = memo(function Dock() {
                   >
                 <AnimatePresence>
                   {dockPreviewEnabled && previewData && previewData.path === app.path && hoveredApp === app.path && (
-                    <motion.div className="preview-tooltip" initial={{opacity: 0, y: 10, scale: 0.95}} animate={{opacity: 1, y: 0, scale: 1}} exit={{opacity: 0, scale: 0.95}} transition={{duration: 0.15}}>
-                      <img src={previewData.image} alt="Preview" />
-                      <div className="preview-label">{app.name}</div>
+                    <motion.div 
+                      className={`preview-tooltip ${previewData.previews.length > 1 ? 'multi' : ''}`} 
+                      initial={{opacity: 0, y: 10, scale: 0.95}} 
+                      animate={{opacity: 1, y: 0, scale: 1}} 
+                      exit={{opacity: 0, scale: 0.95}} 
+                      transition={{duration: 0.15}}
+                    >
+                      <div className="preview-items">
+                        {previewData.previews.map((prev, idx) => (
+                          <div key={prev.hwnd} className="preview-item" onClick={() => invoke('focus_window', { hwnd: prev.hwnd })}>
+                            <img src={prev.image} alt={`Preview ${idx}`} />
+                            <div className="preview-label">{prev.title || app.name}</div>
+                          </div>
+                        ))}
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -497,11 +519,17 @@ const Dock = memo(function Dock() {
                     if (!isDragging) handleAppClick(app);
                   }}
                 >
-                  {iconsRef.current[app.path] ? (
-                    <img src={iconsRef.current[app.path]} alt={app.name} draggable={false} />
-                  ) : (
-                    <div className="fallback-icon">{app.name[0]}</div>
-                  )}
+                  {(() => {
+                    const isHost = app.path.toLowerCase().includes("msedge.exe") || app.path.toLowerCase().includes("chrome.exe") || app.path.toLowerCase().includes("applicationframehost.exe");
+                    const cacheKey = isHost ? `${app.path}:${app.name.toLowerCase()}` : (app.hwnd ? `${app.path}-${app.hwnd}` : app.path);
+                    const icon = iconsRef.current[cacheKey] || iconsRef.current[app.path] || app.icon;
+                    
+                    return icon ? (
+                      <img src={icon} alt={app.name} draggable={false} />
+                    ) : (
+                      <div className="fallback-icon">{app.name[0]}</div>
+                    );
+                  })()}
                 </motion.div>
                 {app.is_running && <div className="active-indicator" />}
               </Reorder.Item>

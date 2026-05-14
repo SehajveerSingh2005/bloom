@@ -924,6 +924,7 @@ pub fn trigger_app_scan() {
                                                 is_running: false,
                                                 hwnd: None,
                                                 executable: None,
+                                                all_hwnds: None,
                                             });
                                         }
                                         CoTaskMemFree(Some(pidl_item as *const _));
@@ -996,6 +997,7 @@ fn scan_dir(path: &Path, apps: &mut Vec<AppInfo>, depth: i32) {
                             is_running: false,
                             hwnd: None,
                             executable: None,
+                            all_hwnds: None,
                         });
                     }
                 }
@@ -1207,11 +1209,17 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                     } else if name == "explorer" && title.is_empty() {
                         "File Explorer".to_string()
                     } else {
-                        name
+                        name.clone()
                     };
 
-                    // Avoid duplicates
-                    if !apps.iter().any(|a| a.path == path) {
+                    // Avoid duplicates, but allow host processes to have multiple entries if they have different names (PWAs)
+                    let already_exists = if name == "msedge" || name == "chrome" || name == "ApplicationFrameHost" {
+                        apps.iter().any(|a| a.path == path && a.name == final_name)
+                    } else {
+                        apps.iter().any(|a| a.path == path)
+                    };
+
+                    if !already_exists {
                         apps.push(AppInfo {
                             name: final_name,
                             path,
@@ -1219,6 +1227,7 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                             is_running: true,
                             hwnd: Some(hwnd.0 as isize),
                             executable: None,
+                            all_hwnds: None,
                         });
                     }
                     let _ = CloseHandle(process_handle);

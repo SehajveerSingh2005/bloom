@@ -241,10 +241,10 @@ pub async fn open_app(app_name: String) {
     
     let path = app_name;
     tauri::async_runtime::spawn_blocking(move || unsafe {
-        let actual_path = if path.to_lowercase().ends_with(".lnk") {
-            crate::utils::resolve_shortcut(&path).unwrap_or_else(|| path.clone())
+        let (actual_path, _args) = if path.to_lowercase().ends_with(".lnk") {
+            resolve_shortcut(&path).unwrap_or((path.clone(), String::new()))
         } else {
-            path.clone()
+            (path.clone(), String::new())
         };
 
         if let Some(uwp_cmd) = crate::commands::get_uwp_launch_cmd(&actual_path) {
@@ -275,14 +275,14 @@ pub async fn open_app(app_name: String) {
             let file_name = Path::new(&final_path).file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
             
             // Handle Discord/Slack style auto-updaters (app-x.x.x folder structure)
-            if file_name == "discord.exe" || file_name == "slack.exe" || file_name == "githubdesktop.exe" {
+            if file_name == "discord.exe" || file_name == "slack.exe" || file_name == "githubdesktop.exe" || file_name == "zentwilight.exe" {
                 if let Some(parent) = Path::new(&final_path).parent().and_then(|p| p.parent()) {
                     if parent.exists() {
                         if let Ok(entries) = std::fs::read_dir(parent) {
                             let mut app_dirs = Vec::new();
                             for entry in entries.flatten() {
                                 let name = entry.file_name().to_string_lossy().to_string();
-                                if name.starts_with("app-") && entry.path().is_dir() {
+                                if (name.starts_with("app-") || name.starts_with("current")) && entry.path().is_dir() {
                                     app_dirs.push(entry.path());
                                 }
                             }
@@ -323,26 +323,44 @@ pub async fn open_app(app_name: String) {
 #[tauri::command]
 pub async fn get_active_windows() -> Vec<AppInfo> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut apps = Vec::new();
+        let mut apps: Vec<AppInfo> = Vec::new();
         unsafe {
             let _ = EnumWindows(Some(enum_windows_proc), LPARAM(&mut apps as *mut Vec<AppInfo> as isize));
         }
-        // Deduplicate carefully: allow duplicates for host processes like msedge, chrome, explorer
-        let mut seen = std::collections::HashSet::new();
-        apps.into_iter().filter(|a: &AppInfo| {
-            let p = a.path.to_lowercase();
-            if p.contains("msedge.exe") || p.contains("chrome.exe") || p.contains("explorer.exe") || p.contains("applicationframehost.exe") {
-                // For these, use path + name as unique key
-                let key = format!("{}:{}", p, a.name);
-                if seen.contains(&key) { return false; }
-                seen.insert(key);
-                true
+
+        let mut grouped: HashMap<String, AppInfo> = HashMap::new();
+        
+        for app in apps {
+            let path = app.path.to_lowercase();
+            let name = app.name.to_lowercase();
+            
+            // For host processes (Edge, Chrome, ApplicationFrameHost), use path + name 
+            // so that different PWAs/UWP apps are separate dock items.
+            let key = if path.contains("msedge.exe") || path.contains("chrome.exe") || path.contains("applicationframehost.exe") {
+                format!("{}:{}", path, name)
+            } else if let Some(ref exe) = app.executable {
+                format!("{}:{}", path, exe.to_lowercase())
             } else {
-                if seen.contains(&p) { return false; }
-                seen.insert(p);
-                true
+                path.clone()
+            };
+
+            if let Some(existing) = grouped.get_mut(&key) {
+                if let Some(ref mut hwnds) = existing.all_hwnds {
+                    hwnds.push((app.hwnd.unwrap_or(0), app.name.clone()));
+                } else {
+                    existing.all_hwnds = Some(vec![
+                        (existing.hwnd.unwrap_or(0), existing.name.clone()),
+                        (app.hwnd.unwrap_or(0), app.name.clone())
+                    ]);
+                }
+            } else {
+                let mut new_app = app.clone();
+                new_app.all_hwnds = Some(vec![(app.hwnd.unwrap_or(0), app.name.clone())]);
+                grouped.insert(key, new_app);
             }
-        }).collect()
+        }
+
+        grouped.into_values().collect()
     }).await.unwrap_or_default()
 }
 
@@ -363,7 +381,6 @@ pub async fn focus_window(hwnd: isize) {
         } else if fg == hwnd {
             let _ = ShowWindow(hwnd, SW_MINIMIZE);
         } else {
-            // Also check if the ancestor is the same (handles some UWP apps)
             use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
             let fg_root = GetAncestor(fg, GA_ROOT);
             let hwnd_root = GetAncestor(hwnd, GA_ROOT);
@@ -378,10 +395,20 @@ pub async fn focus_window(hwnd: isize) {
 }
 
 #[tauri::command]
-pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> Result<Option<String>, String> {
+pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hwnd: Option<isize>) -> Result<Option<String>, String> {
     let cache_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     let cache_path = cache_dir.join("icons_cache.json");
     
+    let path_lc = path.to_lowercase();
+    let name_lc = name.as_ref().map(|n| n.to_lowercase()).unwrap_or_default();
+    
+    // For host processes, use path + name as cache key to distinguish different PWAs
+    let cache_key = if path_lc.contains("msedge.exe") || path_lc.contains("chrome.exe") || path_lc.contains("applicationframehost.exe") {
+        format!("{}:{}", path, name_lc)
+    } else {
+        path.clone()
+    };
+
     let cache = ICON_CACHE.get_or_init(|| {
         let mut map = std::collections::HashMap::new();
         if let Ok(content) = std::fs::read_to_string(&cache_path) {
@@ -392,14 +419,12 @@ pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> 
         std::sync::Mutex::new(map)
     });
 
-    // 1. Check cache first
     if let Ok(c) = cache.lock() {
-        if let Some(icon) = c.get(&path) {
+        if let Some(icon) = c.get(&cache_key) {
             return Ok(Some(icon.clone()));
         }
     }
 
-    // 2. Try to get icon from HWND if available (Best for PWAs/Netflix)
     if let Some(h) = hwnd {
         let result = tauri::async_runtime::spawn_blocking(move || unsafe {
             use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
@@ -408,7 +433,6 @@ pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> 
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             let h_hwnd = HWND(h as *mut _);
             
-            // Try different ways to get the icon from HWND
             let mut h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(GetClassLongPtrW(h_hwnd, GCLP_HICON) as *mut _);
             if h_icon.is_invalid() {
                 h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(GetClassLongPtrW(h_hwnd, windows::Win32::UI::WindowsAndMessaging::GCL_HICON) as *mut _);
@@ -416,52 +440,50 @@ pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> 
 
             if h_icon.is_invalid() {
                 let mut res = 0usize;
-                let _ = SendMessageTimeoutW(
-                    h_hwnd, 
-                    WM_GETICON, 
-                    windows::Win32::Foundation::WPARAM(ICON_BIG as usize), 
-                    windows::Win32::Foundation::LPARAM(0), 
-                    SMTO_ABORTIFHUNG, 
-                    250, // Increased timeout
-                    Some(&mut res)
-                );
+                let _ = SendMessageTimeoutW(h_hwnd, WM_GETICON, windows::Win32::Foundation::WPARAM(ICON_BIG as usize), windows::Win32::Foundation::LPARAM(0), SMTO_ABORTIFHUNG, 250, Some(&mut res));
                 if res != 0 { h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(res as *mut _); }
             }
             
-            if h_icon.is_invalid() {
-                let mut res = 0usize;
-                let _ = SendMessageTimeoutW(
-                    h_hwnd, 
-                    windows::Win32::UI::WindowsAndMessaging::WM_GETICON, 
-                    windows::Win32::Foundation::WPARAM(windows::Win32::UI::WindowsAndMessaging::ICON_SMALL as usize), 
-                    windows::Win32::Foundation::LPARAM(0), 
-                    SMTO_ABORTIFHUNG, 
-                    250, 
-                    Some(&mut res)
-                );
-                if res != 0 { h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(res as *mut _); }
-            }
+            let res = if !h_icon.is_invalid() { icon_to_base64(h_icon) } else { None };
             
-            let res = if !h_icon.is_invalid() {
-                icon_to_base64(h_icon)
-            } else {
-                None
-            };
+            // If HWND icon failed and it's a host process, try command line / package
+            if res.is_none() {
+                use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, PROCESS_NAME_WIN32};
+                use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+                
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(h_hwnd, Some(&mut pid));
+                if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                    let mut path_buf = [0u16; 1024];
+                    let mut path_len = path_buf.len() as u32;
+                    if QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, windows::core::PWSTR(path_buf.as_mut_ptr()), &mut path_len).is_ok() {
+                        let path = String::from_utf16_lossy(&path_buf[..path_len as usize]).to_lowercase();
+                        
+                        // Edge/Chrome PWA detection via command line
+                        if path.contains("msedge.exe") || path.contains("chrome.exe") {
+                            if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                                let browser = if path.contains("msedge") { "Microsoft\\Edge" } else { "Google\\Chrome" };
+                                let _web_apps_path = format!("{}\\{}\\User Data\\Default\\Web Applications", local, browser);
+                            }
+                        }
+                    }
+                    let _ = windows::Win32::Foundation::CloseHandle(handle);
+                }
+            }
+
             CoUninitialize();
             res
         }).await.unwrap_or(None);
 
         if let Some(base64) = result {
             if let Ok(mut c) = cache.lock() {
-                c.insert(path.clone(), base64.clone());
-                let _ = std::fs::create_dir_all(&cache_dir);
+                c.insert(cache_key.clone(), base64.clone());
                 let _ = std::fs::write(&cache_path, serde_json::to_string(&*c).unwrap_or_default());
             }
             return Ok(Some(base64));
         }
     }
 
-    // 3. Fallback to path-based extraction
     let path_clone = path.clone();
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
@@ -470,103 +492,70 @@ pub async fn get_app_icon(app: AppHandle, path: String, hwnd: Option<isize>) -> 
         
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let result = {
-            let (mut actual_path, is_lnk) = if path_clone.to_lowercase().ends_with(".lnk") {
-                (resolve_shortcut(&path_clone).unwrap_or(path_clone.clone()), true)
+            let ((mut actual_path, args), is_lnk) = if path_clone.to_lowercase().ends_with(".lnk") {
+                (resolve_shortcut(&path_clone).unwrap_or((path_clone.clone(), String::new())), true)
             } else {
-                (path_clone.clone(), false)
+                ((path_clone.clone(), String::new()), false)
             };
 
-            // Enhanced path resolution for common names
-            if !std::path::Path::new(&actual_path).is_absolute() {
-                if actual_path.to_lowercase() == "code" || actual_path.to_lowercase() == "code.exe" {
-                    if let Ok(home) = std::env::var("USERPROFILE") {
-                        let p1 = format!("{}\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", home);
-                        if std::path::Path::new(&p1).exists() { actual_path = p1; }
-                    }
-                } else if actual_path.to_lowercase() == "wt" || actual_path.to_lowercase() == "wt.exe" {
-                   if let Ok(local) = std::env::var("LOCALAPPDATA") {
-                        let p = format!("{}\\Microsoft\\WindowsApps\\wt.exe", local);
-                        if std::path::Path::new(&p).exists() { actual_path = p; }
-                   }
-                } else if actual_path.to_lowercase() == "msedge" || actual_path.to_lowercase() == "msedge.exe" {
-                    let p = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
-                    if std::path::Path::new(p).exists() { 
-                        actual_path = p.to_string(); 
-                    } else {
-                        let p2 = r"C:\Program Files\Microsoft\Edge\Application\msedge.exe";
-                        if std::path::Path::new(p2).exists() { actual_path = p2.to_string(); }
-                    }
-                } else {
-                    let common_exes = vec![
-                        r"C:\Windows\explorer.exe",
-                        r"C:\Windows\System32\notepad.exe",
-                        r"C:\Windows\System32\cmd.exe",
-                    ];
-                    for p in common_exes {
-                        if p.to_lowercase().contains(&actual_path.to_lowercase()) {
-                            actual_path = p.to_string();
-                            break;
+            if actual_path.to_lowercase().contains("chrome_proxy.exe") || actual_path.to_lowercase().contains("msedge_proxy.exe") || args.contains("--app-id=") {
+                if let Some(app_id_start) = args.find("--app-id=") {
+                    let app_id = &args[app_id_start + 9..].split_whitespace().next().unwrap_or("");
+                    if !app_id.is_empty() {
+                        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                            let chrome_pwa = format!("{}\\Google\\Chrome\\User Data\\Default\\Web Applications\\_crx_{}\\icon_256.png", local, app_id);
+                            if std::path::Path::new(&chrome_pwa).exists() { actual_path = chrome_pwa; }
+                            else {
+                                let edge_pwa = format!("{}\\Microsoft\\Edge\\User Data\\Default\\Web Applications\\_crx_{}\\icon_256.png", local, app_id);
+                                if std::path::Path::new(&edge_pwa).exists() { actual_path = edge_pwa; }
+                            }
                         }
                     }
                 }
             }
 
+            if !std::path::Path::new(&actual_path).is_absolute() {
+                if actual_path.to_lowercase() == "code" || actual_path.to_lowercase() == "code.exe" {
+                    if let Ok(home) = std::env::var("USERPROFILE") {
+                        let p = format!("{}\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", home);
+                        if std::path::Path::new(&p).exists() { actual_path = p; }
+                    }
+                } else if actual_path.to_lowercase() == "msedge" || actual_path.to_lowercase() == "msedge.exe" {
+                    let p = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
+                    if std::path::Path::new(p).exists() { actual_path = p.to_string(); }
+                }
+            }
+
             let mut shfi: SHFILEINFOW = std::mem::zeroed();
-            
-            // If it's a .lnk, try getting the icon for the .lnk file first (contains custom icons for PWAs/Discord)
             let mut res = 0usize;
             if is_lnk {
                 let lnk_u16: Vec<u16> = path_clone.encode_utf16().chain(std::iter::once(0)).collect();
-                res = SHGetFileInfoW(
-                    windows::core::PCWSTR(lnk_u16.as_ptr()),
-                    Default::default(),
-                    Some(&mut shfi),
-                    std::mem::size_of::<SHFILEINFOW>() as u32,
-                    SHGFI_ICON | SHGFI_LARGEICON
-                );
+                res = SHGetFileInfoW(windows::core::PCWSTR(lnk_u16.as_ptr()), Default::default(), Some(&mut shfi), std::mem::size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
             }
 
-            // Fallback to actual_path if not a lnk or lnk icon fetch failed
             if res == 0 || shfi.hIcon.is_invalid() {
                 let path_u16: Vec<u16> = actual_path.encode_utf16().chain(std::iter::once(0)).collect();
-                res = SHGetFileInfoW(
-                    windows::core::PCWSTR(path_u16.as_ptr()),
-                    Default::default(),
-                    Some(&mut shfi),
-                    std::mem::size_of::<SHFILEINFOW>() as u32,
-                    SHGFI_ICON | SHGFI_LARGEICON
-                );
+                res = SHGetFileInfoW(windows::core::PCWSTR(path_u16.as_ptr()), Default::default(), Some(&mut shfi), std::mem::size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
             }
 
             if res != 0 && !shfi.hIcon.is_invalid() {
                 let base64_icon = icon_to_base64(shfi.hIcon);
                 let _ = DestroyIcon(shfi.hIcon);
                 if let Some(ref base64) = base64_icon {
-                    if let Ok(mut lock) = ICON_CACHE.get().unwrap().lock() {
-                        lock.insert(path_clone, base64.clone());
-                        let _ = std::fs::write(&cache_path, serde_json::to_string(&*lock).unwrap_or_default());
-                    }
+                    if let Ok(mut lock) = ICON_CACHE.get().unwrap().lock() { lock.insert(cache_key, base64.clone()); }
                 }
                 Some(base64_icon)
-            } else {
-                None
-            }
+            } else { None }
         };
         CoUninitialize();
         Ok(result.flatten())
     }).await.map_err(|e| e.to_string())?
 }
 
-
 #[tauri::command]
 pub fn save_pinned_apps(app: AppHandle, apps: Vec<AppInfo>) -> Result<(), String> {
-    let path = app.path().app_config_dir().map_err(|e| e.to_string())?
-        .join("pinned_apps.json");
-    
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    
+    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("pinned_apps.json");
+    if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
     let content = serde_json::to_string(&apps).map_err(|e| e.to_string())?;
     std::fs::write(path, content).map_err(|e| e.to_string())?;
     Ok(())
@@ -574,44 +563,25 @@ pub fn save_pinned_apps(app: AppHandle, apps: Vec<AppInfo>) -> Result<(), String
 
 #[tauri::command]
 pub async fn load_pinned_apps(app: AppHandle) -> Vec<AppInfo> {
-    let path = app.path().app_config_dir().unwrap_or_default()
-        .join("pinned_apps.json");
-    
+    let path = app.path().app_config_dir().unwrap_or_default().join("pinned_apps.json");
     if let Ok(content) = std::fs::read_to_string(path) {
-        if let Ok(apps) = serde_json::from_str(&content) {
-            return apps;
-        }
+        if let Ok(apps) = serde_json::from_str(&content) { return apps; }
     }
-    
-    // Default apps if none saved
     vec![
-        AppInfo { name: "File Explorer".into(), path: "C:\\Windows\\explorer.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("explorer.exe".into()) },
-        AppInfo { name: "Microsoft Edge".into(), path: "msedge".into(), icon: None, is_running: false, hwnd: None, executable: Some("msedge.exe".into()) },
-        AppInfo { name: "Notepad".into(), path: "notepad.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("notepad.exe".into()) },
+        AppInfo { name: "File Explorer".into(), path: "C:\\Windows\\explorer.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("explorer.exe".into()), all_hwnds: None },
+        AppInfo { name: "Microsoft Edge".into(), path: "msedge".into(), icon: None, is_running: false, hwnd: None, executable: Some("msedge.exe".into()), all_hwnds: None },
+        AppInfo { name: "Notepad".into(), path: "notepad.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("notepad.exe".into()), all_hwnds: None },
     ]
 }
 
 #[tauri::command]
 pub async fn get_installed_apps() -> Vec<AppInfo> {
     let cache = INSTALLED_APPS_CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()));
-    
-    // If empty and not scanning, trigger one
     let is_empty = if let Ok(lock) = cache.lock() { lock.is_empty() } else { true };
-    if is_empty && !IS_SCANNING.load(Ordering::Relaxed) {
-        crate::services::trigger_app_scan();
-    }
-    
-    // Wait for scanning to finish if it's in progress (max 5 seconds to avoid hanging frontend)
+    if is_empty && !IS_SCANNING.load(Ordering::Relaxed) { crate::services::trigger_app_scan(); }
     let start = std::time::Instant::now();
-    while IS_SCANNING.load(Ordering::Relaxed) && start.elapsed() < std::time::Duration::from_secs(5) {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    
-    if let Ok(cache_lock) = cache.lock() {
-        cache_lock.clone()
-    } else {
-        Vec::new()
-    }
+    while IS_SCANNING.load(Ordering::Relaxed) && start.elapsed() < std::time::Duration::from_secs(5) { tokio::time::sleep(std::time::Duration::from_millis(100)).await; }
+    if let Ok(cache_lock) = cache.lock() { cache_lock.clone() } else { Vec::new() }
 }
 
 #[tauri::command]
@@ -624,32 +594,23 @@ pub fn hide_native_osd() {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE};
         let class1 = windows::core::PCSTR(b"NativeHWNDHost\0".as_ptr());
-        if let Ok(hwnd) = FindWindowA(class1, windows::core::PCSTR::null()) {
-            let _ = ShowWindow(hwnd, SW_HIDE);
-        }
+        if let Ok(hwnd) = FindWindowA(class1, windows::core::PCSTR::null()) { let _ = ShowWindow(hwnd, SW_HIDE); }
     }
 }
 
 #[tauri::command]
 pub fn open_settings_window(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("settings") {
-        let _ = win.show();
-        let _ = win.set_focus();
-    }
+    if let Some(win) = app.get_webview_window("settings") { let _ = win.show(); let _ = win.set_focus(); }
 }
 
 #[tauri::command]
 pub fn hide_volume_overlay(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("volume-overlay") {
-        let _ = win.hide();
-    }
+    if let Some(win) = app.get_webview_window("volume-overlay") { let _ = win.hide(); }
 }
 
 #[tauri::command]
 pub fn hide_brightness_overlay(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("brightness-overlay") {
-        let _ = win.hide();
-    }
+    if let Some(win) = app.get_webview_window("brightness-overlay") { let _ = win.hide(); }
 }
 
 #[tauri::command]
@@ -658,16 +619,7 @@ pub fn open_wifi_settings() {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         use windows::Win32::UI::Shell::ShellExecuteA;
-        use std::ptr::null_mut;
-
-        let _ = ShellExecuteA(
-            Some(HWND(null_mut())),
-            windows::core::PCSTR(b"open\0".as_ptr()),
-            windows::core::PCSTR(b"ms-availablenetworks:\0".as_ptr()),
-            windows::core::PCSTR::null(),
-            windows::core::PCSTR::null(),
-            SW_SHOWNORMAL,
-        );
+        let _ = ShellExecuteA(Some(HWND(std::ptr::null_mut())), windows::core::PCSTR(b"open\0".as_ptr()), windows::core::PCSTR(b"ms-availablenetworks:\0".as_ptr()), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
     }
 }
 
@@ -677,54 +629,21 @@ pub fn open_notification_center() {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         use windows::Win32::UI::Shell::ShellExecuteA;
-        use std::ptr::null_mut;
-
-        let _ = ShellExecuteA(
-            Some(HWND(null_mut())),
-            windows::core::PCSTR(b"open\0".as_ptr()),
-            windows::core::PCSTR(b"ms-actioncenter:\0".as_ptr()),
-            windows::core::PCSTR::null(),
-            windows::core::PCSTR::null(),
-            SW_SHOWNORMAL,
-        );
+        let _ = ShellExecuteA(Some(HWND(std::ptr::null_mut())), windows::core::PCSTR(b"open\0".as_ptr()), windows::core::PCSTR(b"ms-actioncenter:\0".as_ptr()), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
     }
 }
 
 #[tauri::command]
-pub fn media_play_pause() {
-    unsafe {
-        if let Some(ref sender) = COMMAND_SENDER {
-            let _ = sender.send(crate::types::SystemCommand::MediaPlayPause);
-        }
-    }
-}
+pub fn media_play_pause() { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::MediaPlayPause); } } }
 
 #[tauri::command]
-pub fn media_next() {
-    unsafe {
-        if let Some(ref sender) = COMMAND_SENDER {
-            let _ = sender.send(crate::types::SystemCommand::MediaNext);
-        }
-    }
-}
+pub fn media_next() { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::MediaNext); } } }
 
 #[tauri::command]
-pub fn media_previous() {
-    unsafe {
-        if let Some(ref sender) = COMMAND_SENDER {
-            let _ = sender.send(crate::types::SystemCommand::MediaPrevious);
-        }
-    }
-}
+pub fn media_previous() { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::MediaPrevious); } } }
 
 #[tauri::command]
-pub fn set_volume(volume: f32) {
-    unsafe {
-        if let Some(ref sender) = COMMAND_SENDER {
-            let _ = sender.send(crate::types::SystemCommand::SetVolume(volume));
-        }
-    }
-}
+pub fn set_volume(volume: f32) { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::SetVolume(volume)); } } }
 
 #[tauri::command]
 pub async fn quit_bloom(handle: AppHandle) {
@@ -732,7 +651,6 @@ pub async fn quit_bloom(handle: AppHandle) {
     if let Some(w) = handle.get_webview_window("dock") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
     set_taskbar_visibility(true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
-
     handle.exit(0);
 }
 
@@ -742,7 +660,6 @@ pub async fn restart_bloom(handle: AppHandle) {
     if let Some(w) = handle.get_webview_window("dock") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
     set_taskbar_visibility(true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
-
     handle.restart();
 }
 
@@ -758,19 +675,10 @@ pub async fn close_window(hwnd: isize) {
 #[tauri::command]
 pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
     let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    
+    if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
     let mut settings = HashMap::new();
-    if let Ok(content) = std::fs::read_to_string(&path) {
-        if let Ok(existing) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&content) {
-            settings = existing;
-        }
-    }
-    
+    if let Ok(content) = std::fs::read_to_string(&path) { if let Ok(existing) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&content) { settings = existing; } }
     settings.insert(key, value);
-    
     let content = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
     std::fs::write(path, content).map_err(|e| e.to_string())?;
     Ok(())
@@ -779,13 +687,7 @@ pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Re
 #[tauri::command]
 pub fn load_settings(app: AppHandle) -> Result<HashMap<String, serde_json::Value>, String> {
     let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
-    
-    if let Ok(content) = std::fs::read_to_string(path) {
-        if let Ok(settings) = serde_json::from_str(&content) {
-            return Ok(settings);
-        }
-    }
-    
+    if let Ok(content) = std::fs::read_to_string(path) { if let Ok(settings) = serde_json::from_str(&content) { return Ok(settings); } }
     Ok(HashMap::new())
 }
 
@@ -793,36 +695,18 @@ pub fn load_settings(app: AppHandle) -> Result<HashMap<String, serde_json::Value
 pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u32) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::Foundation::{HWND, RECT};
-        use windows::Win32::Graphics::Gdi::{
-            CreateCompatibleDC, CreateCompatibleBitmap, SelectObject, DeleteObject, DeleteDC, GetDC, ReleaseDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC
-        };
+        use windows::Win32::Graphics::Gdi::{CreateCompatibleDC, CreateCompatibleBitmap, SelectObject, DeleteObject, DeleteDC, GetDC, ReleaseDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC};
         use windows::Win32::UI::WindowsAndMessaging::{GetWindowPlacement, WINDOWPLACEMENT, IsWindow};
         use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
-
         #[link(name = "user32")]
-        extern "system" {
-            pub fn PrintWindow(hwnd: HWND, hdcBlt: HDC, nFlags: u32) -> i32;
-        }
-
+        extern "system" { pub fn PrintWindow(hwnd: HWND, hdcBlt: HDC, nFlags: u32) -> i32; }
         let hwnd = HWND(hwnd as *mut _);
-        if !IsWindow(Some(hwnd)).as_bool() {
-            return None;
-        }
-
+        if !IsWindow(Some(hwnd)).as_bool() { return None; }
         let mut rect = RECT::default();
-        // Try DWM attribute first for high-fidelity bounds (especially for Win11 rounded corners)
         let _ = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut _ as *mut _, std::mem::size_of::<RECT>() as u32);
-        
-        if rect.right == 0 && rect.bottom == 0 {
-            // Fallback to standard GetWindowRect
-            if windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_err() {
-                return None;
-            }
-        }
-
+        if rect.right == 0 && rect.bottom == 0 { if windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_err() { return None; } }
         let mut width = (rect.right - rect.left) as i32;
         let mut height = (rect.bottom - rect.top) as i32;
-
         if width <= 10 || height <= 10 {
             let mut wp = WINDOWPLACEMENT::default();
             wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
@@ -831,58 +715,27 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
                 height = (wp.rcNormalPosition.bottom - wp.rcNormalPosition.top) as i32;
             }
         }
-
-        // Final sanity check - if it's still tiny, don't return a "blank" preview
-        if width <= 100 || height <= 100 {
-            return None;
-        }
-
+        if width <= 100 || height <= 100 { return None; }
         let hdc_screen = GetDC(None);
         let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
         let hbm_mem = CreateCompatibleBitmap(hdc_screen, width, height);
-        
         let h_old = SelectObject(hdc_mem, hbm_mem.into());
-
-        let success = PrintWindow(hwnd, hdc_mem, 2 /* PW_RENDERFULLCONTENT */);
-        
+        let success = PrintWindow(hwnd, hdc_mem, 2);
         let mut result = None;
-
         if success != 0 {
             let mut bmi = BITMAPINFO {
-                bmiHeader: BITMAPINFOHEADER {
-                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                    biWidth: width,
-                    biHeight: -height, // top-down
-                    biPlanes: 1,
-                    biBitCount: 32,
-                    biCompression: BI_RGB.0,
-                    biSizeImage: 0,
-                    biXPelsPerMeter: 0,
-                    biYPelsPerMeter: 0,
-                    biClrUsed: 0,
-                    biClrImportant: 0,
-                },
+                bmiHeader: BITMAPINFOHEADER { biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32, biWidth: width, biHeight: -height, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0, biSizeImage: 0, biXPelsPerMeter: 0, biYPelsPerMeter: 0, biClrUsed: 0, biClrImportant: 0 },
                 bmiColors: [windows::Win32::Graphics::Gdi::RGBQUAD::default(); 1],
             };
-
             let mut pixels = vec![0u8; (width * height * 4) as usize];
             if GetDIBits(hdc_mem, hbm_mem, 0, height as u32, Some(pixels.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS) != 0 {
-                // BGRA to RGBA and force opaque
-                for chunk in pixels.chunks_exact_mut(4) {
-                    let b = chunk[0];
-                    let r = chunk[2];
-                    chunk[0] = r;
-                    chunk[2] = b;
-                    chunk[3] = 255; 
-                }
-
+                for chunk in pixels.chunks_exact_mut(4) { let b = chunk[0]; let r = chunk[2]; chunk[0] = r; chunk[2] = b; chunk[3] = 255; }
                 if let Ok(Some(png_base64)) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     if let Some(mut img) = image::RgbaImage::from_raw(width as u32, height as u32, pixels) {
                         if img.width() > max_width || img.height() > max_height {
                             let dyn_img = image::DynamicImage::ImageRgba8(img);
                             img = dyn_img.resize(max_width, max_height, image::imageops::FilterType::Triangle).into_rgba8();
                         }
-                        
                         let mut buf = std::io::Cursor::new(Vec::new());
                         if image::write_buffer_with_format(&mut buf, &img, img.width(), img.height(), image::ColorType::Rgba8, image::ImageFormat::Png).is_ok() {
                             use base64::Engine;
@@ -891,17 +744,13 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
                         }
                     }
                     None
-                })) {
-                    result = Some(png_base64);
-                }
+                })) { result = Some(png_base64); }
             }
         }
-
         SelectObject(hdc_mem, h_old);
         let _ = DeleteObject(hbm_mem.into());
         let _ = DeleteDC(hdc_mem);
         ReleaseDC(None, hdc_screen);
-
         result
     }).await.map_err(|e| e.to_string())
 }

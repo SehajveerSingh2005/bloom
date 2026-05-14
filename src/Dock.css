@@ -74,14 +74,47 @@ body {
   transform-origin: bottom center;
 }
 
-.preview-tooltip img {
-  max-width: 240px;
-  max-height: 140px;
+.preview-tooltip.multi {
+  min-width: auto;
+  max-width: 85vw;
+}
+
+.preview-items {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 4px;
+}
+
+.preview-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+  padding: 4px;
+  border-radius: 8px;
+  pointer-events: auto;
+}
+
+.preview-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-4px);
+}
+
+.preview-item img {
+  max-width: 220px;
+  max-height: 130px;
   border-radius: 6px;
   object-fit: cover;
   background: rgba(0, 0, 0, 0.5);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
+
+
 
 .preview-label {
   color: rgba(255, 255, 255, 0.9);
