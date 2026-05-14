@@ -40,17 +40,22 @@ body {
   white-space: nowrap;
 }
 
-.dock-container:not(.dragging) .dock-icon-wrapper:hover .tooltip {
+.dock-container:not(.dragging) .dock-icon-wrapper:hover .tooltip:not(.tooltip-hidden) {
   opacity: 1;
   transform: translate(-50%, 0) scale(1);
+}
+
+.tooltip.tooltip-hidden {
+  opacity: 0 !important;
+  transition: opacity 0.1s ease !important;
 }
 
 /* App Preview Tooltip */
 .preview-tooltip {
   position: absolute;
-  bottom: calc(100% + 16px);
+  bottom: calc(100% + 20px);
   left: 50%;
-  transform: translateX(-50%);
+  transform: translateX(-50%) !important;
   background: rgba(30, 30, 30, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -64,6 +69,8 @@ body {
   box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
   pointer-events: none;
   z-index: 100;
+  min-width: 160px;
+  min-height: 100px;
   transform-origin: bottom center;
 }
 

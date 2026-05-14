@@ -41,6 +41,7 @@ windows = { version = "0.61", features = [
   "Graphics_Imaging",
   "Win32_Graphics_Imaging",
   "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
 ] }
 base64 = "0.22"
 tauri-plugin-autostart = "2.5.1"

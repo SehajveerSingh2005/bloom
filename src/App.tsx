@@ -313,6 +313,7 @@ function App() {
   const [settingsCalendarEnabled, setSettingsCalendarEnabled] = useState(() => localStorage.getItem("bloom-calendar-enabled") !== "false");
   const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-visualizer-enabled") !== "false");
   const [settingsAlbumArtEnabled, setSettingsAlbumArtEnabled] = useState(() => localStorage.getItem("bloom-media-album-art-enabled") !== "false");
+  const [dockPreviewEnabled, setDockPreviewEnabled] = useState(() => localStorage.getItem("bloom-dock-preview-enabled") !== "false");
   const [settingsCornersEnabled, setSettingsCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
 
@@ -331,6 +332,7 @@ function App() {
       const viz = getVal("bloom-media-visualizer-enabled") ?? getVal("bloom-visualizer-enabled", "true");
       setSettingsVisualizerEnabled(viz !== "false");
       setSettingsAlbumArtEnabled(getVal("bloom-media-album-art-enabled", "true") !== "false");
+      setDockPreviewEnabled(getVal("bloom-dock-preview-enabled", "true") !== "false");
       setSettingsCornersEnabled(getVal("bloom-corners-enabled", "false") === "true");
       setTempUnit(getVal("bloom-temp-unit", "celsius") as string);
       
@@ -407,6 +409,9 @@ function App() {
           invoke("change_dock_mode", { mode: value });
           setTimeout(() => invoke("sync_appbar"), 200);
         }
+      }
+      if (key === "dock-preview-enabled") {
+        setDockPreviewEnabled(value);
       }
       if (key === "notch-mode") {
         setNotchMode(value);

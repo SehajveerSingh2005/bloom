@@ -20,6 +20,8 @@ const Dock = memo(function Dock() {
   const iconsRef = useRef<Record<string, string>>({});
   const [, setIconsTick] = useState(0); 
   const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "auto-hide");
+  const [dockPreviewEnabled, setDockPreviewEnabled] = useState(() => localStorage.getItem("bloom-dock-preview-enabled") !== "false");
+  const [previewData, setPreviewData] = useState<{ path: string, image: string } | null>(null);
   const [isDockHovered, setIsDockHovered] = useState(false);
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
   const [isOverlapped, setIsOverlapped] = useState(false);
@@ -126,6 +128,9 @@ const Dock = memo(function Dock() {
       const dMode = getVal("bloom-dock-mode", "auto-hide");
       setDockMode(dMode as string);
 
+      const preview = getVal("bloom-dock-preview-enabled", "true");
+      setDockPreviewEnabled(preview === "true");
+
       const pinned = await invoke<AppInfo[]>('load_pinned_apps');
       setPinnedApps(pinned.map(a => ({ ...a, is_pinned: true })));
       pinned.forEach(app => fetchIcon(app.path));
@@ -134,6 +139,7 @@ const Dock = memo(function Dock() {
 
     const unlistenSettings = listen<{ key: string, value: any }>("settings-changed", (event) => {
       if (event.payload.key === "dock-mode") setDockMode(event.payload.value);
+      if (event.payload.key === "dock-preview-enabled") setDockPreviewEnabled(event.payload.value);
     });
 
     const unlistenOverlap = listen<boolean>("dock-overlap", (event) => {
@@ -333,7 +339,11 @@ const Dock = memo(function Dock() {
 
   useEffect(() => {
     if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
-    setPreviewImage(null);
+    
+    if (!hoveredApp) {
+      const timer = setTimeout(() => setPreviewData(null), 100);
+      return () => clearTimeout(timer);
+    }
 
     if (hoveredApp && !isDragging) {
       const app = dockItems.find(a => a.path === hoveredApp);
@@ -342,12 +352,17 @@ const Dock = memo(function Dock() {
           try {
             const base64 = await invoke<string | null>("capture_window_thumbnail", { hwnd: app.hwnd, maxWidth: 320, maxHeight: 200 });
             if (base64) {
-              setPreviewImage(base64);
+              setPreviewData({ path: app.path, image: base64 });
+            } else {
+              setPreviewData(null);
             }
           } catch (e) {
             console.error("Failed to capture thumbnail:", e);
+            setPreviewData(null);
           }
-        }, 400); // 400ms delay for hover preview
+        }, 400); 
+      } else {
+        setPreviewData(null);
       }
     }
 
@@ -415,7 +430,9 @@ const Dock = memo(function Dock() {
                   onMouseEnter={() => setHoveredApp(startItem.path)}
                   onMouseLeave={() => { setHoveredApp(null); setPressedApp(null); }}
                 >
-                  <div className="tooltip">{startItem.name}</div>
+                  {(!dockPreviewEnabled || (dockPreviewEnabled && hoveredApp === startItem.path)) && (
+                    <div className="tooltip">{startItem.name}</div>
+                  )}
                   <motion.div 
                     className="dock-icon"
                     variants={iconVariants}
@@ -455,12 +472,17 @@ const Dock = memo(function Dock() {
                     onDragStart={() => { if (app.is_pinned) { setIsDragging(true); setHoveredApp(null); setPressedApp(null); } }}
                     onDragEnd={handleDragEnd}
                   >
-                {previewImage && hoveredApp === app.path ? (
-                  <motion.div className="preview-tooltip" initial={{opacity: 0, y: 10, scale: 0.95}} animate={{opacity: 1, y: 0, scale: 1}} exit={{opacity: 0, scale: 0.95}} transition={{duration: 0.15}}>
-                    <img src={previewImage} alt="Preview" />
-                    <div className="preview-label">{app.name}</div>
-                  </motion.div>
-                ) : (
+                <AnimatePresence>
+                  {dockPreviewEnabled && previewData && previewData.path === app.path && hoveredApp === app.path && (
+                    <motion.div className="preview-tooltip" initial={{opacity: 0, y: 10, scale: 0.95}} animate={{opacity: 1, y: 0, scale: 1}} exit={{opacity: 0, scale: 0.95}} transition={{duration: 0.15}}>
+                      <img src={previewData.image} alt="Preview" />
+                      <div className="preview-label">{app.name}</div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                
+                {/* Fallback to text tooltip if previews are disabled, app isn't running, or preview failed to load */}
+                {(!dockPreviewEnabled || (dockPreviewEnabled && hoveredApp === app.path && !previewData)) && (
                   <div className="tooltip">{app.name}</div>
                 )}
                 <motion.div 

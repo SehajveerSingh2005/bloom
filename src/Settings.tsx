@@ -22,6 +22,7 @@ function SettingsApp() {
   const [cityName, setCityName] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [dockEnabled, setDockEnabled] = useState(false);
+  const [dockPreviewEnabled, setDockPreviewEnabled] = useState(true);
   const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "auto-hide");
   const [notchMode, setNotchMode] = useState("fixed");
   const [lowBatteryThreshold, setLowBatteryThreshold] = useState(20);
@@ -102,6 +103,9 @@ function SettingsApp() {
 
       const nMode = getVal("bloom-notch-mode");
       if (nMode) setNotchMode(nMode);
+
+      const preview = getVal("bloom-dock-preview-enabled");
+      if (preview !== null) setDockPreviewEnabled(preview === "true");
     }).catch(console.error);
 
     getVersion().then(setAppVersion);
@@ -249,6 +253,13 @@ function SettingsApp() {
     setDockEnabled(newVal);
     saveAndLocal("bloom-dock-enabled", String(newVal));
     notifyChange("dock-enabled", newVal);
+  };
+
+  const toggleDockPreview = () => {
+    const newVal = !dockPreviewEnabled;
+    setDockPreviewEnabled(newVal);
+    saveAndLocal("bloom-dock-preview-enabled", String(newVal));
+    notifyChange("dock-preview-enabled", newVal);
   };
 
   const toggleDockMode = (newMode: string) => {
@@ -408,7 +419,17 @@ function SettingsApp() {
                   <option value="auto-hide">Auto Hide</option>
                 </select>
               </div>
-            </>
+                <div className="setting-item">
+                  <div className="setting-info" style={{ marginLeft: '42px' }}>
+                    <span className="setting-label">Show App Previews</span>
+                    <span className="setting-desc">Show window thumbnails on hover</span>
+                  </div>
+                  <label className="toggle-switch">
+                    <input type="checkbox" checked={dockPreviewEnabled} onChange={toggleDockPreview} />
+                    <span className="slider"></span>
+                  </label>
+                </div>
+              </>
           )}
 
           <div className="setting-divider" />

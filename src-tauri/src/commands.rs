@@ -794,35 +794,60 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::Foundation::{HWND, RECT};
         use windows::Win32::Graphics::Gdi::{
-            CreateCompatibleDC, CreateCompatibleBitmap, SelectObject, DeleteObject, DeleteDC, GetDC, ReleaseDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, BitBlt, SRCCOPY
+            CreateCompatibleDC, CreateCompatibleBitmap, SelectObject, DeleteObject, DeleteDC, GetDC, ReleaseDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC
         };
-        use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect};
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowPlacement, WINDOWPLACEMENT, IsWindow};
+        use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+
+        #[link(name = "user32")]
+        extern "system" {
+            pub fn PrintWindow(hwnd: HWND, hdcBlt: HDC, nFlags: u32) -> i32;
+        }
 
         let hwnd = HWND(hwnd as *mut _);
-        let mut rect = RECT::default();
-        if windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_err() {
+        if !IsWindow(Some(hwnd)).as_bool() {
             return None;
         }
 
-        let width = (rect.right - rect.left) as i32;
-        let height = (rect.bottom - rect.top) as i32;
+        let mut rect = RECT::default();
+        // Try DWM attribute first for high-fidelity bounds (especially for Win11 rounded corners)
+        let _ = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut _ as *mut _, std::mem::size_of::<RECT>() as u32);
+        
+        if rect.right == 0 && rect.bottom == 0 {
+            // Fallback to standard GetWindowRect
+            if windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_err() {
+                return None;
+            }
+        }
 
-        if width <= 0 || height <= 0 {
+        let mut width = (rect.right - rect.left) as i32;
+        let mut height = (rect.bottom - rect.top) as i32;
+
+        if width <= 10 || height <= 10 {
+            let mut wp = WINDOWPLACEMENT::default();
+            wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+            if GetWindowPlacement(hwnd, &mut wp).is_ok() {
+                width = (wp.rcNormalPosition.right - wp.rcNormalPosition.left) as i32;
+                height = (wp.rcNormalPosition.bottom - wp.rcNormalPosition.top) as i32;
+            }
+        }
+
+        // Final sanity check - if it's still tiny, don't return a "blank" preview
+        if width <= 100 || height <= 100 {
             return None;
         }
 
         let hdc_screen = GetDC(None);
-        let hdc_window = GetDC(Some(hwnd));
         let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
         let hbm_mem = CreateCompatibleBitmap(hdc_screen, width, height);
         
         let h_old = SelectObject(hdc_mem, hbm_mem.into());
 
-        let success = BitBlt(hdc_mem, 0, 0, width, height, Some(hdc_window), 0, 0, SRCCOPY);
+        let success = PrintWindow(hwnd, hdc_mem, 2 /* PW_RENDERFULLCONTENT */);
         
         let mut result = None;
 
-        if success.is_ok() {
+        if success != 0 {
             let mut bmi = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -873,10 +898,9 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
         }
 
         SelectObject(hdc_mem, h_old);
-        DeleteObject(hbm_mem.into());
-        DeleteDC(hdc_mem);
+        let _ = DeleteObject(hbm_mem.into());
+        let _ = DeleteDC(hdc_mem);
         ReleaseDC(None, hdc_screen);
-        ReleaseDC(Some(hwnd), hdc_window);
 
         result
     }).await.map_err(|e| e.to_string())
