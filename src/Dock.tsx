@@ -58,7 +58,6 @@ const Dock = memo(function Dock() {
   const isHidden = dockMode === 'auto-hide' && isOverlapped && interactionState === 'none';
 
   useEffect(() => {
-    // Poll for visibility to trigger entrance animation
     const checkVisibility = async () => {
       try {
         const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -66,14 +65,8 @@ const Dock = memo(function Dock() {
         const visible = await win.isVisible();
         if (visible) {
           setIsReady(true);
-          
-          // Overlap phases for fluidity
-          // Impact starts as it reaches the bottom
           setTimeout(() => setIsImpacted(true), 280);
-          
-          // Expand starts almost immediately after impact to look "liquid"
           setTimeout(() => setIsExpanded(true), 350);
-          
           return true;
         }
       } catch (e) {}
@@ -291,8 +284,8 @@ const Dock = memo(function Dock() {
       if (!runningMap.has(id)) runningMap.set(id, a);
     });
     
-    const pinned = [
-      { name: 'Start', path: 'start', icon: null, is_running: false, is_pinned: true },
+    const pinned: AppInfo[] = [
+      { name: 'Start', path: 'start', icon: null, is_running: false, is_pinned: true, hwnd: undefined, all_hwnds: undefined, executable: undefined },
       ...pinnedApps.map(p => {
         const id = getAppId(p.path, p.executable);
         const running = runningMap.get(id);

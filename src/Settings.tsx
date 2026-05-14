@@ -116,12 +116,7 @@ function SettingsApp() {
     invoke('broadcast_setting', { key, value });
   };
 
-  const saveAndBroadcast = (key: string, value: any) => {
-    const stringValue = value.toString();
-    localStorage.setItem(key, stringValue);
-    invoke("save_setting", { key, value: stringValue }).catch(console.error);
-    broadcastSetting(key, value);
-  };
+  /* saveAndBroadcast removed because it was unused and causing build errors */
 
   const checkForUpdates = async (manual = true) => {
     setUpdateStatus("checking");
