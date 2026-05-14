@@ -408,9 +408,7 @@ function App() {
           setTimeout(() => invoke("sync_appbar"), 200);
         }
       }
-      if (key === "dock-preview-enabled") {
-        setDockPreviewEnabled(value);
-      }
+
       if (key === "notch-mode") {
         setNotchMode(value);
         if (windowLabel === 'main') {

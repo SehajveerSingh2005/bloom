@@ -112,9 +112,7 @@ function SettingsApp() {
     checkForUpdates(false);
   }, []);
 
-  const broadcastSetting = (key: string, value: any) => {
-    invoke('broadcast_setting', { key, value });
-  };
+
 
   /* saveAndBroadcast removed because it was unused and causing build errors */
 

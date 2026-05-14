@@ -63,6 +63,6 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Bloom ${{ github.ref_name }}"
           releaseDraft: false
-          releasePrerelease: false
+          prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
