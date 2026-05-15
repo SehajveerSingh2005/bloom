@@ -350,19 +350,22 @@ function App() {
           });
           localStorage.setItem("bloom-first-run", "done");
         }
-
-        setTimeout(() => {
+        const syncWindows = async () => {
           const dockEnabled = getVal("bloom-dock-enabled", "false") === "true";
           if (dockEnabled) {
-            invoke("toggle_dock", { enable: true });
-            invoke("change_dock_mode", { mode: getVal("bloom-dock-mode", "auto-hide") });
+            await invoke("toggle_dock", { enable: true });
+            await invoke("change_dock_mode", { mode: getVal("bloom-dock-mode", "auto-hide") });
           }
-          
-          invoke("change_notch_mode", { mode: nMode });
+          await invoke("change_notch_mode", { mode: nMode });
+          await invoke("sync_appbar");
+        };
 
-          invoke("sync_appbar");
-          setTimeout(() => invoke("sync_appbar"), 800);
-        }, 200);
+        // 1. Snappy initial sync (fast as possible)
+        setTimeout(syncWindows, 50);
+        
+        // 2. Smooth layout corrections (only syncs position, doesn't re-toggle visibility)
+        setTimeout(() => invoke("sync_appbar"), 1000);
+        setTimeout(() => invoke("sync_appbar"), 2500);
       }
     }).catch(console.error);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
