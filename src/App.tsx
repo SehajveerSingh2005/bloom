@@ -216,7 +216,10 @@ function App() {
   });
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
   const [volume, setVolume] = useState(0.5);
-  const [windowLabel] = useState<string>(getCurrentWebviewWindow().label);
+  const [windowLabel, setWindowLabel] = useState<string>("");
+  useEffect(() => {
+    setWindowLabel(getCurrentWebviewWindow().label);
+  }, []);
   const [isVisible, setIsVisible] = useState(true);
   const [isImpacted, setIsImpacted] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -317,6 +320,8 @@ function App() {
   const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
 
   useEffect(() => {
+    if (!windowLabel) return;
+
     invoke("load_settings").then((settings: any) => {
       const getVal = (key: string, fallback: string | null = null) => {
         const val = settings[key];
@@ -353,22 +358,21 @@ function App() {
         const syncWindows = async () => {
           const dockEnabled = getVal("bloom-dock-enabled", "false") === "true";
           if (dockEnabled) {
-            await invoke("toggle_dock", { enable: true });
-            await invoke("change_dock_mode", { mode: getVal("bloom-dock-mode", "auto-hide") });
+            await invoke("init_dock", { mode: getVal("bloom-dock-mode", "auto-hide") });
           }
           await invoke("change_notch_mode", { mode: nMode });
           await invoke("sync_appbar");
         };
 
         // 1. Snappy initial sync (fast as possible)
-        setTimeout(syncWindows, 50);
+        setTimeout(syncWindows, 400);
         
         // 2. Smooth layout corrections (only syncs position, doesn't re-toggle visibility)
         setTimeout(() => invoke("sync_appbar"), 1000);
         setTimeout(() => invoke("sync_appbar"), 2500);
       }
     }).catch(console.error);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [windowLabel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // Disable context menu globally
@@ -397,9 +401,10 @@ function App() {
       }
       if (key === "dock-enabled") {
         if (windowLabel === 'main') {
-          invoke("toggle_dock", { enable: value });
           if (value) {
-            invoke("change_dock_mode", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
+            invoke("init_dock", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
+          } else {
+            invoke("toggle_dock", { enable: false });
           }
           // Always re-sync topbar to prevent displacement when dock state changes
           setTimeout(() => invoke("sync_appbar"), 200);
@@ -434,7 +439,7 @@ function App() {
       unlistenNotchOverlap.then(f => f());
       unlistenNotchEdgeHover.then(f => f());
     };
-  }, []);
+  }, [windowLabel]);
 
   // New bloom mode state: 'status', 'music', or 'calendar'
   const [bloomMode, setBloomMode] = useState<'status' | 'music' | 'calendar'>('status');

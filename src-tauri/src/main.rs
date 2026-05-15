@@ -52,6 +52,7 @@ fn main() {
             media_play_pause,
             media_next,
             media_previous,
+            init_dock,
             toggle_dock,
             change_dock_mode,
             change_notch_mode,

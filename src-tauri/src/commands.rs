@@ -57,14 +57,49 @@ pub fn set_ignore_cursor_events(window: Window, ignore: bool) {
 }
 
 #[tauri::command]
+pub async fn init_dock(app: AppHandle, mode: String) {
+    if let Some(dock_win) = app.get_webview_window("dock") {
+        // 1. Hide taskbar
+        set_taskbar_visibility(false);
+        NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
+
+        // 2. Set window properties
+        let _ = dock_win.set_always_on_top(true);
+        
+        // 3. Show and Register
+        if mode == "fixed" {
+            register_dock_appbar(dock_win.clone());
+        } else {
+            let _ = dock_win.show();
+            // In auto-hide mode, we still want to ensure it's at the bottom
+            if let Ok(hwnd) = dock_win.hwnd() {
+                if let Ok(Some(monitor)) = dock_win.primary_monitor() {
+                    let m_size = monitor.size();
+                    let m_pos = monitor.position();
+                    let scale = dock_win.scale_factor().unwrap_or(1.0);
+                    let ph = dock_win.outer_size().map(|s| s.height as i32).unwrap_or((100.0 * scale) as i32);
+                    let final_y = m_pos.y + m_size.height as i32 - ph;
+                    unsafe {
+                        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED};
+                        let _ = SetWindowPos(hwnd, None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                    }
+                }
+            }
+        }
+
+        // 4. Sync overlap state
+        let current = CURRENT_DOCK_OVERLAP.load(Ordering::Relaxed);
+        if current != -1 {
+            let _ = app.emit("dock-overlap", current == 1);
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn toggle_dock(app: AppHandle, enable: bool) {
     if let Some(dock_win) = app.get_webview_window("dock") {
         if enable {
-            set_taskbar_visibility(false);
-            NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
-
-            let _ = dock_win.set_always_on_top(true);
-            let _ = dock_win.show();
+            init_dock(app, "fixed".to_string()).await; // Default to fixed when toggling via UI if not specified, or we could load from settings
         } else {
             let _ = dock_win.hide();
             if let Ok(hwnd) = dock_win.hwnd() {
@@ -77,7 +112,7 @@ pub async fn toggle_dock(app: AppHandle, enable: bool) {
             set_taskbar_visibility(true);
             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
 
-            // Re-sync other appbars to ensure they stay in place
+            // Re-sync other appbars
             if let Some(main_win) = app.get_webview_window("main") {
                 if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
                     register_appbar(main_win);
