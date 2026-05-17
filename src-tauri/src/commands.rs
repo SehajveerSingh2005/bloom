@@ -60,7 +60,7 @@ pub fn set_ignore_cursor_events(window: Window, ignore: bool) {
 pub async fn init_dock(app: AppHandle, mode: String) {
     if let Some(dock_win) = app.get_webview_window("dock") {
         // 1. Hide taskbar
-        set_taskbar_visibility(false);
+        set_taskbar_visibility(false, false);
         NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
 
         // 2. Set window properties
@@ -109,7 +109,7 @@ pub async fn toggle_dock(app: AppHandle, enable: bool) {
                 });
             }
             DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
-            set_taskbar_visibility(true);
+            set_taskbar_visibility(true, true);
             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
 
             // Re-sync other appbars
@@ -165,7 +165,7 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
         
         // Ensure always on top and native taskbar stays hidden
         let _ = dock_win.set_always_on_top(true);
-        set_taskbar_visibility(false);
+        set_taskbar_visibility(false, false);
         NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
 
         
@@ -669,6 +669,127 @@ pub fn open_notification_center() {
 }
 
 #[tauri::command]
+pub fn open_system_tray() {
+    tauri::async_runtime::spawn_blocking(move || unsafe {
+        use std::sync::atomic::Ordering;
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, GetWindowLongA, SetWindowLongA, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TRANSPARENT, SetLayeredWindowAttributes, LWA_ALPHA, IsWindowVisible};
+        use windows::core::PCSTR;
+
+        let tray_class = PCSTR(b"Shell_TrayWnd\0".as_ptr());
+        let hwnd = FindWindowA(tray_class, windows::core::PCSTR::null()).unwrap_or_default();
+        if hwnd.0 == std::ptr::null_mut() { return; }
+
+        let currently_hidden = crate::state::NATIVE_TASKBAR_HIDDEN.load(Ordering::Relaxed);
+        if currently_hidden {
+            // 1. Make the taskbar completely invisible and click-through
+            let exstyle = GetWindowLongA(hwnd, GWL_EXSTYLE);
+            let _ = SetWindowLongA(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED.0 as i32 | WS_EX_TRANSPARENT.0 as i32);
+            let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 0, LWA_ALPHA);
+
+            // 2. Restore taskbar to its screen position and show it WITHOUT work area change (prevents Dock jump)
+            crate::utils::set_taskbar_visibility(true, false);
+            crate::state::NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+            
+            // Give Windows a moment to realize the taskbar is "there"
+            std::thread::sleep(std::time::Duration::from_millis(50));
+
+            // 3. Send the Win+B and Space macro to open the tray chevron
+            use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, KEYBDINPUT, VK_LWIN, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_SPACE};
+            let b_key = VIRTUAL_KEY(0x42); // 'B' key
+            
+            let inputs = [
+                // Win+B
+                INPUT {
+                    r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_LWIN, wScan: 0, dwFlags: Default::default(), time: 0, dwExtraInfo: 0 } },
+                },
+                INPUT {
+                    r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: b_key, wScan: 0, dwFlags: Default::default(), time: 0, dwExtraInfo: 0 } },
+                },
+                INPUT {
+                    r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: b_key, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 } },
+                },
+                INPUT {
+                    r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_LWIN, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 } },
+                },
+            ];
+            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+            
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            
+            // Space to open the popup
+            let space_inputs = [
+                INPUT {
+                    r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_SPACE, wScan: 0, dwFlags: Default::default(), time: 0, dwExtraInfo: 0 } },
+                },
+                INPUT {
+                    r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_SPACE, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 } },
+                },
+            ];
+            SendInput(&space_inputs, std::mem::size_of::<INPUT>() as i32);
+
+            // 4. Start monitoring for the tray popup to close
+            std::thread::spawn(move || {
+                let overflow_class = PCSTR(b"TopLevelWindowForOverflowXamlIsland\0".as_ptr());
+                let win10_overflow_class = PCSTR(b"NotifyIconOverflowWindow\0".as_ptr());
+                
+                // Wait for it to appear
+                let mut found = false;
+                for _ in 0..50 {
+                    let h1 = FindWindowA(overflow_class, PCSTR::null()).unwrap_or_default();
+                    let h2 = FindWindowA(win10_overflow_class, PCSTR::null()).unwrap_or_default();
+                    if (h1.0 != std::ptr::null_mut() && IsWindowVisible(h1).as_bool()) || (h2.0 != std::ptr::null_mut() && IsWindowVisible(h2).as_bool()) {
+                        found = true;
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+
+                if found {
+                    // Wait for it to disappear
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                        let h1 = FindWindowA(overflow_class, PCSTR::null()).unwrap_or_default();
+                        let h2 = FindWindowA(win10_overflow_class, PCSTR::null()).unwrap_or_default();
+                        let visible = (h1.0 != std::ptr::null_mut() && IsWindowVisible(h1).as_bool()) || (h2.0 != std::ptr::null_mut() && IsWindowVisible(h2).as_bool());
+                        if !visible {
+                            break;
+                        }
+                    }
+                }
+                
+                // Once closed, hide taskbar again
+                crate::utils::set_taskbar_visibility(false, false);
+                crate::state::NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
+                
+                // Revert transparency
+                let tray_class = PCSTR(b"Shell_TrayWnd\0".as_ptr());
+                let hwnd = FindWindowA(tray_class, PCSTR::null()).unwrap_or_default();
+                if hwnd.0 != std::ptr::null_mut() {
+                    let exstyle = GetWindowLongA(hwnd, GWL_EXSTYLE);
+                    let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
+                    let _ = SetWindowLongA(hwnd, GWL_EXSTYLE, exstyle & !(WS_EX_LAYERED.0 as i32) & !(WS_EX_TRANSPARENT.0 as i32));
+                }
+            });
+
+        } else {
+            // If already toggled on manually, toggle off
+            crate::utils::set_taskbar_visibility(false, false);
+            crate::state::NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
+
+            let exstyle = GetWindowLongA(hwnd, GWL_EXSTYLE);
+            let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
+            let _ = SetWindowLongA(hwnd, GWL_EXSTYLE, exstyle & !(WS_EX_LAYERED.0 as i32) & !(WS_EX_TRANSPARENT.0 as i32));
+        }
+    });
+}
+
+#[tauri::command]
 pub fn media_play_pause() { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::MediaPlayPause); } } }
 
 #[tauri::command]
@@ -684,7 +805,7 @@ pub fn set_volume(volume: f32) { unsafe { if let Some(ref sender) = COMMAND_SEND
 pub async fn quit_bloom(handle: AppHandle) {
     if let Some(w) = handle.get_webview_window("main") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
     if let Some(w) = handle.get_webview_window("dock") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
-    set_taskbar_visibility(true);
+    set_taskbar_visibility(true, true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
     handle.exit(0);
 }
@@ -693,7 +814,7 @@ pub async fn quit_bloom(handle: AppHandle) {
 pub async fn restart_bloom(handle: AppHandle) {
     if let Some(w) = handle.get_webview_window("main") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
     if let Some(w) = handle.get_webview_window("dock") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
-    set_taskbar_visibility(true);
+    set_taskbar_visibility(true, true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
     handle.restart();
 }

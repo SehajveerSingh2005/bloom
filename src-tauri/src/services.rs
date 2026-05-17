@@ -92,7 +92,7 @@ unsafe extern "system" fn taskbar_event_proc(
         
         if class_str == "Shell_TrayWnd" || class_str == "Shell_SecondaryTrayWnd" {
             // Taskbar is trying to show or move: slap it back down.
-            set_taskbar_visibility(false);
+            set_taskbar_visibility(false, false);
         }
     }
 }
@@ -690,7 +690,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     }
 
                     if should_rehide {
-                        set_taskbar_visibility(false);
+                        set_taskbar_visibility(false, false);
                     }
                 }
             }
@@ -1111,7 +1111,7 @@ pub fn register_dock_appbar(window: tauri::WebviewWindow) {
             let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style as isize);
 
             // Hide native taskbar first to free up space
-            set_taskbar_visibility(false);
+            set_taskbar_visibility(false, false);
 
             let mut abd = APPBARDATA::default();
             abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;

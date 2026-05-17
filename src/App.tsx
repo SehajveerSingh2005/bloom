@@ -55,6 +55,17 @@ function SettingsIcon() {
   );
 }
 
+function TrayIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="6" height="6" rx="1" />
+      <rect x="15" y="3" width="6" height="6" rx="1" />
+      <rect x="15" y="15" width="6" height="6" rx="1" />
+      <rect x="3" y="15" width="6" height="6" rx="1" />
+    </svg>
+  );
+}
+
 function BatteryIcon({ charging, level, threshold = 20 }: { charging: boolean; level: number; threshold?: number }) {
   const percentage = Math.min(Math.max(level, 0), 100);
   
@@ -802,6 +813,16 @@ function App() {
     }
   }, []);
 
+  // Open system tray (unhide taskbar and invoke Win+B)
+  const openSystemTray = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await invoke("open_system_tray");
+    } catch (e) {
+      console.error("Failed to open system tray:", e);
+    }
+  }, []);
+
   const openSettingsWindow = useCallback(async () => {
     try {
       const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -1133,13 +1154,16 @@ function App() {
                                         animate={{ opacity: 1, x: 0 }}
                                         exit={{ opacity: 0, x: -10 }}
                                       >
-                                        <div className="passive-feature clickable" onClick={openWifiSettings}>
+                                        <div className="passive-feature clickable" onClick={openWifiSettings} title="Wi-Fi">
                                           <WifiIcon connected={isOnline} />
                                         </div>
-                                        <div className="passive-feature clickable" onClick={openNotificationCenter}>
+                                        <div className="passive-feature clickable" onClick={openNotificationCenter} title="Notifications">
                                           {isMuted ? <BellOffIcon /> : <BellIcon />}
                                         </div>
-                                        <div className="passive-feature clickable" onClick={openSettingsWindow}>
+                                        <div className="passive-feature clickable" onClick={openSystemTray} title="System Tray">
+                                          <TrayIcon />
+                                        </div>
+                                        <div className="passive-feature clickable" onClick={openSettingsWindow} title="Settings">
                                           <SettingsIcon />
                                         </div>
                                       </motion.div>

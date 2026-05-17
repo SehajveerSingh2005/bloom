@@ -20,7 +20,7 @@ use crate::commands::*;
 
 unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     if ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT {
-        set_taskbar_visibility(true);
+        set_taskbar_visibility(true, true);
         NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
 
     }
@@ -45,6 +45,7 @@ fn main() {
             open_settings_window,
             open_wifi_settings,
             open_notification_center,
+            open_system_tray,
             set_ignore_cursor_events,
             set_window_height,
             hide_volume_overlay,
@@ -212,7 +213,7 @@ fn main() {
                             if let Some(w) = ah.get_webview_window("dock") {
                                 unregister_appbar_native(w.hwnd().unwrap());
                             }
-                            set_taskbar_visibility(true);
+                            set_taskbar_visibility(true, true);
                             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
 
                             ah.exit(0);
@@ -224,7 +225,7 @@ fn main() {
                             if let Some(w) = ah.get_webview_window("dock") {
                                 unregister_appbar_native(w.hwnd().unwrap());
                             }
-                            set_taskbar_visibility(true);
+                            set_taskbar_visibility(true, true);
                             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
 
                             ah.restart();
@@ -258,7 +259,7 @@ fn main() {
         .expect("error while building tauri application");
     app.run(|_, event| {
         if let tauri::RunEvent::Exit = event {
-            set_taskbar_visibility(true);
+            set_taskbar_visibility(true, true);
             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
 
         }

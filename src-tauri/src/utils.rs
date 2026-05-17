@@ -31,46 +31,64 @@ pub fn resolve_shortcut(path: &str) -> Option<(String, String)> {
     }
 }
 
-pub fn set_taskbar_visibility(visible: bool) {
+static mut ORIGINAL_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
+static mut ORIGINAL_SEC_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
+
+pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
     unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE, SW_SHOW};
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE, SW_SHOW, GetWindowRect};
         use windows::Win32::UI::Shell::{SHAppBarMessage, APPBARDATA, ABM_SETSTATE};
-        
+
         let tray_class = windows::core::PCSTR(b"Shell_TrayWnd\0".as_ptr());
         let secondary_tray_class = windows::core::PCSTR(b"Shell_SecondaryTrayWnd\0".as_ptr());
 
         // 1. Set the taskbar state (Auto-hide or Always-on-top)
-        // ABS_AUTOHIDE = 0x1, ABS_ALWAYSONTOP = 0x2
+        // ABS_AUTOHIDE = 0x1, ABS_ALWAYSONTOP = 0x2 
         let mut abd = APPBARDATA::default();
         abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
-        abd.lParam = windows::Win32::Foundation::LPARAM(if visible { 2 } else { 1 });
+        abd.lParam = windows::Win32::Foundation::LPARAM(if always_on_top { 2 } else { 1 });
         SHAppBarMessage(ABM_SETSTATE, &mut abd);
 
         // 2. Control visibility of the primary taskbar
         if let Ok(tray_hwnd) = FindWindowA(tray_class, windows::core::PCSTR::null()) {
             use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE};
             if visible {
+                if let Some(rect) = ORIGINAL_TRAY_RECT {
+                    let _ = SetWindowPos(tray_hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                }
                 let _ = ShowWindow(tray_hwnd, SW_SHOW);
-                // Restoration to 0,0 is usually handled by Windows shell when shown, 
-                // but we can be explicit if needed. Most taskbars are at the bottom.
             } else {
+                let has_rect = { let rect_ptr: *const Option<windows::Win32::Foundation::RECT> = std::ptr::addr_of!(ORIGINAL_TRAY_RECT); (*rect_ptr).is_some() };
+                if !has_rect {
+                    let mut rect = windows::Win32::Foundation::RECT::default();
+                    let _ = GetWindowRect(tray_hwnd, &mut rect);
+                    ORIGINAL_TRAY_RECT = Some(rect);
+                }
                 let _ = ShowWindow(tray_hwnd, SW_HIDE);
                 // Move it far off-screen to prevent any "thin line" artifacts or flashes
                 let _ = SetWindowPos(tray_hwnd, None, -10000, -10000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             }
         }
-        
+
         // 3. Control visibility of secondary taskbars (multi-monitor)
         if let Ok(secondary_tray_hwnd) = FindWindowA(secondary_tray_class, windows::core::PCSTR::null()) {
             use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE};
             if visible {
+                if let Some(rect) = ORIGINAL_SEC_TRAY_RECT {
+                    let _ = SetWindowPos(secondary_tray_hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                }
                 let _ = ShowWindow(secondary_tray_hwnd, SW_SHOW);
             } else {
+                let has_sec_rect = { let rect_ptr: *const Option<windows::Win32::Foundation::RECT> = std::ptr::addr_of!(ORIGINAL_SEC_TRAY_RECT); (*rect_ptr).is_some() };
+                if !has_sec_rect {
+                    let mut rect = windows::Win32::Foundation::RECT::default();
+                    let _ = GetWindowRect(secondary_tray_hwnd, &mut rect);
+                    ORIGINAL_SEC_TRAY_RECT = Some(rect);
+                }
                 let _ = ShowWindow(secondary_tray_hwnd, SW_HIDE);
                 let _ = SetWindowPos(secondary_tray_hwnd, None, -10000, -10000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             }
         }
-
     }
 }
 
