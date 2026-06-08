@@ -870,8 +870,8 @@ body {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    filter: blur(36px) saturate(3.5) contrast(1.1) brightness(1.4);
-    transform: scale(1.5);
+    filter: blur(52px) saturate(3.5) contrast(1.1) brightness(1.4);
+    transform: scale(1.8);
     opacity: 0.85;
     transition: opacity 0.5s ease;
 }
