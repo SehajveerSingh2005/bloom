@@ -49,6 +49,7 @@ body,
     /* Rounded on the right side to look like it grows from the left edge */
     border-radius: 0 18px 18px 0;
 
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-left: none;
 
     width: 42px;
@@ -76,23 +77,23 @@ body,
     top: -13px;
     -webkit-mask-image: radial-gradient(
         circle at 13px 0px,
-        transparent 13px,
+        transparent 12px,
         black 13px
     );
     mask-image: radial-gradient(
         circle at 13px 0px,
-        transparent 13px,
+        transparent 12px,
         black 13px
     );
     background:
         radial-gradient(
             circle at 13px 0px,
-            transparent 13px,
-            rgba(255, 255, 255, 0.15) 13px,
-            rgba(255, 255, 255, 0.14) 14px,
-            transparent 14.1px
+            transparent 12px,
+            rgba(255, 255, 255, 0.1) 12.7px,
+            rgba(255, 255, 255, 0.1) 13.3px,
+            transparent 14px
         ),
-        rgba(0, 0, 0, 0.5);
+        rgba(0, 0, 0, 0.8);
 }
 
 /* Bottom bridge corner: curves from left edge to island bottom */
@@ -100,23 +101,23 @@ body,
     bottom: -13px;
     -webkit-mask-image: radial-gradient(
         circle at 13px 13px,
-        transparent 13px,
+        transparent 12px,
         black 13px
     );
     mask-image: radial-gradient(
         circle at 13px 13px,
-        transparent 13px,
+        transparent 12px,
         black 13px
     );
     background:
         radial-gradient(
             circle at 13px 13px,
-            transparent 13px,
-            rgba(255, 255, 255, 0.15) 13px,
-            rgba(255, 255, 255, 0.14) 14px,
-            transparent 14.1px
+            transparent 12px,
+            rgba(255, 255, 255, 0.1) 12.7px,
+            rgba(255, 255, 255, 0.1) 13.3px,
+            transparent 14px
         ),
-        rgba(0, 0, 0, 0.5);
+        rgba(0, 0, 0, 0.8);
 }
 
 /* Container for bar and text to manage staggered animation */

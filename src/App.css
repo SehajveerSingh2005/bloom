@@ -183,34 +183,34 @@ body {
 .bloom.is-impacted::before {
     left: -13px;
     -webkit-mask-image: radial-gradient(circle at 0 13px,
-            transparent 13px,
+            transparent 12px,
             black 13px);
-    mask-image: radial-gradient(circle at 0 13px, transparent 13px, black 13px);
+    mask-image: radial-gradient(circle at 0 13px, transparent 12px, black 13px);
     backdrop-filter: blur(20px);
     background:
         radial-gradient(circle at 0 13px,
-            transparent 13px,
-            rgba(255, 255, 255, 0.1) 13px,
-            rgba(255, 255, 255, 0.1) 14px,
-            transparent 14.1px),
+            transparent 12px,
+            rgba(255, 255, 255, 0.1) 12.7px,
+            rgba(255, 255, 255, 0.1) 13.3px,
+            transparent 14px),
         rgba(0, 0, 0, 0.8);
 }
 
 .bloom.is-impacted::after {
     right: -13px;
     -webkit-mask-image: radial-gradient(circle at 13px 13px,
-            transparent 13px,
+            transparent 12px,
             black 13px);
     mask-image: radial-gradient(circle at 13px 13px,
-            transparent 13px,
+            transparent 12px,
             black 13px);
     backdrop-filter: blur(20px);
     background:
         radial-gradient(circle at 13px 13px,
-            transparent 13px,
-            rgba(255, 255, 255, 0.1) 13px,
-            rgba(255, 255, 255, 0.1) 14px,
-            transparent 14.1px),
+            transparent 12px,
+            rgba(255, 255, 255, 0.1) 12.7px,
+            rgba(255, 255, 255, 0.1) 13.3px,
+            transparent 14px),
         rgba(0, 0, 0, 0.8);
 }
 
@@ -486,29 +486,29 @@ body {
 .top-left {
     top: 0;
     left: 0;
-    -webkit-mask-image: radial-gradient(circle at 100% 100%, transparent 38px, black 38px);
-    mask-image: radial-gradient(circle at 100% 100%, transparent 38px, black 38px);
+    -webkit-clip-path: path('M 0 0 L 36 0 C 18 0, 0 18, 0 36 Z');
+    clip-path: path('M 0 0 L 36 0 C 18 0, 0 18, 0 36 Z');
 }
 
 .top-right {
     top: 0;
     right: 0;
-    -webkit-mask-image: radial-gradient(circle at 0% 100%, transparent 38px, black 38px);
-    mask-image: radial-gradient(circle at 0% 100%, transparent 38px, black 38px);
+    -webkit-clip-path: path('M 38 0 L 2 0 C 20 0, 38 18, 38 36 Z');
+    clip-path: path('M 38 0 L 2 0 C 20 0, 38 18, 38 36 Z');
 }
 
 .bottom-left {
     bottom: 0;
     left: 0;
-    -webkit-mask-image: radial-gradient(circle at 100% 0, transparent 38px, black 38px);
-    mask-image: radial-gradient(circle at 100% 0, transparent 38px, black 38px);
+    -webkit-clip-path: path('M 0 38 L 0 2 C 0 20, 18 38, 36 38 Z');
+    clip-path: path('M 0 38 L 0 2 C 0 20, 18 38, 36 38 Z');
 }
 
 .bottom-right {
     bottom: 0;
     right: 0;
-    -webkit-mask-image: radial-gradient(circle at 0 0, transparent 38px, black 38px);
-    mask-image: radial-gradient(circle at 0 0, transparent 38px, black 38px);
+    -webkit-clip-path: path('M 38 38 L 38 2 C 38 20, 20 38, 2 38 Z');
+    clip-path: path('M 38 38 L 38 2 C 38 20, 20 38, 2 38 Z');
 }
 
 /* Calendar & Timer Split View */

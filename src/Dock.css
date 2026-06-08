@@ -176,27 +176,27 @@ body {
 
 .dock::before {
   left: -13px;
-  -webkit-mask-image: radial-gradient(circle at 0 0, transparent 13px, black 13px);
-  mask-image: radial-gradient(circle at 0 0, transparent 13px, black 13px);
+  -webkit-mask-image: radial-gradient(circle at 0 0, transparent 12px, black 13px);
+  mask-image: radial-gradient(circle at 0 0, transparent 12px, black 13px);
   background:
     radial-gradient(circle at 0 0,
-      transparent 13px,
-      rgba(255, 255, 255, 0.1) 13px,
-      rgba(255, 255, 255, 0.1) 14px,
-      transparent 14.1px),
+      transparent 12px,
+      rgba(255, 255, 255, 0.1) 12.7px,
+      rgba(255, 255, 255, 0.1) 13.3px,
+      transparent 14px),
     rgba(0, 0, 0, 0.8);
 }
 
 .dock::after {
   right: -13px;
-  -webkit-mask-image: radial-gradient(circle at 13px 0, transparent 13px, black 13px);
-  mask-image: radial-gradient(circle at 13px 0, transparent 13px, black 13px);
+  -webkit-mask-image: radial-gradient(circle at 13px 0, transparent 12px, black 13px);
+  mask-image: radial-gradient(circle at 13px 0, transparent 12px, black 13px);
   background:
     radial-gradient(circle at 13px 0,
-      transparent 13px,
-      rgba(255, 255, 255, 0.1) 13px,
-      rgba(255, 255, 255, 0.1) 14px,
-      transparent 14.1px),
+      transparent 12px,
+      rgba(255, 255, 255, 0.1) 12.7px,
+      rgba(255, 255, 255, 0.1) 13.3px,
+      transparent 14px),
     rgba(0, 0, 0, 0.8);
 }
 
