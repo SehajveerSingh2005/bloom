@@ -1234,8 +1234,8 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                     let path = String::from_utf16_lossy(&path_buf[..path_len as usize]);
                     let lowercase_path = path.to_lowercase();
                     
-                    // Filter out Bloom itself and some common background processes
-                    if lowercase_path.contains("bloom.exe") || lowercase_path.contains("conhost.exe") || 
+                    // Filter out Bloom itself (except the Settings window) and some common background processes
+                    if (lowercase_path.contains("bloom.exe") && title != "Settings") || lowercase_path.contains("conhost.exe") || 
                        lowercase_path.contains("explorer.exe") || lowercase_path.contains("shellexperiencehost.exe") ||
                        lowercase_path.contains("searchhost.exe") || lowercase_path.contains("applicationframehost.exe") ||
                        lowercase_path.contains("textinputhost.exe") || lowercase_path.contains("systemsettings.exe") {

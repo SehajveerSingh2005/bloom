@@ -216,10 +216,7 @@ fn main() {
                             ah.restart();
                         }
                         "settings" => {
-                            if let Some(w) = ah.get_webview_window("settings") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
+                            crate::commands::open_settings_window(ah.clone());
                         }
                         _ => {}
                     })
@@ -230,10 +227,7 @@ fn main() {
                             ..
                         } = event
                         {
-                            if let Some(w) = tray.app_handle().get_webview_window("settings") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
+                            crate::commands::open_settings_window(tray.app_handle().clone());
                         }
                     })
                     .build(app)?;

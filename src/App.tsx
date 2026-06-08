@@ -827,28 +827,7 @@ function App() {
 
   const openSettingsWindow = useCallback(async () => {
     try {
-      const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-      let settingsWebview = await WebviewWindow.getByLabel('settings');
-
-      if (settingsWebview) {
-        await settingsWebview.show();
-        await settingsWebview.unminimize();
-        await settingsWebview.setFocus();
-      } else {
-        settingsWebview = new WebviewWindow('settings', {
-          url: 'settings.html',
-          title: 'Settings',
-          width: 380,
-          height: 450,
-          decorations: false,
-          transparent: true,
-          resizable: false,
-          center: true,
-          skipTaskbar: false,
-        });
-        // Windows created via JS need to wait for ready or just show
-        await settingsWebview.show();
-      }
+      await invoke("open_settings_window");
     } catch (e) {
       console.error("Failed to open settings window:", e);
     }

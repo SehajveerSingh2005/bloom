@@ -635,7 +635,19 @@ pub fn hide_native_osd() {
 
 #[tauri::command]
 pub fn open_settings_window(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("settings") { let _ = win.show(); let _ = win.set_focus(); }
+    if let Some(win) = app.get_webview_window("settings") {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+        if let Ok(hwnd) = win.hwnd() {
+            unsafe {
+                use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW};
+                let _ = ShowWindow(hwnd, SW_SHOW);
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+                let _ = SetForegroundWindow(hwnd);
+            }
+        }
+    }
 }
 
 #[tauri::command]
