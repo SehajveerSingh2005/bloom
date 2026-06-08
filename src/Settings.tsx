@@ -17,6 +17,7 @@ function SettingsApp() {
   const [mediaVisualizerEnabled, setMediaVisualizerEnabled] = useState(true);
   const [mediaAlbumArtEnabled, setMediaAlbumArtEnabled] = useState(true);
   const [mediaDetailsEnabled, setMediaDetailsEnabled] = useState(true);
+  const [mediaAmbienceEnabled, setMediaAmbienceEnabled] = useState(true);
   const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
   const [cityName, setCityName] = useState("");
@@ -82,6 +83,9 @@ function SettingsApp() {
 
       const details = getVal("bloom-media-details-enabled");
       if (details !== null) setMediaDetailsEnabled(details === "true");
+
+      const ambience = getVal("bloom-media-ambience-enabled");
+      if (ambience !== null) setMediaAmbienceEnabled(ambience === "true");
 
       const corners = getVal("bloom-corners-enabled");
       if (corners !== null) setCornersEnabled(corners === "true");
@@ -225,6 +229,13 @@ function SettingsApp() {
     setMediaDetailsEnabled(newVal);
     saveAndLocal("bloom-media-details-enabled", String(newVal));
     notifyChange("media-details", newVal);
+  };
+
+  const toggleAmbience = () => {
+    const newVal = !mediaAmbienceEnabled;
+    setMediaAmbienceEnabled(newVal);
+    saveAndLocal("bloom-media-ambience-enabled", String(newVal));
+    notifyChange("media-ambience-enabled", newVal);
   };
 
   const toggleCorners = () => {
@@ -579,6 +590,25 @@ function SettingsApp() {
             </div>
             <label className="toggle-switch">
               <input type="checkbox" checked={mediaDetailsEnabled} onChange={toggleMediaDetails} />
+              <span className="slider"></span>
+            </label>
+          </div>
+
+          <div className="setting-divider" />
+
+          <div className="setting-item">
+            <div className="setting-icon-bg" style={{ background: '#ffcc00' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 2a7 7 0 1 0 10 10" />
+              </svg>
+            </div>
+            <div className="setting-info">
+              <span className="setting-label">Ambient Glow</span>
+              <span className="setting-desc">Artwork-driven backing color</span>
+            </div>
+            <label className="toggle-switch">
+              <input type="checkbox" checked={mediaAmbienceEnabled} onChange={toggleAmbience} />
               <span className="slider"></span>
             </label>
           </div>

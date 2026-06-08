@@ -329,6 +329,7 @@ function App() {
   const [settingsCalendarEnabled, setSettingsCalendarEnabled] = useState(() => localStorage.getItem("bloom-calendar-enabled") !== "false");
   const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-visualizer-enabled") !== "false");
   const [settingsAlbumArtEnabled, setSettingsAlbumArtEnabled] = useState(() => localStorage.getItem("bloom-media-album-art-enabled") !== "false");
+  const [settingsAmbienceEnabled, setSettingsAmbienceEnabled] = useState(() => localStorage.getItem("bloom-media-ambience-enabled") !== "false");
   const [settingsCornersEnabled, setSettingsCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
 
@@ -349,6 +350,7 @@ function App() {
       const viz = getVal("bloom-media-visualizer-enabled") ?? getVal("bloom-visualizer-enabled", "true");
       setSettingsVisualizerEnabled(viz !== "false");
       setSettingsAlbumArtEnabled(getVal("bloom-media-album-art-enabled", "true") !== "false");
+      setSettingsAmbienceEnabled(getVal("bloom-media-ambience-enabled", "true") !== "false");
       setSettingsCornersEnabled(getVal("bloom-corners-enabled", "false") === "true");
       setTempUnit(getVal("bloom-temp-unit", "celsius") as string);
 
@@ -401,6 +403,7 @@ function App() {
       if (key === "calendar") setSettingsCalendarEnabled(value);
       if (key === "visualizer") setSettingsVisualizerEnabled(value);
       if (key === "album-art") setSettingsAlbumArtEnabled(value);
+      if (key === "media-ambience-enabled") setSettingsAmbienceEnabled(value as boolean);
       if (key === "temp-unit") setTempUnit(value ? "fahrenheit" : "celsius");
       if (key === "weather-refresh") {
         // Re-trigger the init function or just update from localStorage
@@ -949,6 +952,11 @@ function App() {
           default: { type: "spring", stiffness: 500, damping: 30, mass: 1 }
         }}
       >
+        {isMusicMode && settingsAmbienceEnabled && albumArtUrl && isHovered && !isCalendarMode && (
+          <div className="notch-ambient-glow">
+            <img src={albumArtUrl} alt="" />
+          </div>
+        )}
         <AnimatePresence mode="wait">
           {isExpanded && (
             <motion.div
@@ -1000,21 +1008,20 @@ function App() {
                           <motion.button
                             className="sleek-btn previous-btn"
                             onClick={(e) => { e.stopPropagation(); skipPrevious(); }}
-                            whileHover={{ scale: 1.2 }}
+                            whileHover={{ scale: 1.15 }}
                             whileTap={{ scale: 0.9 }}
                             transition={{ type: "spring", stiffness: 400, damping: 25 }}
                           >
-                            <svg width="24" height="12" viewBox="0 0 66 32" fill="currentColor">
-                              <g transform="scale(-1,1) translate(-66,0)">
-                                <path d="M 7.54 0.06 C 8.12 0.06 8.78 0.36 9.23 0.64 L 31.66 13.83 C 32.11 14.09 32.48 14.45 32.63 14.93 L 32.63 2.55 C 32.63 0.81 33.68 0.06 34.71 0.06 C 35.27 0.06 35.94 0.36 36.39 0.64 L 58.84 13.83 C 59.46 14.2 59.91 14.78 59.91 15.59 C 59.91 16.41 59.51 16.9 58.84 17.31 L 36.39 30.5 C 35.9 30.78 35.27 31.08 34.71 31.08 C 33.68 31.08 32.63 30.33 32.63 28.57 L 32.63 16.26 C 32.48 16.71 32.14 17.03 31.66 17.31 L 9.23 30.5 C 8.74 30.78 8.12 31.08 7.54 31.08 C 6.5 31.08 5.47 30.33 5.47 28.57 L 5.47 2.55 C 5.47 0.81 6.5 0.06 7.54 0.06 Z" />
-                              </g>
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.85 }}>
+                              <polygon points="19 20 9 12 19 4 19 20" />
+                              <line x1="5" y1="19" x2="5" y2="5" />
                             </svg>
                           </motion.button>
 
                           <motion.button
                             className="sleek-btn play-pause-btn-floating"
                             onClick={(e) => { e.stopPropagation(); togglePlayPause(); }}
-                            whileHover={{ scale: 1.2 }}
+                            whileHover={{ scale: 1.15 }}
                             whileTap={{ scale: 0.95 }}
                             transition={{ type: "spring", stiffness: 400, damping: 25 }}
                           >
@@ -1043,12 +1050,13 @@ function App() {
                           <motion.button
                             className="sleek-btn next-btn"
                             onClick={(e) => { e.stopPropagation(); skipNext(); }}
-                            whileHover={{ scale: 1.2 }}
+                            whileHover={{ scale: 1.15 }}
                             whileTap={{ scale: 0.9 }}
                             transition={{ type: "spring", stiffness: 400, damping: 25 }}
                           >
-                            <svg width="24" height="12" viewBox="0 0 66 32" fill="currentColor">
-                              <path d="M 7.54 0.06 C 8.12 0.06 8.78 0.36 9.23 0.64 L 31.66 13.83 C 32.11 14.09 32.48 14.45 32.63 14.93 L 32.63 2.55 C 32.63 0.81 33.68 0.06 34.71 0.06 C 35.27 0.06 35.94 0.36 36.39 0.64 L 58.84 13.83 C 59.46 14.2 59.91 14.78 59.91 15.59 C 59.91 16.41 59.51 16.9 58.84 17.31 L 36.39 30.5 C 35.9 30.78 35.27 31.08 34.71 31.08 C 33.68 31.08 32.63 30.33 32.63 28.57 L 32.63 16.26 C 32.48 16.71 32.14 17.03 31.66 17.31 L 9.23 30.5 C 8.74 30.78 8.12 31.08 7.54 31.08 C 6.5 31.08 5.47 30.33 5.47 28.57 L 5.47 2.55 C 5.47 0.81 6.5 0.06 7.54 0.06 Z" />
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.85 }}>
+                              <polygon points="5 4 15 12 5 20 5 4" />
+                              <line x1="19" y1="5" x2="19" y2="19" />
                             </svg>
                           </motion.button>
                         </div>
