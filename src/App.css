@@ -168,7 +168,6 @@ body {
     width: 13px;
     height: 13px;
     background: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(20px);
     pointer-events: none;
     opacity: 0;
     animation: corner-fade-in 0.2s forwards;
@@ -182,11 +181,8 @@ body {
 
 .bloom.is-impacted::before {
     left: -13px;
-    -webkit-mask-image: radial-gradient(circle at 0 13px,
-            transparent 12px,
-            black 13px);
-    mask-image: radial-gradient(circle at 0 13px, transparent 12px, black 13px);
-    backdrop-filter: blur(20px);
+    -webkit-clip-path: path('M 13 13 L 13 0 L 0 0 C 7 0, 13 6, 13 13 Z');
+    clip-path: path('M 13 13 L 13 0 L 0 0 C 7 0, 13 6, 13 13 Z');
     background:
         radial-gradient(circle at 0 13px,
             transparent 12px,
@@ -198,13 +194,8 @@ body {
 
 .bloom.is-impacted::after {
     right: -13px;
-    -webkit-mask-image: radial-gradient(circle at 13px 13px,
-            transparent 12px,
-            black 13px);
-    mask-image: radial-gradient(circle at 13px 13px,
-            transparent 12px,
-            black 13px);
-    backdrop-filter: blur(20px);
+    -webkit-clip-path: path('M 0 13 L 0 0 L 13 0 C 6 0, 0 6, 0 13 Z');
+    clip-path: path('M 0 13 L 0 0 L 13 0 C 6 0, 0 6, 0 13 Z');
     background:
         radial-gradient(circle at 13px 13px,
             transparent 12px,
@@ -848,4 +839,3 @@ body {
     background: radial-gradient(circle, rgba(255, 255, 255, 0.8) 0%, rgba(168, 85, 247, 0.4) 70%, transparent 100%);
     filter: blur(1px);
 }
-

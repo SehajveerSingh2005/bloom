@@ -68,55 +68,42 @@ body,
     width: 13px;
     height: 13px;
     background: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(20px);
     pointer-events: none;
 }
 
 /* Top bridge corner: curves from right edge to island top */
 .brightness-notch::before {
     top: -13px;
-    -webkit-mask-image: radial-gradient(
-        circle at 0px 0px,
-        transparent 12px,
-        black 13px
-    );
-    mask-image: radial-gradient(
-        circle at 0px 0px,
-        transparent 12px,
-        black 13px
-    );
+    -webkit-mask-image: radial-gradient(circle at 0px 0px,
+            transparent 12px,
+            black 13px);
+    mask-image: radial-gradient(circle at 0px 0px,
+            transparent 12px,
+            black 13px);
     background:
-        radial-gradient(
-            circle at 0px 0px,
+        radial-gradient(circle at 0px 0px,
             transparent 12px,
             rgba(255, 255, 255, 0.1) 12.7px,
             rgba(255, 255, 255, 0.1) 13.3px,
-            transparent 14px
-        ),
+            transparent 14px),
         rgba(0, 0, 0, 0.8);
 }
 
 /* Bottom bridge corner: curves from right edge to island bottom */
 .brightness-notch::after {
     bottom: -13px;
-    -webkit-mask-image: radial-gradient(
-        circle at 0px 13px,
-        transparent 12px,
-        black 13px
-    );
-    mask-image: radial-gradient(
-        circle at 0px 13px,
-        transparent 12px,
-        black 13px
-    );
+    -webkit-mask-image: radial-gradient(circle at 0px 13px,
+            transparent 12px,
+            black 13px);
+    mask-image: radial-gradient(circle at 0px 13px,
+            transparent 12px,
+            black 13px);
     background:
-        radial-gradient(
-            circle at 0px 13px,
+        radial-gradient(circle at 0px 13px,
             transparent 12px,
             rgba(255, 255, 255, 0.1) 12.7px,
             rgba(255, 255, 255, 0.1) 13.3px,
-            transparent 14px
-        ),
+            transparent 14px),
         rgba(0, 0, 0, 0.8);
 }
 
@@ -152,7 +139,8 @@ body,
 }
 
 .brightness-notch-icon {
-    width: 20px; /* Slightly smaller for premium look */
+    width: 20px;
+    /* Slightly smaller for premium look */
     height: 20px;
     display: flex;
     align-items: center;

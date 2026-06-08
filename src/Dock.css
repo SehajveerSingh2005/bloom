@@ -136,6 +136,7 @@ body {
   padding: 8px 8px;
   border-radius: 18px 18px 0 0;
   background: rgba(0, 0, 0, 0.8);
+  background-clip: padding-box;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -162,8 +163,7 @@ body {
   bottom: 0;
   width: 13px;
   height: 13px;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(20px);
+  background-color: rgba(0, 0, 0, 0.8);
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.3s ease;
@@ -175,29 +175,27 @@ body {
 }
 
 .dock::before {
-  left: -13px;
-  -webkit-mask-image: radial-gradient(circle at 0 0, transparent 12px, black 13px);
-  mask-image: radial-gradient(circle at 0 0, transparent 12px, black 13px);
-  background:
+  left: -12.5px;
+  -webkit-clip-path: path('M 13 0 L 13 13 L 0 13 C 7 13, 13 7, 13 0 Z');
+  clip-path: path('M 13 0 L 13 13 L 0 13 C 7 13, 13 7, 13 0 Z');
+  background-image:
     radial-gradient(circle at 0 0,
       transparent 12px,
       rgba(255, 255, 255, 0.1) 12.7px,
       rgba(255, 255, 255, 0.1) 13.3px,
-      transparent 14px),
-    rgba(0, 0, 0, 0.8);
+      transparent 14px);
 }
 
 .dock::after {
-  right: -13px;
-  -webkit-mask-image: radial-gradient(circle at 13px 0, transparent 12px, black 13px);
-  mask-image: radial-gradient(circle at 13px 0, transparent 12px, black 13px);
-  background:
+  right: -12.5px;
+  -webkit-clip-path: path('M 13 13 L 0 13 L 0 0 C 0 7, 6 13, 13 13 Z');
+  clip-path: path('M 13 13 L 0 13 L 0 0 C 0 7, 6 13, 13 13 Z');
+  background-image:
     radial-gradient(circle at 13px 0,
       transparent 12px,
       rgba(255, 255, 255, 0.1) 12.7px,
       rgba(255, 255, 255, 0.1) 13.3px,
-      transparent 14px),
-    rgba(0, 0, 0, 0.8);
+      transparent 14px);
 }
 
 .dock-icon-wrapper {
@@ -410,7 +408,8 @@ body {
   font-family: inherit !important;
 }
 
-.add-app-popup *, .context-menu * {
+.add-app-popup *,
+.context-menu * {
   font-family: inherit !important;
 }
 
@@ -550,7 +549,9 @@ body {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .no-results {

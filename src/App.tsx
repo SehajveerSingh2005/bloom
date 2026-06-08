@@ -68,40 +68,40 @@ function TrayIcon() {
 
 function BatteryIcon({ charging, level, threshold = 20 }: { charging: boolean; level: number; threshold?: number }) {
   const percentage = Math.min(Math.max(level, 0), 100);
-  
+
   return (
-    <div style={{ 
-      display: 'flex', 
-      alignItems: 'center', 
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
       position: 'relative',
       height: '14px',
       justifyContent: 'center'
     }}>
       <svg width="20" height="10" viewBox="0 0 20 10" fill="none">
         {/* Battery Shell - Centered at 9px within 20px width, ignoring the tip's offset */}
-        <rect 
-          x="2" y="0.75" width="14" height="8.5" rx="2.4" 
+        <rect
+          x="2" y="0.75" width="14" height="8.5" rx="2.4"
           stroke="currentColor" strokeOpacity={0.35} strokeWidth="1.1"
         />
         {/* Battery Tip */}
-        <path 
-           d="M17.5 3.5V6.5" 
-           stroke="currentColor" strokeOpacity={0.35} strokeWidth="1.2" strokeLinecap="round" 
+        <path
+          d="M17.5 3.5V6.5"
+          stroke="currentColor" strokeOpacity={0.35} strokeWidth="1.2" strokeLinecap="round"
         />
         {/* Fill */}
-        <rect 
-          x="3.8" y="2.5" 
-          width={Math.max(0.5, (percentage / 100) * 10.4)} 
-          height="5" rx="1" 
-          fill={charging ? "#32D74B" : (percentage <= threshold ? "#FF453A" : "white")} 
+        <rect
+          x="3.8" y="2.5"
+          width={Math.max(0.5, (percentage / 100) * 10.4)}
+          height="5" rx="1"
+          fill={charging ? "#32D74B" : (percentage <= threshold ? "#FF453A" : "white")}
         />
       </svg>
       {/* Charging Bolt - Centered on the battery body */}
       {charging && (
-        <div style={{ 
-          position: 'absolute', 
-          top: '50%', 
-          left: '9px', 
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '9px',
           transform: 'translate(-50%, -50%)',
           color: 'white',
           filter: 'drop-shadow(0px 0px 1.5px rgba(0,0,0,0.8))'
@@ -203,7 +203,7 @@ function App() {
       lowBatteryPulseShownRef.current = true;
       setTimeout(() => setShowLowBatteryPulse(false), 5000);
     }
-    
+
     // Reset the "shown" state if battery is charged or threshold is lowered
     if (isCharging || batteryLevel > lowBatteryThreshold) {
       lowBatteryPulseShownRef.current = false;
@@ -257,7 +257,7 @@ function App() {
 
   useEffect(() => {
     if (windowLabel === 'main') {
-      invoke('set_notch_hovered', { hovered: isNotchHovered }).catch(() => {});
+      invoke('set_notch_hovered', { hovered: isNotchHovered }).catch(() => { });
     }
   }, [isNotchHovered, windowLabel]);
 
@@ -272,7 +272,7 @@ function App() {
             width: Math.round(rect.width),
             height: Math.round(rect.height)
           }
-        }).catch(() => {});
+        }).catch(() => { });
       }
     };
 
@@ -310,14 +310,14 @@ function App() {
           }, 240);
           return true;
         }
-      } catch (e) {}
+      } catch (e) { }
       return false;
     };
 
     const interval = setInterval(async () => {
       if (await checkVisibility()) clearInterval(interval);
     }, 100);
-    
+
     checkVisibility();
     return () => clearInterval(interval);
   }, [windowLabel]);
@@ -341,7 +341,7 @@ function App() {
         if (local !== null) return local;
         return fallback;
       };
-      
+
       setSettingsWeatherEnabled(getVal("bloom-weather-enabled", "true") !== "false");
       setSettingsCalendarEnabled(getVal("bloom-calendar-enabled", "true") !== "false");
       const viz = getVal("bloom-media-visualizer-enabled") ?? getVal("bloom-visualizer-enabled", "true");
@@ -349,7 +349,7 @@ function App() {
       setSettingsAlbumArtEnabled(getVal("bloom-media-album-art-enabled", "true") !== "false");
       setSettingsCornersEnabled(getVal("bloom-corners-enabled", "false") === "true");
       setTempUnit(getVal("bloom-temp-unit", "celsius") as string);
-      
+
       const thresholdStr = getVal("bloom-low-battery-threshold", "20");
       if (thresholdStr) setLowBatteryThreshold(parseInt(thresholdStr as string));
 
@@ -361,7 +361,7 @@ function App() {
         if (firstRun) {
           import("@tauri-apps/plugin-autostart").then(({ enable, isEnabled }) => {
             isEnabled().then(enabled => {
-              if (!enabled) enable().catch(() => {});
+              if (!enabled) enable().catch(() => { });
             });
           });
           localStorage.setItem("bloom-first-run", "done");
@@ -377,7 +377,7 @@ function App() {
 
         // 1. Snappy initial sync (fast as possible)
         setTimeout(syncWindows, 400);
-        
+
         // 2. Smooth layout corrections (only syncs position, doesn't re-toggle visibility)
         setTimeout(() => invoke("sync_appbar"), 1000);
         setTimeout(() => invoke("sync_appbar"), 2500);
@@ -931,14 +931,14 @@ function App() {
         className={`bloom ${isHovered ? 'expanded' : ''} ${isImpacted ? 'is-impacted' : ''}`}
         onMouseEnter={() => setIsNotchHovered(true)}
         onMouseLeave={() => setIsNotchHovered(false)}
-        initial={{ y: 250, width: 34, height: 34, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 18, borderBottomRightRadius: 18, scaleX: 0.9, scaleY: 1.3, opacity: 0 }}
+        initial={{ y: 250, width: 30.6, height: 44.2, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 18, borderBottomRightRadius: 18, scaleX: 1, scaleY: 1, opacity: 0 }}
         animate={{
           y: !isReady ? 250 : (isVisible ? (isHidden ? -100 : 0) : -150),
-          width: isExpanded && isVisible && !isHidden ? getDynamicWidth() : 34,
-          height: isExpanded && isVisible && !isHidden ? (isHovered ? (bloomMode === 'calendar' ? 260 : (bloomMode === 'music' ? 120 : 34)) : (bloomMode === 'calendar' ? 260 : 34)) : 34,
+          width: !isReady ? 34 : (isExpanded && isVisible && !isHidden ? getDynamicWidth() : (isImpacted ? 39.1 : 30.6)),
+          height: !isReady ? 34 : (isExpanded && isVisible && !isHidden ? (isHovered ? (bloomMode === 'calendar' ? 260 : (bloomMode === 'music' ? 120 : 34)) : (bloomMode === 'calendar' ? 260 : 34)) : (isImpacted ? 28.9 : 44.2)),
           opacity: isVisible ? 1 : 0,
-          scaleX: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 1.15 : 0.9)),
-          scaleY: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 0.85 : 1.3)),
+          scaleX: 1,
+          scaleY: 1,
           borderTopLeftRadius: isImpacted ? 0 : 18,
           borderTopRightRadius: isImpacted ? 0 : 18,
           borderBottomLeftRadius: 18,
@@ -963,8 +963,6 @@ function App() {
           height: { type: "spring", stiffness: 450, damping: 26 },
           y: { type: "spring", stiffness: 550, damping: 45, mass: 0.8, restDelta: 0.001 },
           opacity: { duration: 0.2 },
-          scaleX: { type: "spring", stiffness: 600, damping: 18 },
-          scaleY: { type: "spring", stiffness: 600, damping: 18 },
           borderTopLeftRadius: { type: "spring", stiffness: 1000, damping: 40 },
           borderTopRightRadius: { type: "spring", stiffness: 1000, damping: 40 },
           default: { type: "spring", stiffness: 500, damping: 30, mass: 1 }
@@ -1018,8 +1016,8 @@ function App() {
                         </div>
 
                         <div className="controls-row-sleek">
-                          <motion.button 
-                            className="sleek-btn previous-btn" 
+                          <motion.button
+                            className="sleek-btn previous-btn"
                             onClick={(e) => { e.stopPropagation(); skipPrevious(); }}
                             whileHover={{ scale: 1.2 }}
                             whileTap={{ scale: 0.9 }}
@@ -1031,9 +1029,9 @@ function App() {
                               </g>
                             </svg>
                           </motion.button>
-                          
-                          <motion.button 
-                            className="sleek-btn play-pause-btn-floating" 
+
+                          <motion.button
+                            className="sleek-btn play-pause-btn-floating"
                             onClick={(e) => { e.stopPropagation(); togglePlayPause(); }}
                             whileHover={{ scale: 1.2 }}
                             whileTap={{ scale: 0.95 }}
@@ -1061,8 +1059,8 @@ function App() {
                             </AnimatePresence>
                           </motion.button>
 
-                          <motion.button 
-                            className="sleek-btn next-btn" 
+                          <motion.button
+                            className="sleek-btn next-btn"
                             onClick={(e) => { e.stopPropagation(); skipNext(); }}
                             whileHover={{ scale: 1.2 }}
                             whileTap={{ scale: 0.9 }}
@@ -1077,7 +1075,7 @@ function App() {
                         <div className="volume-slider-container">
                           <VolumeLowIcon />
                           <div className="slider-track-premium">
-                            <input 
+                            <input
                               type="range"
                               min="0"
                               max="1"
