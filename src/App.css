@@ -870,12 +870,23 @@ body {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    filter: blur(32px) saturate(3.2) contrast(1.1) brightness(1.5);
+    filter: blur(36px) saturate(3.5) contrast(1.1) brightness(1.4);
     transform: scale(1.5);
-    opacity: 0.65;
+    opacity: 0.85;
     transition: opacity 0.5s ease;
-    mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.8) 40%, rgba(0, 0, 0, 0) 80%);
-    -webkit-mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.8) 40%, rgba(0, 0, 0, 0) 80%);
+}
+
+/* Gradient overlay to smoothly fade the image to the notch's background color without using buggy WebView2 mask-image */
+.notch-ambient-glow::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(ellipse at center, transparent 20%, rgba(0, 0, 0, 0.25) 50%, var(--notch-bg) 85%);
+    pointer-events: none;
+    z-index: 1;
 }
 
 .main-row,
