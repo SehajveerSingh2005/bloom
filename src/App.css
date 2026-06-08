@@ -689,7 +689,7 @@ body {
     align-items: flex-start;
     flex: 1;
     min-width: 0;
-    gap: 9px;
+    gap: 5px;
     text-align: left;
 }
 
@@ -768,8 +768,8 @@ body {
 }
 
 .play-pause-btn-floating {
-    width: 44px;
-    height: 44px;
+    width: 38px;
+    height: 38px;
     background: none;
     border: none;
     display: flex;
