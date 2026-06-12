@@ -440,15 +440,28 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                     if let Ok(props) = session.TryGetMediaPropertiesAsync().and_then(|op| op.get()) {
                                         let title = props.Title().unwrap_or_default().to_string();
                                         if !title.is_empty() {
-                                            let artwork = (|| -> Option<Vec<String>> {
-                                                let stream = props.Thumbnail().ok()?.OpenReadAsync().ok()?.get().ok()?;
-                                                let reader = DataReader::CreateDataReader(&stream).ok()?;
-                                                reader.LoadAsync(stream.Size().ok()? as u32).ok()?.get().ok()?;
-                                                let mut bytes = vec![0u8; stream.Size().ok()? as usize];
-                                                reader.ReadBytes(&mut bytes).ok()?;
-                                                Some(vec![format!("data:{};base64,{}", stream.ContentType().ok()?.to_string(), general_purpose::STANDARD.encode(bytes))])
-                                            })();
-                                            let info = MediaInfo { title, artist: props.Artist().unwrap_or_default().to_string(), is_playing, has_media: true, artwork };
+                                            let artist = props.Artist().unwrap_or_default().to_string();
+                                            let mut artwork = None;
+                                            let mut got_art_from_cache = false;
+                                            if let Some((ref last_title, ref last_artist, _, _, ref last_art)) = last_emitted_info {
+                                                if last_title == &title && last_artist == &artist {
+                                                    artwork = last_art.as_ref().map(|art| vec![art.clone()]);
+                                                    got_art_from_cache = true;
+                                                }
+                                            }
+
+                                            if !got_art_from_cache {
+                                                artwork = (|| -> Option<Vec<String>> {
+                                                    let stream = props.Thumbnail().ok()?.OpenReadAsync().ok()?.get().ok()?;
+                                                    let reader = DataReader::CreateDataReader(&stream).ok()?;
+                                                    reader.LoadAsync(stream.Size().ok()? as u32).ok()?.get().ok()?;
+                                                    let mut bytes = vec![0u8; stream.Size().ok()? as usize];
+                                                    reader.ReadBytes(&mut bytes).ok()?;
+                                                    Some(vec![format!("data:{};base64,{}", stream.ContentType().ok()?.to_string(), general_purpose::STANDARD.encode(bytes))])
+                                                })();
+                                            }
+
+                                            let info = MediaInfo { title, artist, is_playing, has_media: true, artwork };
                                             if is_playing { best_info = Some(info); break; } else if best_info.is_none() { best_info = Some(info); }
                                         }
                                     }
@@ -767,38 +780,42 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                             let mut is_click_interactive = false;
                             let mut is_hovered = false;
                             
-                            if let Ok(lock) = DOCK_WINDOW_RECT.lock() {
-                                if let Some((win_pos, win_size)) = *lock {
-                                    let in_window = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
-                                                    pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
-                                    
-                                    if in_window {
-                                        // 1. Check if over actual dock items (DOCK_RECT)
-                                        if let Ok(region) = DOCK_RECT.try_lock() {
-                                            if let Some(r) = *region {
-                                                let scale = dock_win.scale_factor().unwrap_or(1.0);
-                                                let rx = win_pos.x + (r.x as f64 * scale) as i32 - 10;
-                                                let ry = win_pos.y + (r.y as f64 * scale) as i32 - 10;
-                                                let rw = (r.width as f64 * scale) as i32 + 20;
-                                                let rh = (r.height as f64 * scale) as i32 + 20;
-                                                if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
-                                                    is_click_interactive = true;
-                                                }
+                            let dock_rect_val = if let Ok(lock) = DOCK_WINDOW_RECT.lock() {
+                                *lock
+                            } else {
+                                None
+                            };
+
+                            if let Some((win_pos, win_size)) = dock_rect_val {
+                                let in_window = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
+                                                pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
+                                
+                                if in_window {
+                                    // 1. Check if over actual dock items (DOCK_RECT)
+                                    if let Ok(region) = DOCK_RECT.try_lock() {
+                                        if let Some(r) = *region {
+                                            let scale = dock_win.scale_factor().unwrap_or(1.0);
+                                            let rx = win_pos.x + (r.x as f64 * scale) as i32 - 10;
+                                            let ry = win_pos.y + (r.y as f64 * scale) as i32 - 10;
+                                            let rw = (r.width as f64 * scale) as i32 + 20;
+                                            let rh = (r.height as f64 * scale) as i32 + 20;
+                                            if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
+                                                is_click_interactive = true;
                                             }
                                         }
+                                    }
 
-                                        // 2. Check if over an open menu
-                                        if !is_click_interactive && MENU_IS_OPEN.load(Ordering::Relaxed) {
-                                            if let Ok(rect) = MENU_RECT.try_lock() {
-                                                if let Some(r) = *rect {
-                                                    let scale = dock_win.scale_factor().unwrap_or(1.0);
-                                                    let rx = win_pos.x + (r.x as f64 * scale) as i32 - 5;
-                                                    let ry = win_pos.y + (r.y as f64 * scale) as i32 - 5;
-                                                    let rw = (r.width as f64 * scale) as i32 + 10;
-                                                    let rh = (r.height as f64 * scale) as i32 + 10;
-                                                    if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
-                                                        is_click_interactive = true;
-                                                    }
+                                    // 2. Check if over an open menu
+                                    if !is_click_interactive && MENU_IS_OPEN.load(Ordering::Relaxed) {
+                                        if let Ok(rect) = MENU_RECT.try_lock() {
+                                            if let Some(r) = *rect {
+                                                let scale = dock_win.scale_factor().unwrap_or(1.0);
+                                                let rx = win_pos.x + (r.x as f64 * scale) as i32 - 5;
+                                                let ry = win_pos.y + (r.y as f64 * scale) as i32 - 5;
+                                                let rw = (r.width as f64 * scale) as i32 + 10;
+                                                let rh = (r.height as f64 * scale) as i32 + 10;
+                                                if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
+                                                    is_click_interactive = true;
                                                 }
                                             }
                                         }
@@ -845,22 +862,26 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                             }
 
                             let mut is_click_interactive = false;
-                            if let Ok(lock) = MAIN_WINDOW_RECT.lock() {
-                                if let Some((win_pos, win_size)) = *lock {
-                                    if let Ok(region) = NOTCH_RECT.try_lock() {
-                                        if let Some(r) = *region {
-                                            let scale = main_win.scale_factor().unwrap_or(1.0);
-                                            // Add horizontal padding (50px) to capture incoming drag actions
-                                            let rx = win_pos.x + (r.x as f64 * scale) as i32 - (50.0 * scale) as i32;
-                                            let rw = (r.width as f64 * scale) as i32 + (100.0 * scale) as i32;
-                                            
-                                            // Pre-interactive vertical range: from screen top down to window height + 40px padding
-                                            let ry_top = win_pos.y;
-                                            let ry_bottom = win_pos.y + win_size.height as i32 + (40.0 * scale) as i32;
-                                            
-                                            if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry_top && pt.y <= ry_bottom {
-                                                is_click_interactive = true;
-                                            }
+                            let main_rect_val = if let Ok(lock) = MAIN_WINDOW_RECT.lock() {
+                                *lock
+                            } else {
+                                None
+                            };
+
+                            if let Some((win_pos, win_size)) = main_rect_val {
+                                if let Ok(region) = NOTCH_RECT.try_lock() {
+                                    if let Some(r) = *region {
+                                        let scale = main_win.scale_factor().unwrap_or(1.0);
+                                        // Add horizontal padding (50px) to capture incoming drag actions
+                                        let rx = win_pos.x + (r.x as f64 * scale) as i32 - (50.0 * scale) as i32;
+                                        let rw = (r.width as f64 * scale) as i32 + (100.0 * scale) as i32;
+                                        
+                                        // Pre-interactive vertical range: from screen top down to window height + 40px padding
+                                        let ry_top = win_pos.y;
+                                        let ry_bottom = win_pos.y + win_size.height as i32 + (40.0 * scale) as i32;
+                                        
+                                        if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry_top && pt.y <= ry_bottom {
+                                            is_click_interactive = true;
                                         }
                                     }
                                 }
@@ -1274,8 +1295,8 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                             all_hwnds: None,
                         });
                     }
-                    let _ = CloseHandle(process_handle);
                 }
+                let _ = CloseHandle(process_handle);
             }
         }
     }

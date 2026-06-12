@@ -102,45 +102,39 @@ function VolumeOverlayApp() {
     const preventContext = (e: MouseEvent) => e.preventDefault();
     document.addEventListener('contextmenu', preventContext);
 
-    let unlistenVol: any = null;
-    let unlistenSettings: any = null;
+    const volPromise = listen("volume-change", (event: any) => {
+      if (!volumeOverlayEnabled) return; // Ignore if HUD is disabled
 
-    const setupListeners = async () => {
-      unlistenVol = await listen("volume-change", (event: any) => {
-        if (!volumeOverlayEnabled) return; // Ignore if HUD is disabled
+      // Backup suppression
+      invoke("hide_native_osd");
 
-        // Backup suppression
-        invoke("hide_native_osd");
+      const { volume: newVolume, is_muted } = event.payload;
 
-        const { volume: newVolume, is_muted } = event.payload;
+      setVolume(newVolume);
+      setIsMuted(is_muted);
+      setIsVisible(true);
 
-        setVolume(newVolume);
-        setIsMuted(is_muted);
-        setIsVisible(true);
+      // Reset the inactivity timeout whenever volume changes
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-        // Reset the inactivity timeout whenever volume changes
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      // Window remains visible for 2 seconds after last change
+      timeoutRef.current = setTimeout(() => {
+        setIsVisible(false);
+      }, 2000);
+    });
 
-        // Window remains visible for 2 seconds after last change
-        timeoutRef.current = setTimeout(() => {
-          setIsVisible(false);
-        }, 2000);
-      });
-
-      unlistenSettings = await listen<{ key: string, value: boolean }>("settings-changed", (event) => {
-        if (event.payload.key === "volume-overlay") {
-          setVolumeOverlayEnabled(event.payload.value);
-          if (!event.payload.value) setIsVisible(false);
-        }
-      });
-    };
-
-    setupListeners();
+    const settingsPromise = listen<{ key: string, value: boolean }>("settings-changed", (event) => {
+      if (event.payload.key === "volume-overlay") {
+        setVolumeOverlayEnabled(event.payload.value);
+        if (!event.payload.value) setIsVisible(false);
+      }
+    });
 
     return () => {
-      if (unlistenVol) unlistenVol();
-      if (unlistenSettings) unlistenSettings();
+      volPromise.then(fn => fn());
+      settingsPromise.then(fn => fn());
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      document.removeEventListener('contextmenu', preventContext);
     };
   }, [volumeOverlayEnabled]);
 

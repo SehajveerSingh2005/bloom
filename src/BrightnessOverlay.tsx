@@ -98,42 +98,36 @@ function BrightnessOverlayApp() {
     const preventContext = (e: MouseEvent) => e.preventDefault();
     document.addEventListener('contextmenu', preventContext);
 
-    let unlistenBright: any = null;
-    let unlistenSettings: any = null;
+    const brightPromise = listen("brightness-change", (event: any) => {
+      if (!brightnessOverlayEnabled) return;
 
-    const setupListeners = async () => {
-      unlistenBright = await listen("brightness-change", (event: any) => {
-        if (!brightnessOverlayEnabled) return;
+      // Backup suppression for native OSD
+      invoke("hide_native_osd");
 
-        // Backup suppression for native OSD
-        invoke("hide_native_osd");
+      const { brightness: newBrightness } = event.payload;
 
-        const { brightness: newBrightness } = event.payload;
+      setBrightness(newBrightness);
+      setIsVisible(true);
 
-        setBrightness(newBrightness);
-        setIsVisible(true);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => {
+        setIsVisible(false);
+      }, 2000);
+    });
 
-        timeoutRef.current = setTimeout(() => {
-          setIsVisible(false);
-        }, 2000);
-      });
-
-      unlistenSettings = await listen<{ key: string, value: boolean }>("settings-changed", (event) => {
-        if (event.payload.key === "brightness-overlay") {
-          setBrightnessOverlayEnabled(event.payload.value);
-          if (!event.payload.value) setIsVisible(false);
-        }
-      });
-    };
-
-    setupListeners();
+    const settingsPromise = listen<{ key: string, value: boolean }>("settings-changed", (event) => {
+      if (event.payload.key === "brightness-overlay") {
+        setBrightnessOverlayEnabled(event.payload.value);
+        if (!event.payload.value) setIsVisible(false);
+      }
+    });
 
     return () => {
-      if (unlistenBright) unlistenBright();
-      if (unlistenSettings) unlistenSettings();
+      brightPromise.then(fn => fn());
+      settingsPromise.then(fn => fn());
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      document.removeEventListener('contextmenu', preventContext);
     };
   }, [brightnessOverlayEnabled]);
 
