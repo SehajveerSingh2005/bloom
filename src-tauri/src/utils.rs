@@ -44,9 +44,7 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
 
         // 1. Set the taskbar state (Auto-hide or Always-on-top)
         // ABS_AUTOHIDE = 0x1, ABS_ALWAYSONTOP = 0x2 
-        let mut abd = APPBARDATA::default();
-        abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
-        abd.lParam = windows::Win32::Foundation::LPARAM(if always_on_top { 2 } else { 1 });
+        let mut abd = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, lParam: windows::Win32::Foundation::LPARAM(if always_on_top { 2 } else { 1 }), ..Default::default() };
         SHAppBarMessage(ABM_SETSTATE, &mut abd);
 
         // 2. Control visibility of the primary taskbar

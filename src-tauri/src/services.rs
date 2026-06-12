@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::core::BOOL;
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindowVisible, GetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, GetClassNameW};
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindowVisible, GetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_NAME_WIN32};
 use windows::Win32::Foundation::CloseHandle;
@@ -116,7 +116,7 @@ pub fn setup_audio_visualization(app_handle: AppHandle) {
             let mut prev_values = [0.1f32; NUM_BANDS];
 
             loop {
-                let _result: Result<(), String> = (|| {
+                let _: Result<(), String> = (|| {
                     let enumerator: IMMDeviceEnumerator =
                         CoCreateInstance(&windows::Win32::Media::Audio::MMDeviceEnumerator, None, CLSCTX_ALL)
                             .map_err(|e| format!("CoCreateInstance failed: {:?}", e))?;
@@ -288,7 +288,7 @@ pub fn setup_audio_visualization(app_handle: AppHandle) {
                                             let is_rising = target > prev_values[band_idx];
                                             let smooth_factor = if is_rising { 0.10 } else { 0.20 };
                                             output[band_idx] = prev_values[band_idx] * smooth_factor + target * (1.0 - smooth_factor);
-                                            output[band_idx] = output[band_idx].min(1.0).max(0.18);
+                                            output[band_idx] = output[band_idx].clamp(0.18, 1.0);
                                             prev_values[band_idx] = output[band_idx];
                                         }
                                         let _ = app_handle.emit("audio-visualization", AudioVisualizationData { frequencies: output.to_vec() });
@@ -304,8 +304,6 @@ pub fn setup_audio_visualization(app_handle: AppHandle) {
                         }
                     }
                 })();
-                
-                let _ = _result;
                 
                 // Wait before retrying (increased to 2500ms to allow Windows to fully update default endpoint)
                 std::thread::sleep(std::time::Duration::from_millis(2500));
@@ -409,7 +407,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                             }
                             SystemCommand::BrightnessDown => {
                                 let current = CURRENT_BRIGHTNESS.load(Ordering::Relaxed);
-                                let new_val = if current > 10 { current - 10 } else { 0 };
+                                let new_val = current.saturating_sub(10);
                                 CURRENT_BRIGHTNESS.store(new_val, Ordering::Relaxed);
                                 LAST_BRIGHTNESS_CHANGE.store(get_now_ms(), Ordering::Relaxed);
                                 let _ = handle_system.emit("brightness-change", BrightnessChangeEvent { brightness: new_val });
@@ -471,7 +469,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     }
                     let current = best_info.unwrap_or(MediaInfo { title: "".into(), artist: "".into(), is_playing: false, has_media: false, artwork: None });
                     let art_str = current.artwork.as_ref().and_then(|a| a.first()).cloned();
-                    if last_emitted_info.as_ref().map_or(true, |(t, a, p, h, art)| t != &current.title || a != &current.artist || p != &current.is_playing || h != &current.has_media || art != &art_str) {
+                    if last_emitted_info.as_ref().is_none_or(|(t, a, p, h, art)| t != &current.title || a != &current.artist || p != &current.is_playing || h != &current.has_media || art != &art_str) {
                         let _ = handle_system.emit("media-update", current.clone());
                         ANY_MEDIA_PLAYING.store(current.is_playing, Ordering::Relaxed);
                         last_emitted_info = Some((current.title, current.artist, current.is_playing, current.has_media, art_str));
@@ -597,8 +595,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
 
                             if has_rect {
                                 let h_monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-                                let mut mi = MONITORINFO::default();
-                                mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                                let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
                                 
                                 if GetMonitorInfoA(h_monitor, &mut mi).as_bool() {
                                     let screen_rect = mi.rcMonitor;
@@ -732,7 +729,7 @@ pub fn setup_brightness_worker() {
         use std::io::Write;
         use std::process::{Command, Stdio};
         use std::os::windows::process::CommandExt;
-        let child = Command::new("powershell").args(&["-NoProfile", "-NoLogo", "-Command", "-"]).creation_flags(0x08000000).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
+        let child = Command::new("powershell").args(["-NoProfile", "-NoLogo", "-Command", "-"]).creation_flags(0x08000000).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
         if let Some(mut child) = child {
             if let Some(mut stdin) = child.stdin.take() {
                 let _ = stdin.write_all(b"$m = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods\n");
@@ -1087,9 +1084,7 @@ pub fn register_appbar(window: tauri::WebviewWindow) {
             ex_style |= (WS_EX_TOOLWINDOW.0 | WS_EX_NA.0) as usize;
             let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style as isize);
             
-            let mut abd = APPBARDATA::default();
-            abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
-            abd.hWnd = hwnd;
+            let mut abd = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: hwnd, ..Default::default() };
             
             if !MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
                 SHAppBarMessage(ABM_NEW, &mut abd);
@@ -1161,9 +1156,7 @@ pub fn register_dock_appbar(window: tauri::WebviewWindow) {
             // Hide native taskbar first to free up space
             set_taskbar_visibility(false, false);
 
-            let mut abd = APPBARDATA::default();
-            abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
-            abd.hWnd = hwnd;
+            let mut abd = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: hwnd, ..Default::default() };
             
             if !DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
                 SHAppBarMessage(ABM_NEW, &mut abd);
@@ -1220,13 +1213,7 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
         if len > 0 {
             let title = String::from_utf16_lossy(&text[..len as usize]);
             
-            // Filter out some common non-app windows
-            let mut class_name = [0u16; 256];
-            let class_len = GetClassNameW(hwnd, &mut class_name);
-            let class_str = String::from_utf16_lossy(&class_name[..class_len as usize]);
-            
             let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-            let _style = GetWindowLongW(hwnd, windows::Win32::UI::WindowsAndMessaging::GWL_STYLE) as u32;
             
             // Basic filter for top-level app windows
             // We include windows without captions if they don't have the ToolWindow style,
@@ -1238,10 +1225,6 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
             // Filter out system containers and background stuff
             if title == "Program Manager" || title == "Bloom" || title == "Bloom Dock" {
                 return true.into();
-            }
-
-            if class_str == "Windows.UI.Core.CoreWindow" || class_str == "ApplicationFrameWindow" {
-                // Ignore these or handle specially if needed
             }
 
             let mut process_id = 0u32;
@@ -1306,9 +1289,7 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
 pub fn unregister_appbar_native(hwnd: HWND) {
     unsafe {
         use windows::Win32::UI::Shell::{SHAppBarMessage, APPBARDATA, ABM_REMOVE};
-        let mut abd = APPBARDATA::default();
-        abd.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
-        abd.hWnd = hwnd;
+        let mut abd = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: hwnd, ..Default::default() };
         SHAppBarMessage(ABM_REMOVE, &mut abd);
     }
 }

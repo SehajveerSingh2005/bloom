@@ -481,31 +481,6 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
             
             let res = if !h_icon.is_invalid() { icon_to_base64(h_icon) } else { None };
             
-            // If HWND icon failed and it's a host process, try command line / package
-            if res.is_none() {
-                use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, PROCESS_NAME_WIN32};
-                use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
-                
-                let mut pid = 0u32;
-                GetWindowThreadProcessId(h_hwnd, Some(&mut pid));
-                if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
-                    let mut path_buf = [0u16; 1024];
-                    let mut path_len = path_buf.len() as u32;
-                    if QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, windows::core::PWSTR(path_buf.as_mut_ptr()), &mut path_len).is_ok() {
-                        let path = String::from_utf16_lossy(&path_buf[..path_len as usize]).to_lowercase();
-                        
-                        // Edge/Chrome PWA detection via command line
-                        if path.contains("msedge.exe") || path.contains("chrome.exe") {
-                            if let Ok(local) = std::env::var("LOCALAPPDATA") {
-                                let browser = if path.contains("msedge") { "Microsoft\\Edge" } else { "Google\\Chrome" };
-                                let _web_apps_path = format!("{}\\{}\\User Data\\Default\\Web Applications", local, browser);
-                            }
-                        }
-                    }
-                    let _ = windows::Win32::Foundation::CloseHandle(handle);
-                }
-            }
-
             CoUninitialize();
             res
         }).await.unwrap_or(None);
@@ -689,7 +664,7 @@ pub fn open_system_tray() {
 
         let tray_class = PCSTR(b"Shell_TrayWnd\0".as_ptr());
         let hwnd = FindWindowA(tray_class, windows::core::PCSTR::null()).unwrap_or_default();
-        if hwnd.0 == std::ptr::null_mut() { return; }
+        if hwnd.0.is_null() { return; }
 
         let currently_hidden = crate::state::NATIVE_TASKBAR_HIDDEN.load(Ordering::Relaxed);
         if currently_hidden {
@@ -755,7 +730,7 @@ pub fn open_system_tray() {
                 for _ in 0..50 {
                     let h1 = FindWindowA(overflow_class, PCSTR::null()).unwrap_or_default();
                     let h2 = FindWindowA(win10_overflow_class, PCSTR::null()).unwrap_or_default();
-                    if (h1.0 != std::ptr::null_mut() && IsWindowVisible(h1).as_bool()) || (h2.0 != std::ptr::null_mut() && IsWindowVisible(h2).as_bool()) {
+                    if (!h1.0.is_null() && IsWindowVisible(h1).as_bool()) || (!h2.0.is_null() && IsWindowVisible(h2).as_bool()) {
                         found = true;
                         break;
                     }
@@ -768,7 +743,7 @@ pub fn open_system_tray() {
                         std::thread::sleep(std::time::Duration::from_millis(200));
                         let h1 = FindWindowA(overflow_class, PCSTR::null()).unwrap_or_default();
                         let h2 = FindWindowA(win10_overflow_class, PCSTR::null()).unwrap_or_default();
-                        let visible = (h1.0 != std::ptr::null_mut() && IsWindowVisible(h1).as_bool()) || (h2.0 != std::ptr::null_mut() && IsWindowVisible(h2).as_bool());
+                        let visible = (!h1.0.is_null() && IsWindowVisible(h1).as_bool()) || (!h2.0.is_null() && IsWindowVisible(h2).as_bool());
                         if !visible {
                             break;
                         }
@@ -782,7 +757,7 @@ pub fn open_system_tray() {
                 // Revert transparency
                 let tray_class = PCSTR(b"Shell_TrayWnd\0".as_ptr());
                 let hwnd = FindWindowA(tray_class, PCSTR::null()).unwrap_or_default();
-                if hwnd.0 != std::ptr::null_mut() {
+                if !hwnd.0.is_null() {
                     let exstyle = GetWindowLongA(hwnd, GWL_EXSTYLE);
                     let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
                     let _ = SetWindowLongA(hwnd, GWL_EXSTYLE, exstyle & !(WS_EX_LAYERED.0 as i32) & !(WS_EX_TRANSPARENT.0 as i32));
@@ -815,8 +790,8 @@ pub fn set_volume(volume: f32) { unsafe { if let Some(ref sender) = COMMAND_SEND
 
 #[tauri::command]
 pub async fn quit_bloom(handle: AppHandle) {
-    if let Some(w) = handle.get_webview_window("main") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
-    if let Some(w) = handle.get_webview_window("dock") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
+    if let Some(w) = handle.get_webview_window("main") { unregister_appbar_native(w.hwnd().unwrap()); }
+    if let Some(w) = handle.get_webview_window("dock") { unregister_appbar_native(w.hwnd().unwrap()); }
     set_taskbar_visibility(true, true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
     handle.exit(0);
@@ -824,8 +799,8 @@ pub async fn quit_bloom(handle: AppHandle) {
 
 #[tauri::command]
 pub async fn restart_bloom(handle: AppHandle) {
-    if let Some(w) = handle.get_webview_window("main") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
-    if let Some(w) = handle.get_webview_window("dock") { let _ = unregister_appbar_native(w.hwnd().unwrap()); }
+    if let Some(w) = handle.get_webview_window("main") { unregister_appbar_native(w.hwnd().unwrap()); }
+    if let Some(w) = handle.get_webview_window("dock") { unregister_appbar_native(w.hwnd().unwrap()); }
     set_taskbar_visibility(true, true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
     handle.restart();
@@ -872,15 +847,14 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
         if !IsWindow(Some(hwnd)).as_bool() { return None; }
         let mut rect = RECT::default();
         let _ = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut _ as *mut _, std::mem::size_of::<RECT>() as u32);
-        if rect.right == 0 && rect.bottom == 0 { if windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_err() { return None; } }
-        let mut width = (rect.right - rect.left) as i32;
-        let mut height = (rect.bottom - rect.top) as i32;
+        if rect.right == 0 && rect.bottom == 0 && windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_err() { return None; }
+        let mut width = rect.right - rect.left;
+        let mut height = rect.bottom - rect.top;
         if width <= 10 || height <= 10 {
-            let mut wp = WINDOWPLACEMENT::default();
-            wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+            let mut wp = WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
             if GetWindowPlacement(hwnd, &mut wp).is_ok() {
-                width = (wp.rcNormalPosition.right - wp.rcNormalPosition.left) as i32;
-                height = (wp.rcNormalPosition.bottom - wp.rcNormalPosition.top) as i32;
+                width = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
+                height = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
             }
         }
         if width <= 100 || height <= 100 { return None; }

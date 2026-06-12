@@ -3,7 +3,6 @@ import { useEffect, useState, useCallback, useRef, memo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
 // Simple SVG icons
@@ -14,18 +13,6 @@ function WifiIcon({ connected }: { connected: boolean }) {
       <path d="M1.42 9a16 16 0 0 1 21.16 0" />
       <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
       <line x1="12" y1="20" x2="12.01" y2="20" />
-    </svg>
-  );
-}
-
-function BellOffIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-      <path d="M18.63 13A17.89 17.89 0 0 1 18 8" />
-      <path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14" />
-      <path d="M18 8a6 6 0 0 0-9.33-5" />
-      <line x1="1" y1="1" x2="23" y2="23" />
     </svg>
   );
 }
@@ -116,7 +103,7 @@ function BatteryIcon({ charging, level, threshold = 20 }: { charging: boolean; l
   );
 }
 
-export const Visualizer = memo(function Visualizer({ isPlaying, bars = 5, height = 20 }: { isPlaying: boolean; bars?: number; height?: number }) {
+const Visualizer = memo(function Visualizer({ isPlaying, bars = 5, height = 20 }: { isPlaying: boolean; bars?: number; height?: number }) {
   const [audioData, setAudioData] = useState<number[]>(new Array(bars).fill(0.18));
 
   useEffect(() => {
@@ -303,7 +290,6 @@ function App() {
 
     const checkVisibility = async () => {
       try {
-        const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
         const win = getCurrentWebviewWindow();
         const visible = await win.isVisible();
         if (visible) {
@@ -462,7 +448,6 @@ function App() {
 
   // New bloom mode state: 'status', 'music', or 'calendar'
   const [bloomMode, setBloomMode] = useState<'status' | 'music' | 'calendar'>('status');
-  const [isMuted] = useState(false);
 
   // Reset window height when state changes
   useEffect(() => {
@@ -1192,7 +1177,7 @@ function App() {
                                           <WifiIcon connected={isOnline} />
                                         </div>
                                         <div className="passive-feature clickable" onClick={openNotificationCenter} title="Notifications">
-                                          {isMuted ? <BellOffIcon /> : <BellIcon />}
+                                          <BellIcon />
                                         </div>
                                         <div className="passive-feature clickable" onClick={openSystemTray} title="System Tray">
                                           <TrayIcon />
