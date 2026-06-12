@@ -29,7 +29,8 @@
         "focus": false,
         "skipTaskbar": true,
         "shadow": false,
-        "visible": false
+        "visible": false,
+        "dragDropEnabled": false
       },
       {
         "label": "settings",

@@ -847,20 +847,19 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                             let mut is_click_interactive = false;
                             if let Ok(lock) = MAIN_WINDOW_RECT.lock() {
                                 if let Some((win_pos, win_size)) = *lock {
-                                    let in_window = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
-                                                    pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
-                                    
-                                    if in_window {
-                                        if let Ok(region) = NOTCH_RECT.try_lock() {
-                                            if let Some(r) = *region {
-                                                let scale = main_win.scale_factor().unwrap_or(1.0);
-                                                let rx = win_pos.x + (r.x as f64 * scale) as i32 - 10;
-                                                let ry = win_pos.y + (r.y as f64 * scale) as i32 - 10;
-                                                let rw = (r.width as f64 * scale) as i32 + 20;
-                                                let rh = (r.height as f64 * scale) as i32 + 20;
-                                                if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
-                                                    is_click_interactive = true;
-                                                }
+                                    if let Ok(region) = NOTCH_RECT.try_lock() {
+                                        if let Some(r) = *region {
+                                            let scale = main_win.scale_factor().unwrap_or(1.0);
+                                            // Add horizontal padding (50px) to capture incoming drag actions
+                                            let rx = win_pos.x + (r.x as f64 * scale) as i32 - (50.0 * scale) as i32;
+                                            let rw = (r.width as f64 * scale) as i32 + (100.0 * scale) as i32;
+                                            
+                                            // Pre-interactive vertical range: from screen top down to window height + 40px padding
+                                            let ry_top = win_pos.y;
+                                            let ry_bottom = win_pos.y + win_size.height as i32 + (40.0 * scale) as i32;
+                                            
+                                            if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry_top && pt.y <= ry_bottom {
+                                                is_click_interactive = true;
                                             }
                                         }
                                     }
