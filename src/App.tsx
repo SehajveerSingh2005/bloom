@@ -169,14 +169,6 @@ interface MediaInfo {
   artwork?: string[];
 }
 
-interface ShelfItem {
-  id: string;
-  type: 'file' | 'text';
-  name?: string;
-  path?: string;
-  content?: string;
-  timestamp: number;
-}
 
 
 
@@ -244,72 +236,6 @@ function App() {
   const [isVisible, setIsVisible] = useState(true);
   const [isImpacted, setIsImpacted] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
-
-  const [shelfItems, setShelfItems] = useState<ShelfItem[]>(() => {
-    try {
-      const saved = localStorage.getItem("bloom-shelf-items");
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
-  const [isDraggingOver, setIsDraggingOver] = useState(false);
-  const previousModeRef = useRef<'status' | 'music' | 'shelf' | 'calendar'>('status');
-
-  useEffect(() => {
-    localStorage.setItem("bloom-shelf-items", JSON.stringify(shelfItems));
-  }, [shelfItems]);
-
-  useEffect(() => {
-    let unlistenDragDrop: (() => void) | undefined;
-
-    const setupDragDrop = async () => {
-      try {
-        const win = getCurrentWebviewWindow();
-        const unlisten = await win.onDragDropEvent((event) => {
-          if (event.payload.type === 'enter' || event.payload.type === 'over') {
-            setIsDraggingOver(true);
-            setBloomMode(prev => {
-              if (prev !== 'shelf') {
-                previousModeRef.current = prev;
-              }
-              return 'shelf';
-            });
-          } else if (event.payload.type === 'drop') {
-            setIsDraggingOver(false);
-            if (event.payload.paths && event.payload.paths.length > 0) {
-              const newItems: ShelfItem[] = event.payload.paths.map(path => {
-                const name = path.split('\\').pop()?.split('/').pop() || path;
-                return {
-                  id: Math.random().toString(36).substring(2, 9),
-                  type: 'file',
-                  name,
-                  path,
-                  timestamp: Date.now()
-                };
-              });
-              setShelfItems(prev => [...newItems, ...prev]);
-              setBloomMode('shelf');
-            }
-          } else if (event.payload.type === 'leave') {
-            setIsDraggingOver(false);
-            if (previousModeRef.current) {
-              setBloomMode(previousModeRef.current);
-            }
-          }
-        });
-        unlistenDragDrop = unlisten;
-      } catch (e) {
-        console.error("Failed to setup drag drop listener:", e);
-      }
-    };
-
-    setupDragDrop();
-
-    return () => {
-      if (unlistenDragDrop) unlistenDragDrop();
-    };
-  }, []);
 
   const [notchMode, setNotchMode] = useState(() => localStorage.getItem("bloom-notch-mode") || "fixed");
   const [isNotchHovered, setIsNotchHovered] = useState(false);
@@ -534,19 +460,9 @@ function App() {
     };
   }, [windowLabel]);
 
-  // New bloom mode state: 'status', 'music', 'shelf', or 'calendar'
-  const [bloomMode, setBloomMode] = useState<'status' | 'music' | 'shelf' | 'calendar'>('status');
+  // New bloom mode state: 'status', 'music', or 'calendar'
+  const [bloomMode, setBloomMode] = useState<'status' | 'music' | 'calendar'>('status');
   const [isMuted] = useState(false);
-
-  const getShelfHeight = (itemCount: number, isWindow: boolean) => {
-    if (itemCount === 0) {
-      return isWindow ? 170 : 130;
-    }
-    const headerHeight = 26;
-    const rows = Math.min(3, Math.ceil(itemCount / 4));
-    const webviewHeight = 36 + 16 + headerHeight + 6 + rows * 64 + (rows - 1) * 10 + 6 + 12;
-    return isWindow ? webviewHeight + 40 : webviewHeight;
-  };
 
   // Reset window height when state changes
   useEffect(() => {
@@ -555,8 +471,6 @@ function App() {
     if (isExpanded) {
       if (bloomMode === 'calendar') {
         targetHeight = 320;
-      } else if (bloomMode === 'shelf') {
-        targetHeight = getShelfHeight(shelfItems.length, true);
       } else if (isHovered) {
         targetHeight = mediaInfo.has_media ? 140 : 64;
       }
@@ -569,12 +483,12 @@ function App() {
     }, delay);
 
     return () => clearTimeout(timeout);
-  }, [isHovered, bloomMode, isExpanded, mediaInfo.has_media, shelfItems.length]);
+  }, [isHovered, bloomMode, isExpanded, mediaInfo.has_media]);
 
   const lastScrollTime = useRef(0);
   const handleWheel = (e: React.WheelEvent) => {
     const target = e.target as HTMLElement;
-    if (target.closest('.shelf-items-list') || target.closest('.calendar-grid') || target.closest('.timer-column')) {
+    if (target.closest('.calendar-grid') || target.closest('.timer-column')) {
       return;
     }
 
@@ -587,7 +501,7 @@ function App() {
     const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
     if (Math.abs(delta) < 5) return; // Ignore tiny movements
 
-    const modes: ('status' | 'music' | 'shelf' | 'calendar')[] = ['status', 'music', 'shelf', 'calendar'];
+    const modes: ('status' | 'music' | 'calendar')[] = ['status', 'music', 'calendar'];
     const availableModes = modes.filter(m => m !== 'music' || mediaInfo.has_media);
 
     const currentIndex = availableModes.indexOf(bloomMode);
@@ -601,69 +515,6 @@ function App() {
       const prevIndex = (currentIndex - 1 + availableModes.length) % availableModes.length;
       setBloomMode(availableModes[prevIndex]);
       lastScrollTime.current = now;
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (e.dataTransfer.types.includes("bloom/source")) {
-      return;
-    }
-    if (!isDraggingOver) {
-      setIsDraggingOver(true);
-      setBloomMode(prev => {
-        if (prev !== 'shelf') {
-          previousModeRef.current = prev;
-        }
-        return 'shelf';
-      });
-    }
-  };
-
-  const handleDragLeave = () => {
-    setIsDraggingOver(false);
-    if (previousModeRef.current) {
-      setBloomMode(previousModeRef.current);
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDraggingOver(false);
-
-    if (e.dataTransfer.types.includes("bloom/source") || e.dataTransfer.getData("bloom/source") === "shelf") {
-      return;
-    }
-
-    // 1. Handle file drops
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const newItems: ShelfItem[] = Array.from(e.dataTransfer.files).map(file => {
-        const path = (file as any).path || file.name;
-        const name = file.name;
-        return {
-          id: Math.random().toString(36).substring(2, 9),
-          type: 'file',
-          name,
-          path,
-          timestamp: Date.now()
-        };
-      });
-      setShelfItems(prev => [...newItems, ...prev]);
-      setBloomMode('shelf');
-      return;
-    }
-
-    // 2. Handle text drops
-    const text = e.dataTransfer.getData("text");
-    if (text && text.trim().length > 0) {
-      const newItem: ShelfItem = {
-        id: Math.random().toString(36).substring(2, 9),
-        type: 'text',
-        content: text,
-        timestamp: Date.now()
-      };
-      setShelfItems(prev => [newItem, ...prev]);
-      setBloomMode('shelf');
     }
   };
 
@@ -1050,7 +901,6 @@ function App() {
   // Calculate width dynamically based on enabled features
   const getDynamicWidth = () => {
     if (isCalendarMode) return 480;
-    if (bloomMode === 'shelf') return 400;
     if (isMusicMode && isHovered) return 340;
     if ((showPowerPulse || showLowBatteryPulse) && !isHovered) return 200;
 
@@ -1075,7 +925,6 @@ function App() {
       return isImpacted ? 28.9 : 44.2;
     }
     if (bloomMode === 'calendar') return 280;
-    if (bloomMode === 'shelf') return getShelfHeight(shelfItems.length, false);
     if (isMusicMode && isHovered) return 120;
     return 34;
   };
@@ -1113,9 +962,6 @@ function App() {
         onMouseEnter={() => setIsNotchHovered(true)}
         onMouseLeave={() => setIsNotchHovered(false)}
         onWheel={handleWheel}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
         initial={{ y: 250, width: 30.6, height: 44.2, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 18, borderBottomRightRadius: 18, scaleX: 1, scaleY: 1, opacity: 0 }}
         animate={{
           y: !isReady ? 250 : (isVisible ? (isHidden ? -100 : 0) : -150),
@@ -1137,7 +983,7 @@ function App() {
         onHoverStart={() => setIsHovered(true)}
         onHoverEnd={() => {
           setIsHovered(false);
-          if (bloomMode === 'calendar' || bloomMode === 'shelf') {
+          if (bloomMode === 'calendar') {
             setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'status');
           }
         }}
@@ -1510,139 +1356,6 @@ function App() {
                 )}
               </AnimatePresence>
 
-              {/* Shelf View */}
-              <AnimatePresence>
-                {bloomMode === 'shelf' && (
-                  <motion.div
-                    className="shelf-content"
-                    onClick={e => e.stopPropagation()}
-                    initial={{ opacity: 0, scale: 0.98 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.98, filter: "blur(4px)", transition: { duration: 0.15 } }}
-                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                  >
-                    {shelfItems.length > 0 && (
-                      <div className="shelf-actions-header">
-                        <button className="shelf-clear-btn" onClick={() => setShelfItems([])}>
-                          Clear All
-                        </button>
-                      </div>
-                    )}
-
-                      {shelfItems.length === 0 ? (
-                        <div className="shelf-empty-box">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}>
-                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                            <line x1="9" y1="9" x2="15" y2="9" />
-                            <line x1="9" y1="13" x2="15" y2="13" />
-                            <line x1="9" y1="17" x2="13" y2="17" />
-                          </svg>
-                          <span className="empty-box-text">Drag & drop files or text here</span>
-                        </div>
-                      ) : (
-                        <div className="shelf-items-grid">
-                          {shelfItems.map((item) => (
-                            <div
-                              key={item.id}
-                              className="shelf-item-thumb"
-                              title={item.type === 'file' ? `${item.name}\nPath: ${item.path}\n(Left-click to open, Right-click to reveal)` : `${item.content}\n(Click to copy)`}
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                if (item.type === 'file' && item.path) {
-                                  try {
-                                    await openPath(item.path);
-                                  } catch (err) {
-                                    console.error("Failed to open file:", err);
-                                  }
-                                } else if (item.content) {
-                                  navigator.clipboard.writeText(item.content);
-                                }
-                              }}
-                              onContextMenu={async (e) => {
-                                e.preventDefault();
-                                if (item.type === 'file' && item.path) {
-                                  try {
-                                    await revealItemInDir(item.path);
-                                  } catch (err) {
-                                    console.error("Failed to reveal file:", err);
-                                  }
-                                }
-                              }}
-                            >
-                              <div
-                                className="shelf-thumb-icon"
-                                draggable="true"
-                                onDragStart={(e) => {
-                                  e.dataTransfer.setData("bloom/source", "shelf");
-                                  if (item.type === 'file' && item.path) {
-                                    const fileUrl = `file:///${item.path.replace(/\\/g, '/')}`;
-                                    e.dataTransfer.setData("text/uri-list", fileUrl);
-                                    e.dataTransfer.setData("text/plain", item.path);
-                                    e.dataTransfer.setData("DownloadURL", `application/octet-stream:${item.name}:${fileUrl}`);
-                                  } else if (item.content) {
-                                    e.dataTransfer.setData("text/plain", item.content);
-                                  }
-                                }}
-                              >
-                                {item.type === 'file' ? (
-                                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                    <polyline points="14 2 14 8 20 8" />
-                                  </svg>
-                                ) : (
-                                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                    <polyline points="14 2 14 8 20 8" />
-                                    <line x1="16" y1="13" x2="8" y2="13" />
-                                    <line x1="16" y1="17" x2="8" y2="17" />
-                                  </svg>
-                                )}
-                              </div>
-                              <span className="shelf-thumb-label">
-                                {item.type === 'file' ? item.name : item.content}
-                              </span>
-                              <button
-                                className="shelf-thumb-delete-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setShelfItems(prev => prev.filter(i => i.id !== item.id));
-                                }}
-                              >
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                  <line x1="18" y1="6" x2="6" y2="18" />
-                                  <line x1="6" y1="6" x2="18" y2="18" />
-                                </svg>
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Drag & Drop Glass Overlay */}
-        <AnimatePresence>
-          {isDraggingOver && (
-            <motion.div
-              className="notch-drag-overlay"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              <div className="drag-overlay-content">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="drag-icon">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-                <span className="drag-title">Drop to Store</span>
-                <span className="drag-subtitle">Files or Text</span>
-              </div>
             </motion.div>
           )}
         </AnimatePresence>
