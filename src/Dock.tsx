@@ -90,9 +90,9 @@ const Dock = memo(function Dock() {
         const hasPreview = !!previewData;
         invoke('update_dock_rect', {
           rect: {
-            x: Math.round(rect.x),
+            x: Math.round(rect.x) - (hasPreview ? 500 : 0),
             y: Math.round(rect.y) - (hasPreview ? 320 : 0),
-            width: Math.round(rect.width),
+            width: Math.round(rect.width) + (hasPreview ? 1000 : 0),
             height: Math.round(rect.height) + (hasPreview ? 320 : 0)
           }
         }).catch(() => {});
