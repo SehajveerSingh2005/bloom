@@ -286,19 +286,62 @@ const Dock = memo(function Dock() {
       if (!runningMap.has(id)) runningMap.set(id, a);
     });
     
+    const matchedRunningKeys = new Set<string>();
+
+    const findRunningApp = (p: AppInfo) => {
+      // 1. Try exact match by getAppId
+      const id = getAppId(p.path, p.executable);
+      let running = runningMap.get(id);
+      if (running) {
+        matchedRunningKeys.add(getAppId(running.path, running.executable));
+        return running;
+      }
+
+      // 2. Try match by path (without executable)
+      const pathId = getAppId(p.path);
+      running = runningMap.get(pathId);
+      if (running) {
+        matchedRunningKeys.add(getAppId(running.path, running.executable));
+        return running;
+      }
+
+      // 3. Try fallback match by executable name if defined
+      if (p.executable) {
+        const targetExe = p.executable.toLowerCase();
+        const found = activeApps.find(a => a.executable?.toLowerCase() === targetExe);
+        if (found) {
+          matchedRunningKeys.add(getAppId(found.path, found.executable));
+          return found;
+        }
+      }
+
+      // 4. Try fallback match by path's file name (e.g., if path is "msedge" and running app's executable is "msedge.exe")
+      const pinFilename = p.path.split('/').pop()?.split('\\').pop()?.toLowerCase() || "";
+      if (pinFilename) {
+        const found = activeApps.find(a => {
+          const runExe = a.executable?.toLowerCase() || a.path.split('/').pop()?.split('\\').pop()?.toLowerCase() || "";
+          return runExe === pinFilename || runExe === `${pinFilename}.exe` || `${runExe}.exe` === pinFilename;
+        });
+        if (found) {
+          matchedRunningKeys.add(getAppId(found.path, found.executable));
+          return found;
+        }
+      }
+
+      return undefined;
+    };
+
     const pinned: AppInfo[] = [
       { name: 'Start', path: 'start', icon: null, is_running: false, is_pinned: true, hwnd: undefined, all_hwnds: undefined, executable: undefined },
       ...pinnedApps.map(p => {
-        const id = getAppId(p.path, p.executable);
-        const running = runningMap.get(id);
+        const running = findRunningApp(p);
         return { ...p, is_running: !!running, hwnd: running?.hwnd, all_hwnds: running?.all_hwnds };
       })
     ];
 
-    const pinnedIds = new Set(pinned.map(p => getAppId(p.path, p.executable)));
     const unpinned = activeOrder
-      .map(path => runningMap.get(getAppId(path)))
-      .filter((a): a is AppInfo => !!a && !pinnedIds.has(getAppId(a.path, a.executable)));
+      .map(path => activeApps.find(a => a.path.toLowerCase().replace(/\\/g, '/') === path.toLowerCase().replace(/\\/g, '/')))
+      .filter((a): a is AppInfo => !!a && !matchedRunningKeys.has(getAppId(a.path, a.executable)));
 
     return [...pinned, ...unpinned];
   }, [pinnedApps, activeApps, activeOrder]);

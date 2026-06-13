@@ -1362,11 +1362,24 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                     let path = String::from_utf16_lossy(&path_buf[..path_len as usize]);
                     let lowercase_path = path.to_lowercase();
                     
+                    let is_explorer_folder = if lowercase_path.contains("explorer.exe") {
+                        let mut class_name = [0u8; 256];
+                        let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
+                        let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
+                        class_str == "CabinetWClass" || class_str == "ExploreWClass"
+                    } else {
+                        false
+                    };
+
                     // Filter out Bloom itself (except the Settings window) and some common background processes
-                    if (lowercase_path.contains("bloom.exe") && title != "Settings") || lowercase_path.contains("conhost.exe") || 
-                       lowercase_path.contains("explorer.exe") || lowercase_path.contains("shellexperiencehost.exe") ||
-                       lowercase_path.contains("searchhost.exe") || lowercase_path.contains("applicationframehost.exe") ||
-                       lowercase_path.contains("textinputhost.exe") || lowercase_path.contains("systemsettings.exe") {
+                    if (lowercase_path.contains("bloom.exe") && title != "Settings") || 
+                       lowercase_path.contains("conhost.exe") || 
+                       (lowercase_path.contains("explorer.exe") && !is_explorer_folder) || 
+                       lowercase_path.contains("shellexperiencehost.exe") ||
+                       lowercase_path.contains("searchhost.exe") || 
+                       lowercase_path.contains("applicationframehost.exe") ||
+                       lowercase_path.contains("textinputhost.exe") || 
+                       lowercase_path.contains("systemsettings.exe") {
                         let _ = CloseHandle(process_handle);
                         return true.into();
                     }
@@ -1375,6 +1388,10 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                         .and_then(|n| n.to_str())
                         .unwrap_or(&title)
                         .replace(".exe", "");
+
+                    let exe_name = Path::new(&path).file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string());
 
                     let final_name = if (name == "msedge" || name == "chrome" || name == "ApplicationFrameHost") && !title.is_empty() {
                         // Extract a cleaner name from the window title for host processes (PWAs, UWP apps)
@@ -1395,7 +1412,7 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                             icon: None,
                             is_running: true,
                             hwnd: Some(hwnd.0 as isize),
-                            executable: None,
+                            executable: exe_name,
                             all_hwnds: None,
                         });
                     }
