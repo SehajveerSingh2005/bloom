@@ -76,7 +76,14 @@ fn main() {
             set_volume,
             save_setting,
             load_settings,
-            capture_window_thumbnail
+            capture_window_thumbnail,
+            get_wifi_state,
+            set_wifi_state,
+            get_bluetooth_state,
+            set_bluetooth_state,
+            open_bluetooth_settings,
+            open_airplane_mode_settings,
+            set_brightness
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();

@@ -8,6 +8,7 @@ use crate::state::*;
 use crate::utils::*;
 use crate::services::{register_appbar, register_dock_appbar, sync_overlays, unregister_appbar_native, enum_windows_proc};
 use std::collections::HashMap;
+use std::os::windows::process::CommandExt;
 
 #[tauri::command]
 pub async fn set_menu_open(open: bool, rect: Option<IntRect>) {
@@ -934,4 +935,102 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
 
         result
     }).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_wifi_state() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = std::process::Command::new("netsh")
+            .args(["interface", "show", "interface", "name=Wi-Fi"])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| e.to_string())?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.contains("Enabled"))
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_wifi_state(enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let admin = if enabled { "enable" } else { "disable" };
+        let output = std::process::Command::new("netsh")
+            .args(["interface", "set", "interface", "name=Wi-Fi", &format!("admin={}", admin)])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).to_string())
+        }
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_bluetooth_state() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NoLogo", "-Command",
+                "Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' } | Select-Object -First 1 | ForEach-Object { 'ON' }"])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| e.to_string())?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(stdout == "ON")
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_bluetooth_state(enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let action = if enabled { "Enable" } else { "Disable" };
+        let script = format!(
+            "$dev = Get-PnpDevice -Class Bluetooth -Status OK -ErrorAction SilentlyContinue | Select-Object -First 1; \
+             if ($dev) {{ {}-PnpDevice -InstanceId $dev.InstanceId -Confirm:$false -ErrorAction Stop; 'OK' }} else {{ 'NOTFOUND' }}",
+            action
+        );
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NoLogo", "-Command", &script])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| e.to_string())?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if stdout == "OK" {
+            return Ok(());
+        }
+        let _ = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NoLogo", "-Command", "Start-Process 'ms-settings:bluetooth'"])
+            .creation_flags(0x08000000)
+            .output();
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn open_bluetooth_settings() {
+    std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NoLogo", "-Command", "Start-Process 'ms-settings:bluetooth'"])
+        .creation_flags(0x08000000)
+        .spawn()
+        .ok();
+}
+
+#[tauri::command]
+pub fn open_airplane_mode_settings() {
+    std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NoLogo", "-Command", "Start-Process 'ms-settings:network-airplanemode'"])
+        .creation_flags(0x08000000)
+        .spawn()
+        .ok();
+}
+
+#[tauri::command]
+pub fn set_brightness(brightness: u32) {
+    let val = brightness.min(100);
+    crate::state::CURRENT_BRIGHTNESS.store(val, Ordering::Relaxed);
+    crate::state::LAST_BRIGHTNESS_CHANGE.store(crate::utils::get_now_ms(), Ordering::Relaxed);
+    if let Some(tx) = crate::state::BRIGHTNESS_SENDER.get() {
+        let _ = tx.send(val);
+    }
 }

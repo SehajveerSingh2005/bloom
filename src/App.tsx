@@ -17,28 +17,10 @@ function WifiIcon({ connected }: { connected: boolean }) {
   );
 }
 
-function BellIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-    </svg>
-  );
-}
-
 function ThermometerIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" />
-    </svg>
-  );
-}
-
-function SettingsIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3"></circle>
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
     </svg>
   );
 }
@@ -203,9 +185,6 @@ function App() {
   const [temperature, setTemperature] = useState<number | null>(null);
   const [weatherCondition, setWeatherCondition] = useState<string>("");
 
-  // Network state
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-
   // Media state
   const [isPlaying, setIsPlaying] = useState(false);
   const [mediaInfo, setMediaInfo] = useState<MediaInfo>({
@@ -216,6 +195,9 @@ function App() {
   });
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
   const [volume, setVolume] = useState(0.5);
+  const [wifiEnabled, setWifiEnabled] = useState(true);
+  const [bluetoothEnabled, setBluetoothEnabled] = useState(true);
+  const [currentBrightness, setCurrentBrightness] = useState(50);
   const [windowLabel, setWindowLabel] = useState<string>("");
   useEffect(() => {
     setWindowLabel(getCurrentWebviewWindow().label);
@@ -446,8 +428,8 @@ function App() {
     };
   }, [windowLabel]);
 
-  // New bloom mode state: 'status', 'music', or 'calendar'
-  const [bloomMode, setBloomMode] = useState<'status' | 'music' | 'calendar'>('status');
+  // Bloom mode state: 'music', 'calendar', or 'command-center'
+  const [bloomMode, setBloomMode] = useState<'music' | 'calendar' | 'command-center'>('music');
 
   // Reset window height when state changes
   useEffect(() => {
@@ -456,6 +438,8 @@ function App() {
     if (isExpanded) {
       if (bloomMode === 'calendar') {
         targetHeight = 320;
+      } else if (bloomMode === 'command-center') {
+        targetHeight = isHovered ? 175 : 48;
       } else if (isHovered) {
         targetHeight = mediaInfo.has_media ? 140 : 64;
       }
@@ -486,7 +470,7 @@ function App() {
     const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
     if (Math.abs(delta) < 5) return; // Ignore tiny movements
 
-    const modes: ('status' | 'music' | 'calendar')[] = ['status', 'music', 'calendar'];
+    const modes: ('music' | 'calendar' | 'command-center')[] = ['command-center', 'music', 'calendar'];
     const availableModes = modes.filter(m => m !== 'music' || mediaInfo.has_media);
 
     const currentIndex = availableModes.indexOf(bloomMode);
@@ -563,12 +547,12 @@ function App() {
     lastPlayingRef.current = isPlaying;
   }, [mediaInfo.has_media, isPlaying, mediaInfo.title]);
 
-  // Auto-switch back to status mode if music stops for 4 seconds
+  // Auto-switch back from music if music stops for 4 seconds
   useEffect(() => {
     let timer: any;
     if (!isPlaying && bloomMode === 'music') {
       timer = setTimeout(() => {
-        setBloomMode('status');
+        setBloomMode('music');
       }, 4000);
     }
     return () => clearTimeout(timer);
@@ -635,24 +619,24 @@ function App() {
     initBattery();
   }, []);
 
-  // Network status
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
-
   // Listen for Volume Changes
   useEffect(() => {
     const unlisten = listen<{ volume: number; is_muted: boolean }>("volume-change", (event) => {
       setVolume(event.payload.volume);
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  // Load wifi/bluetooth state on mount
+  useEffect(() => {
+    invoke<boolean>("get_wifi_state").then(setWifiEnabled).catch(() => {});
+    invoke<boolean>("get_bluetooth_state").then(setBluetoothEnabled).catch(() => {});
+  }, []);
+
+  // Listen for brightness changes
+  useEffect(() => {
+    const unlisten = listen<{ brightness: number }>("brightness-change", (event) => {
+      setCurrentBrightness(event.payload.brightness);
     });
     return () => { unlisten.then(fn => fn()); };
   }, []);
@@ -834,12 +818,37 @@ function App() {
     }
   }, []);
 
-  // Open notification center
-  const openNotificationCenter = useCallback(async () => {
+  // WiFi toggle
+  const toggleWifi = useCallback(async () => {
+    const newState = !wifiEnabled;
+    setWifiEnabled(newState);
     try {
-      await invoke("open_notification_center");
+      await invoke("set_wifi_state", { enabled: newState });
     } catch (e) {
-      console.error("Failed to open notification center:", e);
+      setWifiEnabled(!newState);
+      console.error("Failed to toggle WiFi:", e);
+    }
+  }, [wifiEnabled]);
+
+  // Bluetooth toggle
+  const toggleBluetooth = useCallback(async () => {
+    const newState = !bluetoothEnabled;
+    setBluetoothEnabled(newState);
+    try {
+      await invoke("set_bluetooth_state", { enabled: newState });
+    } catch (e) {
+      setBluetoothEnabled(!newState);
+      console.error("Failed to toggle Bluetooth:", e);
+    }
+  }, [bluetoothEnabled]);
+
+  // Brightness change
+  const handleBrightnessChange = useCallback(async (newVal: number) => {
+    setCurrentBrightness(newVal);
+    try {
+      await invoke("set_brightness", { brightness: newVal });
+    } catch (e) {
+      console.error("Failed to set brightness:", e);
     }
   }, []);
 
@@ -874,7 +883,7 @@ function App() {
     setBloomMode(prev => {
       if (prev === 'calendar') {
         // Return to music mode if media is present and playing, otherwise status
-        return (mediaInfo.has_media && isPlaying) ? 'music' : 'status';
+        return (mediaInfo.has_media && isPlaying) ? 'music' : 'music';
       }
       return 'calendar';
     });
@@ -886,6 +895,7 @@ function App() {
   // Calculate width dynamically based on enabled features
   const getDynamicWidth = () => {
     if (isCalendarMode) return 480;
+    if (bloomMode === 'command-center' && isHovered) return 340;
     if (isMusicMode && isHovered) return 340;
     if ((showPowerPulse || showLowBatteryPulse) && !isHovered) return 200;
 
@@ -898,8 +908,6 @@ function App() {
       if (isHovered) {
         w += 60;
       }
-    } else if (isHovered) {
-      w = 320;
     }
 
     return w;
@@ -910,6 +918,7 @@ function App() {
       return isImpacted ? 28.9 : 44.2;
     }
     if (bloomMode === 'calendar') return 280;
+    if (bloomMode === 'command-center') return isHovered ? 175 : 34;
     if (isMusicMode && isHovered) return 120;
     return 34;
   };
@@ -965,11 +974,14 @@ function App() {
         onClick={(e) => {
           e.stopPropagation();
         }}
-        onHoverStart={() => setIsHovered(true)}
+        onHoverStart={() => {
+          setIsHovered(true);
+          setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'command-center');
+        }}
         onHoverEnd={() => {
           setIsHovered(false);
-          if (bloomMode === 'calendar') {
-            setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'status');
+          if (bloomMode === 'command-center' || bloomMode === 'calendar') {
+            setBloomMode('music');
           }
         }}
         style={{ originY: 0 }}
@@ -1147,48 +1159,36 @@ function App() {
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
                           >
-                            {/* Left: visualizer (music) or wifi+notifs (status) */}
-                            {(isMusicMode && settingsVisualizerEnabled) || (!isMusicMode && isHovered) ? (
+                            {/* Left: visualizer (music) or weather (command-center, calendar) */}
+                            {isMusicMode && settingsVisualizerEnabled ? (
                               <div className="side-content left">
-                                <AnimatePresence mode="wait">
-                                  {isMusicMode ? (
-                                    <AnimatePresence>
-                                      {settingsVisualizerEnabled && (
-                                        <motion.div
-                                          key="visualizer"
-                                          initial={{ scale: 0.8, opacity: 0 }}
-                                          animate={{ scale: 1, opacity: 1 }}
-                                          exit={{ scale: 0.8, opacity: 0 }}
-                                        >
-                                          <Visualizer isPlaying={isPlaying} />
-                                        </motion.div>
-                                      )}
-                                    </AnimatePresence>
-                                  ) : (
-                                    isHovered && (
-                                      <motion.div
-                                        key="left-passive"
-                                        className="passive-features-group"
-                                        initial={{ opacity: 0, x: -10 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        exit={{ opacity: 0, x: -10 }}
-                                      >
-                                        <div className="passive-feature clickable" onClick={openWifiSettings} title="Wi-Fi">
-                                          <WifiIcon connected={isOnline} />
-                                        </div>
-                                        <div className="passive-feature clickable" onClick={openNotificationCenter} title="Notifications">
-                                          <BellIcon />
-                                        </div>
-                                        <div className="passive-feature clickable" onClick={openSystemTray} title="System Tray">
-                                          <TrayIcon />
-                                        </div>
-                                        <div className="passive-feature clickable" onClick={openSettingsWindow} title="Settings">
-                                          <SettingsIcon />
-                                        </div>
-                                      </motion.div>
-                                    )
+                                <AnimatePresence>
+                                  {settingsVisualizerEnabled && (
+                                    <motion.div
+                                      key="visualizer"
+                                      initial={{ scale: 0.8, opacity: 0 }}
+                                      animate={{ scale: 1, opacity: 1 }}
+                                      exit={{ scale: 0.8, opacity: 0 }}
+                                    >
+                                      <Visualizer isPlaying={isPlaying} />
+                                    </motion.div>
                                   )}
                                 </AnimatePresence>
+                              </div>
+                            ) : (!isMusicMode && isHovered && settingsWeatherEnabled && temperature !== null) ? (
+                              <div className="side-content left">
+                                <motion.div
+                                  key="left-weather"
+                                  className="passive-features-group"
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  exit={{ opacity: 0 }}
+                                >
+                                  <div className="passive-feature" title={weatherCondition}>
+                                    <ThermometerIcon />
+                                    <span className="label">{temperature}°{tempUnit === "fahrenheit" ? "F" : "C"}</span>
+                                  </div>
+                                </motion.div>
                               </div>
                             ) : (
                               /* Spacer to keep time centered if the OTHER side has content */
@@ -1224,68 +1224,54 @@ function App() {
                               </AnimatePresence>
                             </div>
 
-                            {/* Right: album art (music) or battery+temp (status) */}
-                            {(isMusicMode && settingsAlbumArtEnabled) || (!isMusicMode && isHovered) ? (
+                            {/* Right: album art (music) or battery (command-center, calendar) */}
+                            {isMusicMode && settingsAlbumArtEnabled ? (
                               <div className="side-content right">
                                 <AnimatePresence mode="wait">
-                                  {isMusicMode && settingsAlbumArtEnabled ? (
-                                    <motion.button
-                                      key="album-art"
-                                      className={`album-art${isHovered ? ' album-art-large' : ''}${!isPlaying ? ' paused' : ''}`}
-                                      initial={{ opacity: 0, scale: 0.8 }}
-                                      animate={{ opacity: 1, scale: 1 }}
-                                      exit={{ opacity: 0, y: -20, scale: 0.8, filter: "blur(8px)" }}
-                                      transition={{ duration: 0.12 }}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        togglePlayPause();
-                                      }}
-                                      onDoubleClick={(e) => {
-                                        e.stopPropagation();
-                                        skipNext();
-                                      }}
-                                      onContextMenu={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        skipPrevious();
-                                      }}
-                                    >
-                                      <div className="album-art-inner">
-                                        {albumArtUrl ? (
-                                          <img src={albumArtUrl} alt="Art" />
-                                        ) : (
-                                          <div className="album-art-placeholder">🎵</div>
-                                        )}
-                                        <div className="album-art-overlay">
-                                          <div className="control-icon-small">
-                                            {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                                          </div>
+                                  <motion.button
+                                    key="album-art"
+                                    className={`album-art${isHovered ? ' album-art-large' : ''}${!isPlaying ? ' paused' : ''}`}
+                                    initial={{ opacity: 0, scale: 0.8 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, y: -20, scale: 0.8, filter: "blur(8px)" }}
+                                    transition={{ duration: 0.12 }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      togglePlayPause();
+                                    }}
+                                    onDoubleClick={(e) => {
+                                      e.stopPropagation();
+                                      skipNext();
+                                    }}
+                                    onContextMenu={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      skipPrevious();
+                                    }}
+                                  >
+                                    <div className="album-art-inner">
+                                      {albumArtUrl ? (
+                                        <img src={albumArtUrl} alt="Art" />
+                                      ) : (
+                                        <div className="album-art-placeholder">🎵</div>
+                                      )}
+                                      <div className="album-art-overlay">
+                                        <div className="control-icon-small">
+                                          {isPlaying ? <PauseIcon /> : <PlayIcon />}
                                         </div>
                                       </div>
-                                    </motion.button>
-                                  ) : (
-                                    isHovered && (
-                                      <motion.div
-                                        key="right-passive"
-                                        className="passive-features-group"
-                                        initial={{ opacity: 0, x: 10 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        exit={{ opacity: 0, x: 10 }}
-                                      >
-                                        {settingsWeatherEnabled && temperature !== null && (
-                                          <div className="passive-feature" title={weatherCondition}>
-                                            <ThermometerIcon />
-                                            <span className="label">{temperature}°{tempUnit === "fahrenheit" ? "F" : "C"}</span>
-                                          </div>
-                                        )}
-                                        <div className="passive-feature">
-                                          <BatteryIcon charging={isCharging} level={batteryLevel} threshold={lowBatteryThreshold} />
-                                          <span className="label">{batteryLevel}%</span>
-                                        </div>
-                                      </motion.div>
-                                    )
-                                  )}
+                                    </div>
+                                  </motion.button>
                                 </AnimatePresence>
+                              </div>
+                            ) : (!isMusicMode && isHovered) ? (
+                              <div className="side-content right">
+                                <div className="passive-features-group">
+                                  <div className="passive-feature">
+                                    <BatteryIcon charging={isCharging} level={batteryLevel} threshold={lowBatteryThreshold} />
+                                    <span className="label">{batteryLevel}%</span>
+                                  </div>
+                                </div>
                               </div>
                             ) : (
                               /* Spacer to keep time centered if the OTHER side has content */
@@ -1299,6 +1285,92 @@ function App() {
                 )}
               </AnimatePresence>
 
+              {/* Command Center Panel */}
+              <AnimatePresence>
+                {bloomMode === 'command-center' && (
+                  <motion.div
+                    className="command-center-content"
+                    onClick={e => e.stopPropagation()}
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.98, filter: "blur(4px)", transition: { duration: 0.15 } }}
+                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  >
+                    {/* Toggle tiles row */}
+                    <div className="cc-toggles-row">
+                      <div className={`cc-tile ${wifiEnabled ? 'active' : ''}`} onClick={(e) => { e.stopPropagation(); toggleWifi(); }}>
+                        <WifiIcon connected={wifiEnabled} />
+                        <span className="cc-tile-label">Wi-Fi</span>
+                      </div>
+                      <div className={`cc-tile ${bluetoothEnabled ? 'active' : ''}`} onClick={(e) => { e.stopPropagation(); toggleBluetooth(); }}>
+                        <BluetoothIcon />
+                        <span className="cc-tile-label">Bluetooth</span>
+                      </div>
+                      <div className="cc-tile" onClick={(e) => { e.stopPropagation(); openSystemTray(e); }}>
+                        <TrayIcon />
+                        <span className="cc-tile-label">Tray</span>
+                      </div>
+                      <div className="cc-tile" onClick={(e) => { e.stopPropagation(); invoke("open_airplane_mode_settings"); }}>
+                        <AirplaneIcon />
+                        <span className="cc-tile-label">Airplane</span>
+                      </div>
+                    </div>
+
+                    {/* Volume slider */}
+                    <div className="cc-slider-row">
+                      <VolumeLowIcon />
+                      <div className="slider-track-premium">
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={volume}
+                          onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                          className="premium-slider"
+                        />
+                        <div className="slider-progress-fill" style={{ width: `${volume * 100}%` }} />
+                      </div>
+                      <VolumeHighIcon />
+                    </div>
+
+                    {/* Brightness slider */}
+                    <div className="cc-slider-row">
+                      <BrightnessLowIcon />
+                      <div className="slider-track-premium">
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value={currentBrightness}
+                          onChange={(e) => handleBrightnessChange(parseInt(e.target.value))}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                          className="premium-slider"
+                        />
+                        <div className="slider-progress-fill" style={{ width: `${currentBrightness}%` }} />
+                      </div>
+                      <BrightnessHighIcon />
+                    </div>
+
+                    {/* Native settings links */}
+                    <div className="cc-links-row">
+                      <div className="cc-native-link" onClick={(e) => { e.stopPropagation(); openWifiSettings(); }}>
+                        <span>Wi-Fi Settings</span>
+                      </div>
+                      <div className="cc-native-link" onClick={(e) => { e.stopPropagation(); invoke("open_bluetooth_settings"); }}>
+                        <span>Bluetooth</span>
+                      </div>
+                      <div className="cc-native-link" onClick={(e) => { e.stopPropagation(); openSettingsWindow(); }}>
+                        <span>Settings</span>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Calendar & Timer Split View */}
               <AnimatePresence>
@@ -1427,6 +1499,46 @@ function VolumeHighIcon() {
       <path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" />
       <path d="M15.54 8.46a5 5 0 0 1 0 7.07" strokeWidth="2.5" />
       <path d="M19.07 4.93a10 10 0 0 1 0 14.14" strokeWidth="2.5" />
+    </svg>
+  );
+}
+
+function BluetoothIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6.5 6.5l11 11L12 23V1l5.5 5.5-11 11" />
+    </svg>
+  );
+}
+
+function AirplaneIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.9 }}>
+      <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" />
+    </svg>
+  );
+}
+
+function BrightnessLowIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}>
+      <circle cx="12" cy="12" r="5" fill="currentColor" />
+    </svg>
+  );
+}
+
+function BrightnessHighIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}>
+      <circle cx="12" cy="12" r="5" fill="currentColor" />
+      <line x1="12" y1="1" x2="12" y2="3" />
+      <line x1="12" y1="21" x2="12" y2="23" />
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+      <line x1="1" y1="12" x2="3" y2="12" />
+      <line x1="21" y1="12" x2="23" y2="12" />
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
     </svg>
   );
 }
