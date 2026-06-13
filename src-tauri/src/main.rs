@@ -164,6 +164,7 @@ fn main() {
             setup_display_change_monitor(app.handle().clone());
             {
                 let _ = crate::state::THUMBNAIL_CACHE.set(std::sync::Mutex::new(std::collections::HashMap::new()));
+                let _ = crate::state::FOCUS_TIMESTAMPS.set(std::sync::Mutex::new(std::collections::HashMap::new()));
             }
             setup_thumbnail_capture(app.handle().clone());
             trigger_app_scan();

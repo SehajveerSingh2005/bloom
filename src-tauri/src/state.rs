@@ -35,3 +35,5 @@ pub static DISPLAY_MONITOR_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 pub static LAST_DISPLAY_CHANGE_MS: AtomicI64 = AtomicI64::new(0);
 
 pub static THUMBNAIL_CACHE: OnceLock<Mutex<HashMap<isize, (String, i64)>>> = OnceLock::new();
+pub static FOCUS_TIMESTAMPS: OnceLock<Mutex<HashMap<isize, i64>>> = OnceLock::new();
+

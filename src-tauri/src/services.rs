@@ -77,15 +77,16 @@ pub fn setup_taskbar_hook() {
 }
 
 static mut THUMBNAIL_HOOK_HANDLE: Option<windows::Win32::UI::Accessibility::HWINEVENTHOOK> = None;
+static mut FOCUS_HOOK_HANDLE: Option<windows::Win32::UI::Accessibility::HWINEVENTHOOK> = None;
 
 pub fn setup_thumbnail_capture(_app_handle: AppHandle) {
     unsafe {
         use windows::Win32::UI::Accessibility::SetWinEventHook;
-        use windows::Win32::UI::WindowsAndMessaging::{WINEVENT_OUTOFCONTEXT, EVENT_SYSTEM_MINIMIZESTART};
+        use windows::Win32::UI::WindowsAndMessaging::{WINEVENT_OUTOFCONTEXT, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_FOREGROUND};
 
         let hook = SetWinEventHook(
             EVENT_SYSTEM_MINIMIZESTART,
-            EVENT_SYSTEM_MINIMIZESTART,
+            EVENT_SYSTEM_MINIMIZEEND,
             None,
             Some(thumbnail_capture_proc),
             0,
@@ -93,6 +94,46 @@ pub fn setup_thumbnail_capture(_app_handle: AppHandle) {
             WINEVENT_OUTOFCONTEXT,
         );
         THUMBNAIL_HOOK_HANDLE = Some(hook);
+
+        let focus_hook = SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            Some(focus_event_proc),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        );
+        FOCUS_HOOK_HANDLE = Some(focus_hook);
+    }
+}
+
+unsafe extern "system" fn focus_event_proc(
+    _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
+    _event: u32,
+    hwnd: HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _event_thread: u32,
+    _ms_event_time: u32,
+) {
+    if hwnd.0.is_null() { return; }
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindow, GetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW};
+
+    if !IsWindow(Some(hwnd)).as_bool() { return; }
+    let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+    if (ex_style & WS_EX_TOOLWINDOW.0) != 0 { return; }
+
+    let my_pid = std::process::id();
+    let mut pid = 0u32;
+    windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid == my_pid { return; }
+
+    let hwnd_raw = hwnd.0 as isize;
+    if let Some(map) = crate::state::FOCUS_TIMESTAMPS.get() {
+        if let Ok(mut guard) = map.lock() {
+            guard.insert(hwnd_raw, crate::utils::get_now_ms());
+        }
     }
 }
 
@@ -122,9 +163,13 @@ unsafe extern "system" fn thumbnail_capture_proc(
     if len == 0 { return; }
 
     let hwnd_raw = hwnd.0 as isize;
+    let event_type = _event;
 
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        use windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_MINIMIZEEND;
+        if event_type == EVENT_SYSTEM_MINIMIZEEND {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
 
         unsafe {
             let hwnd = HWND(hwnd_raw as *mut _);

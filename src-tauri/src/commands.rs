@@ -396,7 +396,31 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
             }
         }
 
-        grouped.into_values().collect()
+        let focus_guard = if let Some(map) = crate::state::FOCUS_TIMESTAMPS.get() {
+            map.lock().ok()
+        } else {
+            None
+        };
+
+        let mut result_apps: Vec<AppInfo> = grouped.into_values().collect();
+
+        for app in &mut result_apps {
+            if let Some(ref mut hwnds) = app.all_hwnds {
+                hwnds.sort_by(|a, b| {
+                    let ts_a = focus_guard.as_ref()
+                        .and_then(|g| g.get(&(a.0 as isize)))
+                        .copied()
+                        .unwrap_or(0);
+                    let ts_b = focus_guard.as_ref()
+                        .and_then(|g| g.get(&(b.0 as isize)))
+                        .copied()
+                        .unwrap_or(0);
+                    ts_b.cmp(&ts_a)
+                });
+            }
+        }
+
+        result_apps
     }).await.unwrap_or_default()
 }
 
@@ -836,7 +860,7 @@ pub fn load_settings(app: AppHandle) -> Result<HashMap<String, serde_json::Value
 }
 
 #[tauri::command]
-pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u32) -> Result<Option<String>, String> {
+pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u32) -> Result<Option<(String, i64)>, String> {
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::Foundation::{HWND, RECT};
         use windows::Win32::Graphics::Gdi::{CreateCompatibleDC, CreateCompatibleBitmap, SelectObject, DeleteObject, DeleteDC, GetDC, ReleaseDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC};
@@ -854,10 +878,14 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
         if is_minimized {
             if let Some(cache) = crate::state::THUMBNAIL_CACHE.get() {
                 if let Ok(guard) = cache.lock() {
-                    if let Some((cached, ts)) = guard.get(&hwnd_key) {
-                        if crate::utils::get_now_ms() - *ts < 60_000 {
-                            return Some(cached.clone());
+                    if let Some((cached, _)) = guard.get(&hwnd_key) {
+                        let mut focus_time = 0i64;
+                        if let Some(map) = crate::state::FOCUS_TIMESTAMPS.get() {
+                            if let Ok(f_guard) = map.lock() {
+                                focus_time = f_guard.get(&hwnd_key).copied().unwrap_or(0);
+                            }
                         }
+                        return Some((cached.clone(), focus_time));
                     }
                 }
             }
@@ -933,7 +961,14 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
             }
         }
 
-        result
+        let mut focus_time = 0i64;
+        if let Some(map) = crate::state::FOCUS_TIMESTAMPS.get() {
+            if let Ok(guard) = map.lock() {
+                focus_time = guard.get(&hwnd_key).copied().unwrap_or(0);
+            }
+        }
+
+        result.map(|img| (img, focus_time))
     }).await.map_err(|e| e.to_string())
 }
 

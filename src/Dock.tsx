@@ -397,16 +397,21 @@ const Dock = memo(function Dock() {
             const results = await Promise.all(
               hwndsToCapture.map(async ([hwnd, title]) => {
                 try {
-                  const base64 = await invoke<string | null>("capture_window_thumbnail", { hwnd, maxWidth: 320, maxHeight: 200 });
-                  if (base64) {
-                    return { hwnd, title, image: base64 };
+                  const res = await invoke<[string, number] | null>("capture_window_thumbnail", { hwnd, maxWidth: 320, maxHeight: 200 });
+                  if (res) {
+                    const [image, lastFocused] = res;
+                    return { hwnd, title, image, lastFocused };
                   }
                 } catch {}
                 return null;
               })
             );
 
-            const captured = results.filter((r): r is { hwnd: number, title: string, image: string } => r !== null);
+            const captured = results
+              .filter((r): r is { hwnd: number, title: string, image: string, lastFocused: number } => r !== null)
+              .sort((a, b) => b.lastFocused - a.lastFocused)
+              .map(({ hwnd, title, image }) => ({ hwnd, title, image }));
+
             const currentHovered = hoveredAppRef.current;
             if (captured.length > 0 && currentHovered === app.path) {
               setPreviewData({ path: app.path, previews: captured });
