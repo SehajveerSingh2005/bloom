@@ -429,7 +429,7 @@ function App() {
   }, [windowLabel]);
 
   // Bloom mode state: 'music', 'calendar', or 'command-center'
-  const [bloomMode, setBloomMode] = useState<'music' | 'calendar' | 'command-center'>('music');
+  const [bloomMode, setBloomMode] = useState<'music' | 'calendar' | 'command-center'>('command-center');
 
   // Reset window height when state changes
   useEffect(() => {
@@ -547,13 +547,13 @@ function App() {
     lastPlayingRef.current = isPlaying;
   }, [mediaInfo.has_media, isPlaying, mediaInfo.title]);
 
-  // Auto-switch back from music if music stops for 4 seconds
+  // Auto-switch back from music if music stops for 5 seconds
   useEffect(() => {
     let timer: any;
     if (!isPlaying && bloomMode === 'music') {
       timer = setTimeout(() => {
-        setBloomMode('music');
-      }, 4000);
+        setBloomMode('command-center');
+      }, 5000);
     }
     return () => clearTimeout(timer);
   }, [isPlaying, bloomMode]);
@@ -882,8 +882,8 @@ function App() {
 
     setBloomMode(prev => {
       if (prev === 'calendar') {
-        // Return to music mode if media is present and playing, otherwise status
-        return (mediaInfo.has_media && isPlaying) ? 'music' : 'music';
+        // Return to music mode if media is present and playing, otherwise command-center
+        return (mediaInfo.has_media && isPlaying) ? 'music' : 'command-center';
       }
       return 'calendar';
     });
@@ -981,7 +981,7 @@ function App() {
         onHoverEnd={() => {
           setIsHovered(false);
           if (bloomMode === 'command-center' || bloomMode === 'calendar') {
-            setBloomMode('music');
+            setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'command-center');
           }
         }}
         style={{ originY: 0 }}
