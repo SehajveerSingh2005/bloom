@@ -87,12 +87,13 @@ const Dock = memo(function Dock() {
     const updateRect = () => {
       if (dockRef.current) {
         const rect = dockRef.current.getBoundingClientRect();
+        const hasPreview = !!previewData;
         invoke('update_dock_rect', {
           rect: {
             x: Math.round(rect.x),
-            y: Math.round(rect.y),
+            y: Math.round(rect.y) - (hasPreview ? 320 : 0),
             width: Math.round(rect.width),
-            height: Math.round(rect.height)
+            height: Math.round(rect.height) + (hasPreview ? 320 : 0)
           }
         }).catch(() => {});
       }
@@ -107,7 +108,7 @@ const Dock = memo(function Dock() {
       window.removeEventListener('resize', updateRect);
       observer.disconnect();
     };
-  }, [pinnedApps, activeApps, isHidden]);
+  }, [pinnedApps, activeApps, isHidden, previewData]);
 
   useEffect(() => {
     const init = async () => {
