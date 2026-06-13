@@ -1385,12 +1385,8 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                         name.clone()
                     };
 
-                    // Avoid duplicates, but allow host processes to have multiple entries if they have different names (PWAs)
-                    let already_exists = if name == "msedge" || name == "chrome" || name == "ApplicationFrameHost" {
-                        apps.iter().any(|a| a.path == path && a.name == final_name)
-                    } else {
-                        apps.iter().any(|a| a.path == path)
-                    };
+                    // Only avoid adding the exact same window handle (HWND) multiple times
+                    let already_exists = apps.iter().any(|a| a.hwnd == Some(hwnd.0 as isize));
 
                     if !already_exists {
                         apps.push(AppInfo {

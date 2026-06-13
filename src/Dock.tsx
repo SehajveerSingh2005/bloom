@@ -44,7 +44,6 @@ const Dock = memo(function Dock() {
   const isAnyInteraction = isCurrentlyHovered || !!contextMenu || showAddPopup;
   
   const previewTimerRef = useRef<any>(null);
-  const thumbnailCacheRef = useRef<Map<number, string>>(new Map());
   const isPreviewHoveredRef = useRef(false);
   const hoveredAppRef = useRef<string | null>(null);
 
@@ -172,15 +171,6 @@ const Dock = memo(function Dock() {
       });
 
       running.forEach(app => fetchIcon(app.path, app.name, app.hwnd));
-
-      const activeHwnds = new Set<number>();
-      running.forEach(app => {
-        if (app.hwnd) activeHwnds.add(app.hwnd);
-        app.all_hwnds?.forEach(([h]) => activeHwnds.add(h));
-      });
-      for (const [hwnd] of thumbnailCacheRef.current) {
-        if (!activeHwnds.has(hwnd)) thumbnailCacheRef.current.delete(hwnd);
-      }
     };
 
     const interval = setInterval(poll, 2000);
@@ -358,42 +348,32 @@ const Dock = memo(function Dock() {
       if (app && app.is_running) {
         const hwndsToCapture = app.all_hwnds || (app.hwnd ? [[app.hwnd, app.name]] : []);
 
-        const cachedResults = hwndsToCapture
-          .filter(([hwnd]) => thumbnailCacheRef.current.has(hwnd))
-          .map(([hwnd, title]) => ({ hwnd, title, image: thumbnailCacheRef.current.get(hwnd)! }));
+        previewTimerRef.current = setTimeout(async () => {
+          try {
+            const results = await Promise.all(
+              hwndsToCapture.map(async ([hwnd, title]) => {
+                try {
+                  const base64 = await invoke<string | null>("capture_window_thumbnail", { hwnd, maxWidth: 320, maxHeight: 200 });
+                  if (base64) {
+                    return { hwnd, title, image: base64 };
+                  }
+                } catch {}
+                return null;
+              })
+            );
 
-        if (cachedResults.length === hwndsToCapture.length) {
-          setPreviewData({ path: app.path, previews: cachedResults });
-        } else {
-          const uncached = hwndsToCapture.filter(([hwnd]) => !thumbnailCacheRef.current.has(hwnd));
-          previewTimerRef.current = setTimeout(async () => {
-            try {
-              const results = await Promise.all(
-                uncached.map(async ([hwnd, title]) => {
-                  try {
-                    const base64 = await invoke<string | null>("capture_window_thumbnail", { hwnd, maxWidth: 320, maxHeight: 200 });
-                    if (base64) {
-                      thumbnailCacheRef.current.set(hwnd, base64);
-                      return { hwnd, title, image: base64 };
-                    }
-                  } catch {}
-                  return null;
-                })
-              );
-              const captured = results.filter((r): r is { hwnd: number, title: string, image: string } => r !== null);
-              const allPreviews = [...cachedResults, ...captured];
-              const currentHovered = hoveredAppRef.current;
-              if (allPreviews.length > 0 && currentHovered === app.path) {
-                setPreviewData({ path: app.path, previews: allPreviews });
-              } else if (currentHovered === app.path) {
-                setPreviewData(null);
-              }
-            } catch (e) {
-              console.error("Failed to capture thumbnails:", e);
+            const captured = results.filter((r): r is { hwnd: number, title: string, image: string } => r !== null);
+            const currentHovered = hoveredAppRef.current;
+            if (captured.length > 0 && currentHovered === app.path) {
+              setPreviewData({ path: app.path, previews: captured });
+            } else if (currentHovered === app.path) {
               setPreviewData(null);
             }
-          }, cachedResults.length > 0 ? 100 : 400);
-        }
+          } catch (e) {
+            console.error("Failed to capture thumbnails:", e);
+            setPreviewData(null);
+          }
+        }, 300);
       } else {
         setPreviewData(null);
       }
