@@ -592,7 +592,8 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                         let is_muted: bool = muted.into();
                         if (vol - last_volume).abs() > 0.001 || is_muted != last_muted {
                             last_volume = vol; last_muted = is_muted;
-                        let _ = handle_system.emit("volume-change", VolumeChangeEvent { volume: vol, is_muted });
+                            crate::state::CURRENT_VOLUME.store((vol * 100.0) as u32, Ordering::Relaxed);
+                            let _ = handle_system.emit("volume-change", VolumeChangeEvent { volume: vol, is_muted });
                             hide_osd();
                         }
                     }

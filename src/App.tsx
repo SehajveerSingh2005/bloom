@@ -8,7 +8,7 @@ import "./App.css";
 // Simple SVG icons
 function WifiIcon({ connected }: { connected: boolean }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" opacity={connected ? 1 : 0.4}>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" opacity={connected ? 1 : 0.4}>
       <path d="M5 12.55a11 11 0 0 1 14.08 0" />
       <path d="M1.42 9a16 16 0 0 1 21.16 0" />
       <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
@@ -207,6 +207,10 @@ function App() {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const [notchMode, setNotchMode] = useState(() => localStorage.getItem("bloom-notch-mode") || "fixed");
+  const [dockMode, setDockMode] = useState<'fixed' | 'auto-hide'>(() => {
+    return (localStorage.getItem("bloom-dock-mode") as 'fixed' | 'auto-hide') || 'auto-hide';
+  });
+  const [dndActive, setDndActive] = useState(false);
   const [isNotchHovered, setIsNotchHovered] = useState(false);
 
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
@@ -398,6 +402,7 @@ function App() {
         }
       }
       if (key === "dock-mode") {
+        setDockMode(value);
         if (windowLabel === 'main') {
           invoke("change_dock_mode", { mode: value });
           setTimeout(() => invoke("sync_appbar"), 200);
@@ -428,8 +433,8 @@ function App() {
     };
   }, [windowLabel]);
 
-  // Bloom mode state: 'music', 'calendar', or 'command-center'
-  const [bloomMode, setBloomMode] = useState<'music' | 'calendar' | 'command-center'>('command-center');
+  // Bloom mode state: 'music', 'calendar', 'command-center', or 'status'
+  const [bloomMode, setBloomMode] = useState<'music' | 'calendar' | 'command-center' | 'status'>('status');
 
   // Reset window height when state changes
   useEffect(() => {
@@ -439,7 +444,9 @@ function App() {
       if (bloomMode === 'calendar') {
         targetHeight = 320;
       } else if (bloomMode === 'command-center') {
-        targetHeight = isHovered ? 175 : 48;
+        targetHeight = isHovered ? 230 : 48;
+      } else if (bloomMode === 'status') {
+        targetHeight = 48;
       } else if (isHovered) {
         targetHeight = mediaInfo.has_media ? 140 : 64;
       }
@@ -470,7 +477,7 @@ function App() {
     const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
     if (Math.abs(delta) < 5) return; // Ignore tiny movements
 
-    const modes: ('music' | 'calendar' | 'command-center')[] = ['command-center', 'music', 'calendar'];
+    const modes: ('music' | 'command-center' | 'status' | 'calendar')[] = ['music', 'command-center', 'status', 'calendar'];
     const availableModes = modes.filter(m => m !== 'music' || mediaInfo.has_media);
 
     const currentIndex = availableModes.indexOf(bloomMode);
@@ -552,7 +559,7 @@ function App() {
     let timer: any;
     if (!isPlaying && bloomMode === 'music') {
       timer = setTimeout(() => {
-        setBloomMode('command-center');
+        setBloomMode('status');
       }, 5000);
     }
     return () => clearTimeout(timer);
@@ -627,10 +634,12 @@ function App() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  // Load wifi/bluetooth state on mount
+  // Load wifi/bluetooth/volume/brightness state on mount
   useEffect(() => {
     invoke<boolean>("get_wifi_state").then(setWifiEnabled).catch(() => {});
     invoke<boolean>("get_bluetooth_state").then(setBluetoothEnabled).catch(() => {});
+    invoke<number>("get_volume").then(setVolume).catch(() => {});
+    invoke<number>("get_brightness").then(setCurrentBrightness).catch(() => {});
   }, []);
 
   // Listen for brightness changes
@@ -842,6 +851,7 @@ function App() {
     }
   }, [bluetoothEnabled]);
 
+
   // Brightness change
   const handleBrightnessChange = useCallback(async (newVal: number) => {
     setCurrentBrightness(newVal);
@@ -870,6 +880,44 @@ function App() {
     }
   }, []);
 
+  const handleWifiRightClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openWifiSettings();
+  }, [openWifiSettings]);
+
+  const toggleDockModeSetting = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextMode = dockMode === "fixed" ? "auto-hide" : "fixed";
+    setDockMode(nextMode);
+    localStorage.setItem("bloom-dock-mode", nextMode);
+    try {
+      await invoke("change_dock_mode", { mode: nextMode });
+      await invoke("broadcast_setting", { key: "dock-mode", value: nextMode });
+    } catch (err) {
+      console.error("Failed to change dock mode:", err);
+    }
+  }, [dockMode]);
+
+  const toggleNotchModeSetting = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextMode = notchMode === "fixed" ? "auto-hide" : "fixed";
+    setNotchMode(nextMode);
+    localStorage.setItem("bloom-notch-mode", nextMode);
+    try {
+      await invoke("change_notch_mode", { mode: nextMode });
+      await invoke("broadcast_setting", { key: "notch-mode", value: nextMode });
+    } catch (err) {
+      console.error("Failed to change notch mode:", err);
+    }
+  }, [notchMode]);
+
+  const handleBluetoothRightClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    invoke("open_bluetooth_settings");
+  }, []);
+
 
 
   const toggleCalendarMode = (e: React.MouseEvent) => {
@@ -882,8 +930,8 @@ function App() {
 
     setBloomMode(prev => {
       if (prev === 'calendar') {
-        // Return to music mode if media is present and playing, otherwise command-center
-        return (mediaInfo.has_media && isPlaying) ? 'music' : 'command-center';
+        // Return to music mode if media is present and playing, otherwise status
+        return (mediaInfo.has_media && isPlaying) ? 'music' : 'status';
       }
       return 'calendar';
     });
@@ -895,7 +943,8 @@ function App() {
   // Calculate width dynamically based on enabled features
   const getDynamicWidth = () => {
     if (isCalendarMode) return 480;
-    if (bloomMode === 'command-center' && isHovered) return 340;
+    if (bloomMode === 'command-center' && isHovered) return 350;
+    if (bloomMode === 'status' && isHovered) return 280;
     if (isMusicMode && isHovered) return 340;
     if ((showPowerPulse || showLowBatteryPulse) && !isHovered) return 200;
 
@@ -918,7 +967,8 @@ function App() {
       return isImpacted ? 28.9 : 44.2;
     }
     if (bloomMode === 'calendar') return 280;
-    if (bloomMode === 'command-center') return isHovered ? 175 : 34;
+    if (bloomMode === 'command-center') return isHovered ? 230 : 34;
+    if (bloomMode === 'status') return 34;
     if (isMusicMode && isHovered) return 120;
     return 34;
   };
@@ -976,12 +1026,12 @@ function App() {
         }}
         onHoverStart={() => {
           setIsHovered(true);
-          setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'command-center');
+          setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'status');
         }}
         onHoverEnd={() => {
           setIsHovered(false);
-          if (bloomMode === 'command-center' || bloomMode === 'calendar') {
-            setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'command-center');
+          if (bloomMode === 'command-center' || bloomMode === 'calendar' || bloomMode === 'status') {
+            setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'status');
           }
         }}
         style={{ originY: 0 }}
@@ -1289,83 +1339,163 @@ function App() {
               <AnimatePresence>
                 {bloomMode === 'command-center' && (
                   <motion.div
-                    className="command-center-content"
+                    className="command-center-content-minimal"
                     onClick={e => e.stopPropagation()}
                     initial={{ opacity: 0, scale: 0.98 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.98, filter: "blur(4px)", transition: { duration: 0.15 } }}
                     transition={{ type: "spring", stiffness: 400, damping: 30 }}
                   >
-                    {/* Toggle tiles row */}
-                    <div className="cc-toggles-row">
-                      <div className={`cc-tile ${wifiEnabled ? 'active' : ''}`} onClick={(e) => { e.stopPropagation(); toggleWifi(); }}>
-                        <WifiIcon connected={wifiEnabled} />
-                        <span className="cc-tile-label">Wi-Fi</span>
+                    {/* Pills Grid */}
+                    <div className="cc-pills-grid">
+                      {/* Wi-Fi Pill */}
+                      <div 
+                        className={`cc-pill-tile ${wifiEnabled ? 'active' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); toggleWifi(); }}
+                        onContextMenu={handleWifiRightClick}
+                        title="Left-click to toggle, Right-click for Settings"
+                      >
+                        <div className="cc-pill-icon-wrapper">
+                          <WifiIcon connected={wifiEnabled} />
+                        </div>
+                        <div className="cc-pill-info">
+                          <span className="cc-pill-title">Wi-Fi</span>
+                          <span className="cc-pill-status">{wifiEnabled ? 'Connected' : 'Off'}</span>
+                        </div>
                       </div>
-                      <div className={`cc-tile ${bluetoothEnabled ? 'active' : ''}`} onClick={(e) => { e.stopPropagation(); toggleBluetooth(); }}>
-                        <BluetoothIcon />
-                        <span className="cc-tile-label">Bluetooth</span>
+
+                      {/* Dock Mode Pill */}
+                      <div 
+                        className={`cc-pill-tile ${dockMode === 'fixed' ? 'active' : ''}`}
+                        onClick={toggleDockModeSetting}
+                        title="Toggle Dock fixed / auto-hide"
+                      >
+                        <div className="cc-pill-icon-wrapper">
+                          <DockIcon />
+                        </div>
+                        <div className="cc-pill-info">
+                          <span className="cc-pill-title">Dock Mode</span>
+                          <span className="cc-pill-status">{dockMode === 'fixed' ? 'Fixed' : 'Auto Hide'}</span>
+                        </div>
                       </div>
-                      <div className="cc-tile" onClick={(e) => { e.stopPropagation(); openSystemTray(e); }}>
+
+                      {/* Bluetooth Pill */}
+                      <div 
+                        className={`cc-pill-tile ${bluetoothEnabled ? 'active' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); toggleBluetooth(); }}
+                        onContextMenu={handleBluetoothRightClick}
+                        title="Left-click to toggle, Right-click for Settings"
+                      >
+                        <div className="cc-pill-icon-wrapper">
+                          <BluetoothIcon />
+                        </div>
+                        <div className="cc-pill-info">
+                          <span className="cc-pill-title">Bluetooth</span>
+                          <span className="cc-pill-status">{bluetoothEnabled ? 'On' : 'Off'}</span>
+                        </div>
+                      </div>
+
+                      {/* Notch Mode Pill */}
+                      <div 
+                        className={`cc-pill-tile ${notchMode === 'fixed' ? 'active' : ''}`}
+                        onClick={toggleNotchModeSetting}
+                        title="Toggle Notch fixed / auto-hide"
+                      >
+                        <div className="cc-pill-icon-wrapper">
+                          <NotchIcon />
+                        </div>
+                        <div className="cc-pill-info">
+                          <span className="cc-pill-title">Notch Mode</span>
+                          <span className="cc-pill-status">{notchMode === 'fixed' ? 'Fixed' : 'Auto Hide'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Circular Actions Row */}
+                    <div className="cc-circular-actions-row">
+                      <button 
+                        className={`cc-circular-btn ${dndActive ? 'active' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); setDndActive(prev => !prev); }}
+                        title={`Focus / DND: ${dndActive ? 'On' : 'Off'}`}
+                      >
+                        <MoonIcon />
+                      </button>
+                      <button 
+                        className="cc-circular-btn" 
+                        onClick={(e) => { e.stopPropagation(); openSystemTray(e); }}
+                        title="System Tray"
+                      >
                         <TrayIcon />
-                        <span className="cc-tile-label">Tray</span>
-                      </div>
-                      <div className="cc-tile" onClick={(e) => { e.stopPropagation(); invoke("open_airplane_mode_settings"); }}>
-                        <AirplaneIcon />
-                        <span className="cc-tile-label">Airplane</span>
-                      </div>
+                      </button>
+                      <button 
+                        className="cc-circular-btn" 
+                        onClick={(e) => { e.stopPropagation(); invoke("open_notification_center"); }}
+                        title="Notification Center"
+                      >
+                        <BellIcon />
+                      </button>
+                      <button 
+                        className="cc-circular-btn" 
+                        onClick={(e) => { e.stopPropagation(); openSettingsWindow(); }}
+                        title="Bloom Settings"
+                      >
+                        <SettingsIcon />
+                      </button>
+                      <button 
+                        className="cc-circular-btn" 
+                        onClick={(e) => { e.stopPropagation(); invoke("restart_bloom"); }}
+                        title="Restart Bloom"
+                      >
+                        <ReloadIcon />
+                      </button>
                     </div>
 
-                    {/* Volume slider */}
-                    <div className="cc-slider-row">
-                      <VolumeLowIcon />
-                      <div className="slider-track-premium">
-                        <input
-                          type="range"
-                          min="0"
-                          max="1"
-                          step="0.01"
-                          value={volume}
-                          onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onClick={(e) => e.stopPropagation()}
-                          className="premium-slider"
-                        />
-                        <div className="slider-progress-fill" style={{ width: `${volume * 100}%` }} />
+                    {/* Classic Sliders Area */}
+                    <div className="cc-classic-sliders-area">
+                      {/* Volume Slider */}
+                      <div className="cc-classic-slider-row">
+                        <div className="cc-classic-slider-label">
+                          <VolumeLowIcon />
+                          <span>Volume</span>
+                        </div>
+                        <div className="cc-classic-slider-track">
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={volume}
+                            onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            className="cc-classic-input"
+                          />
+                          <div className="cc-classic-fill" style={{ width: `${volume * 100}%` }} />
+                        </div>
+                        <span className="cc-classic-percentage">{Math.round(volume * 100)}%</span>
                       </div>
-                      <VolumeHighIcon />
-                    </div>
 
-                    {/* Brightness slider */}
-                    <div className="cc-slider-row">
-                      <BrightnessLowIcon />
-                      <div className="slider-track-premium">
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          step="1"
-                          value={currentBrightness}
-                          onChange={(e) => handleBrightnessChange(parseInt(e.target.value))}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onClick={(e) => e.stopPropagation()}
-                          className="premium-slider"
-                        />
-                        <div className="slider-progress-fill" style={{ width: `${currentBrightness}%` }} />
-                      </div>
-                      <BrightnessHighIcon />
-                    </div>
-
-                    {/* Native settings links */}
-                    <div className="cc-links-row">
-                      <div className="cc-native-link" onClick={(e) => { e.stopPropagation(); openWifiSettings(); }}>
-                        <span>Wi-Fi Settings</span>
-                      </div>
-                      <div className="cc-native-link" onClick={(e) => { e.stopPropagation(); invoke("open_bluetooth_settings"); }}>
-                        <span>Bluetooth</span>
-                      </div>
-                      <div className="cc-native-link" onClick={(e) => { e.stopPropagation(); openSettingsWindow(); }}>
-                        <span>Settings</span>
+                      {/* Brightness Slider */}
+                      <div className="cc-classic-slider-row">
+                        <div className="cc-classic-slider-label">
+                          <BrightnessLowIcon />
+                          <span>Brightness</span>
+                        </div>
+                        <div className="cc-classic-slider-track">
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={currentBrightness}
+                            onChange={(e) => handleBrightnessChange(parseInt(e.target.value))}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            className="cc-classic-input"
+                          />
+                          <div className="cc-classic-fill" style={{ width: `${currentBrightness}%` }} />
+                        </div>
+                        <span className="cc-classic-percentage">{currentBrightness}%</span>
                       </div>
                     </div>
                   </motion.div>
@@ -1505,16 +1635,17 @@ function VolumeHighIcon() {
 
 function BluetoothIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M6.5 6.5l11 11L12 23V1l5.5 5.5-11 11" />
     </svg>
   );
 }
 
-function AirplaneIcon() {
+function SettingsIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.9 }}>
-      <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" />
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.9 }}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }
@@ -1527,18 +1658,48 @@ function BrightnessLowIcon() {
   );
 }
 
-function BrightnessHighIcon() {
+function MoonIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}>
-      <circle cx="12" cy="12" r="5" fill="currentColor" />
-      <line x1="12" y1="1" x2="12" y2="3" />
-      <line x1="12" y1="21" x2="12" y2="23" />
-      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-      <line x1="1" y1="12" x2="3" y2="12" />
-      <line x1="21" y1="12" x2="23" y2="12" />
-      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
+function DockIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="14" width="20" height="8" rx="2" />
+      <line x1="6" y1="18" x2="6.01" y2="18" strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="10" y1="18" x2="10.01" y2="18" strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="14" y1="18" x2="14.01" y2="18" strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="18" y1="18" x2="18.01" y2="18" strokeWidth="3.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function NotchIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 3h16a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+      <path d="M9 9v4a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2V9" />
+    </svg>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9z" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </svg>
+  );
+}
+
+function ReloadIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
     </svg>
   );
 }

@@ -972,25 +972,71 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
     }).await.map_err(|e| e.to_string())
 }
 
+const RADIO_SCRIPT: &str = r#"
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+[void][Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime]
+[void][Windows.Devices.Radios.RadioAccessStatus,Windows.System.Devices,ContentType=WindowsRuntime]
+
+$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { 
+    $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' 
+})[0]
+
+function Await-Task($WinRtTask, $ResultType) {
+    $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
+    $netTask = $asTask.Invoke($null, @($WinRtTask))
+    $netTask.Wait(-1) | Out-Null
+    return $netTask.Result
+}
+
+$access = Await-Task ([Windows.Devices.Radios.Radio]::RequestAccessAsync()) ([Windows.Devices.Radios.RadioAccessStatus])
+if ($access -eq 'Allowed') {
+    $radios = Await-Task ([Windows.Devices.Radios.Radio]::GetRadiosAsync()) ([System.Collections.Generic.IReadOnlyList[Windows.Devices.Radios.Radio]])
+} else {
+    $radios = @()
+}
+"#;
+
+#[tauri::command]
+pub fn get_volume() -> f32 {
+    crate::state::CURRENT_VOLUME.load(std::sync::atomic::Ordering::Relaxed) as f32 / 100.0
+}
+
+#[tauri::command]
+pub fn get_brightness() -> u32 {
+    crate::state::CURRENT_BRIGHTNESS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[tauri::command]
 pub async fn get_wifi_state() -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let output = std::process::Command::new("netsh")
-            .args(["interface", "show", "interface", "name=Wi-Fi"])
+        let script = format!(
+            "{}\n\
+             $target = $radios | Where-Object {{ $_.Kind.ToString() -eq 'WiFi' }};\n\
+             if ($target) {{ Write-Host $target.State.ToString() }}",
+            RADIO_SCRIPT
+        );
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", &script])
             .creation_flags(0x08000000)
             .output()
             .map_err(|e| e.to_string())?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.contains("Enabled"))
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(stdout == "On")
     }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn set_wifi_state(enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let admin = if enabled { "enable" } else { "disable" };
-        let output = std::process::Command::new("netsh")
-            .args(["interface", "set", "interface", "name=Wi-Fi", &format!("admin={}", admin)])
+        let state = if enabled { "On" } else { "Off" };
+        let script = format!(
+            "{}\n\
+             $target = $radios | Where-Object {{ $_.Kind.ToString() -eq 'WiFi' }};\n\
+             if ($target) {{ $null = Await-Task ($target.SetStateAsync('{}')) ([Windows.Devices.Radios.RadioAccessStatus]) }}",
+            RADIO_SCRIPT, state
+        );
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", &script])
             .creation_flags(0x08000000)
             .output()
             .map_err(|e| e.to_string())?;
@@ -1005,40 +1051,42 @@ pub async fn set_wifi_state(enabled: bool) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_bluetooth_state() -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let script = format!(
+            "{}\n\
+             $target = $radios | Where-Object {{ $_.Kind.ToString() -eq 'Bluetooth' }};\n\
+             if ($target) {{ Write-Host $target.State.ToString() }}",
+            RADIO_SCRIPT
+        );
         let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NoLogo", "-Command",
-                "Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' } | Select-Object -First 1 | ForEach-Object { 'ON' }"])
+            .args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", &script])
             .creation_flags(0x08000000)
             .output()
             .map_err(|e| e.to_string())?;
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(stdout == "ON")
+        Ok(stdout == "On")
     }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn set_bluetooth_state(enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let action = if enabled { "Enable" } else { "Disable" };
+        let state = if enabled { "On" } else { "Off" };
         let script = format!(
-            "$dev = Get-PnpDevice -Class Bluetooth -Status OK -ErrorAction SilentlyContinue | Select-Object -First 1; \
-             if ($dev) {{ {}-PnpDevice -InstanceId $dev.InstanceId -Confirm:$false -ErrorAction Stop; 'OK' }} else {{ 'NOTFOUND' }}",
-            action
+            "{}\n\
+             $target = $radios | Where-Object {{ $_.Kind.ToString() -eq 'Bluetooth' }};\n\
+             if ($target) {{ $null = Await-Task ($target.SetStateAsync('{}')) ([Windows.Devices.Radios.RadioAccessStatus]) }}",
+            RADIO_SCRIPT, state
         );
         let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NoLogo", "-Command", &script])
+            .args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", &script])
             .creation_flags(0x08000000)
             .output()
             .map_err(|e| e.to_string())?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if stdout == "OK" {
-            return Ok(());
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).to_string())
         }
-        let _ = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NoLogo", "-Command", "Start-Process 'ms-settings:bluetooth'"])
-            .creation_flags(0x08000000)
-            .output();
-        Ok(())
     }).await.map_err(|e| e.to_string())?
 }
 

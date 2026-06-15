@@ -73,6 +73,8 @@ fn main() {
             close_window,
             quit_bloom,
             restart_bloom,
+            get_volume,
+            get_brightness,
             set_volume,
             save_setting,
             load_settings,

@@ -905,8 +905,8 @@ body {
     z-index: 2;
 }
 
-/* Command Center Panel */
-.command-center-content {
+/* Command Center Panel - Minimal */
+.command-center-content-minimal {
     position: absolute;
     top: 36px;
     left: 0;
@@ -914,85 +914,233 @@ body {
     height: calc(100% - 36px);
     box-sizing: border-box;
     z-index: 2;
-    padding: 10px 14px;
+    padding: 12px 14px 12px 14px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    justify-content: space-between;
+    align-items: center;
     color: white;
     border-radius: 0 0 18px 18px;
     overflow: hidden;
 }
 
-.cc-toggles-row {
-    display: flex;
-    gap: 8px;
+/* Pills Grid */
+.cc-pills-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
     width: 100%;
+    height: 78px;
 }
 
-.cc-tile {
+.cc-pill-tile {
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.02);
+    cursor: pointer;
+    transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+    user-select: none;
+    height: 34px;
+    box-sizing: border-box;
+}
+
+.cc-pill-tile:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-0.5px);
+}
+
+.cc-pill-tile:active {
+    transform: scale(0.98);
+}
+
+.cc-pill-icon-wrapper {
+    display: flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    flex: 1;
-    padding: 10px 6px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.1);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    user-select: none;
-    border: 1px solid transparent;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.9);
+    transition: all 0.15s ease;
 }
 
-.cc-tile:hover {
-    background: rgba(255, 255, 255, 0.18);
-}
-
-.cc-tile.active {
-    background: rgba(255, 255, 255, 0.22);
-    border-color: rgba(255, 255, 255, 0.15);
-}
-
-.cc-tile-label {
-    font-size: 10px;
-    font-weight: 500;
-    opacity: 0.85;
-    line-height: 1;
-}
-
-.cc-slider-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
+.cc-pill-icon-wrapper svg {
+    width: 12px;
     height: 12px;
 }
 
-.cc-links-row {
+.cc-pill-info {
     display: flex;
-    gap: 6px;
-    width: 100%;
+    flex-direction: column;
+    line-height: 1.15;
 }
 
-.cc-native-link {
-    flex: 1;
+.cc-pill-title {
+    font-size: 9px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.cc-pill-status {
+    font-size: 7.5px;
+    color: rgba(255, 255, 255, 0.4);
+    font-weight: 500;
+}
+
+/* Active Monochrome pill states */
+.cc-pill-tile.active {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(255, 255, 255, 0.95);
+}
+
+.cc-pill-tile.active .cc-pill-title {
+    color: rgba(0, 0, 0, 0.9);
+}
+
+.cc-pill-tile.active .cc-pill-status {
+    color: rgba(0, 0, 0, 0.6);
+}
+
+.cc-pill-tile.active .cc-pill-icon-wrapper {
+    background: rgba(0, 0, 0, 0.08);
+    color: #000;
+}
+
+/* Circular Actions Row */
+.cc-circular-actions-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 0 4px;
+}
+
+.cc-circular-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.02);
+    color: rgba(255, 255, 255, 0.7);
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    padding: 6px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.06);
     cursor: pointer;
-    font-size: 10px;
-    font-weight: 500;
-    opacity: 0.7;
-    transition: all 0.2s ease;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.cc-native-link:hover {
-    opacity: 1;
+.cc-circular-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+.cc-circular-btn:active {
+    transform: scale(0.95) translateY(0);
+}
+
+.cc-circular-btn.active {
+    background: #ffffff;
+    border-color: #ffffff;
+    color: #000000;
+    box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
+}
+
+.cc-circular-btn.active:hover {
+    background: rgba(255, 255, 255, 0.9);
+}
+
+/* Classic Sliders Area */
+.cc-classic-sliders-area {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.cc-classic-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    height: 18px;
+    position: relative;
+}
+
+.cc-classic-slider-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 75px;
+    font-size: 9px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.cc-classic-slider-label svg {
+    opacity: 0.7;
+    width: 12px;
+    height: 12px;
+}
+
+.cc-classic-slider-track {
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    position: relative;
+    display: flex;
+    align-items: center;
+    transition: background 0.15s ease;
+}
+
+.cc-classic-slider-row:hover .cc-classic-slider-track {
     background: rgba(255, 255, 255, 0.12);
+}
+
+.cc-classic-fill {
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 3px;
+    height: 100%;
+    position: absolute;
+    left: 0;
+    top: 0;
+    pointer-events: none;
+    transition: width 0.05s linear, background 0.15s ease;
+}
+
+.cc-classic-slider-row:hover .cc-classic-fill {
+    background: #ffffff;
+    box-shadow: 0 0 4px rgba(255, 255, 255, 0.15);
+}
+
+.cc-classic-percentage {
+    width: 28px;
+    text-align: right;
+    font-size: 9px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.55);
+    font-variant-numeric: tabular-nums;
+}
+
+.cc-classic-slider-row:hover .cc-classic-percentage {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.cc-classic-input {
+    position: absolute;
+    top: -6px;
+    left: 0;
+    width: 100%;
+    height: 18px;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 4;
+    margin: 0;
 }
 
