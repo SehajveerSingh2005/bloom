@@ -1230,9 +1230,10 @@ function App() {
                                 <motion.div
                                   key="left-weather"
                                   className="passive-features-group"
-                                  initial={{ opacity: 0 }}
-                                  animate={{ opacity: 1 }}
-                                  exit={{ opacity: 0 }}
+                                  initial={{ opacity: 0, scale: 0.8, x: -15 }}
+                                  animate={{ opacity: 1, scale: 1, x: 0 }}
+                                  exit={{ opacity: 0, scale: 0.8, x: -15 }}
+                                  transition={{ type: "spring", stiffness: 500, damping: 24 }}
                                 >
                                   <div className="passive-feature" title={weatherCondition}>
                                     <ThermometerIcon />
@@ -1316,12 +1317,19 @@ function App() {
                               </div>
                             ) : (!isMusicMode && isHovered) ? (
                               <div className="side-content right">
-                                <div className="passive-features-group">
+                                <motion.div
+                                  key="right-battery"
+                                  className="passive-features-group"
+                                  initial={{ opacity: 0, scale: 0.8, x: 15 }}
+                                  animate={{ opacity: 1, scale: 1, x: 0 }}
+                                  exit={{ opacity: 0, scale: 0.8, x: 15 }}
+                                  transition={{ type: "spring", stiffness: 500, damping: 24 }}
+                                >
                                   <div className="passive-feature">
                                     <BatteryIcon charging={isCharging} level={batteryLevel} threshold={lowBatteryThreshold} />
                                     <span className="label">{batteryLevel}%</span>
                                   </div>
-                                </div>
+                                </motion.div>
                               </div>
                             ) : (
                               /* Spacer to keep time centered if the OTHER side has content */
