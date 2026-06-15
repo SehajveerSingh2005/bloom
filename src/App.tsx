@@ -1230,9 +1230,9 @@ function App() {
                                 <motion.div
                                   key="left-weather"
                                   className="passive-features-group"
-                                  initial={{ opacity: 0, scale: 0.8, x: -15 }}
+                                  initial={{ opacity: 0, scale: 0.8, x: 15 }}
                                   animate={{ opacity: 1, scale: 1, x: 0 }}
-                                  exit={{ opacity: 0, scale: 0.8, x: -15 }}
+                                  exit={{ opacity: 0, scale: 0.8, x: 15 }}
                                   transition={{ type: "spring", stiffness: 450, damping: 26, delay: 0.08 }}
                                 >
                                   <div className="passive-feature" title={weatherCondition}>
@@ -1320,9 +1320,9 @@ function App() {
                                 <motion.div
                                   key="right-battery"
                                   className="passive-features-group"
-                                  initial={{ opacity: 0, scale: 0.8, x: 15 }}
+                                  initial={{ opacity: 0, scale: 0.8, x: -15 }}
                                   animate={{ opacity: 1, scale: 1, x: 0 }}
-                                  exit={{ opacity: 0, scale: 0.8, x: 15 }}
+                                  exit={{ opacity: 0, scale: 0.8, x: -15 }}
                                   transition={{ type: "spring", stiffness: 450, damping: 26, delay: 0.08 }}
                                 >
                                   <div className="passive-feature">
