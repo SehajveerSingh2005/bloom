@@ -636,10 +636,10 @@ function App() {
 
   // Load wifi/bluetooth/volume/brightness state on mount
   useEffect(() => {
-    invoke<boolean>("get_wifi_state").then(setWifiEnabled).catch(() => {});
-    invoke<boolean>("get_bluetooth_state").then(setBluetoothEnabled).catch(() => {});
-    invoke<number>("get_volume").then(setVolume).catch(() => {});
-    invoke<number>("get_brightness").then(setCurrentBrightness).catch(() => {});
+    invoke<boolean>("get_wifi_state").then(setWifiEnabled).catch(() => { });
+    invoke<boolean>("get_bluetooth_state").then(setBluetoothEnabled).catch(() => { });
+    invoke<number>("get_volume").then(setVolume).catch(() => { });
+    invoke<number>("get_brightness").then(setCurrentBrightness).catch(() => { });
   }, []);
 
   // Listen for brightness changes
@@ -1230,10 +1230,10 @@ function App() {
                                 <motion.div
                                   key="left-weather"
                                   className="passive-features-group"
-                                  initial={{ opacity: 0, scale: 0.8, x: 15 }}
-                                  animate={{ opacity: 1, scale: 1, x: 0 }}
-                                  exit={{ opacity: 0, scale: 0.8, x: 15 }}
-                                  transition={{ type: "spring", stiffness: 450, damping: 26, delay: 0.08 }}
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  exit={{ opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
                                 >
                                   <div className="passive-feature" title={weatherCondition}>
                                     <ThermometerIcon />
@@ -1320,10 +1320,10 @@ function App() {
                                 <motion.div
                                   key="right-battery"
                                   className="passive-features-group"
-                                  initial={{ opacity: 0, scale: 0.8, x: -15 }}
-                                  animate={{ opacity: 1, scale: 1, x: 0 }}
-                                  exit={{ opacity: 0, scale: 0.8, x: -15 }}
-                                  transition={{ type: "spring", stiffness: 450, damping: 26, delay: 0.08 }}
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  exit={{ opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
                                 >
                                   <div className="passive-feature">
                                     <BatteryIcon charging={isCharging} level={batteryLevel} threshold={lowBatteryThreshold} />
@@ -1357,7 +1357,7 @@ function App() {
                     {/* Pills Grid */}
                     <div className="cc-pills-grid">
                       {/* Wi-Fi Pill */}
-                      <div 
+                      <div
                         className={`cc-pill-tile ${wifiEnabled ? 'active' : ''}`}
                         onClick={(e) => { e.stopPropagation(); toggleWifi(); }}
                         onContextMenu={handleWifiRightClick}
@@ -1373,7 +1373,7 @@ function App() {
                       </div>
 
                       {/* Dock Mode Pill */}
-                      <div 
+                      <div
                         className={`cc-pill-tile ${dockMode === 'fixed' ? 'active' : ''}`}
                         onClick={toggleDockModeSetting}
                         title="Toggle Dock fixed / auto-hide"
@@ -1388,7 +1388,7 @@ function App() {
                       </div>
 
                       {/* Bluetooth Pill */}
-                      <div 
+                      <div
                         className={`cc-pill-tile ${bluetoothEnabled ? 'active' : ''}`}
                         onClick={(e) => { e.stopPropagation(); toggleBluetooth(); }}
                         onContextMenu={handleBluetoothRightClick}
@@ -1404,7 +1404,7 @@ function App() {
                       </div>
 
                       {/* Notch Mode Pill */}
-                      <div 
+                      <div
                         className={`cc-pill-tile ${notchMode === 'fixed' ? 'active' : ''}`}
                         onClick={toggleNotchModeSetting}
                         title="Toggle Notch fixed / auto-hide"
@@ -1421,36 +1421,36 @@ function App() {
 
                     {/* Circular Actions Row */}
                     <div className="cc-circular-actions-row">
-                      <button 
+                      <button
                         className={`cc-circular-btn ${dndActive ? 'active' : ''}`}
                         onClick={(e) => { e.stopPropagation(); setDndActive(prev => !prev); }}
                         title={`Focus / DND: ${dndActive ? 'On' : 'Off'}`}
                       >
                         <MoonIcon />
                       </button>
-                      <button 
-                        className="cc-circular-btn" 
+                      <button
+                        className="cc-circular-btn"
                         onClick={(e) => { e.stopPropagation(); openSystemTray(e); }}
                         title="System Tray"
                       >
                         <TrayIcon />
                       </button>
-                      <button 
-                        className="cc-circular-btn" 
+                      <button
+                        className="cc-circular-btn"
                         onClick={(e) => { e.stopPropagation(); invoke("open_notification_center"); }}
                         title="Notification Center"
                       >
                         <BellIcon />
                       </button>
-                      <button 
-                        className="cc-circular-btn" 
+                      <button
+                        className="cc-circular-btn"
                         onClick={(e) => { e.stopPropagation(); openSettingsWindow(); }}
                         title="Bloom Settings"
                       >
                         <SettingsIcon />
                       </button>
-                      <button 
-                        className="cc-circular-btn" 
+                      <button
+                        className="cc-circular-btn"
                         onClick={(e) => { e.stopPropagation(); invoke("restart_bloom"); }}
                         title="Restart Bloom"
                       >
