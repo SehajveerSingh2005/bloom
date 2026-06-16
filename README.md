@@ -11,17 +11,9 @@
 
 *A desktop companion that moves like thought — fluid, responsive, and unapologetically beautiful.*
 
-<br>
-
-[![Release](https://img.shields.io/github/v/release/SehajveerSingh2005/bloom?style=flat-square&color=0a0a0a&labelColor=f5f5f5)](https://github.com/SehajveerSingh2005/bloom/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/SehajveerSingh2005/bloom/total?style=flat-square&color=0a0a0a&labelColor=f5f5f5)](https://github.com/SehajveerSingh2005/bloom/releases)
-[![License](https://img.shields.io/github/license/SehajveerSingh2005/bloom?style=flat-square&color=0a0a0a&labelColor=f5f5f5)](https://github.com/SehajveerSingh2005/bloom/blob/main/LICENSE)
-[![Stars](https://img.shields.io/github/stars/SehajveerSingh2005/bloom?style=flat-square&color=0a0a0a&labelColor=f5f5f5)](https://github.com/SehajveerSingh2005/bloom)
-
-<br>
-
 <!-- HERO SHOWCASE — full-screen hero image or video goes here -->
 <!-- ![Hero](your-hero-image-or-video-url) -->
+<img width="1920" height="1080" alt="Screenshot (170)" src="https://github.com/user-attachments/assets/22041f25-a69e-457d-80d9-7dfbfbed2d29" />
 
 </div>
 
