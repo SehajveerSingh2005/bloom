@@ -88,11 +88,8 @@ pub async fn init_dock(app: AppHandle, mode: String) {
             }
         }
 
-        // 4. Sync overlap state
-        let current = CURRENT_DOCK_OVERLAP.load(Ordering::Relaxed);
-        if current != -1 {
-            let _ = app.emit("dock-overlap", current == 1);
-        }
+        // 4. Force dock visible on init — overlap thread will re-sync shortly
+        let _ = app.emit("dock-overlap", false);
     }
 }
 
@@ -143,23 +140,25 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
     if let Some(dock_win) = app.get_webview_window("dock") {
         if mode == "fixed" {
             register_dock_appbar(dock_win.clone());
-        } else if let Ok(hwnd) = dock_win.hwnd() {
-            let hwnd_val = hwnd.0 as isize;
-            tauri::async_runtime::spawn_blocking(move || {
-                unregister_appbar_native(HWND(hwnd_val as *mut _));
-            });
-            DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
-            
-            // Force position even in auto-hide mode to ensure it's at the screen bottom
-            if let Ok(Some(monitor)) = dock_win.primary_monitor() {
-                let m_size = monitor.size();
-                let m_pos = monitor.position();
-                let scale = dock_win.scale_factor().unwrap_or(1.0);
-                let ph = dock_win.outer_size().map(|s| s.height as i32).unwrap_or((600.0 * scale) as i32);
-                let final_y = m_pos.y + m_size.height as i32 - ph;
-                unsafe {
-                    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED};
-                    let _ = SetWindowPos(hwnd, None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        } else {
+            let _ = dock_win.show();
+            if let Ok(hwnd) = dock_win.hwnd() {
+                let hwnd_val = hwnd.0 as isize;
+                tauri::async_runtime::spawn_blocking(move || {
+                    unregister_appbar_native(HWND(hwnd_val as *mut _));
+                });
+                DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
+                
+                if let Ok(Some(monitor)) = dock_win.primary_monitor() {
+                    let m_size = monitor.size();
+                    let m_pos = monitor.position();
+                    let scale = dock_win.scale_factor().unwrap_or(1.0);
+                    let ph = dock_win.outer_size().map(|s| s.height as i32).unwrap_or((600.0 * scale) as i32);
+                    let final_y = m_pos.y + m_size.height as i32 - ph;
+                    unsafe {
+                        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED};
+                        let _ = SetWindowPos(hwnd, None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                    }
                 }
             }
         }
