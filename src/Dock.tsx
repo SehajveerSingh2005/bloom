@@ -569,7 +569,8 @@ const Dock = memo(function Dock() {
                   onPointerDown={() => setPressedApp(app.path)}
                   onPointerUp={() => setPressedApp(null)}
                   onPointerCancel={() => setPressedApp(null)}
-                  onTap={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     if (!isDragging) handleAppClick(app);
                   }}
                 >

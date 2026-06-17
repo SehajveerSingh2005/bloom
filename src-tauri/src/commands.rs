@@ -253,6 +253,40 @@ pub async fn open_app(app_name: String) {
     if app_name == "start" {
         tauri::async_runtime::spawn_blocking(move || unsafe {
             use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, KEYBDINPUT, VK_LWIN, KEYEVENTF_KEYUP};
+            use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetClassNameA, GetWindowTextW, IsWindowVisible};
+
+            // Check if Start menu is already open — if so, close it
+            let hwnd = GetForegroundWindow();
+            if !hwnd.is_invalid() && IsWindowVisible(hwnd).as_bool() {
+                let mut class_name = [0u8; 256];
+                let len = GetClassNameA(hwnd, &mut class_name);
+                let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
+
+                let mut title = [0u16; 512];
+                let title_len = GetWindowTextW(hwnd, &mut title);
+                let title_str = String::from_utf16_lossy(&title[..title_len as usize]);
+
+                let is_start_menu = (class_str == "Windows.UI.Core.CoreWindow" || class_str == "SimpleWindow")
+                    && (title_str == "Start" || title_str == "Search");
+
+                if is_start_menu {
+                    // Start menu is open — just send Win key to close it
+                    let inputs = [
+                        INPUT {
+                            r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+                            Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_LWIN, wScan: 0, dwFlags: Default::default(), time: 0, dwExtraInfo: 0 } },
+                        },
+                        INPUT {
+                            r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+                            Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_LWIN, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 } },
+                        },
+                    ];
+                    SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+                    return;
+                }
+            }
+
+            // Start menu not open — send Win key to open it
             let inputs = [
                 INPUT {
                     r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
@@ -436,7 +470,7 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
 #[tauri::command]
 pub async fn focus_window(hwnd: isize) {
     tauri::async_runtime::spawn_blocking(move || unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW, SW_MINIMIZE, IsIconic, GetForegroundWindow, IsWindowVisible};
+        use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW, SW_MINIMIZE, IsIconic, GetForegroundWindow, IsWindowVisible, GetWindowThreadProcessId};
         let hwnd = HWND(hwnd as *mut _);
         let fg = GetForegroundWindow();
         
@@ -447,14 +481,29 @@ pub async fn focus_window(hwnd: isize) {
         } else if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
             let _ = SetForegroundWindow(hwnd);
-        } else if fg == hwnd {
-            let _ = ShowWindow(hwnd, SW_MINIMIZE);
         } else {
-            use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
-            let fg_root = GetAncestor(fg, GA_ROOT);
-            let hwnd_root = GetAncestor(hwnd, GA_ROOT);
-            
-            if fg_root == hwnd_root && !fg_root.is_invalid() {
+            // Check if target window or any of its ancestors is the foreground window
+            let mut is_target_fg = fg == hwnd;
+            if !is_target_fg && !fg.is_invalid() {
+                use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
+                let fg_root = GetAncestor(fg, GA_ROOT);
+                let hwnd_root = GetAncestor(hwnd, GA_ROOT);
+                if fg_root == hwnd_root && !fg_root.is_invalid() {
+                    is_target_fg = true;
+                }
+                // Also check if the foreground window belongs to the same process
+                if !is_target_fg {
+                    let mut fg_pid = 0u32;
+                    let mut target_pid = 0u32;
+                    GetWindowThreadProcessId(fg, Some(&mut fg_pid));
+                    GetWindowThreadProcessId(hwnd, Some(&mut target_pid));
+                    if fg_pid == target_pid && fg_pid != 0 {
+                        is_target_fg = true;
+                    }
+                }
+            }
+
+            if is_target_fg {
                 let _ = ShowWindow(hwnd, SW_MINIMIZE);
             } else {
                 let _ = SetForegroundWindow(hwnd);
