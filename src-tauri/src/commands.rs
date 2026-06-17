@@ -201,6 +201,13 @@ pub async fn change_notch_mode(app: AppHandle, mode: String) {
                 MAIN_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
             }
         }
+        // Reposition window to span the full primary monitor so CSS justify-content:center works
+        if let Ok(Some(monitor)) = main_win.primary_monitor() {
+            let m_pos = monitor.position();
+            let m_size = monitor.size();
+            let _ = main_win.set_position(tauri::PhysicalPosition::new(m_pos.x, m_pos.y));
+            let _ = main_win.set_size(tauri::PhysicalSize::new(m_size.width, 360));
+        }
         
         let current = CURRENT_NOTCH_OVERLAP.load(Ordering::Relaxed);
         if current != -1 {
