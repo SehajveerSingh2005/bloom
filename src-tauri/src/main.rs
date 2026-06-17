@@ -18,6 +18,9 @@ use crate::utils::*;
 use crate::services::*;
 use crate::commands::*;
 
+static mut SINGLE_INSTANCE_EVENT_HANDLE: isize = 0;
+static mut SINGLE_INSTANCE_MUTEX_HANDLE: isize = 0;
+
 unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     if ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT {
         set_taskbar_visibility(true, true);
@@ -31,6 +34,34 @@ fn main() {
     unsafe {
         let _ = SetConsoleCtrlHandler(Some(ctrl_handler), true);
     }
+
+    // Single-instance enforcement
+    unsafe {
+        use windows::Win32::System::Threading::{CreateMutexW, CreateEventW, OpenEventW, SetEvent, SYNCHRONIZATION_ACCESS_RIGHTS};
+        use windows::Win32::Foundation::{GetLastError, CloseHandle};
+
+        let mutex_name: Vec<u16> = "BloomSingleInstance".encode_utf16().chain(std::iter::once(0)).collect();
+        let event_name: Vec<u16> = "BloomOpenSettings".encode_utf16().chain(std::iter::once(0)).collect();
+
+        let h_mutex = CreateMutexW(None, true, windows::core::PCWSTR(mutex_name.as_ptr())).ok();
+        let err = GetLastError();
+
+        if err.0 == 183 {
+            // Another instance is already running — signal it to open settings
+            if let Ok(h_event) = OpenEventW(SYNCHRONIZATION_ACCESS_RIGHTS(0x00100002), false, windows::core::PCWSTR(event_name.as_ptr())) {
+                let _ = SetEvent(h_event);
+                let _ = CloseHandle(h_event);
+            }
+            if let Some(h) = h_mutex { let _ = CloseHandle(h); }
+            return;
+        }
+
+        if let Ok(h_event) = CreateEventW(None, false, false, windows::core::PCWSTR(event_name.as_ptr())) {
+            SINGLE_INSTANCE_EVENT_HANDLE = h_event.0 as isize;
+        }
+        if let Some(h) = h_mutex { SINGLE_INSTANCE_MUTEX_HANDLE = h.0 as isize; }
+    }
+
     setup_brightness_worker();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -177,6 +208,24 @@ fn main() {
             let _hook = services::setup_keyboard_hook();
             setup_taskbar_hook();
             setup_audio_visualization(app.handle().clone());
+
+            // Listen for second-instance signal to open settings
+            unsafe {
+                if SINGLE_INSTANCE_EVENT_HANDLE != 0 {
+                    let app_handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+                        use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
+                        let h_event = HANDLE(SINGLE_INSTANCE_EVENT_HANDLE as *mut _);
+                        loop {
+                            let result = WaitForSingleObject(h_event, INFINITE);
+                            if result == WAIT_OBJECT_0 {
+                                crate::commands::open_settings_window(app_handle.clone());
+                            }
+                        }
+                    });
+                }
+            }
 
             if let Some(settings_win) = app.get_webview_window("settings") {
                 #[cfg(target_os = "windows")]
