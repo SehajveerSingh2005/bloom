@@ -2,6 +2,7 @@ import { StrictMode, useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow, Effect } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { check } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
@@ -114,6 +115,23 @@ function SettingsApp() {
 
     getVersion().then(setAppVersion);
     checkForUpdates(false);
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen<{ key: string, value: any }>("settings-changed", (event) => {
+      const { key, value } = event.payload;
+      if (key === "dock-mode") setDockMode(value);
+      if (key === "notch-mode") setNotchMode(value);
+      if (key === "dock-enabled") setDockEnabled(value);
+      if (key === "weather") setWeatherEnabled(value);
+      if (key === "calendar") setCalendarEnabled(value);
+      if (key === "visualizer") setMediaVisualizerEnabled(value);
+      if (key === "album-art") setMediaAlbumArtEnabled(value);
+      if (key === "media-ambience-enabled") setMediaAmbienceEnabled(value);
+      if (key === "corners-enabled") setCornersEnabled(value);
+      if (key === "low-battery-threshold") setLowBatteryThreshold(value);
+    });
+    return () => { unlisten.then(fn => fn()); };
   }, []);
 
 

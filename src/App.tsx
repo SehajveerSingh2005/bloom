@@ -942,6 +942,7 @@ function App() {
     const nextMode = dockMode === "fixed" ? "auto-hide" : "fixed";
     setDockMode(nextMode);
     localStorage.setItem("bloom-dock-mode", nextMode);
+    invoke("save_setting", { key: "bloom-dock-mode", value: nextMode }).catch(console.error);
     try {
       await invoke("change_dock_mode", { mode: nextMode });
       await invoke("broadcast_setting", { key: "dock-mode", value: nextMode });
@@ -955,6 +956,7 @@ function App() {
     const nextMode = notchMode === "fixed" ? "auto-hide" : "fixed";
     setNotchMode(nextMode);
     localStorage.setItem("bloom-notch-mode", nextMode);
+    invoke("save_setting", { key: "bloom-notch-mode", value: nextMode }).catch(console.error);
     try {
       await invoke("change_notch_mode", { mode: nextMode });
       await invoke("broadcast_setting", { key: "notch-mode", value: nextMode });
