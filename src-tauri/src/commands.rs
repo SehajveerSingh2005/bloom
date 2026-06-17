@@ -192,12 +192,15 @@ pub async fn change_notch_mode(app: AppHandle, mode: String) {
     if let Some(main_win) = app.get_webview_window("main") {
         if mode == "fixed" {
             register_appbar(main_win.clone());
-        } else if let Ok(hwnd) = main_win.hwnd() {
-            let hwnd_val = hwnd.0 as isize;
-            tauri::async_runtime::spawn_blocking(move || {
-                unregister_appbar_native(HWND(hwnd_val as *mut _));
-            });
-            MAIN_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
+        } else {
+            let _ = main_win.show();
+            if let Ok(hwnd) = main_win.hwnd() {
+                let hwnd_val = hwnd.0 as isize;
+                tauri::async_runtime::spawn_blocking(move || {
+                    unregister_appbar_native(HWND(hwnd_val as *mut _));
+                });
+                MAIN_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
+            }
         }
         
         let current = CURRENT_NOTCH_OVERLAP.load(Ordering::Relaxed);
