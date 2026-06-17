@@ -1038,7 +1038,7 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                                 None
                             };
 
-                            if let Some((win_pos, win_size)) = main_rect_val {
+                            if let Some((win_pos, _)) = main_rect_val {
                                 if let Ok(region) = NOTCH_RECT.try_lock() {
                                     if let Some(r) = *region {
                                         let scale = main_win.scale_factor().unwrap_or(1.0);
@@ -1048,7 +1048,7 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                                         
                                         // Pre-interactive vertical range: from screen top down to window height + 40px padding
                                         let ry_top = win_pos.y;
-                                        let ry_bottom = win_pos.y + win_size.height as i32 + (40.0 * scale) as i32;
+                                        let ry_bottom = win_pos.y + (r.height as f64 * scale) as i32 + (40.0 * scale) as i32;
                                         
                                         if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry_top && pt.y <= ry_bottom {
                                             is_click_interactive = true;

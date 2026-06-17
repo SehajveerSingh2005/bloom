@@ -498,30 +498,7 @@ function App() {
   // Bloom mode state: 'music', 'calendar', 'command-center', or 'status'
   const [bloomMode, setBloomMode] = useState<'music' | 'calendar' | 'command-center' | 'status'>('status');
 
-  // Reset window height when state changes
-  useEffect(() => {
-    let targetHeight = 48;
-
-    if (isExpanded) {
-      if (bloomMode === 'calendar') {
-        targetHeight = 320;
-      } else if (bloomMode === 'command-center') {
-        targetHeight = isHovered ? 230 : 48;
-      } else if (bloomMode === 'status') {
-        targetHeight = 48;
-      } else if (isHovered) {
-        targetHeight = mediaInfo.has_media ? 140 : 64;
-      }
-    }
-
-    // Debounce the Tauri window resize to prevent race conditions during rapid HMR/scroll switches
-    const delay = isExpanded ? 50 : 350; // Faster expansion, slightly delayed collapse for better UX
-    const timeout = setTimeout(() => {
-      invoke("set_window_height", { height: targetHeight });
-    }, delay);
-
-    return () => clearTimeout(timeout);
-  }, [isHovered, bloomMode, isExpanded, mediaInfo.has_media]);
+  // Window height is now kept constant to prevent rendering layout lag and sharp corners
 
   const lastScrollTime = useRef(0);
   const handleWheel = (e: React.WheelEvent) => {
@@ -1090,8 +1067,8 @@ function App() {
           scaleY: 1,
           borderTopLeftRadius: isImpacted ? 0 : 18,
           borderTopRightRadius: isImpacted ? 0 : 18,
-          borderBottomLeftRadius: 18,
-          borderBottomRightRadius: 18,
+          borderBottomLeftRadius: isCalendarMode ? 28 : 18,
+          borderBottomRightRadius: isCalendarMode ? 28 : 18,
           filter: isVisible ? "blur(0px)" : "blur(8px)",
           pointerEvents: isVisible ? 'auto' : 'none'
         }}
@@ -1116,6 +1093,8 @@ function App() {
           opacity: { duration: 0.2 },
           borderTopLeftRadius: { type: "spring", stiffness: 1000, damping: 40 },
           borderTopRightRadius: { type: "spring", stiffness: 1000, damping: 40 },
+          borderBottomLeftRadius: { type: "spring", stiffness: 1000, damping: 40 },
+          borderBottomRightRadius: { type: "spring", stiffness: 1000, damping: 40 },
           default: { type: "spring", stiffness: 500, damping: 30, mass: 1 }
         }}
       >
