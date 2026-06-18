@@ -839,13 +839,21 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     is_known_shell = false;
                 }
 
+                // Only report dock overlap when the dock window is actually visible.
+                // On autostart, the overlap thread starts before init_dock shows the window,
+                // and without this guard it emits dock-overlap:true which hides the dock
+                // right after init_dock emits dock-overlap:false.
+                let dock_visible = handle_visibility.get_webview_window("dock")
+                    .is_some_and(|w| w.is_visible().unwrap_or(false));
+                let effective_dock_overlap = should_overlap && dock_visible;
+
                 // Update overlap state
-                CURRENT_DOCK_OVERLAP.store(if should_overlap { 1 } else { 0 }, Ordering::Relaxed);
+                CURRENT_DOCK_OVERLAP.store(if effective_dock_overlap { 1 } else { 0 }, Ordering::Relaxed);
                 CURRENT_NOTCH_OVERLAP.store(if should_notch_overlap { 1 } else { 0 }, Ordering::Relaxed);
                 
-                if Some(should_overlap) != last_dock_overlap || last_emit.elapsed() >= Duration::from_secs(3) {
-                    let _ = handle_visibility.emit("dock-overlap", should_overlap);
-                    last_dock_overlap = Some(should_overlap);
+                if Some(effective_dock_overlap) != last_dock_overlap || last_emit.elapsed() >= Duration::from_secs(3) {
+                    let _ = handle_visibility.emit("dock-overlap", effective_dock_overlap);
+                    last_dock_overlap = Some(effective_dock_overlap);
                     last_emit = Instant::now();
                 }
 

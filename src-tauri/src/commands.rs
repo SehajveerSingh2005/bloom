@@ -60,35 +60,47 @@ pub fn set_ignore_cursor_events(window: Window, ignore: bool) {
 #[tauri::command]
 pub async fn init_dock(app: AppHandle, mode: String) {
     if let Some(dock_win) = app.get_webview_window("dock") {
-        // 1. Hide taskbar
-        set_taskbar_visibility(false, false);
-        NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
-
-        // 2. Set window properties
+        // 1. Set window properties
         let _ = dock_win.set_always_on_top(true);
         
-        // 3. Show and Register
+        // 2. Show and Register
         if mode == "fixed" {
             register_dock_appbar(dock_win.clone());
         } else {
+            // Auto-hide mode: show and position at bottom of screen.
+            // primary_monitor() can return None during Windows login autostart
+            // before the shell is fully initialized — retry if needed.
             let _ = dock_win.show();
-            // In auto-hide mode, we still want to ensure it's at the bottom
-            if let Ok(hwnd) = dock_win.hwnd() {
-                if let Ok(Some(monitor)) = dock_win.primary_monitor() {
-                    let m_size = monitor.size();
-                    let m_pos = monitor.position();
-                    let scale = dock_win.scale_factor().unwrap_or(1.0);
-                    let ph = dock_win.outer_size().map(|s| s.height as i32).unwrap_or((100.0 * scale) as i32);
-                    let final_y = m_pos.y + m_size.height as i32 - ph;
-                    unsafe {
-                        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED};
-                        let _ = SetWindowPos(hwnd, None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            let dock_clone = dock_win.clone();
+            tauri::async_runtime::spawn(async move {
+                for attempt in 0..15 {
+                    if let Ok(hwnd) = dock_clone.hwnd() {
+                        if let Ok(Some(monitor)) = dock_clone.primary_monitor() {
+                            let m_size = monitor.size();
+                            let m_pos = monitor.position();
+                            let scale = dock_clone.scale_factor().unwrap_or(1.0);
+                            let ph = dock_clone.outer_size().map(|s| s.height as i32).unwrap_or((600.0 * scale) as i32);
+                            let final_y = m_pos.y + m_size.height as i32 - ph;
+                            unsafe {
+                                use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED};
+                                let _ = SetWindowPos(hwnd, None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                            }
+                            break;
+                        }
+                    }
+                    if attempt < 14 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
                     }
                 }
-            }
+            });
         }
 
-        // 4. Force dock visible on init — overlap thread will re-sync shortly
+        // 3. Hide taskbar after showing dock (not before, so user always has something)
+        set_taskbar_visibility(false, false);
+        NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
+
+        // 4. Reset overlap state so the overlap thread re-syncs cleanly
+        CURRENT_DOCK_OVERLAP.store(0, Ordering::Relaxed);
         let _ = app.emit("dock-overlap", false);
     }
 }
@@ -149,17 +161,29 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
                 });
                 DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
                 
-                if let Ok(Some(monitor)) = dock_win.primary_monitor() {
-                    let m_size = monitor.size();
-                    let m_pos = monitor.position();
-                    let scale = dock_win.scale_factor().unwrap_or(1.0);
-                    let ph = dock_win.outer_size().map(|s| s.height as i32).unwrap_or((600.0 * scale) as i32);
-                    let final_y = m_pos.y + m_size.height as i32 - ph;
-                    unsafe {
-                        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED};
-                        let _ = SetWindowPos(hwnd, None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                // Retry primary_monitor() — can fail on autostart before shell initializes
+                let dock_clone = dock_win.clone();
+                tauri::async_runtime::spawn(async move {
+                    for attempt in 0..10 {
+                        if let Ok(hwnd) = dock_clone.hwnd() {
+                            if let Ok(Some(monitor)) = dock_clone.primary_monitor() {
+                                let m_size = monitor.size();
+                                let m_pos = monitor.position();
+                                let scale = dock_clone.scale_factor().unwrap_or(1.0);
+                                let ph = dock_clone.outer_size().map(|s| s.height as i32).unwrap_or((600.0 * scale) as i32);
+                                let final_y = m_pos.y + m_size.height as i32 - ph;
+                                unsafe {
+                                    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED};
+                                    let _ = SetWindowPos(hwnd, None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                                }
+                                break;
+                            }
+                        }
+                        if attempt < 9 {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                        }
                     }
-                }
+                });
             }
         }
         
@@ -884,7 +908,10 @@ pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Re
 
 #[tauri::command]
 pub fn load_settings(app: AppHandle) -> Result<HashMap<String, serde_json::Value>, String> {
-    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
+    let path = match app.path().app_config_dir() {
+        Ok(p) => p.join("settings.json"),
+        Err(_) => return Ok(HashMap::new()),
+    };
     if let Ok(content) = std::fs::read_to_string(path) { if let Ok(settings) = serde_json::from_str(&content) { return Ok(settings); } }
     Ok(HashMap::new())
 }
