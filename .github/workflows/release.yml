@@ -69,32 +69,28 @@ jobs:
           while IFS= read -r line; do
             [ -z "$line" ] && continue
             if [[ "$line" =~ ^feat[:(] ]]; then
-              FEATURES+="- ${line#*: }
-"
+              FEATURES+=$(printf "\n- %s" "${line#*: }")
             elif [[ "$line" =~ ^fix[:(] ]]; then
-              FIXES+="- ${line#*: }
-"
+              FIXES+=$(printf "\n- %s" "${line#*: }")
             else
-              OTHER+="- ${line}
-"
+              OTHER+=$(printf "\n- %s" "$line")
             fi
           done <<< "$COMMITS"
 
-          NOTES="## Bloom ${VERSION}\n\n"
+          NOTES=$(printf "## Bloom %s\n" "$VERSION")
           if [ -n "$FEATURES" ]; then
-            NOTES+="### What's New\n\n${FEATURES}\n"
+            NOTES+=$(printf "\n### What's New\n%s\n" "$FEATURES")
           fi
           if [ -n "$FIXES" ]; then
-            NOTES+="### Bug Fixes\n\n${FIXES}\n"
+            NOTES+=$(printf "\n### Bug Fixes\n%s\n" "$FIXES")
           fi
           if [ -n "$OTHER" ]; then
-            NOTES+="### Other\n\n${OTHER}\n"
+            NOTES+=$(printf "\n### Other\n%s\n" "$OTHER")
           fi
-          NOTES+="### Installers\n\n"
-          NOTES+="- \`bloom_${VERSION}_x64-setup.exe\` — NSIS installer\n"
-          NOTES+="- \`bloom_${VERSION}_x64_en-US.msi\` — MSI installer"
+          NOTES+=$(printf "\n### Installers\n\n- \`bloom_%s_x64-setup.exe\` — NSIS installer\n- \`bloom_%s_x64_en-US.msi\` — MSI installer" "$VERSION" "$VERSION")
+
           echo "body<<EOF" >> "$GITHUB_OUTPUT"
-          echo -e "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "$NOTES" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Install frontend dependencies
