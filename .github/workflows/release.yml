@@ -68,9 +68,9 @@ jobs:
           OTHER=""
           while IFS= read -r line; do
             [ -z "$line" ] && continue
-            if [[ "$line" =~ ^feat[:(] ]]; then
+            if [[ "$line" =~ ^feat[\(:] ]]; then
               FEATURES+=$(printf "\n- %s" "${line#*: }")
-            elif [[ "$line" =~ ^fix[:(] ]]; then
+            elif [[ "$line" =~ ^fix[\(:] ]]; then
               FIXES+=$(printf "\n- %s" "${line#*: }")
             else
               OTHER+=$(printf "\n- %s" "$line")
