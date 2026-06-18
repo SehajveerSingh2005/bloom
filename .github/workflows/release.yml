@@ -50,6 +50,53 @@ jobs:
           # Update Cargo.toml
           sed -i "0,/^version = \".*\"/{s/^version = \".*\"/version = \"$VERSION\"/}" src-tauri/Cargo.toml
 
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          PREV_TAG=$(git tag --sort=-version:refname | grep '^v' | sed -n '2p')
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s" --no-merges)
+          else
+            COMMITS=$(git log --pretty=format:"%s" --no-merges)
+          fi
+
+          FEATURES=""
+          FIXES=""
+          OTHER=""
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            if [[ "$line" =~ ^feat[:(] ]]; then
+              FEATURES+="- ${line#*: }
+"
+            elif [[ "$line" =~ ^fix[:(] ]]; then
+              FIXES+="- ${line#*: }
+"
+            else
+              OTHER+="- ${line}
+"
+            fi
+          done <<< "$COMMITS"
+
+          NOTES="## Bloom ${VERSION}\n\n"
+          if [ -n "$FEATURES" ]; then
+            NOTES+="### What's New\n\n${FEATURES}\n"
+          fi
+          if [ -n "$FIXES" ]; then
+            NOTES+="### Bug Fixes\n\n${FIXES}\n"
+          fi
+          if [ -n "$OTHER" ]; then
+            NOTES+="### Other\n\n${OTHER}\n"
+          fi
+          NOTES+="### Installers\n\n"
+          NOTES+="- \`bloom_${VERSION}_x64-setup.exe\` — NSIS installer\n"
+          NOTES+="- \`bloom_${VERSION}_x64_en-US.msi\` — MSI installer"
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo -e "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Install frontend dependencies
         run: bun install
 
@@ -62,6 +109,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Bloom ${{ github.ref_name }}"
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
