@@ -89,56 +89,32 @@ export default function AboutApp({ githubUrl, downloadUrl, accentColor }: AboutA
         </div>
       </div>
 
-      {/* Middle: Giant Editorial Display Typography & Tech Highlights */}
+      {/* Middle: Giant Editorial Display Typography */}
       <div className="relative z-10 my-auto py-2 text-left">
-        <span className="text-[9px] tracking-[0.25em] font-extrabold text-[#fa243c] uppercase block mb-1">
-          EXCLUSIVE WINDOWS DESKTOP ENVIRONMENT
-        </span>
         <h1
-          className="text-[48px] font-black tracking-tighter leading-[0.85] text-white uppercase"
+          className="text-[64px] font-black tracking-tighter leading-[0.85] text-white uppercase"
           style={{
             fontFamily: 'var(--font-display)',
             letterSpacing: '-0.05em'
           }}
         >
-          YOUR WINDOWS,<br />ALIVE.
+          BLOOM
         </h1>
-        
-        {/* Cool, bold content instead of small text buzzwords */}
-        <div className="mt-5 space-y-4">
-          <p className="text-[11px] leading-relaxed text-white/70 font-medium max-w-[420px]">
-            Bloom is a ground-up reconstruction of the Windows desktop experience. Operating as a low-level shell override, it silences the legacy taskbar and binds context-aware desktop elements with hardware-level hooks.
+        <p className="text-[13px] font-semibold tracking-tight text-white/50 mt-3 max-w-[360px] leading-snug">
+          A desktop companion that moves like thought — fluid, responsive, and built exclusively for Windows.
+        </p>
+
+        {/* Small, non-buzzword facts below */}
+        <div className="mt-6 space-y-2.5 border-l border-white/10 pl-4.5">
+          <p className="text-[10px] text-white/40 leading-relaxed">
+            <span className="text-white/75 font-semibold">Zero easing curves.</span> Motion is driven dynamically by real-time spring physics simulations.
           </p>
-          
-          <div className="border-t border-white/10 pt-4">
-            <span className="text-[8.5px] tracking-widest font-black text-white/30 block mb-2.5 uppercase">SYSTEM ARCHITECTURE</span>
-            <div className="grid grid-cols-2 gap-x-5 gap-y-3">
-              <div>
-                <span className="text-[10px] text-white font-semibold block">Active Shell Override</span>
-                <p className="text-[9px] leading-[1.3] text-white/40 mt-0.5">
-                  Suppresses the explorer taskbar using Win32 window management hooks, replacing it with an reactive, clickable app dock.
-                </p>
-              </div>
-              <div>
-                <span className="text-[10px] text-white font-semibold block">Hardware-Direct WASAPI</span>
-                <p className="text-[9px] leading-[1.3] text-white/40 mt-0.5">
-                  Captures system audio loopback feeds at the kernel level to drive the spring-physics 5-bar hardware visualizer.
-                </p>
-              </div>
-              <div>
-                <span className="text-[10px] text-white font-semibold block">Spring-Loaded Simulation</span>
-                <p className="text-[9px] leading-[1.3] text-white/40 mt-0.5">
-                  Motion designed as a physical mass-spring-damper model, executing animations dynamically rather than relying on easing curves.
-                </p>
-              </div>
-              <div>
-                <span className="text-[10px] text-white font-semibold block">Coordinated Webviews</span>
-                <p className="text-[9px] leading-[1.3] text-white/40 mt-0.5">
-                  Tauri v2 runs 5 independent, sandboxed process layers communicating over IPC pipelines while keeping idle CPU usage near zero.
-                </p>
-              </div>
-            </div>
-          </div>
+          <p className="text-[10px] text-white/40 leading-relaxed">
+            <span className="text-white/75 font-semibold">Active shell control.</span> Silences the legacy Explorer taskbar at the OS layer.
+          </p>
+          <p className="text-[10px] text-white/40 leading-relaxed">
+            <span className="text-white/75 font-semibold">Rust core.</span> Tauri v2 coordinates multiple process layers under 10MB idle RAM.
+          </p>
         </div>
       </div>
 

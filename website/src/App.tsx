@@ -52,7 +52,7 @@ export default function App() {
         return { x: rx, y: ry };
       };
       setPositions({
-        about: getPos(98, 117, 500, 520),
+        about: getPos(98, 117, 500, 460),
         music: getPos(716, 42, 680, 400),
         terminal: getPos(527, 335, 500, 320),
         settings: getPos(140, 130, 520, 480)
@@ -195,7 +195,7 @@ export default function App() {
             onMinimize={() => handleMinimizeApp('about')}
             onFocus={() => setFocusedApp('about')}
             width="w-[500px]"
-            height="h-[520px]"
+            height="h-[460px]"
             defaultPosition={positions.about}
           >
             <AboutApp
