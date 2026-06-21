@@ -1,0 +1,897 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@500;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg-glow: rgba(232, 197, 229, 0.15);
+  --accent-color: #e8c5e5;
+  --accent-hover: #f3d6f1;
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Syne', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background-color: #0b0d13;
+  user-select: none;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Glassmorphism primitives */
+.glass-panel {
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(20px) saturate(120%);
+  -webkit-backdrop-filter: blur(20px) saturate(120%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+.glass-panel-dark {
+  background: rgba(10, 10, 15, 0.75);
+  backdrop-filter: blur(25px) saturate(140%);
+  -webkit-backdrop-filter: blur(25px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.5);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.glass-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Scrollbar customizations */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+/* ==========================================================================
+   Bloom Notch CSS (Ported directly from src/App.css)
+   ========================================================================== */
+
+.bloom {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  position: relative;
+  --notch-bg: rgba(0, 0, 0, 0.8);
+  background: var(--notch-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 0 0 18px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: none;
+  color: white;
+  pointer-events: auto;
+  cursor: default;
+  padding: 0px 12px;
+  white-space: nowrap;
+  height: 100%;
+  flex-direction: column;
+  box-sizing: border-box;
+  font-family: var(--font-sans);
+  transition: background 0.3s ease;
+}
+
+.bloom.expanded {
+  --notch-bg: rgba(0, 0, 0, 0.92);
+}
+
+.main-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 36px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.main-row-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* Concave top corners ("bridge" to screen edge) */
+.bloom.is-impacted::before,
+.bloom.is-impacted::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 13px;
+  height: 13px;
+  background-color: var(--notch-bg);
+  pointer-events: none;
+  opacity: 0;
+  animation: corner-fade-in 0.2s forwards;
+  transition: background-color 0.3s ease;
+}
+
+@keyframes corner-fade-in {
+  to {
+    opacity: 1;
+  }
+}
+
+.bloom.is-impacted::before {
+  left: -13px;
+  -webkit-mask-image: radial-gradient(circle at 0% 100%, transparent 12.5px, black 13px);
+  mask-image: radial-gradient(circle at 0% 100%, transparent 12.5px, black 13px);
+  background-image:
+    radial-gradient(circle at 0 13px,
+      transparent 12px,
+      rgba(255, 255, 255, 0.1) 12.7px,
+      rgba(255, 255, 255, 0.1) 13.3px,
+      transparent 14px);
+}
+
+.bloom.is-impacted::after {
+  right: -13px;
+  -webkit-mask-image: radial-gradient(circle at 100% 100%, transparent 12.5px, black 13px);
+  mask-image: radial-gradient(circle at 100% 100%, transparent 12.5px, black 13px);
+  background-image:
+    radial-gradient(circle at 13px 13px,
+      transparent 12px,
+      rgba(255, 255, 255, 0.1) 12.7px,
+      rgba(255, 255, 255, 0.1) 13.3px,
+      transparent 14px);
+}
+
+.time-flip-container {
+  min-width: 60px;
+  height: 24px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  perspective: 1000px;
+  cursor: pointer;
+  z-index: 10;
+  user-select: none;
+  transition: transform 0.1s ease;
+}
+
+.time-flip-container:hover .time {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.time-flip-container:active {
+  transform: scale(0.95);
+}
+
+.time {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  line-height: 1;
+  color: white;
+  position: absolute;
+  transition: color 0.2s ease;
+}
+
+.side-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+}
+
+.side-content.left {
+  left: 14px;
+  justify-content: flex-start;
+}
+
+.side-content.right {
+  right: 14px;
+  justify-content: flex-end;
+}
+
+.passive-features-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.passive-feature {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.passive-feature .label {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.85;
+  line-height: 1;
+}
+
+/* Visualizer Bars */
+.music-visualizer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.visualizer-horizontal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2.5px;
+  height: 20px;
+  width: 28px;
+  position: relative;
+}
+
+.visualizer-horizontal .bar-horizontal {
+  width: 3px;
+  height: 100%;
+  background: white;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  transform-origin: center;
+  will-change: transform;
+}
+
+/* Album art compact */
+.album-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  border-radius: 6px;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  overflow: hidden;
+  width: 24px;
+  height: 24px;
+  transition: width 0.2s ease, height 0.2s ease, border-radius 0.2s ease;
+}
+
+.album-art.album-art-large {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+.album-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.album-art-placeholder {
+  font-size: 12px;
+  line-height: 20px;
+  filter: brightness(0) invert(1);
+}
+
+.album-art-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.album-art-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.album-art:hover .album-art-overlay {
+  opacity: 1;
+}
+
+.control-icon-small {
+  color: white;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.5));
+}
+
+/* Media details */
+.expanded-music-container {
+  width: 100%;
+  height: 100%;
+  padding: 0px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+}
+
+.compact-premium-layout {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  gap: 22px;
+}
+
+.album-art-section {
+  flex-shrink: 0;
+}
+
+.premium-album-art {
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+}
+
+.premium-album-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.metadata-controls-section-middle {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 0;
+  gap: 5px;
+  text-align: left;
+}
+
+.track-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  width: 100%;
+  gap: 12px;
+}
+
+.track-info-middle {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.header-visualizer {
+  padding-top: 4px;
+  opacity: 0.8;
+}
+
+.premium-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.15px;
+  width: 100%;
+}
+
+.premium-artist {
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.controls-row-sleek {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  gap: 32px;
+}
+
+.sleek-btn {
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  outline: none;
+}
+
+.play-pause-btn-floating {
+  width: 38px;
+  height: 38px;
+  background: none;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.volume-slider-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  height: 12px;
+}
+
+.slider-track-premium {
+  position: relative;
+  flex: 1;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2.5px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  transition: background 0.2s ease, height 0.2s ease;
+}
+
+.premium-slider {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.slider-progress-fill {
+  height: 100%;
+  background: white;
+  border-radius: 2.5px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+/* Concave corners for website corners overlay */
+.screen-corner {
+  position: absolute;
+  width: 38px;
+  height: 38px;
+  background: #000;
+  z-index: 999999;
+  pointer-events: none;
+}
+
+.top-left {
+  top: 0;
+  left: 0;
+  -webkit-clip-path: path('M 0 0 L 36 0 C 18 0, 0 18, 0 36 Z');
+  clip-path: path('M 0 0 L 36 0 C 18 0, 0 18, 0 36 Z');
+}
+
+.top-right {
+  top: 0;
+  right: 0;
+  -webkit-clip-path: path('M 38 0 L 2 0 C 20 0, 38 18, 38 36 Z');
+  clip-path: path('M 38 0 L 2 0 C 20 0, 38 18, 38 36 Z');
+}
+
+.bottom-left {
+  bottom: 0;
+  left: 0;
+  -webkit-clip-path: path('M 0 38 L 0 2 C 0 20, 18 38, 36 38 Z');
+  clip-path: path('M 0 38 L 0 2 C 0 20, 18 38, 36 38 Z');
+}
+
+.bottom-right {
+  bottom: 0;
+  right: 0;
+  -webkit-clip-path: path('M 38 38 L 38 2 C 38 20, 20 38, 2 38 Z');
+  clip-path: path('M 38 38 L 38 2 C 38 20, 20 38, 2 38 Z');
+}
+
+/* ==========================================================================
+   Bloom Dock CSS (Ported directly from src/Dock.css)
+   ========================================================================== */
+
+.dock-container {
+  width: 100vw;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  box-sizing: border-box;
+  position: relative;
+  pointer-events: none;
+}
+
+.tooltip {
+  position: absolute;
+  top: -36px;
+  left: 50%;
+  transform: translate(-50%, 4px) scale(0.95);
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  pointer-events: none;
+  opacity: 0;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.dock-container:not(.dragging) .dock-icon-wrapper:hover .tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.dock {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 8px;
+  border-radius: 18px 18px 0 0;
+  background: rgba(0, 0, 0, 0.8);
+  background-clip: padding-box;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: none;
+  color: white;
+  position: relative;
+  transform-origin: bottom center;
+  pointer-events: auto;
+}
+
+.dock-reorder-container,
+.dock-reorder-group {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.dock::before,
+.dock::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 13px;
+  height: 13px;
+  background-color: rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.dock.dock-expanded::before,
+.dock.dock-expanded::after {
+  opacity: 1;
+}
+
+.dock::before {
+  left: -12.5px;
+  -webkit-clip-path: path('M 13 0 L 13 13 L 0 13 C 7 13, 13 7, 13 0 Z');
+  clip-path: path('M 13 0 L 13 13 L 0 13 C 7 13, 13 7, 13 0 Z');
+  background-image:
+    radial-gradient(circle at 0 0,
+      transparent 12px,
+      rgba(255, 255, 255, 0.1) 12.7px,
+      rgba(255, 255, 255, 0.1) 13.3px,
+      transparent 14px);
+}
+
+.dock::after {
+  right: -12.5px;
+  -webkit-clip-path: path('M 13 13 L 0 13 L 0 0 C 0 7, 6 13, 13 13 Z');
+  clip-path: path('M 13 13 L 0 13 L 0 0 C 0 7, 6 13, 13 13 Z');
+  background-image:
+    radial-gradient(circle at 13px 0,
+      transparent 12px,
+      rgba(255, 255, 255, 0.1) 12.7px,
+      rgba(255, 255, 255, 0.1) 13.3px,
+      transparent 14px);
+}
+
+.dock-icon-wrapper {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+}
+
+.dock-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.05) 100%);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: opacity 0.2s ease;
+}
+
+.dock-icon img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.dock-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke: rgba(255, 255, 255, 0.9);
+}
+
+.active-indicator {
+  position: absolute;
+  bottom: -4px;
+  width: 4px;
+  height: 4px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
+}
+
+.preview-tooltip {
+  position: absolute;
+  bottom: calc(100% + 20px);
+  left: 50%;
+  transform: translateX(-50%) !important;
+  background: rgba(30, 30, 30, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  z-index: 100;
+  min-width: 160px;
+}
+
+.preview-items {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  max-width: 100%;
+}
+
+.preview-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 6px;
+  border-radius: 8px;
+}
+
+.preview-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+  transform: translateY(-4px);
+}
+
+.preview-item div {
+  width: 100px;
+  height: 60px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.preview-label {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Calendar & Timer Split View */
+.calendar-timer-content.split-view {
+  width: 100%;
+  padding: 16px;
+  display: flex;
+  flex-direction: row;
+  gap: 16px;
+  color: white;
+  box-sizing: border-box;
+  border-radius: 0 0 28px 28px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.4);
+  margin-top: 1px;
+}
+
+.calendar-column {
+  flex: 1.2;
+  min-width: 0;
+}
+
+.timer-column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  padding-left: 16px;
+}
+
+.calendar-container {
+  width: 100%;
+}
+
+.calendar-header {
+  margin-bottom: 8px;
+}
+
+.month-year {
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.day-name {
+  font-size: 9px;
+  font-weight: 600;
+  opacity: 0.4;
+  text-align: center;
+  padding-bottom: 2px;
+}
+
+.calendar-day {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+.calendar-day.today {
+  background: white;
+  color: black;
+  font-weight: 600;
+}
+
+.timer-section-new {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+}
+
+.timer-display-large {
+  text-align: center;
+}
+
+.timer-time-large {
+  font-size: 32px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -1px;
+}
+
+.timer-controls-new {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.timer-btn {
+  flex: 1;
+  padding: 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.timer-btn.primary {
+  background: white;
+  color: black;
+}
+
+.timer-btn.secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.timer-presets-new {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  width: 100%;
+}
+
+.preset-btn-small {
+  padding: 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.preset-btn-small:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.bloom.calendar-mode {
+  padding-top: 4px;
+  border-radius: 0 0 28px 28px !important;
+}
