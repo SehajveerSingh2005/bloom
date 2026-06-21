@@ -100,8 +100,8 @@ export default function AboutApp({ githubUrl, downloadUrl, accentColor }: AboutA
         >
           BLOOM
         </h1>
-        <p className="text-[13px] font-semibold tracking-tight text-white/50 mt-3 max-w-[360px] leading-snug">
-          A desktop companion that moves like thought — fluid, responsive, and built exclusively for Windows.
+        <p className="text-[16px] font-medium tracking-tight text-white/50 mt-2 lowercase italic">
+          your windows, alive.
         </p>
 
         {/* Small, non-buzzword facts below */}
