@@ -91,6 +91,8 @@ export default function Window({
           }`}
           style={{
             transformOrigin: 'center center',
+            backdropFilter: 'blur(25px) saturate(140%)',
+            WebkitBackdropFilter: 'blur(25px) saturate(140%)',
           }}
         >
           {/* Header/Titlebar */}

@@ -10,7 +10,7 @@ import MusicApp from './components/apps/MusicApp';
 import SettingsApp from './components/apps/SettingsApp';
 import TerminalApp from './components/apps/TerminalApp';
 
-import wallpaperImg from './assets/wallpaper.png';
+import wallpaperImg from './assets/wallpaper.jpg';
 
 const wallpapersList = [
   wallpaperImg,
