@@ -52,7 +52,7 @@ export default function App() {
         return { x: rx, y: ry };
       };
       setPositions({
-        about: getPos(98, 117, 500, 460),
+        about: getPos(98, 117, 500, 520),
         music: getPos(716, 42, 680, 400),
         terminal: getPos(527, 335, 500, 320),
         settings: getPos(140, 130, 520, 480)
@@ -153,7 +153,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [openApps, minimizedApps]);
 
-  const activeWallpaperUrl = wallpapersList[settings.wallpaper];
+  const activeWallpaperUrl = wallpapersList[settings.wallpaper] || wallpapersList[0];
 
   return (
     <div
@@ -165,7 +165,7 @@ export default function App() {
         transition: 'background-image 0.5s ease-in-out',
       }}
     >
-      {/* Background radial soft ambient glow */}
+      {/* Dynamic Background Accent Glow */}
       <div
         className="absolute inset-0 glow-accent pointer-events-none transition-all duration-500"
         style={{ opacity: playback.isPlaying ? 1 : 0 }}
@@ -195,7 +195,7 @@ export default function App() {
             onMinimize={() => handleMinimizeApp('about')}
             onFocus={() => setFocusedApp('about')}
             width="w-[500px]"
-            height="h-[460px]"
+            height="h-[520px]"
             defaultPosition={positions.about}
           >
             <AboutApp
