@@ -933,8 +933,10 @@ pub async fn quit_bloom(handle: AppHandle) {
 pub async fn restart_bloom(handle: AppHandle) {
     if let Some(w) = handle.get_webview_window("main") { unregister_appbar_native(w.hwnd().unwrap()); }
     if let Some(w) = handle.get_webview_window("dock") { unregister_appbar_native(w.hwnd().unwrap()); }
+    if let Some(w) = handle.get_webview_window("settings") { let _ = w.destroy(); }
     set_taskbar_visibility(true, true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+    close_single_instance_handles();
     handle.restart();
 }
 

@@ -29,6 +29,26 @@ pub static CURRENT_VOLUME: AtomicU32 = AtomicU32::new(50);
 pub static LAST_BRIGHTNESS_CHANGE: AtomicI64 = AtomicI64::new(0);
 pub static ANY_MEDIA_PLAYING: AtomicBool = AtomicBool::new(false);
 
+pub static mut SINGLE_INSTANCE_MUTEX_HANDLE: isize = 0;
+pub static mut SINGLE_INSTANCE_EVENT_HANDLE: isize = 0;
+
+pub fn close_single_instance_handles() {
+    unsafe {
+        if SINGLE_INSTANCE_MUTEX_HANDLE != 0 {
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::Foundation::HANDLE;
+            let _ = CloseHandle(HANDLE(SINGLE_INSTANCE_MUTEX_HANDLE as *mut _));
+            SINGLE_INSTANCE_MUTEX_HANDLE = 0;
+        }
+        if SINGLE_INSTANCE_EVENT_HANDLE != 0 {
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::Foundation::HANDLE;
+            let _ = CloseHandle(HANDLE(SINGLE_INSTANCE_EVENT_HANDLE as *mut _));
+            SINGLE_INSTANCE_EVENT_HANDLE = 0;
+        }
+    }
+}
+
 pub static MAIN_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> = Mutex::new(None);
 pub static DOCK_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> = Mutex::new(None);
 

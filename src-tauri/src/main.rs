@@ -18,9 +18,6 @@ use crate::utils::*;
 use crate::services::*;
 use crate::commands::*;
 
-static mut SINGLE_INSTANCE_EVENT_HANDLE: isize = 0;
-static mut SINGLE_INSTANCE_MUTEX_HANDLE: isize = 0;
-
 unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     if ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT {
         set_taskbar_visibility(true, true);
@@ -278,8 +275,10 @@ fn main() {
                             if let Some(w) = ah.get_webview_window("dock") {
                                 unregister_appbar_native(w.hwnd().unwrap());
                             }
+                            if let Some(w) = ah.get_webview_window("settings") { let _ = w.destroy(); }
                             set_taskbar_visibility(true, true);
                             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+                            close_single_instance_handles();
 
                             ah.restart();
                         }
