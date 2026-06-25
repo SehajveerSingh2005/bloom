@@ -24,13 +24,13 @@ body {
     align-items: center;
     justify-content: flex-start;
     position: relative;
-    --notch-bg: rgba(0, 0, 0, 0.8);
+    --notch-bg: var(--bloom-bg, rgba(0, 0, 0, 0.8));
     background: var(--notch-bg);
     backdrop-filter: blur(20px);
     border-radius: 0 0 18px 18px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
     border-top: none;
-    color: white;
+    color: var(--bloom-text, white);
     pointer-events: auto;
     cursor: default;
     padding: 0px 12px;
@@ -52,7 +52,7 @@ body {
 }
 
 .bloom.expanded {
-    --notch-bg: rgba(0, 0, 0, 0.92);
+    --notch-bg: var(--bloom-bg-expanded, rgba(0, 0, 0, 0.92));
 }
 
 .main-row {
@@ -220,7 +220,7 @@ body {
 }
 
 .time-flip-container:hover .time {
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--bloom-text-muted, rgba(255, 255, 255, 0.8));
 }
 
 .time-flip-container:active {
@@ -232,7 +232,7 @@ body {
     font-weight: 500;
     letter-spacing: 0.3px;
     line-height: 1;
-    color: white;
+    color: var(--bloom-text, white);
     backface-visibility: hidden;
     position: absolute;
     transition: color 0.2s ease;
@@ -287,7 +287,7 @@ body {
     display: flex;
     align-items: center;
     gap: 5px;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--bloom-text, rgba(255, 255, 255, 0.9));
 }
 
 .passive-feature .label {
@@ -320,8 +320,8 @@ body {
 .visualizer-horizontal .bar-horizontal {
     width: 3px;
     height: 100%;
-    background: white;
-    box-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+    background: var(--bloom-text, white);
+    box-shadow: 0 0 8px var(--bloom-border, rgba(255, 255, 255, 0.3));
     border-radius: 2px;
     transform-origin: center;
     will-change: transform;
@@ -371,10 +371,39 @@ body {
 }
 
 .album-art-placeholder {
-    font-size: 12px;
-    line-height: 20px;
-    filter: brightness(0) invert(1);
-    /* Make icon white */
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 100%);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.music-placeholder-svg-small {
+    width: 55%;
+    height: 55%;
+    display: block;
+}
+
+.art-placeholder-mini {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+    color: rgba(255, 255, 255, 0.65);
+    transition: background 0.25s ease, color 0.25s ease;
+}
+
+.premium-album-art:hover .art-placeholder-mini {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 100%);
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.music-placeholder-svg {
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
 }
 
 .album-art-inner {
@@ -510,11 +539,11 @@ body {
     flex-direction: row;
     /* Side-by-Side */
     gap: 16px;
-    color: white;
+    color: var(--bloom-text, white);
     box-sizing: border-box;
     border-radius: 0 0 28px 28px;
     overflow: hidden;
-    background: rgba(0, 0, 0, 0.4);
+    background: transparent;
     margin-top: 1px;
 }
 
@@ -529,7 +558,7 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    border-left: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
     padding-left: 16px;
 }
 
@@ -572,8 +601,8 @@ body {
 }
 
 .calendar-day.today {
-    background: white;
-    color: black;
+    background: var(--bloom-text, white);
+    color: var(--bloom-bg-expanded, black);
     font-weight: 600;
 }
 
@@ -614,13 +643,13 @@ body {
 }
 
 .timer-btn.primary {
-    background: white;
-    color: black;
+    background: var(--bloom-text, white);
+    color: var(--bloom-bg-expanded, black);
 }
 
 .timer-btn.secondary {
-    background: rgba(255, 255, 255, 0.1);
-    color: white;
+    background: var(--bloom-group-bg, rgba(255, 255, 255, 0.1));
+    color: var(--bloom-text, white);
 }
 
 .timer-presets-new {
@@ -633,16 +662,16 @@ body {
 .preset-btn-small {
     padding: 6px;
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: white;
+    background: var(--bloom-group-bg, rgba(255, 255, 255, 0.05));
+    border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
+    color: var(--bloom-text, white);
     font-size: 10px;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .preset-btn-small:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: var(--bloom-border, rgba(255, 255, 255, 0.15));
 }
 
 .bloom.calendar-mode {
@@ -718,7 +747,7 @@ body {
 .premium-title {
     font-size: 14.5px;
     font-weight: 600;
-    color: white;
+    color: var(--bloom-text, white);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -729,7 +758,7 @@ body {
 .premium-artist {
     font-size: 12px;
     font-weight: 400;
-    color: rgba(255, 255, 255, 0.55);
+    color: var(--bloom-text-muted, rgba(255, 255, 255, 0.55));
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -757,7 +786,7 @@ body {
 .sleek-btn {
     background: none;
     border: none;
-    color: white;
+    color: var(--bloom-text, white);
     cursor: pointer;
     padding: 6px;
     display: flex;
@@ -808,7 +837,7 @@ body {
     left: 0;
     top: 0;
     height: 100%;
-    background: white;
+    background: var(--bloom-text, white);
     border-radius: 3px;
     pointer-events: none;
     transition: width 0.1s ease-out;
@@ -919,7 +948,7 @@ body {
     flex-direction: column;
     justify-content: space-between;
     align-items: center;
-    color: white;
+    color: var(--bloom-text, white);
     border-radius: 0 0 18px 18px;
     overflow: hidden;
 }
@@ -939,8 +968,8 @@ body {
     gap: 8px;
     padding: 5px 8px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.02);
+    background: var(--bloom-group-bg, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.02));
     cursor: pointer;
     transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
     user-select: none;
@@ -949,7 +978,7 @@ body {
 }
 
 .cc-pill-tile:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--bloom-border, rgba(255, 255, 255, 0.08));
     transform: translateY(-0.5px);
 }
 
@@ -964,8 +993,8 @@ body {
     width: 20px;
     height: 20px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.9);
+    background: var(--bloom-group-bg, rgba(255, 255, 255, 0.08));
+    color: var(--bloom-text, rgba(255, 255, 255, 0.9));
     transition: all 0.15s ease;
 }
 
@@ -983,32 +1012,32 @@ body {
 .cc-pill-title {
     font-size: 9px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--bloom-text, rgba(255, 255, 255, 0.9));
 }
 
 .cc-pill-status {
     font-size: 7.5px;
-    color: rgba(255, 255, 255, 0.4);
+    color: var(--bloom-text-muted, rgba(255, 255, 255, 0.4));
     font-weight: 500;
 }
 
 /* Active Monochrome pill states */
 .cc-pill-tile.active {
-    background: rgba(255, 255, 255, 0.95);
-    border-color: rgba(255, 255, 255, 0.95);
+    background: var(--bloom-text, rgba(255, 255, 255, 0.95));
+    border-color: var(--bloom-text, rgba(255, 255, 255, 0.95));
 }
 
 .cc-pill-tile.active .cc-pill-title {
-    color: rgba(0, 0, 0, 0.9);
+    color: var(--bloom-bg-expanded, rgba(0, 0, 0, 0.9));
 }
 
 .cc-pill-tile.active .cc-pill-status {
-    color: rgba(0, 0, 0, 0.6);
+    color: var(--bloom-text-muted, rgba(0, 0, 0, 0.6));
 }
 
 .cc-pill-tile.active .cc-pill-icon-wrapper {
-    background: rgba(0, 0, 0, 0.08);
-    color: #000;
+    background: var(--bloom-group-bg, rgba(0, 0, 0, 0.08));
+    color: var(--bloom-bg-expanded, #000);
 }
 
 /* Circular Actions Row */
@@ -1024,9 +1053,9 @@ body {
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.02);
-    color: rgba(255, 255, 255, 0.7);
+    background: var(--bloom-group-bg, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.02));
+    color: var(--bloom-text-muted, rgba(255, 255, 255, 0.7));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1035,8 +1064,8 @@ body {
 }
 
 .cc-circular-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+    background: var(--bloom-border, rgba(255, 255, 255, 0.1));
+    color: var(--bloom-text, #fff);
     transform: translateY(-1px);
 }
 
@@ -1045,10 +1074,10 @@ body {
 }
 
 .cc-circular-btn.active {
-    background: #ffffff;
-    border-color: #ffffff;
-    color: #000000;
-    box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
+    background: var(--bloom-text, #ffffff);
+    border-color: var(--bloom-text, #ffffff);
+    color: var(--bloom-bg-expanded, #000000);
+    box-shadow: 0 2px 8px var(--bloom-border, rgba(255, 255, 255, 0.1));
 }
 
 .cc-circular-btn.active:hover {
@@ -1079,7 +1108,7 @@ body {
     width: 75px;
     font-size: 9px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.65);
+    color: var(--bloom-text-muted, rgba(255, 255, 255, 0.65));
 }
 
 .cc-classic-slider-label svg {
@@ -1092,7 +1121,7 @@ body {
     flex: 1;
     height: 6px;
     border-radius: 3px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--bloom-group-bg, rgba(255, 255, 255, 0.08));
     position: relative;
     display: flex;
     align-items: center;
@@ -1100,11 +1129,11 @@ body {
 }
 
 .cc-classic-slider-row:hover .cc-classic-slider-track {
-    background: rgba(255, 255, 255, 0.12);
+    background: var(--bloom-border, rgba(255, 255, 255, 0.12));
 }
 
 .cc-classic-fill {
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--bloom-text, rgba(255, 255, 255, 0.9));
     border-radius: 3px;
     height: 100%;
     position: absolute;
@@ -1115,8 +1144,8 @@ body {
 }
 
 .cc-classic-slider-row:hover .cc-classic-fill {
-    background: #ffffff;
-    box-shadow: 0 0 4px rgba(255, 255, 255, 0.15);
+    background: var(--bloom-text, #ffffff);
+    box-shadow: 0 0 4px var(--bloom-border, rgba(255, 255, 255, 0.15));
 }
 
 .cc-classic-percentage {
@@ -1124,12 +1153,12 @@ body {
     text-align: right;
     font-size: 9px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.55);
+    color: var(--bloom-text-muted, rgba(255, 255, 255, 0.55));
     font-variant-numeric: tabular-nums;
 }
 
 .cc-classic-slider-row:hover .cc-classic-percentage {
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--bloom-text, rgba(255, 255, 255, 0.85));
 }
 
 .cc-classic-input {
@@ -1142,4 +1171,41 @@ body {
     cursor: pointer;
     z-index: 4;
     margin: 0;
+}
+
+/* Light Mode overrides for Notch App components */
+.light-mode .power-pulse-content .label {
+    color: var(--bloom-text);
+}
+
+.light-mode .bottom-row {
+    border-top: 1px solid var(--bloom-border);
+}
+
+.light-mode .marquee-content {
+    color: var(--bloom-text);
+}
+
+.light-mode .music-controls svg,
+.light-mode .notch-status-icons svg,
+.light-mode .weather-notch svg {
+    stroke: var(--bloom-text);
+    color: var(--bloom-text);
+}
+
+.light-mode .volume-slider-bar,
+.light-mode .brightness-slider-bar,
+.light-mode .cc-classic-slider,
+.light-mode .slider-track-premium {
+    background: rgba(0, 0, 0, 0.12);
+}
+
+.light-mode .slider-track-premium:hover {
+    background: rgba(0, 0, 0, 0.18);
+}
+
+
+
+.light-mode .cc-classic-slider-row svg {
+    color: var(--bloom-text);
 }

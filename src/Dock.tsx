@@ -3,6 +3,7 @@ import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import './Dock.css';
+import { initTheme } from './theme';
 
 interface AppInfo {
   name: string;
@@ -16,6 +17,10 @@ interface AppInfo {
 }
 
 const Dock = memo(function Dock() {
+  useEffect(() => {
+    return initTheme();
+  }, []);
+
   const [pinnedApps, setPinnedApps] = useState<AppInfo[]>([]);
   const [activeApps, setActiveApps] = useState<AppInfo[]>([]);
   const iconsRef = useRef<Record<string, string>>({});
@@ -531,7 +536,7 @@ const Dock = memo(function Dock() {
                       handleAppClick(startItem);
                     }}
                   >
-                    <img src="/bloom.png" alt="Bloom" draggable={false} />
+                    <img src="/bloom.png" alt="Bloom" className="bloom-icon-img" draggable={false} />
                   </motion.div>
                 </motion.div>
               )}
@@ -603,8 +608,17 @@ const Dock = memo(function Dock() {
                     const cacheKey = isHost ? `${app.path}:${app.name.toLowerCase()}` : (app.hwnd ? `${app.path}-${app.hwnd}` : app.path);
                     const icon = iconsRef.current[cacheKey] || iconsRef.current[app.path] || app.icon;
                     
+                    const isBloomOrSettings = app.name.toLowerCase() === 'settings' || 
+                                              app.name.toLowerCase() === 'bloom' || 
+                                              app.path.toLowerCase().includes('bloom.exe');
+                    
                     return icon ? (
-                      <img src={icon} alt={app.name} draggable={false} />
+                      <img 
+                        src={icon} 
+                        alt={app.name} 
+                        className={isBloomOrSettings ? "bloom-icon-img" : ""} 
+                        draggable={false} 
+                      />
                     ) : (
                       <div className="fallback-icon">{app.name[0]}</div>
                     );
@@ -802,7 +816,21 @@ function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
               <div key={app.path} className="app-list-item" onClick={() => onAdd(app)}>
                 <div className="app-list-info">
                   <div className="app-list-icon">
-                    {listIcons[app.path] ? <img src={listIcons[app.path]} alt="" draggable={false} /> : <div className="app-icon-placeholder">{app.name[0]}</div>}
+                    {(() => {
+                      const isBloomOrSettings = app.name.toLowerCase() === 'settings' || 
+                                                app.name.toLowerCase() === 'bloom' || 
+                                                app.path.toLowerCase().includes('bloom.exe');
+                      return listIcons[app.path] ? (
+                        <img 
+                          src={listIcons[app.path]} 
+                          alt="" 
+                          className={isBloomOrSettings ? "bloom-icon-img" : ""} 
+                          draggable={false} 
+                        />
+                      ) : (
+                        <div className="app-icon-placeholder">{app.name[0]}</div>
+                      );
+                    })()}
                   </div>
                   <div className="app-name">{app.name}</div>
                 </div>

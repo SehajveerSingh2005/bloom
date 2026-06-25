@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState, useRef } from "react";
 import "./VolumeOverlay.css";
+import { initTheme } from "./theme";
 
 // The volume island component that "grows" from and "dissolves" into the left edge
 function VolumeNotch({
@@ -91,6 +92,10 @@ function VolumeNotch({
 }
 
 function VolumeOverlayApp() {
+  useEffect(() => {
+    return initTheme();
+  }, []);
+
   const [volume, setVolume] = useState(0.5);
   const [isMuted, setIsMuted] = useState(false);
   const [isVisible, setIsVisible] = useState(false);

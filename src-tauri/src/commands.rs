@@ -1267,3 +1267,88 @@ pub fn open_battery_saver_settings() {
         .spawn()
         .ok();
 }
+
+pub fn get_windows_accent_color() -> Option<String> {
+    unsafe {
+        use windows::Win32::System::Registry::{RegOpenKeyExW, RegQueryValueExW, RegCloseKey, HKEY_CURRENT_USER, KEY_READ, REG_BINARY, REG_DWORD};
+        
+        // 1. Try reading AccentPalette from Explorer\Accent for the true system accent color
+        let subkey = windows::core::w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent");
+        let mut hkey = windows::Win32::System::Registry::HKEY::default();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, subkey, Some(0), KEY_READ, &mut hkey).is_ok() {
+            let mut value_type = REG_BINARY;
+            let mut palette = [0u8; 32];
+            let mut value_size = 32u32;
+            let val_name = windows::core::w!("AccentPalette");
+            if RegQueryValueExW(
+                hkey,
+                val_name,
+                None,
+                Some(&mut value_type),
+                Some(palette.as_mut_ptr()),
+                Some(&mut value_size)
+            ).is_ok() {
+                let _ = RegCloseKey(hkey);
+                if value_size >= 15 {
+                    // bytes 12, 13, 14 are R, G, B of the active accent color
+                    let r = palette[12];
+                    let g = palette[13];
+                    let b = palette[14];
+                    return Some(format!("#{:02x}{:02x}{:02x}", r, g, b));
+                }
+            } else {
+                let _ = RegCloseKey(hkey);
+            }
+        }
+
+        // 2. Fallback to DWM\AccentColor
+        let subkey = windows::core::w!("Software\\Microsoft\\Windows\\DWM");
+        let mut hkey = windows::Win32::System::Registry::HKEY::default();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, subkey, Some(0), KEY_READ, &mut hkey).is_ok() {
+            let mut value_type = REG_DWORD;
+            let mut color_val = 0u32;
+            let mut value_size = std::mem::size_of::<u32>() as u32;
+            let val_name = windows::core::w!("AccentColor");
+            if RegQueryValueExW(
+                hkey,
+                val_name,
+                None,
+                Some(&mut value_type),
+                Some(&mut color_val as *mut u32 as *mut u8),
+                Some(&mut value_size)
+            ).is_ok() {
+                let _ = RegCloseKey(hkey);
+                // color_val is AABBGGRR (ABGR format)
+                let r = (color_val & 0xff) as u8;
+                let g = ((color_val >> 8) & 0xff) as u8;
+                let b = ((color_val >> 16) & 0xff) as u8;
+                return Some(format!("#{:02x}{:02x}{:02x}", r, g, b));
+            }
+            let _ = RegCloseKey(hkey);
+        }
+    }
+    None
+}
+
+#[tauri::command]
+pub fn get_system_accent_color() -> Result<String, String> {
+    // Try reading registry first for exact Windows accent color
+    if let Some(color) = get_windows_accent_color() {
+        return Ok(color);
+    }
+
+    // Fallback to DwmGetColorizationColor
+    unsafe {
+        let mut color = 0u32;
+        let mut opaque = windows::core::BOOL(0);
+        if windows::Win32::Graphics::Dwm::DwmGetColorizationColor(&mut color, &mut opaque).is_ok() {
+            let r = ((color >> 16) & 0xff) as u8;
+            let g = ((color >> 8) & 0xff) as u8;
+            let b = (color & 0xff) as u8;
+            let hex = format!("#{:02x}{:02x}{:02x}", r, g, b);
+            Ok(hex)
+        } else {
+            Err("Failed to query colorization color".into())
+        }
+    }
+}

@@ -1609,6 +1609,8 @@ unsafe extern "system" fn display_monitor_proc(
     const WM_POWERBROADCAST: u32 = 0x0218;
     const PBT_APMPOWERSTATUSCHANGE: u32 = 0x000A;
     const PBT_APMRESUMESUSPEND: u32 = 0x0007;
+    const WM_DWMCOLORIZATIONCOLORCHANGED: u32 = 0x0320;
+    const WM_SETTINGCHANGE: u32 = 0x001A;
 
     match msg {
         WM_DISPLAYCHANGE => {
@@ -1643,6 +1645,26 @@ unsafe extern "system" fn display_monitor_proc(
                 }
             }
             LRESULT(0)
+        }
+        WM_DWMCOLORIZATIONCOLORCHANGED | WM_SETTINGCHANGE => {
+            if let Some(app_handle) = DISPLAY_MONITOR_HANDLE.get() {
+                let color_hex = if let Some(c) = crate::commands::get_windows_accent_color() {
+                    c
+                } else {
+                    let mut color = 0u32;
+                    let mut opaque = windows::core::BOOL(0);
+                    if unsafe { windows::Win32::Graphics::Dwm::DwmGetColorizationColor(&mut color, &mut opaque).is_ok() } {
+                        let r = ((color >> 16) & 0xff) as u8;
+                        let g = ((color >> 8) & 0xff) as u8;
+                        let b = (color & 0xff) as u8;
+                        format!("#{:02x}{:02x}{:02x}", r, g, b)
+                    } else {
+                        "#0078d4".to_string()
+                    }
+                };
+                let _ = app_handle.emit("system-accent-changed", color_hex);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }

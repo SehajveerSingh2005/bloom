@@ -43,13 +43,13 @@ body,
     justify-content: space-between;
 
     padding: 16px 0;
-    background: rgba(0, 0, 0, 0.8);
+    background: var(--bloom-bg, rgba(0, 0, 0, 0.8));
     backdrop-filter: blur(20px);
 
     /* Rounded on the right side to look like it grows from the left edge */
     border-radius: 0 18px 18px 0;
 
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
     border-left: none;
 
     width: 42px;
@@ -67,7 +67,7 @@ body,
     left: 0;
     width: 13px;
     height: 13px;
-    background: rgba(0, 0, 0, 0.8);
+    background: var(--bloom-bg, rgba(0, 0, 0, 0.8));
     pointer-events: none;
 }
 
@@ -83,10 +83,10 @@ body,
     background:
         radial-gradient(circle at 13px 0px,
             transparent 12px,
-            rgba(255, 255, 255, 0.1) 12.7px,
-            rgba(255, 255, 255, 0.1) 13.3px,
+            var(--bloom-border, rgba(255, 255, 255, 0.1)) 12.7px,
+            var(--bloom-border, rgba(255, 255, 255, 0.1)) 13.3px,
             transparent 14px),
-        rgba(0, 0, 0, 0.8);
+        var(--bloom-bg, rgba(0, 0, 0, 0.8));
 }
 
 /* Bottom bridge corner: curves from left edge to island bottom */
@@ -101,10 +101,10 @@ body,
     background:
         radial-gradient(circle at 13px 13px,
             transparent 12px,
-            rgba(255, 255, 255, 0.1) 12.7px,
-            rgba(255, 255, 255, 0.1) 13.3px,
+            var(--bloom-border, rgba(255, 255, 255, 0.1)) 12.7px,
+            var(--bloom-border, rgba(255, 255, 255, 0.1)) 13.3px,
             transparent 14px),
-        rgba(0, 0, 0, 0.8);
+        var(--bloom-bg, rgba(0, 0, 0, 0.8));
 }
 
 /* Container for bar and text to manage staggered animation */
@@ -134,13 +134,13 @@ body,
     bottom: 0;
     left: 0;
     width: 100%;
-    background: white;
+    background: var(--bloom-text, white);
     border-radius: 20px;
 }
 
 /* Volume percentage text at bottom */
 .volume-notch-text {
-    color: white;
+    color: var(--bloom-text, white);
     font-size: 10px;
     font-weight: 700;
     font-family:
@@ -153,4 +153,9 @@ body,
     width: 100%;
     margin-bottom: 2px;
     opacity: 0.85;
+}
+
+/* Light mode overrides */
+.light-mode .volume-notch-bar {
+    background: rgba(0, 0, 0, 0.12);
 }

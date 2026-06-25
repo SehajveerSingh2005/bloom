@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { check } from "@tauri-apps/plugin-updater";
 import "./App.css";
+import { initTheme } from "./theme";
 
 // Simple SVG icons
 function WifiIcon({ connected }: { connected: boolean }) {
@@ -167,6 +168,10 @@ interface MediaInfo {
 
 
 function App() {
+  useEffect(() => {
+    return initTheme();
+  }, []);
+
   const [time, setTime] = useState("");
   const [isHovered, setIsHovered] = useState(false);
   const [isReady, setIsReady] = useState(false);
@@ -357,6 +362,8 @@ function App() {
   // Settings state
   const [settingsWeatherEnabled, setSettingsWeatherEnabled] = useState(() => localStorage.getItem("bloom-weather-enabled") !== "false");
   const [settingsCalendarEnabled, setSettingsCalendarEnabled] = useState(() => localStorage.getItem("bloom-calendar-enabled") !== "false");
+  const [settingsMusicModeEnabled, setSettingsMusicModeEnabled] = useState(() => localStorage.getItem("bloom-music-mode-enabled") !== "false");
+  const [settingsMusicCompactNotch, setSettingsMusicCompactNotch] = useState(() => localStorage.getItem("bloom-music-compact-notch") !== "false");
   const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-visualizer-enabled") !== "false");
   const [settingsAlbumArtEnabled, setSettingsAlbumArtEnabled] = useState(() => localStorage.getItem("bloom-media-album-art-enabled") !== "false");
   const [settingsAmbienceEnabled, setSettingsAmbienceEnabled] = useState(() => localStorage.getItem("bloom-media-ambience-enabled") !== "false");
@@ -377,6 +384,8 @@ function App() {
 
       setSettingsWeatherEnabled(getVal("bloom-weather-enabled", "true") !== "false");
       setSettingsCalendarEnabled(getVal("bloom-calendar-enabled", "true") !== "false");
+      setSettingsMusicModeEnabled(getVal("bloom-music-mode-enabled", "true") !== "false");
+      setSettingsMusicCompactNotch(getVal("bloom-music-compact-notch", "true") !== "false");
       const viz = getVal("bloom-media-visualizer-enabled") ?? getVal("bloom-visualizer-enabled", "true");
       setSettingsVisualizerEnabled(viz !== "false");
       setSettingsAlbumArtEnabled(getVal("bloom-media-album-art-enabled", "true") !== "false");
@@ -453,6 +462,8 @@ function App() {
       const { key, value } = event.payload;
       if (key === "weather") setSettingsWeatherEnabled(value);
       if (key === "calendar") setSettingsCalendarEnabled(value);
+      if (key === "music-mode-enabled") setSettingsMusicModeEnabled(value);
+      if (key === "music-compact-notch") setSettingsMusicCompactNotch(value);
       if (key === "visualizer") setSettingsVisualizerEnabled(value);
       if (key === "album-art") setSettingsAlbumArtEnabled(value);
       if (key === "media-ambience-enabled") setSettingsAmbienceEnabled(value as boolean);
@@ -536,7 +547,7 @@ function App() {
 
     const modes: ('music' | 'command-center' | 'status' | 'calendar')[] = ['music', 'command-center', 'status', 'calendar'];
     const availableModes = modes.filter(m => {
-      if (m === 'music' && !mediaInfo.has_media) return false;
+      if (m === 'music' && (!settingsMusicModeEnabled || !mediaInfo.has_media)) return false;
       if (m === 'calendar' && !settingsCalendarEnabled) return false;
       return true;
     });
@@ -606,14 +617,17 @@ function App() {
     const isNewTrackWhilePlaying = mediaInfo.title !== lastTrackRef.current && isPlaying;
     const justStartedPlaying = isPlaying && !lastPlayingRef.current;
 
-    // Only auto-switch if we are actually playing something new
-    if (mediaInfo.has_media && isPlaying && bloomMode !== 'calendar' && (isNewTrackWhilePlaying || justStartedPlaying)) {
-      setBloomMode('music');
+    // Only auto-switch if music mode is enabled
+    if (settingsMusicModeEnabled && mediaInfo.has_media && isPlaying && bloomMode !== 'calendar' && (isNewTrackWhilePlaying || justStartedPlaying)) {
+      // Switch if compact notch display is enabled OR we are hovered
+      if (settingsMusicCompactNotch || isHovered) {
+        setBloomMode('music');
+      }
     }
 
     lastTrackRef.current = mediaInfo.title;
     lastPlayingRef.current = isPlaying;
-  }, [mediaInfo.has_media, isPlaying, mediaInfo.title]);
+  }, [mediaInfo.has_media, isPlaying, mediaInfo.title, settingsMusicModeEnabled, settingsMusicCompactNotch, isHovered, bloomMode]);
 
   // Auto-switch back from music if music stops for 5 seconds
   useEffect(() => {
@@ -632,6 +646,27 @@ function App() {
       setBloomMode('status');
     }
   }, [settingsCalendarEnabled, bloomMode]);
+
+  // Reset bloom mode when music mode setting is disabled
+  useEffect(() => {
+    if (!settingsMusicModeEnabled && bloomMode === 'music') {
+      setBloomMode('status');
+    }
+  }, [settingsMusicModeEnabled, bloomMode]);
+
+  // Reset bloom mode when compact notch display is disabled while collapsed
+  useEffect(() => {
+    if (!settingsMusicCompactNotch && bloomMode === 'music' && !isHovered) {
+      setBloomMode('status');
+    }
+  }, [settingsMusicCompactNotch, bloomMode, isHovered]);
+
+  // Synchronize bloom mode immediately when music settings are toggled and music is playing
+  useEffect(() => {
+    if (settingsMusicModeEnabled && settingsMusicCompactNotch && mediaInfo.has_media && isPlaying && bloomMode === 'status' && !isHovered) {
+      setBloomMode('music');
+    }
+  }, [settingsMusicModeEnabled, settingsMusicCompactNotch, mediaInfo.has_media, isPlaying, bloomMode, isHovered]);
 
   // Update time
   useEffect(() => {
@@ -1028,15 +1063,15 @@ function App() {
 
     setBloomMode(prev => {
       if (prev === 'calendar') {
-        // Return to music mode if media is present and playing, otherwise status
-        return (mediaInfo.has_media && isPlaying) ? 'music' : 'status';
+        // Return to music mode if media is present and playing and music mode is enabled, otherwise status
+        return (settingsMusicModeEnabled && mediaInfo.has_media && isPlaying) ? 'music' : 'status';
       }
       return 'calendar';
     });
   };
 
-  // Music mode shows any time we have media info (playing or paused)
-  const isMusicMode = mediaInfo.has_media && bloomMode === 'music';
+  // Music mode shows any time we have media info (playing or paused) and music mode setting is enabled
+  const isMusicMode = mediaInfo.has_media && bloomMode === 'music' && settingsMusicModeEnabled;
 
   // Calculate width dynamically based on enabled features
   const getDynamicWidth = () => {
@@ -1129,8 +1164,11 @@ function App() {
         }}
         onHoverEnd={() => {
           setIsHovered(false);
-          if (bloomMode === 'command-center' || bloomMode === 'calendar' || bloomMode === 'status') {
-            setBloomMode(mediaInfo.has_media && isPlaying ? 'music' : 'status');
+          const targetMode = mediaInfo.has_media && isPlaying && settingsMusicCompactNotch ? 'music' : 'status';
+          if (bloomMode === 'music') {
+            setBloomMode(targetMode);
+          } else if (bloomMode === 'command-center' || bloomMode === 'calendar' || bloomMode === 'status') {
+            setBloomMode(targetMode);
           }
         }}
         style={{ originY: 0 }}
@@ -1183,7 +1221,11 @@ function App() {
                           {albumArtUrl ? (
                             <img src={albumArtUrl} alt="Art" />
                           ) : (
-                            <div className="art-placeholder-mini">🎵</div>
+                            <div className="art-placeholder-mini">
+                              <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" className="music-placeholder-svg">
+                                <path d="M18 3h-8v11.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h6v5.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V3z" />
+                              </svg>
+                            </div>
                           )}
                         </motion.div>
                       </div>
@@ -1416,7 +1458,11 @@ function App() {
                                       {albumArtUrl ? (
                                         <img src={albumArtUrl} alt="Art" />
                                       ) : (
-                                        <div className="album-art-placeholder">🎵</div>
+                                        <div className="album-art-placeholder">
+                                          <svg viewBox="0 0 24 24" fill="currentColor" className="music-placeholder-svg-small">
+                                            <path d="M18 3h-8v11.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h6v5.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V3z" />
+                                          </svg>
+                                        </div>
                                       )}
                                       <div className="album-art-overlay">
                                         <div className="control-icon-small">

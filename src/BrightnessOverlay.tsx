@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState, useRef } from "react";
 import "./BrightnessOverlay.css";
+import { initTheme } from "./theme";
 
 // The rotating Sun icon component
 const SunIcon = ({ brightness }: { brightness: number }) => (
@@ -89,6 +90,10 @@ function BrightnessNotch({
 }
 
 function BrightnessOverlayApp() {
+  useEffect(() => {
+    return initTheme();
+  }, []);
+
   const [brightness, setBrightness] = useState(50);
   const [isVisible, setIsVisible] = useState(false);
   const [brightnessOverlayEnabled, setBrightnessOverlayEnabled] = useState(() => localStorage.getItem("bloom-brightness-overlay-enabled") !== "false");

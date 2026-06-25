@@ -119,7 +119,8 @@ fn main() {
             open_airplane_mode_settings,
             set_brightness,
             get_battery_saver_state,
-            open_battery_saver_settings
+            open_battery_saver_settings,
+            get_system_accent_color
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
