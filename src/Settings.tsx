@@ -55,9 +55,11 @@ function SettingsApp() {
     return val !== null ? parseFloat(val) : 0.15;
   });
 
+  const [activeTab, setActiveTab] = useState("general");
+
   useEffect(() => {
     invoke('resize_settings_window', {
-      width: 380 * scale,
+      width: 620 * scale,
       height: 480 * scale
     }).catch(console.error);
   }, [scale]);
@@ -167,7 +169,16 @@ function SettingsApp() {
       if (tBrightness) setThemeBrightness(parseFloat(tBrightness));
     }).catch(console.error);
 
-    getVersion().then(setAppVersion);
+    getVersion().then((ver) => {
+      if (ver) {
+        setAppVersion(ver);
+      } else {
+        setAppVersion("3.1.2");
+      }
+    }).catch((err) => {
+      console.error("Failed to load version via Tauri API, using fallback:", err);
+      setAppVersion("3.1.2");
+    });
     checkForUpdates(false);
   }, []);
 
@@ -492,6 +503,558 @@ function SettingsApp() {
     }
   };
 
+  const renderGeneral = () => (
+    <>
+      <div className="setting-group-label">Startup & Display</div>
+      <div className="setting-group">
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#007aff' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+              <path d="M12 2v20M2 12h20" strokeLinecap="round" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Launch at Login</span>
+            <span className="setting-desc">Open Bloom automatically</span>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={autostart} onChange={toggleAutostart} />
+            <span className="slider"></span>
+          </label>
+        </div>
+        
+        <div className="setting-divider" />
+
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#5856d6' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+              <rect x="3" y="3" width="18" height="18" rx="4" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Screen Corners</span>
+            <span className="setting-desc">Rounded top edges</span>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={cornersEnabled} onChange={toggleCorners} />
+            <span className="slider"></span>
+          </label>
+        </div>
+
+        <div className="setting-divider" />
+
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#00d2c4' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 14h6v6" />
+              <path d="M20 10h-6V4" />
+              <path d="M14 10l7-7" />
+              <path d="M10 14l-7 7" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">UI & Font Scale</span>
+            <span className="setting-desc">Adjust desktop size (80% - 130%)</span>
+          </div>
+          <div className="scale-button-container">
+            <button 
+              onClick={() => handleScaleChange(Math.max(0.8, parseFloat((scale - 0.1).toFixed(1))))}
+              disabled={scale <= 0.8}
+              className="scale-adjust-btn"
+              title="Decrease Scale"
+            >
+              —
+            </button>
+            <span className="scale-display-value">{Math.round(scale * 100)}%</span>
+            <button 
+              onClick={() => handleScaleChange(Math.min(1.3, parseFloat((scale + 0.1).toFixed(1))))}
+              disabled={scale >= 1.3}
+              className="scale-adjust-btn"
+              title="Increase Scale"
+            >
+              +
+            </button>
+          </div>
+        </div>
+
+        <div className="setting-divider" />
+
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#ff375f' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+              <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Notch Behavior</span>
+            <span className="setting-desc">Auto-hide top bar</span>
+          </div>
+          <select 
+            className="settings-select" 
+            value={notchMode} 
+            onChange={(e) => toggleNotchMode(e.target.value)}
+          >
+            <option value="fixed">Fixed</option>
+            <option value="auto-hide">Auto Hide</option>
+          </select>
+        </div>
+
+        <div className="setting-divider" />
+
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#ff9500' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+              <rect x="2" y="7" width="16" height="10" rx="2" ry="2" />
+              <path d="M22 11v2" strokeLinecap="round" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Low Battery Alert</span>
+            <span className="setting-desc">Trigger at {lowBatteryThreshold}%</span>
+          </div>
+          <input 
+            type="range" 
+            min="5" 
+            max="50" 
+            step="5" 
+            value={lowBatteryThreshold} 
+            onChange={(e) => handleThresholdChange(parseInt(e.target.value))} 
+            className="settings-slider"
+          />
+        </div>
+      </div>
+
+      <div className="setting-group-label">Bloom Management</div>
+      <div className="setting-group">
+        <div className="setting-item action" onClick={() => invoke('restart_bloom')}>
+          <div className="setting-icon-bg" style={{ background: '#8e8e93' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Restart Bloom</span>
+            <span className="setting-desc">Reinitialize all components</span>
+          </div>
+        </div>
+        
+        <div className="setting-divider" />
+
+        <div className="setting-item action danger" onClick={() => invoke('quit_bloom')}>
+          <div className="setting-icon-bg" style={{ background: '#ff3b30' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Quit Bloom</span>
+            <span className="setting-desc">Exit application completely</span>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  const renderAppearance = () => (
+    <>
+      <div className="setting-group-label">Appearance & Theme</div>
+      <div className="setting-group">
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#af52de' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" />
+              <path d="M12 2V22" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Theme Mode</span>
+            <span className="setting-desc">Configure visual styling</span>
+          </div>
+          <select 
+            className="settings-select" 
+            value={themeMode} 
+            onChange={(e) => toggleThemeMode(e.target.value)}
+          >
+            <option value="dark">Dark (Translucent)</option>
+            <option value="light">Light (Translucent)</option>
+            <option value="custom">Custom Color</option>
+            <option value="adaptive">Adaptive Accent</option>
+          </select>
+        </div>
+
+        {themeMode === 'custom' && (
+          <>
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Custom Theme Color</span>
+                <span className="setting-desc">Choose layout background color</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input 
+                  type="color" 
+                  value={themeColor} 
+                  onChange={(e) => handleThemeColorChange(e.target.value)}
+                  style={{
+                    border: 'none',
+                    width: '28px',
+                    height: '28px',
+                    borderRadius: '50%',
+                    cursor: 'pointer',
+                    padding: 0,
+                    background: 'transparent',
+                    overflow: 'hidden'
+                  }}
+                />
+                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                  {themeColor.toUpperCase()}
+                </span>
+              </div>
+            </div>
+          </>
+        )}
+
+        <div className="setting-divider" />
+        <div className="setting-item">
+          <div className="setting-info" style={{ marginLeft: '42px' }}>
+            <span className="setting-label">Background Opacity</span>
+            <span className="setting-desc">Adjust theme transparency ({Math.round(themeOpacity * 100)}%)</span>
+          </div>
+          <input 
+            type="range" 
+            min="0.1" 
+            max="1.0" 
+            step="0.05" 
+            value={themeOpacity} 
+            onChange={(e) => handleOpacityChange(parseFloat(e.target.value))} 
+            className="settings-slider"
+          />
+        </div>
+
+        {(themeMode === 'custom' || themeMode === 'adaptive') && (
+          <>
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Color Saturation</span>
+                <span className="setting-desc">Adjust theme color vibrancy ({Math.round(themeSaturation * 100)}%)</span>
+              </div>
+              <input 
+                type="range" 
+                min="0.0" 
+                max="1.0" 
+                step="0.02" 
+                value={themeSaturation} 
+                onChange={(e) => handleSaturationChange(parseFloat(e.target.value))} 
+                className="settings-slider"
+              />
+            </div>
+
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Background Brightness</span>
+                <span className="setting-desc">Adjust background lightness ({Math.round(themeBrightness * 100)}%)</span>
+              </div>
+              <input 
+                type="range" 
+                min="0.0" 
+                max="1.0" 
+                step="0.02" 
+                value={themeBrightness} 
+                onChange={(e) => handleBrightnessChange(parseFloat(e.target.value))} 
+                className="settings-slider"
+              />
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="setting-group-label">Bloom Dock</div>
+      <div className="setting-group">
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#34c759' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+              <line x1="8" y1="21" x2="16" y2="21" />
+              <line x1="12" y1="17" x2="12" y2="21" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Bloom Dock</span>
+            <span className="setting-desc">Replace Windows taskbar</span>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={dockEnabled} onChange={toggleDock} />
+            <span className="slider"></span>
+          </label>
+        </div>
+
+        {dockEnabled && (
+          <>
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Behavior</span>
+              </div>
+              <select 
+                className="settings-select" 
+                value={dockMode} 
+                onChange={(e) => toggleDockMode(e.target.value)}
+              >
+                <option value="fixed">Fixed (Reserves Space)</option>
+                <option value="auto-hide">Auto Hide</option>
+              </select>
+            </div>
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Show App Previews</span>
+                <span className="setting-desc">Show window thumbnails on hover</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={dockPreviewEnabled} onChange={toggleDockPreview} />
+                <span className="slider"></span>
+              </label>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+
+  const renderModules = () => (
+    <>
+      <div className="setting-group-label">Feature Modules</div>
+      <div className="setting-group">
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#32ade6' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+              <path d="M12 2v2M4.93 4.93l1.41 1.41M2 12h2M4.93 19.07l1.41-1.41M12 20v2M17.66 17.66l1.41 1.41M20 12h2M17.66 6.34l1.41-1.41" strokeLinecap="round" />
+              <circle cx="12" cy="12" r="4" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Weather Status</span>
+            <span className="setting-desc">Passive temperature info</span>
+          </div>
+          <div className="weather-controls">
+            <div className="unit-toggle-minimal" onClick={toggleTempUnit}>
+              <span className={!tempUnitFahrenheit ? "active" : ""}>C</span>
+              <span className={tempUnitFahrenheit ? "active" : ""}>F</span>
+            </div>
+            <label className="toggle-switch">
+              <input type="checkbox" checked={weatherEnabled} onChange={toggleWeather} />
+              <span className="slider"></span>
+            </label>
+          </div>
+        </div>
+        
+        <div className="setting-divider" />
+
+        <div className="manual-city-input">
+          <input 
+            type="text" 
+            placeholder="Enter city manually..." 
+            value={cityName}
+            onChange={(e) => setCityName(e.target.value)}
+            onBlur={() => handleCityChange(cityName)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCityChange(cityName)}
+          />
+          {isSearching && <div className="searching-spinner" />}
+        </div>
+        
+        <div className="setting-divider" />
+
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#ff3b30' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Calendar & Timer</span>
+            <span className="setting-desc">Enable productivity split-view</span>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={calendarEnabled} onChange={toggleCalendar} />
+            <span className="slider"></span>
+          </label>
+        </div>
+
+        <div className="setting-divider" />
+
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#ff2d55' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+              <path d="M9 18V5l12-2v13M9 18c0 1.1-1.34 2-3 2s-3-.9-3-2 1.34-2 3-2 3 .9 3 2zm12-2c0 1.1-1.34 2-3 2s-3-.9-3-2 1.34-2 3-2 3 .9 3 2z" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Music Mode</span>
+            <span className="setting-desc">Enable interactive live music widget</span>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={musicModeEnabled} onChange={toggleMusicMode} />
+            <span className="slider"></span>
+          </label>
+        </div>
+
+        {musicModeEnabled && (
+          <>
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Live Compact Music Mode</span>
+                <span className="setting-desc">Show visualizer & artwork when collapsed</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={musicCompactNotch} onChange={toggleMusicCompactNotch} />
+                <span className="slider"></span>
+              </label>
+            </div>
+          </>
+        )}
+
+        <div className="setting-divider" />
+
+        <div className="setting-item">
+          <div className="setting-icon-bg" style={{ background: '#ff9500' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+              <path d="M11 5L6 9H2v6h4l5 4V5zM15.54 8.46a5 5 0 0 1 0 7.07" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Volume HUD</span>
+            <span className="setting-desc">Bloom volume overlay</span>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={volumeOverlayEnabled} onChange={toggleVolumeOverlay} />
+            <span className="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      {musicModeEnabled && (
+        <>
+          <div className="setting-group-label">Media Aesthetic</div>
+          <div className="setting-group">
+            <div className="setting-item">
+              <div className="setting-icon-bg" style={{ background: '#af52de' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                  <path d="M12 20V10M18 20V4M6 20v-4" />
+                </svg>
+              </div>
+              <div className="setting-info">
+                <span className="setting-label">Visualizer bars</span>
+                <span className="setting-desc">Audio-reactive animation</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={mediaVisualizerEnabled} onChange={toggleVisualizer} />
+                <span className="slider"></span>
+              </label>
+            </div>
+            
+            <div className="setting-divider" />
+
+            <div className="setting-item">
+              <div className="setting-icon-bg" style={{ background: '#ff2d55' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                  <path d="M9 18V5l12-2v13M9 18c0 1.1-1.34 2-3 2s-3-.9-3-2 1.34-2 3-2 3 .9 3 2zm12-2c0 1.1-1.34 2-3 2s-3-.9-3-2 1.34-2 3-2 3 .9 3 2z" />
+                </svg>
+              </div>
+              <div className="setting-info">
+                <span className="setting-label">Album Artwork</span>
+                <span className="setting-desc">Show high-res covers</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={mediaAlbumArtEnabled} onChange={toggleAlbumArt} />
+                <span className="slider"></span>
+              </label>
+            </div>
+
+            <div className="setting-divider" />
+
+            <div className="setting-item">
+              <div className="setting-icon-bg" style={{ background: '#5ac8fa' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                  <path d="M4 6h16M4 12h16M4 18h7" strokeLinecap="round" />
+                </svg>
+              </div>
+              <div className="setting-info">
+                <span className="setting-label">Song Details</span>
+                <span className="setting-desc">Hover marquee info</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={mediaDetailsEnabled} onChange={toggleMediaDetails} />
+                <span className="slider"></span>
+              </label>
+            </div>
+
+            <div className="setting-divider" />
+
+            <div className="setting-item">
+              <div className="setting-icon-bg" style={{ background: '#ffcc00' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 2a7 7 0 1 0 10 10" />
+                </svg>
+              </div>
+              <div className="setting-info">
+                <span className="setting-label">Ambient Glow</span>
+                <span className="setting-desc">Artwork-driven backing color</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={mediaAmbienceEnabled} onChange={toggleAmbience} />
+                <span className="slider"></span>
+              </label>
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+
+  const renderAbout = () => (
+    <div className="about-tab-container">
+      <div className="about-header">
+        <img src="/bloom.png" className="about-logo" alt="Bloom Logo" />
+        <h1 className="about-title">Bloom</h1>
+        <p className="about-version">Version {appVersion}</p>
+      </div>
+
+      <div className="setting-group-label" style={{ marginTop: '24px' }}>Software Updates</div>
+      <div className="setting-group">
+        <div className="setting-item action" onClick={() => updateStatus === 'available' ? installUpdate() : checkForUpdates()}>
+          <div className="setting-icon-bg" style={{ background: updateStatus === 'available' ? '#34c759' : '#8e8e93' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">
+              {updateStatus === 'idle' && "Check for Updates"}
+              {updateStatus === 'checking' && "Checking..."}
+              {updateStatus === 'available' && `Update Available (v${updateVersion})`}
+              {updateStatus === 'uptodate' && "Bloom is up to date"}
+              {updateStatus === 'downloading' && "Downloading Update..."}
+              {updateStatus === 'error' && "No updates found"}
+            </span>
+            <span className="setting-desc">
+              {updateStatus === 'available' ? "Click to install and restart" : `Currently running v${appVersion}`}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="about-footer">
+        <p>Made with ❤️ by sehaz</p>
+      </div>
+    </div>
+  );
+
   return (
     <div className="settings-container" style={{ zoom: scale }}>
       <div className="title-bar" data-tauri-drag-region>
@@ -504,531 +1067,63 @@ function SettingsApp() {
         </button>
       </div>
 
-      <div className="settings-content">
-        <div className="setting-group-label">Startup & Display</div>
-        <div className="setting-group">
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#007aff' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M12 2v20M2 12h20" strokeLinecap="round" />
+      <div className="settings-body">
+        <div className="settings-sidebar">
+          <button 
+            className={`sidebar-tab ${activeTab === 'general' ? 'active' : ''}`}
+            onClick={() => setActiveTab('general')}
+          >
+            <div className="sidebar-tab-icon" style={{ background: '#007aff' }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
               </svg>
             </div>
-            <div className="setting-info">
-              <span className="setting-label">Launch at Login</span>
-              <span className="setting-desc">Open Bloom automatically</span>
-            </div>
-            <label className="toggle-switch">
-              <input type="checkbox" checked={autostart} onChange={toggleAutostart} />
-              <span className="slider"></span>
-            </label>
-          </div>
-          
-          <div className="setting-divider" />
-
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#5856d6' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <rect x="3" y="3" width="18" height="18" rx="4" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">Screen Corners</span>
-              <span className="setting-desc">Rounded top edges</span>
-            </div>
-            <label className="toggle-switch">
-              <input type="checkbox" checked={cornersEnabled} onChange={toggleCorners} />
-              <span className="slider"></span>
-            </label>
-          </div>
-
-          <div className="setting-divider" />
-
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#00d2c4' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 14h6v6" />
-                <path d="M20 10h-6V4" />
-                <path d="M14 10l7-7" />
-                <path d="M10 14l-7 7" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">UI & Font Scale</span>
-              <span className="setting-desc">Adjust desktop size (80% - 130%)</span>
-            </div>
-            <div className="scale-button-container">
-              <button 
-                onClick={() => handleScaleChange(Math.max(0.8, parseFloat((scale - 0.1).toFixed(1))))}
-                disabled={scale <= 0.8}
-                className="scale-adjust-btn"
-                title="Decrease Scale"
-              >
-                —
-              </button>
-              <span className="scale-display-value">{Math.round(scale * 100)}%</span>
-              <button 
-                onClick={() => handleScaleChange(Math.min(1.3, parseFloat((scale + 0.1).toFixed(1))))}
-                disabled={scale >= 1.3}
-                className="scale-adjust-btn"
-                title="Increase Scale"
-              >
-                +
-              </button>
-            </div>
-          </div>
-
-
-          <div className="setting-divider" />
-
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#ff375f' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">Notch Behavior</span>
-              <span className="setting-desc">Auto-hide top bar</span>
-            </div>
-            <select 
-              className="settings-select" 
-              value={notchMode} 
-              onChange={(e) => toggleNotchMode(e.target.value)}
-            >
-              <option value="fixed">Fixed</option>
-              <option value="auto-hide">Auto Hide</option>
-            </select>
-          </div>
-
-          <div className="setting-divider" />
-
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#34c759' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                <line x1="8" y1="21" x2="16" y2="21" />
-                <line x1="12" y1="17" x2="12" y2="21" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">Bloom Dock</span>
-              <span className="setting-desc">Replace Windows taskbar</span>
-            </div>
-            <label className="toggle-switch">
-              <input type="checkbox" checked={dockEnabled} onChange={toggleDock} />
-              <span className="slider"></span>
-            </label>
-          </div>
-
-          {dockEnabled && (
-            <>
-              <div className="setting-divider" />
-              <div className="setting-item">
-                <div className="setting-info" style={{ marginLeft: '42px' }}>
-                  <span className="setting-label">Behavior</span>
-                </div>
-                <select 
-                  className="settings-select" 
-                  value={dockMode} 
-                  onChange={(e) => toggleDockMode(e.target.value)}
-                >
-                  <option value="fixed">Fixed (Reserves Space)</option>
-                  <option value="auto-hide">Auto Hide</option>
-                </select>
-              </div>
-                <div className="setting-item">
-                  <div className="setting-info" style={{ marginLeft: '42px' }}>
-                    <span className="setting-label">Show App Previews</span>
-                    <span className="setting-desc">Show window thumbnails on hover</span>
-                  </div>
-                  <label className="toggle-switch">
-                    <input type="checkbox" checked={dockPreviewEnabled} onChange={toggleDockPreview} />
-                    <span className="slider"></span>
-                  </label>
-                </div>
-              </>
-          )}
-
-          <div className="setting-divider" />
-
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#ff9500' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <rect x="2" y="7" width="16" height="10" rx="2" ry="2" />
-                <path d="M22 11v2" strokeLinecap="round" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">Low Battery Alert</span>
-              <span className="setting-desc">Trigger at {lowBatteryThreshold}%</span>
-            </div>
-            <input 
-              type="range" 
-              min="5" 
-              max="50" 
-              step="5" 
-              value={lowBatteryThreshold} 
-              onChange={(e) => handleThresholdChange(parseInt(e.target.value))} 
-              className="settings-slider"
-            />
-          </div>
-        </div>
-
-        <div className="setting-group-label">Appearance</div>
-        <div className="setting-group">
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#af52de' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <span>General</span>
+          </button>
+          <button 
+            className={`sidebar-tab ${activeTab === 'appearance' ? 'active' : ''}`}
+            onClick={() => setActiveTab('appearance')}
+          >
+            <div className="sidebar-tab-icon" style={{ background: '#af52de' }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" />
                 <path d="M12 2V22" />
               </svg>
             </div>
-            <div className="setting-info">
-              <span className="setting-label">Theme Mode</span>
-              <span className="setting-desc">Configure visual styling</span>
+            <span>Appearance</span>
+          </button>
+          <button 
+            className={`sidebar-tab ${activeTab === 'modules' ? 'active' : ''}`}
+            onClick={() => setActiveTab('modules')}
+          >
+            <div className="sidebar-tab-icon" style={{ background: '#32ade6' }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              </svg>
             </div>
-            <select 
-              className="settings-select" 
-              value={themeMode} 
-              onChange={(e) => toggleThemeMode(e.target.value)}
-            >
-              <option value="dark">Dark (Translucent)</option>
-              <option value="light">Light (Translucent)</option>
-              <option value="custom">Custom Color</option>
-              <option value="adaptive">Adaptive Accent</option>
-            </select>
-          </div>
-
-          {themeMode === 'custom' && (
-            <>
-              <div className="setting-divider" />
-              <div className="setting-item">
-                <div className="setting-info" style={{ marginLeft: '42px' }}>
-                  <span className="setting-label">Custom Theme Color</span>
-                  <span className="setting-desc">Choose layout background color</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <input 
-                    type="color" 
-                    value={themeColor} 
-                    onChange={(e) => handleThemeColorChange(e.target.value)}
-                    style={{
-                      border: 'none',
-                      width: '28px',
-                      height: '28px',
-                      borderRadius: '50%',
-                      cursor: 'pointer',
-                      padding: 0,
-                      background: 'transparent',
-                      overflow: 'hidden'
-                    }}
-                  />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
-                    {themeColor.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-            </>
-          )}
-
-          <div className="setting-divider" />
-          <div className="setting-item">
-            <div className="setting-info" style={{ marginLeft: '42px' }}>
-              <span className="setting-label">Background Opacity</span>
-              <span className="setting-desc">Adjust theme transparency ({Math.round(themeOpacity * 100)}%)</span>
+            <span>Modules</span>
+          </button>
+          <button 
+            className={`sidebar-tab ${activeTab === 'about' ? 'active' : ''}`}
+            onClick={() => setActiveTab('about')}
+          >
+            <div className="sidebar-tab-icon" style={{ background: '#8e8e93' }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
             </div>
-            <input 
-              type="range" 
-              min="0.1" 
-              max="1.0" 
-              step="0.05" 
-              value={themeOpacity} 
-              onChange={(e) => handleOpacityChange(parseFloat(e.target.value))} 
-              className="settings-slider"
-            />
-          </div>
-
-          {(themeMode === 'custom' || themeMode === 'adaptive') && (
-            <>
-              <div className="setting-divider" />
-              <div className="setting-item">
-                <div className="setting-info" style={{ marginLeft: '42px' }}>
-                  <span className="setting-label">Color Saturation</span>
-                  <span className="setting-desc">Adjust theme color vibrancy ({Math.round(themeSaturation * 100)}%)</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="0.0" 
-                  max="1.0" 
-                  step="0.02" 
-                  value={themeSaturation} 
-                  onChange={(e) => handleSaturationChange(parseFloat(e.target.value))} 
-                  className="settings-slider"
-                />
-              </div>
-
-              <div className="setting-divider" />
-              <div className="setting-item">
-                <div className="setting-info" style={{ marginLeft: '42px' }}>
-                  <span className="setting-label">Background Brightness</span>
-                  <span className="setting-desc">Adjust background lightness ({Math.round(themeBrightness * 100)}%)</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="0.0" 
-                  max="1.0" 
-                  step="0.02" 
-                  value={themeBrightness} 
-                  onChange={(e) => handleBrightnessChange(parseFloat(e.target.value))} 
-                  className="settings-slider"
-                />
-              </div>
-            </>
-          )}
+            <span>About</span>
+          </button>
         </div>
 
-        <div className="setting-group-label">Feature Modules</div>
-        <div className="setting-group">
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#32ade6' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M12 2v2M4.93 4.93l1.41 1.41M2 12h2M4.93 19.07l1.41-1.41M12 20v2M17.66 17.66l1.41 1.41M20 12h2M17.66 6.34l1.41-1.41" strokeLinecap="round" />
-                <circle cx="12" cy="12" r="4" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">Weather Status</span>
-              <span className="setting-desc">Passive temperature info</span>
-            </div>
-            <div className="weather-controls">
-              <div className="unit-toggle-minimal" onClick={toggleTempUnit}>
-                <span className={!tempUnitFahrenheit ? "active" : ""}>C</span>
-                <span className={tempUnitFahrenheit ? "active" : ""}>F</span>
-              </div>
-              <label className="toggle-switch">
-                <input type="checkbox" checked={weatherEnabled} onChange={toggleWeather} />
-                <span className="slider"></span>
-              </label>
-            </div>
-          </div>
-          
-          <div className="setting-divider" />
-
-          <div className="manual-city-input">
-            <input 
-              type="text" 
-              placeholder="Enter city manually..." 
-              value={cityName}
-              onChange={(e) => setCityName(e.target.value)}
-              onBlur={() => handleCityChange(cityName)}
-              onKeyDown={(e) => e.key === 'Enter' && handleCityChange(cityName)}
-            />
-            {isSearching && <div className="searching-spinner" />}
-          </div>
-          
-          <div className="setting-divider" />
-
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#ff3b30' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                <line x1="16" y1="2" x2="16" y2="6" />
-                <line x1="8" y1="2" x2="8" y2="6" />
-                <line x1="3" y1="10" x2="21" y2="10" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">Calendar & Timer</span>
-              <span className="setting-desc">Enable productivity split-view</span>
-            </div>
-            <label className="toggle-switch">
-              <input type="checkbox" checked={calendarEnabled} onChange={toggleCalendar} />
-              <span className="slider"></span>
-            </label>
-          </div>
-
-          <div className="setting-divider" />
-
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#ff2d55' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M9 18V5l12-2v13M9 18c0 1.1-1.34 2-3 2s-3-.9-3-2 1.34-2 3-2 3 .9 3 2zm12-2c0 1.1-1.34 2-3 2s-3-.9-3-2 1.34-2 3-2 3 .9 3 2z" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">Music Mode</span>
-              <span className="setting-desc">Enable interactive live music widget</span>
-            </div>
-            <label className="toggle-switch">
-              <input type="checkbox" checked={musicModeEnabled} onChange={toggleMusicMode} />
-              <span className="slider"></span>
-            </label>
-          </div>
-
-          {musicModeEnabled && (
-            <>
-              <div className="setting-divider" />
-              <div className="setting-item">
-                <div className="setting-info" style={{ marginLeft: '42px' }}>
-                  <span className="setting-label">Live Compact Music Mode</span>
-                  <span className="setting-desc">Show visualizer & artwork when collapsed</span>
-                </div>
-                <label className="toggle-switch">
-                  <input type="checkbox" checked={musicCompactNotch} onChange={toggleMusicCompactNotch} />
-                  <span className="slider"></span>
-                </label>
-              </div>
-            </>
-          )}
-
-          <div className="setting-divider" />
-
-          <div className="setting-item">
-            <div className="setting-icon-bg" style={{ background: '#ff9500' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M11 5L6 9H2v6h4l5 4V5zM15.54 8.46a5 5 0 0 1 0 7.07" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">Volume HUD</span>
-              <span className="setting-desc">Bloom volume overlay</span>
-            </div>
-            <label className="toggle-switch">
-              <input type="checkbox" checked={volumeOverlayEnabled} onChange={toggleVolumeOverlay} />
-              <span className="slider"></span>
-            </label>
-          </div>
-        </div>
-
-        {musicModeEnabled && (
-          <>
-            <div className="setting-group-label">Media Aesthetic</div>
-            <div className="setting-group">
-              <div className="setting-item">
-                <div className="setting-icon-bg" style={{ background: '#af52de' }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                    <path d="M12 20V10M18 20V4M6 20v-4" />
-                  </svg>
-                </div>
-                <div className="setting-info">
-                  <span className="setting-label">Visualizer bars</span>
-                  <span className="setting-desc">Audio-reactive animation</span>
-                </div>
-                <label className="toggle-switch">
-                  <input type="checkbox" checked={mediaVisualizerEnabled} onChange={toggleVisualizer} />
-                  <span className="slider"></span>
-                </label>
-              </div>
-              
-              <div className="setting-divider" />
-
-              <div className="setting-item">
-                <div className="setting-icon-bg" style={{ background: '#ff2d55' }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                    <path d="M9 18V5l12-2v13M9 18c0 1.1-1.34 2-3 2s-3-.9-3-2 1.34-2 3-2 3 .9 3 2zm12-2c0 1.1-1.34 2-3 2s-3-.9-3-2 1.34-2 3-2 3 .9 3 2z" />
-                  </svg>
-                </div>
-                <div className="setting-info">
-                  <span className="setting-label">Album Artwork</span>
-                  <span className="setting-desc">Show high-res covers</span>
-                </div>
-                <label className="toggle-switch">
-                  <input type="checkbox" checked={mediaAlbumArtEnabled} onChange={toggleAlbumArt} />
-                  <span className="slider"></span>
-                </label>
-              </div>
-
-              <div className="setting-divider" />
-
-              <div className="setting-item">
-                <div className="setting-icon-bg" style={{ background: '#5ac8fa' }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                    <path d="M4 6h16M4 12h16M4 18h7" strokeLinecap="round" />
-                  </svg>
-                </div>
-                <div className="setting-info">
-                  <span className="setting-label">Song Details</span>
-                  <span className="setting-desc">Hover marquee info</span>
-                </div>
-                <label className="toggle-switch">
-                  <input type="checkbox" checked={mediaDetailsEnabled} onChange={toggleMediaDetails} />
-                  <span className="slider"></span>
-                </label>
-              </div>
-
-              <div className="setting-divider" />
-
-              <div className="setting-item">
-                <div className="setting-icon-bg" style={{ background: '#ffcc00' }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                    <circle cx="12" cy="12" r="10" />
-                    <path d="M12 2a7 7 0 1 0 10 10" />
-                  </svg>
-                </div>
-                <div className="setting-info">
-                  <span className="setting-label">Ambient Glow</span>
-                  <span className="setting-desc">Artwork-driven backing color</span>
-                </div>
-                <label className="toggle-switch">
-                  <input type="checkbox" checked={mediaAmbienceEnabled} onChange={toggleAmbience} />
-                  <span className="slider"></span>
-                </label>
-              </div>
-            </div>
-          </>
-        )}
-
-        <div className="setting-group-label">Bloom Management</div>
-        <div className="setting-group">
-          <div className="setting-item action" onClick={() => invoke('restart_bloom')}>
-             <div className="setting-icon-bg" style={{ background: '#8e8e93' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">Restart Bloom</span>
-              <span className="setting-desc">Reinitialize all components</span>
-            </div>
-          </div>
-          
-          <div className="setting-divider" />
-
-          <div className="setting-item action danger" onClick={() => invoke('quit_bloom')}>
-             <div className="setting-icon-bg" style={{ background: '#ff3b30' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">Quit Bloom</span>
-              <span className="setting-desc">Exit application completely</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="setting-group-label">Software Update</div>
-        <div className="setting-group">
-          <div className="setting-item action" onClick={() => updateStatus === 'available' ? installUpdate() : checkForUpdates()}>
-             <div className="setting-icon-bg" style={{ background: updateStatus === 'available' ? '#34c759' : '#8e8e93' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
-              </svg>
-            </div>
-            <div className="setting-info">
-              <span className="setting-label">
-                {updateStatus === 'idle' && "Check for Updates"}
-                {updateStatus === 'checking' && "Checking..."}
-                {updateStatus === 'available' && `Update Available (v${updateVersion})`}
-                {updateStatus === 'uptodate' && "Bloom is up to date"}
-                {updateStatus === 'downloading' && "Downloading Update..."}
-                {updateStatus === 'error' && "No updates found"}
-              </span>
-              <span className="setting-desc">
-                {updateStatus === 'available' ? "Click to install and restart" : `Currently running v${appVersion}`}
-              </span>
-            </div>
-          </div>
+        <div className="settings-content">
+          {activeTab === 'general' && renderGeneral()}
+          {activeTab === 'appearance' && renderAppearance()}
+          {activeTab === 'modules' && renderModules()}
+          {activeTab === 'about' && renderAbout()}
         </div>
       </div>
     </div>
