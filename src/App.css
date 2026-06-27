@@ -1032,7 +1032,7 @@ body {
 }
 
 .cc-pill-tile.active .cc-pill-status {
-    color: var(--bloom-text-muted, rgba(0, 0, 0, 0.6));
+    color: var(--bloom-bg-expanded, rgba(0, 0, 0, 0.5));
 }
 
 .cc-pill-tile.active .cc-pill-icon-wrapper {

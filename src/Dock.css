@@ -356,9 +356,9 @@ body {
   position: absolute;
   left: 100%;
   bottom: -6px;
-  background: rgba(40, 40, 40, 0.98);
+  background: var(--bloom-bg-expanded, rgba(40, 40, 40, 0.98));
   backdrop-filter: blur(25px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
   border-radius: 12px;
   padding: 6px;
   min-width: 140px;
@@ -616,6 +616,7 @@ body {
 
 .light-mode .start-menu,
 .light-mode .context-menu,
+.light-mode .submenu,
 .light-mode .add-app-popup {
   background: var(--bloom-bg-expanded);
   border-color: var(--bloom-border);
