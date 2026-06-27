@@ -131,6 +131,7 @@ function BrightnessOverlayApp() {
   const [brightness, setBrightness] = useState(50);
   const [isVisible, setIsVisible] = useState(false);
   const [brightnessOverlayEnabled, setBrightnessOverlayEnabled] = useState(() => localStorage.getItem("bloom-brightness-overlay-enabled") !== "false");
+  const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(() => localStorage.getItem("bloom-brightness-edge-enabled") !== "false");
   const timeoutRef = useRef<any>(null);
   const [scale, setScale] = useState(() => parseFloat(localStorage.getItem("bloom-scale") || "1.0"));
 
@@ -165,7 +166,7 @@ function BrightnessOverlayApp() {
     });
 
     const edgePromise = listen<boolean>("brightness-edge-hover", (event) => {
-      if (!brightnessOverlayEnabled) return;
+      if (!brightnessOverlayEnabled || !brightnessEdgeEnabled) return;
 
       if (event.payload) {
         setIsVisible(true);
@@ -183,6 +184,9 @@ function BrightnessOverlayApp() {
         setBrightnessOverlayEnabled(event.payload.value);
         if (!event.payload.value) setIsVisible(false);
       }
+      if (event.payload.key === "brightness-edge") {
+        setBrightnessEdgeEnabled(event.payload.value);
+      }
       if (event.payload.key === "bloom-scale") {
         setScale(Number(event.payload.value));
       }
@@ -195,7 +199,7 @@ function BrightnessOverlayApp() {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       document.removeEventListener('contextmenu', preventContext);
     };
-  }, [brightnessOverlayEnabled]);
+  }, [brightnessOverlayEnabled, brightnessEdgeEnabled]);
 
   useEffect(() => {
     let windowHideTimeout: any = null;

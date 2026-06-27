@@ -23,9 +23,11 @@ function SettingsApp() {
   const [musicModeEnabled, setMusicModeEnabled] = useState(true);
   const [musicCompactNotch, setMusicCompactNotch] = useState(true);
   const [volumeOverlayEnabled, setVolumeOverlayEnabled] = useState(true);
+  const [volumeEdgeEnabled, setVolumeEdgeEnabled] = useState(() => localStorage.getItem("bloom-volume-edge-enabled") !== "false");
+  const [brightnessOverlayEnabled, setBrightnessOverlayEnabled] = useState(true);
+  const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(() => localStorage.getItem("bloom-brightness-edge-enabled") !== "false");
   const [mediaVisualizerEnabled, setMediaVisualizerEnabled] = useState(true);
   const [mediaAlbumArtEnabled, setMediaAlbumArtEnabled] = useState(true);
-  const [mediaDetailsEnabled, setMediaDetailsEnabled] = useState(true);
   const [mediaAmbienceEnabled, setMediaAmbienceEnabled] = useState(true);
   const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
@@ -119,9 +121,6 @@ function SettingsApp() {
 
       const art = getVal("bloom-media-album-art-enabled");
       if (art !== null) setMediaAlbumArtEnabled(art === "true");
-
-      const details = getVal("bloom-media-details-enabled");
-      if (details !== null) setMediaDetailsEnabled(details === "true");
 
       const ambience = getVal("bloom-media-ambience-enabled");
       if (ambience !== null) setMediaAmbienceEnabled(ambience === "true");
@@ -329,6 +328,27 @@ function SettingsApp() {
     notifyChange("volume-overlay", newVal);
   };
 
+  const toggleVolumeEdge = () => {
+    const newVal = !volumeEdgeEnabled;
+    setVolumeEdgeEnabled(newVal);
+    saveAndLocal("bloom-volume-edge-enabled", String(newVal));
+    notifyChange("volume-edge", newVal);
+  };
+
+  const toggleBrightnessOverlay = () => {
+    const newVal = !brightnessOverlayEnabled;
+    setBrightnessOverlayEnabled(newVal);
+    saveAndLocal("bloom-brightness-overlay-enabled", String(newVal));
+    notifyChange("brightness-overlay", newVal);
+  };
+
+  const toggleBrightnessEdge = () => {
+    const newVal = !brightnessEdgeEnabled;
+    setBrightnessEdgeEnabled(newVal);
+    saveAndLocal("bloom-brightness-edge-enabled", String(newVal));
+    notifyChange("brightness-edge", newVal);
+  };
+
   const toggleVisualizer = () => {
     const newVal = !mediaVisualizerEnabled;
     setMediaVisualizerEnabled(newVal);
@@ -341,13 +361,6 @@ function SettingsApp() {
     setMediaAlbumArtEnabled(newVal);
     saveAndLocal("bloom-media-album-art-enabled", String(newVal));
     notifyChange("album-art", newVal);
-  };
-
-  const toggleMediaDetails = () => {
-    const newVal = !mediaDetailsEnabled;
-    setMediaDetailsEnabled(newVal);
-    saveAndLocal("bloom-media-details-enabled", String(newVal));
-    notifyChange("media-details", newVal);
   };
 
   const toggleAmbience = () => {
@@ -824,47 +837,8 @@ function SettingsApp() {
 
   const renderModules = () => (
     <>
-      <div className="setting-group-label">Feature Modules</div>
+      <div className="setting-group-label">Notch</div>
       <div className="setting-group">
-        <div className="setting-item">
-          <div className="setting-icon-bg">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M12 2v2M4.93 4.93l1.41 1.41M2 12h2M4.93 19.07l1.41-1.41M12 20v2M17.66 17.66l1.41 1.41M20 12h2M17.66 6.34l1.41-1.41" strokeLinecap="round" />
-              <circle cx="12" cy="12" r="4" />
-            </svg>
-          </div>
-          <div className="setting-info">
-            <span className="setting-label">Weather Status</span>
-            <span className="setting-desc">Passive temperature info</span>
-          </div>
-          <div className="weather-controls">
-            <div className="unit-toggle-minimal" onClick={toggleTempUnit}>
-              <span className={!tempUnitFahrenheit ? "active" : ""}>C</span>
-              <span className={tempUnitFahrenheit ? "active" : ""}>F</span>
-            </div>
-            <label className="toggle-switch">
-              <input type="checkbox" checked={weatherEnabled} onChange={toggleWeather} />
-              <span className="slider"></span>
-            </label>
-          </div>
-        </div>
-        
-        <div className="setting-divider" />
-
-        <div className="manual-city-input">
-          <input 
-            type="text" 
-            placeholder="Enter city manually..." 
-            value={cityName}
-            onChange={(e) => setCityName(e.target.value)}
-            onBlur={() => handleCityChange(cityName)}
-            onKeyDown={(e) => e.key === 'Enter' && handleCityChange(cityName)}
-          />
-          {isSearching && <div className="searching-spinner" />}
-        </div>
-        
-        <div className="setting-divider" />
-
         <div className="setting-item">
           <div className="setting-icon-bg">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -894,7 +868,7 @@ function SettingsApp() {
           </div>
           <div className="setting-info">
             <span className="setting-label">Music Mode</span>
-            <span className="setting-desc">Enable interactive live music widget</span>
+            <span className="setting-desc">Interactive live music widget</span>
           </div>
           <label className="toggle-switch">
             <input type="checkbox" checked={musicModeEnabled} onChange={toggleMusicMode} />
@@ -907,7 +881,7 @@ function SettingsApp() {
             <div className="setting-divider" />
             <div className="setting-item">
               <div className="setting-info" style={{ marginLeft: '42px' }}>
-                <span className="setting-label">Live Compact Music Mode</span>
+                <span className="setting-label">Compact Mode</span>
                 <span className="setting-desc">Show visualizer & artwork when collapsed</span>
               </div>
               <label className="toggle-switch">
@@ -915,11 +889,91 @@ function SettingsApp() {
                 <span className="slider"></span>
               </label>
             </div>
+
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Visualizer Bars</span>
+                <span className="setting-desc">Audio-reactive animation</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={mediaVisualizerEnabled} onChange={toggleVisualizer} />
+                <span className="slider"></span>
+              </label>
+            </div>
+
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Album Artwork</span>
+                <span className="setting-desc">Show high-res covers</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={mediaAlbumArtEnabled} onChange={toggleAlbumArt} />
+                <span className="slider"></span>
+              </label>
+            </div>
+
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Ambient Glow</span>
+                <span className="setting-desc">Artwork-driven backing color</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={mediaAmbienceEnabled} onChange={toggleAmbience} />
+                <span className="slider"></span>
+              </label>
+            </div>
           </>
         )}
+      </div>
 
-        <div className="setting-divider" />
+      <div className="setting-group-label">Weather</div>
+      <div className="setting-group">
+        <div className="setting-item">
+          <div className="setting-icon-bg">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M12 2v2M4.93 4.93l1.41 1.41M2 12h2M4.93 19.07l1.41-1.41M12 20v2M17.66 17.66l1.41 1.41M20 12h2M17.66 6.34l1.41-1.41" strokeLinecap="round" />
+              <circle cx="12" cy="12" r="4" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Weather Status</span>
+            <span className="setting-desc">Passive temperature info</span>
+          </div>
+          <div className="weather-controls">
+            <div className="unit-toggle-minimal" onClick={toggleTempUnit}>
+              <span className={!tempUnitFahrenheit ? "active" : ""}>C</span>
+              <span className={tempUnitFahrenheit ? "active" : ""}>F</span>
+            </div>
+            <label className="toggle-switch">
+              <input type="checkbox" checked={weatherEnabled} onChange={toggleWeather} />
+              <span className="slider"></span>
+            </label>
+          </div>
+        </div>
 
+        {weatherEnabled && (
+          <>
+            <div className="setting-divider" />
+            <div className="manual-city-input">
+              <input
+                type="text"
+                placeholder="Enter city manually..."
+                value={cityName}
+                onChange={(e) => setCityName(e.target.value)}
+                onBlur={() => handleCityChange(cityName)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCityChange(cityName)}
+              />
+              {isSearching && <div className="searching-spinner" />}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="setting-group-label">Overlays</div>
+      <div className="setting-group">
         <div className="setting-item">
           <div className="setting-icon-bg">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -935,85 +989,58 @@ function SettingsApp() {
             <span className="slider"></span>
           </label>
         </div>
-      </div>
 
-      {musicModeEnabled && (
-        <>
-          <div className="setting-group-label">Media Aesthetic</div>
-          <div className="setting-group">
-            <div className="setting-item">
-              <div className="setting-icon-bg">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M12 20V10M18 20V4M6 20v-4" />
-                </svg>
-              </div>
-              <div className="setting-info">
-                <span className="setting-label">Visualizer bars</span>
-                <span className="setting-desc">Audio-reactive animation</span>
-              </div>
-              <label className="toggle-switch">
-                <input type="checkbox" checked={mediaVisualizerEnabled} onChange={toggleVisualizer} />
-                <span className="slider"></span>
-              </label>
-            </div>
-            
+        {volumeOverlayEnabled && (
+          <>
             <div className="setting-divider" />
-
             <div className="setting-item">
-              <div className="setting-icon-bg">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M9 18V5l12-2v13M9 18c0 1.1-1.34 2-3 2s-3-.9-3-2 1.34-2 3-2 3 .9 3 2zm12-2c0 1.1-1.34 2-3 2s-3-.9-3-2 1.34-2 3-2 3 .9 3 2z" />
-                </svg>
-              </div>
-              <div className="setting-info">
-                <span className="setting-label">Album Artwork</span>
-                <span className="setting-desc">Show high-res covers</span>
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Show on Edge Hover</span>
+                <span className="setting-desc">Slide in from left edge</span>
               </div>
               <label className="toggle-switch">
-                <input type="checkbox" checked={mediaAlbumArtEnabled} onChange={toggleAlbumArt} />
+                <input type="checkbox" checked={volumeEdgeEnabled} onChange={toggleVolumeEdge} />
                 <span className="slider"></span>
               </label>
             </div>
+          </>
+        )}
 
-            <div className="setting-divider" />
+        <div className="setting-divider" />
 
-            <div className="setting-item">
-              <div className="setting-icon-bg">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M4 6h16M4 12h16M4 18h7" strokeLinecap="round" />
-                </svg>
-              </div>
-              <div className="setting-info">
-                <span className="setting-label">Song Details</span>
-                <span className="setting-desc">Hover marquee info</span>
-              </div>
-              <label className="toggle-switch">
-                <input type="checkbox" checked={mediaDetailsEnabled} onChange={toggleMediaDetails} />
-                <span className="slider"></span>
-              </label>
-            </div>
-
-            <div className="setting-divider" />
-
-            <div className="setting-item">
-              <div className="setting-icon-bg">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 2a7 7 0 1 0 10 10" />
-                </svg>
-              </div>
-              <div className="setting-info">
-                <span className="setting-label">Ambient Glow</span>
-                <span className="setting-desc">Artwork-driven backing color</span>
-              </div>
-              <label className="toggle-switch">
-                <input type="checkbox" checked={mediaAmbienceEnabled} onChange={toggleAmbience} />
-                <span className="slider"></span>
-              </label>
-            </div>
+        <div className="setting-item">
+          <div className="setting-icon-bg">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="5" />
+              <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" strokeLinecap="round" />
+            </svg>
           </div>
-        </>
-      )}
+          <div className="setting-info">
+            <span className="setting-label">Brightness HUD</span>
+            <span className="setting-desc">Bloom brightness overlay</span>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={brightnessOverlayEnabled} onChange={toggleBrightnessOverlay} />
+            <span className="slider"></span>
+          </label>
+        </div>
+
+        {brightnessOverlayEnabled && (
+          <>
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Show on Edge Hover</span>
+                <span className="setting-desc">Slide in from right edge</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={brightnessEdgeEnabled} onChange={toggleBrightnessEdge} />
+                <span className="slider"></span>
+              </label>
+            </div>
+          </>
+        )}
+      </div>
     </>
   );
 

@@ -129,6 +129,7 @@ function VolumeOverlayApp() {
   const [isMuted, setIsMuted] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [volumeOverlayEnabled, setVolumeOverlayEnabled] = useState(() => localStorage.getItem("bloom-volume-overlay-enabled") !== "false");
+  const [volumeEdgeEnabled, setVolumeEdgeEnabled] = useState(() => localStorage.getItem("bloom-volume-edge-enabled") !== "false");
   const timeoutRef = useRef<any>(null);
   const [scale, setScale] = useState(() => parseFloat(localStorage.getItem("bloom-scale") || "1.0"));
 
@@ -165,7 +166,7 @@ function VolumeOverlayApp() {
     });
 
     const edgePromise = listen<boolean>("volume-edge-hover", (event) => {
-      if (!volumeOverlayEnabled) return;
+      if (!volumeOverlayEnabled || !volumeEdgeEnabled) return;
 
       if (event.payload) {
         setIsVisible(true);
@@ -183,6 +184,9 @@ function VolumeOverlayApp() {
         setVolumeOverlayEnabled(event.payload.value);
         if (!event.payload.value) setIsVisible(false);
       }
+      if (event.payload.key === "volume-edge") {
+        setVolumeEdgeEnabled(event.payload.value);
+      }
       if (event.payload.key === "bloom-scale") {
         setScale(Number(event.payload.value));
       }
@@ -195,7 +199,7 @@ function VolumeOverlayApp() {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       document.removeEventListener('contextmenu', preventContext);
     };
-  }, [volumeOverlayEnabled]);
+  }, [volumeOverlayEnabled, volumeEdgeEnabled]);
 
   // Manage window visibility to allow exit animation to finish before hiding the window
   useEffect(() => {
