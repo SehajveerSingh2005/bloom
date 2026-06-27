@@ -144,6 +144,18 @@ body {
   background: rgba(0, 0, 0, 0.06);
 }
 
+.light-mode .sidebar-tab-icon {
+  color: var(--text-muted, rgba(0, 0, 0, 0.4));
+}
+
+.light-mode .sidebar-tab.active .sidebar-tab-icon {
+  color: var(--text-color, #1d1d1f);
+}
+
+.light-mode .sidebar-tab:hover .sidebar-tab-icon {
+  color: var(--text-color, #1d1d1f);
+}
+
 .sidebar-tab:active {
   background: rgba(255, 255, 255, 0.12);
   opacity: 1;
@@ -161,12 +173,31 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  background: transparent;
+  color: var(--text-muted, rgba(255, 255, 255, 0.5));
+}
+
+.sidebar-tab.active .sidebar-tab-icon {
+  color: var(--text-color, white);
+}
+
+.sidebar-tab:hover .sidebar-tab-icon {
+  color: var(--text-color, white);
 }
 
 .sidebar-tab.active svg {
   stroke: var(--text-color);
   color: var(--text-color);
+}
+
+.sidebar-tab:hover svg {
+  stroke: var(--text-color);
+  color: var(--text-color);
+}
+
+.light-mode .sidebar-tab:hover svg {
+  stroke: var(--text-color, #1d1d1f);
+  color: var(--text-color, #1d1d1f);
 }
 
 .settings-content {
@@ -234,7 +265,20 @@ body {
   justify-content: center;
   margin-right: 12px;
   flex-shrink: 0;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  background: transparent;
+  color: var(--text-muted, rgba(255, 255, 255, 0.5));
+}
+
+.setting-item:hover .setting-icon-bg {
+  color: var(--text-color, white);
+}
+
+.light-mode .setting-icon-bg {
+  color: var(--text-muted, rgba(0, 0, 0, 0.4));
+}
+
+.light-mode .setting-item:hover .setting-icon-bg {
+  color: var(--text-color, #1d1d1f);
 }
 
 .setting-info {
