@@ -33,7 +33,7 @@ function SettingsApp() {
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
   const [cityName, setCityName] = useState("");
   const [isSearching, setIsSearching] = useState(false);
-  const [dockEnabled, setDockEnabled] = useState(false);
+  const [dockEnabled, setDockEnabled] = useState(true);
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(true);
   const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "auto-hide");
   const [notchMode, setNotchMode] = useState("fixed");

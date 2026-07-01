@@ -956,7 +956,10 @@ pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Re
     
     if key == "bloom-scale" {
         if let Some(main_win) = app.get_webview_window("main") {
-            crate::services::register_appbar(main_win);
+            let notch_fixed = settings.get("bloom-notch-mode").map(|v| v.as_str() == Some("fixed")).unwrap_or(true);
+            if notch_fixed {
+                crate::services::register_appbar(main_win);
+            }
         }
         if let Some(dock_win) = app.get_webview_window("dock") {
             let is_fixed = settings.get("bloom-dock-mode").map(|v| v.as_str() == Some("fixed")).unwrap_or(false);

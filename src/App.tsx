@@ -420,7 +420,7 @@ function App() {
         }
         const dockMode = getVal("bloom-dock-mode", "auto-hide") as string;
         const syncWindows = async () => {
-          const dockEnabled = getVal("bloom-dock-enabled", "false") === "true";
+          const dockEnabled = getVal("bloom-dock-enabled", "true") === "true";
           if (dockEnabled) {
             await invoke("init_dock", { mode: dockMode });
           }
@@ -433,7 +433,7 @@ function App() {
 
         // 2. Safety-net dock retry at 1.5s — catches cases where the dock webview
         //    wasn't fully initialized when the 400ms call fired
-        const dockEnabled = getVal("bloom-dock-enabled", "false") === "true";
+          const dockEnabled = getVal("bloom-dock-enabled", "true") === "true";
         if (dockEnabled) {
           setTimeout(() => invoke("init_dock", { mode: dockMode }).catch(() => {}), 1500);
         }
