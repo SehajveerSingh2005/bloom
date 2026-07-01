@@ -84,22 +84,20 @@ const Dock = memo(function Dock() {
       return false;
     };
 
-    // Keep polling until visible (handles first-launch AND reload timing)
+    // Keep polling until visible — no time cap, since the dock can be
+    // enabled at runtime from settings after any delay.
     const interval = setInterval(async () => {
       if (cleared) return;
       if (await checkVisibility()) {
         clearInterval(interval);
         cleared = true;
       }
-    }, 100);
+    }, 200);
 
     // Also attempt immediately
     checkVisibility().then(ok => { if (ok) { clearInterval(interval); cleared = true; } });
 
-    // Safety cap: give up polling after 8 seconds (avoids zombie intervals)
-    const cap = setTimeout(() => { clearInterval(interval); cleared = true; }, 8000);
-
-    return () => { clearInterval(interval); clearTimeout(cap); cleared = true; };
+    return () => { clearInterval(interval); cleared = true; };
   }, []);
 
   useEffect(() => {

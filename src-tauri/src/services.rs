@@ -1388,6 +1388,10 @@ pub fn register_appbar(window: tauri::WebviewWindow) {
 }
 
 pub fn register_dock_appbar(window: tauri::WebviewWindow) {
+    register_dock_appbar_inner(window, 0);
+}
+
+fn register_dock_appbar_inner(window: tauri::WebviewWindow, attempt: i32) {
     if let Ok(Some(monitor)) = window.app_handle().primary_monitor() {
         let m_size = monitor.size();
         let m_pos = monitor.position();
@@ -1399,12 +1403,13 @@ pub fn register_dock_appbar(window: tauri::WebviewWindow) {
         // window has rendered. Never guess a value — bail and let the retry wrapper handle it.
         let ph = window.outer_size().map(|s| s.height as i32).unwrap_or(0);
         if ph <= 0 {
-            // Window not ready yet; the outer retry wrapper will call us again.
-            let w = window.clone();
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                register_dock_appbar(w);
-            });
+            if attempt < 10 {
+                let w = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    register_dock_appbar_inner(w, attempt + 1);
+                });
+            }
             return;
         }
 
