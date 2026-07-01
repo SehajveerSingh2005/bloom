@@ -669,16 +669,11 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
             }
 
             let mut shfi: SHFILEINFOW = std::mem::zeroed();
-            let mut res = 0usize;
-            if is_lnk {
-                let lnk_u16: Vec<u16> = path_clone.encode_utf16().chain(std::iter::once(0)).collect();
-                res = SHGetFileInfoW(windows::core::PCWSTR(lnk_u16.as_ptr()), Default::default(), Some(&mut shfi), std::mem::size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
-            }
-
-            if res == 0 || shfi.hIcon.is_invalid() {
-                let path_u16: Vec<u16> = actual_path.encode_utf16().chain(std::iter::once(0)).collect();
-                res = SHGetFileInfoW(windows::core::PCWSTR(path_u16.as_ptr()), Default::default(), Some(&mut shfi), std::mem::size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
-            }
+            // Always get icon from the resolved target, never from the .lnk itself
+            // (calling SHGetFileInfoW on a .lnk produces the shortcut arrow overlay)
+            let icon_path = if is_lnk { &actual_path } else { &path_clone };
+            let path_u16: Vec<u16> = icon_path.encode_utf16().chain(std::iter::once(0)).collect();
+            let res = SHGetFileInfoW(windows::core::PCWSTR(path_u16.as_ptr()), Default::default(), Some(&mut shfi), std::mem::size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
 
             if res != 0 && !shfi.hIcon.is_invalid() {
                 let base64_icon = icon_to_base64(shfi.hIcon);

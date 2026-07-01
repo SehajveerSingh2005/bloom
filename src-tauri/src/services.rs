@@ -1220,28 +1220,19 @@ pub fn trigger_app_scan() {
             CoUninitialize();
         }
 
-        // Fallback for classic FS apps
-        let mut paths = vec![
-            r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs".to_string(),
-        ];
+        // Scan Start Menu .lnk shortcuts (depth-limited, no .exe scanning)
+        // This catches Win32 apps that FOLDERID_AppsFolder may miss
+        let mut start_menu_dirs: Vec<String> = Vec::new();
+        if let Ok(programdata) = std::env::var("PROGRAMDATA") {
+            start_menu_dirs.push(format!(r"{}\Microsoft\Windows\Start Menu\Programs", programdata));
+        }
         if let Ok(appdata) = std::env::var("APPDATA") {
-            paths.push(format!(r"{}\Microsoft\Windows\Start Menu\Programs", appdata));
-            paths.push(format!(r"{}\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar", appdata));
+            start_menu_dirs.push(format!(r"{}\Microsoft\Windows\Start Menu\Programs", appdata));
         }
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            paths.push(format!(r"{}\Microsoft\Windows\Start Menu\Programs", local));
-            paths.push(format!(r"{}\Microsoft\WindowsApps", local)); 
-        }
-        
-        // Add Desktop folders as they often contain app shortcuts
-        paths.push(r"C:\Users\Public\Desktop".to_string());
-        if let Ok(home) = std::env::var("USERPROFILE") {
-            paths.push(format!(r"{}\Desktop", home));
-        }
-
-        for root in paths {
-            if Path::new(&root).exists() {
-                scan_dir(Path::new(&root), &mut apps, 0);
+        for dir in &start_menu_dirs {
+            let root = std::path::Path::new(dir);
+            if root.exists() {
+                collect_shortcuts(root, &mut apps, 0);
             }
         }
 
@@ -1254,32 +1245,33 @@ pub fn trigger_app_scan() {
     });
 }
 
-fn scan_dir(path: &Path, apps: &mut Vec<AppInfo>, depth: i32) {
-    if depth > 10 { return; } // Increased depth for deeply nested Start Menu folders
-    if let Ok(entries) = std::fs::read_dir(path) {
+fn collect_shortcuts(dir: &std::path::Path, apps: &mut Vec<AppInfo>, depth: i32) {
+    if depth > 3 { return; }
+    if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                scan_dir(&path, apps, depth + 1);
-            } else if let Some(ext) = path.extension() {
-                let ext_str = ext.to_string_lossy().to_lowercase();
-                if ext_str == "lnk" || ext_str == "exe" {
-                    let name = path.file_stem().unwrap().to_string_lossy().to_string();
-                    if name.to_lowercase().contains("uninstall") || name.starts_with("Install") { continue; }
-                    
-                    let path_str = path.to_string_lossy().to_string();
-                    // Avoid duplicates
-                    if !apps.iter().any(|a| a.path == path_str || a.name == name) {
-                        apps.push(AppInfo {
-                            name,
-                            path: path_str,
-                            icon: None,
-                            is_running: false,
-                            hwnd: None,
-                            executable: None,
-                            all_hwnds: None,
-                        });
-                    }
+                collect_shortcuts(&path, apps, depth + 1);
+            } else if path.extension().map_or(false, |e| e.eq_ignore_ascii_case("lnk")) {
+                let name = path.file_stem().unwrap().to_string_lossy().to_string();
+                if name.to_lowercase().contains("uninstall") || name.starts_with("Install") { continue; }
+
+                // Resolve .lnk to the actual target path
+                let path_str = path.to_string_lossy().to_string();
+                let resolved = crate::utils::resolve_shortcut(&path_str)
+                    .map(|(target, _args)| target)
+                    .unwrap_or_else(|| path_str.clone());
+
+                if !apps.iter().any(|a| a.path == resolved || a.name == name) {
+                    apps.push(AppInfo {
+                        name,
+                        path: resolved,
+                        icon: None,
+                        is_running: false,
+                        hwnd: None,
+                        executable: None,
+                        all_hwnds: None,
+                    });
                 }
             }
         }
