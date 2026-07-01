@@ -406,6 +406,15 @@ const Dock = memo(function Dock() {
   }, [isDockHovered]);
 
   useEffect(() => {
+    const handleBlur = () => {
+      closeMenu();
+      closePopup();
+    };
+    window.addEventListener('blur', handleBlur);
+    return () => window.removeEventListener('blur', handleBlur);
+  }, []);
+
+  useEffect(() => {
     if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
     isPreviewHoveredRef.current = false;
     hoveredAppRef.current = hoveredApp;
@@ -720,8 +729,8 @@ const Dock = memo(function Dock() {
   );
 });
 
-function AddAppPopup({ onClose, onAdd, containerRef, scale }: { 
-  onClose: () => void, 
+function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
+  onClose: () => void,
   onAdd: (app: AppInfo) => void,
   containerRef: React.RefObject<HTMLDivElement | null>,
   scale: number
@@ -731,6 +740,9 @@ function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [listIcons, setListIcons] = useState<Record<string, string>>({});
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 150);
@@ -738,17 +750,20 @@ function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
   }, [search]);
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    const handleBlur = () => onClose();
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('blur', handleBlur);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('blur', handleBlur);
-    };
-  }, [onClose]);
+    inputRef.current?.focus();
+  }, []);
+
+  // Reset selection when search changes
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [debouncedSearch]);
+
+  // Scroll selected item into view
+  useEffect(() => {
+    if (!listRef.current) return;
+    const row = listRef.current.children[selectedIndex] as HTMLElement | undefined;
+    if (row) row.scrollIntoView({ block: 'nearest' });
+  }, [selectedIndex]);
 
   useEffect(() => {
     const load = async () => {
@@ -764,9 +779,45 @@ function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
 
   const filtered = useMemo(() => {
     const s = debouncedSearch.toLowerCase();
-    if (!s) return apps.slice(0, 15);
+    if (!s) return apps.slice(0, 20);
     return apps.filter(a => a.name.toLowerCase().includes(s)).slice(0, 50);
   }, [apps, debouncedSearch]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex(i => Math.min(i + 1, filtered.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex(i => Math.max(i - 1, 0));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (filtered[selectedIndex]) {
+          onAdd(filtered[selectedIndex]);
+        }
+      }
+    };
+    const handleMouseDown = (e: MouseEvent) => {
+      const popup = containerRef.current;
+      if (popup && !popup.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const handleBlur = () => onClose();
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('blur', handleBlur);
+    document.addEventListener('mousedown', handleMouseDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('blur', handleBlur);
+      document.removeEventListener('mousedown', handleMouseDown, true);
+    };
+  }, [onClose, containerRef, filtered, selectedIndex, onAdd]);
 
   useEffect(() => {
     let active = true;
@@ -776,13 +827,13 @@ function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
       for (const app of filtered) {
         if (!active) break;
         if (!listIcons[app.path]) {
-          await new Promise(r => setTimeout(r, 25)); 
+          await new Promise(r => setTimeout(r, 20));
           try {
             const icon = await invoke<string | null>('get_app_icon', { path: app.path });
             if (icon && active) {
               batch[app.path] = icon;
               count++;
-              if (count >= 4) {
+              if (count >= 6) {
                 setListIcons(prev => ({ ...prev, ...batch }));
                 batch = {};
                 count = 0;
@@ -800,49 +851,67 @@ function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
   }, [filtered]);
 
   return (
-    <motion.div className="popup-overlay" style={{ zoom: scale }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
-      <motion.div ref={containerRef} className="add-app-popup" layout initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} onClick={(e) => e.stopPropagation()}>
-        <div className="popup-header">
-          <h3>Add to Dock</h3>
-          <div className="search-container">
-            <input type="text" placeholder="Search applications..." autoFocus value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
+    <div className="add-popup-anchor" style={{ zoom: scale }}>
+      <motion.div
+        ref={containerRef}
+        className="add-app-popup"
+        style={{ transformOrigin: "bottom center" }}
+        initial={{ opacity: 0, scaleY: 0 }}
+        animate={{ opacity: 1, scaleY: 1 }}
+        exit={{ opacity: 0, scaleY: 0 }}
+        transition={{
+          opacity: { duration: 0.15 },
+          scaleY: { type: "spring", stiffness: 500, damping: 30, mass: 0.8 },
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="popup-search-row">
+          <svg className="popup-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            ref={inputRef}
+            type="text"
+            className="popup-search-input"
+            placeholder="Search apps..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
-        <div className="apps-list">
+        <div className="popup-apps-scroll" ref={listRef}>
           {loading ? (
-             <div className="loading-state"><div className="spinner"></div><p>Searching for apps...</p></div>
+            <div className="popup-loading">
+              <div className="popup-spinner" />
+            </div>
           ) : filtered.length > 0 ? (
-            filtered.map(app => (
-              <div key={app.path} className="app-list-item" onClick={() => onAdd(app)}>
-                <div className="app-list-info">
-                  <div className="app-list-icon">
-                    {(() => {
-                      const isBloomOrSettings = app.name.toLowerCase() === 'settings' || 
-                                                app.name.toLowerCase() === 'bloom' || 
-                                                app.path.toLowerCase().includes('bloom.exe');
-                      return listIcons[app.path] ? (
-                        <img 
-                          src={listIcons[app.path]} 
-                          alt="" 
-                          className={isBloomOrSettings ? "bloom-icon-img" : ""} 
-                          draggable={false} 
-                        />
-                      ) : (
-                        <div className="app-icon-placeholder">{app.name[0]}</div>
-                      );
-                    })()}
+            filtered.map((app, idx) => {
+              const icon = listIcons[app.path];
+              return (
+                <div
+                  key={app.path}
+                  className={`popup-app-row${idx === selectedIndex ? ' selected' : ''}`}
+                  onClick={() => onAdd(app)}
+                  onMouseEnter={() => setSelectedIndex(idx)}
+                >
+                  <div className="popup-app-icon">
+                    {icon ? (
+                      <img src={icon} alt="" draggable={false} />
+                    ) : (
+                      <span className="popup-app-initial">{app.name[0]}</span>
+                    )}
                   </div>
-                  <div className="app-name">{app.name}</div>
+                  <span className="popup-app-name">{app.name}</span>
+                  <span className="popup-app-pin">+</span>
                 </div>
-                <div className="app-add-button">Pin</div>
-              </div>
-            ))
+              );
+            })
           ) : (
-            <div className="no-results">No applications match your search</div>
+            <div className="popup-empty">No results</div>
           )}
         </div>
       </motion.div>
-    </motion.div>
+    </div>
   );
 }
 
