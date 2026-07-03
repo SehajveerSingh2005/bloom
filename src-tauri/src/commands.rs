@@ -171,6 +171,8 @@ pub async fn sync_appbar(app: AppHandle) {
     if let Some(main_win) = app.get_webview_window("main") {
         if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
             register_appbar(main_win);
+        } else {
+            let _ = main_win.set_always_on_top(true);
         }
     }
     if let Some(dock_win) = app.get_webview_window("dock") {
@@ -179,6 +181,8 @@ pub async fn sync_appbar(app: AppHandle) {
         // starts hidden and DOCK_APPBAR_REGISTERED is still true from the previous session.
         if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
             register_dock_appbar(dock_win);
+        } else {
+            let _ = dock_win.set_always_on_top(true);
         }
     }
     sync_overlays(&app);
@@ -273,6 +277,14 @@ pub async fn change_notch_mode(app: AppHandle, mode: String) {
                     unregister_appbar_native(HWND(hwnd_val as *mut _));
                 });
                 MAIN_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
+                
+                let main_clone = main_win.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    if !MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                        let _ = main_clone.set_always_on_top(true);
+                    }
+                });
             }
         }
         // Reposition window to span the full primary monitor so CSS justify-content:center works

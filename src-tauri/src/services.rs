@@ -672,7 +672,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
     let tx_clone = tx.clone();
     let handle_visibility = app_handle.clone();
     std::thread::spawn(move || {
-        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, IsZoomed, IsIconic, GetWindowLongW, GWL_STYLE, WS_MAXIMIZE, GetClientRect};
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, IsZoomed, IsIconic, GetWindowLongW, GWL_STYLE, WS_MAXIMIZE, WS_CAPTION, GetClientRect};
         use windows::Win32::Graphics::Gdi::ClientToScreen;
         use windows::Win32::Foundation::{RECT, POINT};
         let mut last_visible = true;
@@ -771,6 +771,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                 if GetMonitorInfoA(h_monitor, &mut mi).as_bool() {
                                     let screen_rect = mi.rcMonitor;
                                     let is_maximized = IsZoomed(hwnd).as_bool() || (style & WS_MAXIMIZE.0) != 0;
+                                    let is_maximized_standard = is_maximized && (style & WS_CAPTION.0) != 0;
                                     
                                     let mut is_client_fullscreen = false;
                                     let mut client_rect = RECT::default();
@@ -788,7 +789,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                                             rect.right >= screen_rect.right && rect.bottom >= screen_rect.bottom;
                                     
                                     // Truly fullscreen means client covers screen, OR window matches screen but is not just a standard maximized window
-                                    current_is_fs = is_client_fullscreen || (is_matches_screen && !is_maximized);
+                                    current_is_fs = (is_client_fullscreen || is_matches_screen) && !is_maximized_standard;
 
                                     if current_is_fs || is_maximized {
                                         should_overlap = true;
