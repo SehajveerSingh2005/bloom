@@ -1103,20 +1103,20 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                             last_left_edge_hover = Some(final_left_hover);
                         }
 
-                        // Check if cursor is over the volume overlay window
+                        // Check if cursor is over the actual visible volume HUD notch (42px wide, 196px high, centered vertically)
                         let vol_over = if let Ok(Some(m)) = vol_win.primary_monitor() {
                             let ms = m.size();
                             let mp = m.position();
-                            let vol_w = 200;
-                            let vol_h = 400;
-                            let vol_x = mp.x;
-                            let vol_y = mp.y + (ms.height as i32 / 2) - (vol_h / 2);
-                            pt.x >= vol_x && pt.x <= vol_x + vol_w &&
-                            pt.y >= vol_y && pt.y <= vol_y + vol_h
+                            let scale = m.scale_factor();
+                            let notch_w = (42.0 * scale) as i32;
+                            let notch_h = (196.0 * scale) as i32;
+                            let notch_x = mp.x;
+                            let notch_y = mp.y + (ms.height as i32 / 2) - (notch_h / 2);
+                            pt.x >= notch_x && pt.x <= notch_x + notch_w &&
+                            pt.y >= notch_y && pt.y <= notch_y + notch_h
                         } else { false };
 
-                        let should_ignore_vol = !vol_over && !final_left_hover;
-                        let _ = vol_win.set_ignore_cursor_events(should_ignore_vol);
+                        let _ = vol_win.set_ignore_cursor_events(!vol_over);
                     }
 
                     // --- Right Edge (Brightness Overlay) ---
@@ -1135,20 +1135,20 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                             last_right_edge_hover = Some(final_right_hover);
                         }
 
-                        // Check if cursor is over the brightness overlay window
+                        // Check if cursor is over the actual visible brightness HUD notch (42px wide, 196px high, centered vertically)
                         let br_over = if let Ok(Some(m)) = br_win.primary_monitor() {
                             let ms = m.size();
                             let mp = m.position();
-                            let br_w = 200;
-                            let br_h = 400;
-                            let br_x = mp.x + ms.width as i32 - br_w;
-                            let br_y = mp.y + (ms.height as i32 / 2) - (br_h / 2);
-                            pt.x >= br_x && pt.x <= br_x + br_w &&
-                            pt.y >= br_y && pt.y <= br_y + br_h
+                            let scale = m.scale_factor();
+                            let notch_w = (42.0 * scale) as i32;
+                            let notch_h = (196.0 * scale) as i32;
+                            let notch_x = mp.x + ms.width as i32 - notch_w;
+                            let notch_y = mp.y + (ms.height as i32 / 2) - (notch_h / 2);
+                            pt.x >= notch_x && pt.x <= notch_x + notch_w &&
+                            pt.y >= notch_y && pt.y <= notch_y + notch_h
                         } else { false };
 
-                        let should_ignore_br = !br_over && !final_right_hover;
-                        let _ = br_win.set_ignore_cursor_events(should_ignore_br);
+                        let _ = br_win.set_ignore_cursor_events(!br_over);
                     }
                 }
             }
