@@ -133,6 +133,12 @@ function VolumeOverlayApp() {
   const timeoutRef = useRef<any>(null);
   const [scale, setScale] = useState(() => parseFloat(localStorage.getItem("bloom-scale") || "1.0"));
 
+  const resetHideTimeout = useCallback(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      setIsVisible(false);
+    }, 2000);
+  }, []);
 
   useEffect(() => {
     invoke("load_settings").then((settings: any) => {
@@ -157,12 +163,7 @@ function VolumeOverlayApp() {
       setVolume(newVolume);
       setIsMuted(is_muted);
       setIsVisible(true);
-
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-
-      timeoutRef.current = setTimeout(() => {
-        setIsVisible(false);
-      }, 2000);
+      resetHideTimeout();
     });
 
     const edgePromise = listen<boolean>("volume-edge-hover", (event) => {
@@ -199,7 +200,7 @@ function VolumeOverlayApp() {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       document.removeEventListener('contextmenu', preventContext);
     };
-  }, [volumeOverlayEnabled, volumeEdgeEnabled]);
+  }, [volumeOverlayEnabled, volumeEdgeEnabled, resetHideTimeout]);
 
   // Manage window visibility to allow exit animation to finish before hiding the window
   useEffect(() => {
@@ -235,13 +236,15 @@ function VolumeOverlayApp() {
   const handleVolumeChange = useCallback((newVol: number) => {
     setVolume(newVol);
     setIsMuted(newVol === 0);
+    setIsVisible(true);
+    resetHideTimeout();
 
     const now = Date.now();
     if (now - lastVolumeCall.current < 50) return;
     lastVolumeCall.current = now;
 
     invoke("set_volume", { volume: newVol }).catch(() => {});
-  }, []);
+  }, [resetHideTimeout]);
 
   return (
     <div className="volume-overlay-container">

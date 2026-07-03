@@ -135,6 +135,12 @@ function BrightnessOverlayApp() {
   const timeoutRef = useRef<any>(null);
   const [scale, setScale] = useState(() => parseFloat(localStorage.getItem("bloom-scale") || "1.0"));
 
+  const resetHideTimeout = useCallback(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      setIsVisible(false);
+    }, 2000);
+  }, []);
 
   useEffect(() => {
     invoke("load_settings").then((settings: any) => {
@@ -157,12 +163,7 @@ function BrightnessOverlayApp() {
 
       setBrightness(newBrightness);
       setIsVisible(true);
-
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-
-      timeoutRef.current = setTimeout(() => {
-        setIsVisible(false);
-      }, 2000);
+      resetHideTimeout();
     });
 
     const edgePromise = listen<boolean>("brightness-edge-hover", (event) => {
@@ -199,7 +200,7 @@ function BrightnessOverlayApp() {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       document.removeEventListener('contextmenu', preventContext);
     };
-  }, [brightnessOverlayEnabled, brightnessEdgeEnabled]);
+  }, [brightnessOverlayEnabled, brightnessEdgeEnabled, resetHideTimeout]);
 
   useEffect(() => {
     let windowHideTimeout: any = null;
@@ -232,13 +233,15 @@ function BrightnessOverlayApp() {
 
   const handleBrightnessChange = useCallback((newBrightness: number) => {
     setBrightness(newBrightness);
+    setIsVisible(true);
+    resetHideTimeout();
 
     const now = Date.now();
     if (now - lastBrightnessCall.current < 50) return;
     lastBrightnessCall.current = now;
 
     invoke("set_brightness", { brightness: Math.round(newBrightness) }).catch(() => {});
-  }, []);
+  }, [resetHideTimeout]);
 
   return (
     <div className="brightness-overlay-container">
