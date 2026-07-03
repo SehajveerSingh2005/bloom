@@ -222,6 +222,24 @@ const Dock = memo(function Dock() {
     }
   };
 
+  const handleClosePreview = async (e: React.MouseEvent, hwnd: number) => {
+    e.stopPropagation();
+    try {
+      await invoke('close_window', { hwnd });
+      setPreviewData(prev => {
+        if (!prev) return null;
+        const remaining = prev.previews.filter(p => p.hwnd !== hwnd);
+        if (remaining.length === 0) {
+          setHoveredApp(null);
+          return null;
+        }
+        return { ...prev, previews: remaining };
+      });
+    } catch (err) {
+      console.error("Failed to close window:", err);
+    }
+  };
+
   const handleAppClick = async (app: AppInfo) => {
     try {
       if (app.path === 'start') {
@@ -590,6 +608,16 @@ const Dock = memo(function Dock() {
                           <div key={prev.hwnd} className="preview-item" onClick={() => invoke('focus_window', { hwnd: prev.hwnd })}>
                             <img src={prev.image} alt={`Preview ${idx}`} />
                             <div className="preview-label">{prev.title || app.name}</div>
+                            <button
+                              className="preview-close-btn"
+                              onClick={(e) => handleClosePreview(e, prev.hwnd)}
+                              title="Close Window"
+                            >
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                              </svg>
+                            </button>
                           </div>
                         ))}
                       </div>
