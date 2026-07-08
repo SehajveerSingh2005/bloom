@@ -361,7 +361,7 @@ body {
   border-radius: 12px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.05);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
   border: 0.5px solid rgba(255, 255, 255, 0.1);
 }
 
@@ -430,7 +430,7 @@ body {
   align-items: center;
   justify-content: center;
   width: 100%;
-  gap: 32px;
+  gap: 24px;
 }
 
 .sleek-btn {
@@ -438,22 +438,26 @@ body {
   border: none;
   color: white;
   cursor: pointer;
-  padding: 6px;
+  padding: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
   outline: none;
+  position: relative;
+  overflow: hidden;
 }
 
 .play-pause-btn-floating {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   background: none;
   border: none;
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+  overflow: hidden;
 }
 
 .volume-slider-container {
