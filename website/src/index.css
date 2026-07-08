@@ -279,7 +279,7 @@ body {
   overflow: hidden;
   width: 24px;
   height: 24px;
-  transition: width 0.2s ease, height 0.2s ease, border-radius 0.2s ease;
+  transition: width 0.2s ease, height 0.2s ease, border-radius 0.2s ease, box-shadow 0.5s ease;
 }
 
 .album-art.album-art-large {
@@ -292,6 +292,25 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.album-art-glow-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.album-art-glow-bg {
+  position: absolute;
+  inset: -4px;
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
+  object-fit: cover;
+  border-radius: 10px;
+  filter: blur(6px) saturate(2.5) brightness(0.8);
+  opacity: 0.6;
+  pointer-events: none;
+  z-index: -1;
+  transition: opacity 0.4s ease;
 }
 
 .album-art-placeholder {

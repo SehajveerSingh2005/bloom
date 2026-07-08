@@ -29,6 +29,7 @@ function SettingsApp() {
   const [mediaVisualizerEnabled, setMediaVisualizerEnabled] = useState(true);
   const [mediaAlbumArtEnabled, setMediaAlbumArtEnabled] = useState(true);
   const [mediaAmbienceEnabled, setMediaAmbienceEnabled] = useState(true);
+  const [mediaCompactGlowEnabled, setMediaCompactGlowEnabled] = useState(true);
   const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
   const [cityName, setCityName] = useState("");
@@ -125,6 +126,9 @@ function SettingsApp() {
       const ambience = getVal("bloom-media-ambience-enabled");
       if (ambience !== null) setMediaAmbienceEnabled(ambience === "true");
 
+      const compactGlow = getVal("bloom-media-compact-glow-enabled");
+      if (compactGlow !== null) setMediaCompactGlowEnabled(compactGlow === "true");
+
       const corners = getVal("bloom-corners-enabled");
       if (corners !== null) setCornersEnabled(corners === "true");
 
@@ -194,6 +198,7 @@ function SettingsApp() {
       if (key === "visualizer") setMediaVisualizerEnabled(value);
       if (key === "album-art") setMediaAlbumArtEnabled(value);
       if (key === "media-ambience-enabled") setMediaAmbienceEnabled(value);
+      if (key === "media-compact-glow-enabled") setMediaCompactGlowEnabled(value);
       if (key === "corners-enabled") setCornersEnabled(value);
       if (key === "low-battery-threshold") setLowBatteryThreshold(value);
       if (key === "bloom-scale") setScale(Number(value));
@@ -368,6 +373,13 @@ function SettingsApp() {
     setMediaAmbienceEnabled(newVal);
     saveAndLocal("bloom-media-ambience-enabled", String(newVal));
     notifyChange("media-ambience-enabled", newVal);
+  };
+
+  const toggleCompactGlow = () => {
+    const newVal = !mediaCompactGlowEnabled;
+    setMediaCompactGlowEnabled(newVal);
+    saveAndLocal("bloom-media-compact-glow-enabled", String(newVal));
+    notifyChange("media-compact-glow-enabled", newVal);
   };
 
   const toggleThemeMode = async (mode: string) => {
@@ -918,10 +930,20 @@ function SettingsApp() {
             <div className="setting-item">
               <div className="setting-info" style={{ marginLeft: '42px' }}>
                 <span className="setting-label">Ambient Glow</span>
-                <span className="setting-desc">Artwork-driven backing color</span>
+                <span className="setting-desc">Colored glow behind expanded album art</span>
               </div>
               <label className="toggle-switch">
                 <input type="checkbox" checked={mediaAmbienceEnabled} onChange={toggleAmbience} />
+                <span className="slider"></span>
+              </label>
+            </div>
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Compact Glow</span>
+                <span className="setting-desc">Glow around collapsed thumbnail</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={mediaCompactGlowEnabled} onChange={toggleCompactGlow} />
                 <span className="slider"></span>
               </label>
             </div>

@@ -369,6 +369,7 @@ function App() {
   const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-visualizer-enabled") !== "false");
   const [settingsAlbumArtEnabled, setSettingsAlbumArtEnabled] = useState(() => localStorage.getItem("bloom-media-album-art-enabled") !== "false");
   const [settingsAmbienceEnabled, setSettingsAmbienceEnabled] = useState(() => localStorage.getItem("bloom-media-ambience-enabled") !== "false");
+  const [settingsCompactGlowEnabled, setSettingsCompactGlowEnabled] = useState(() => localStorage.getItem("bloom-media-compact-glow-enabled") !== "false");
   const [settingsCornersEnabled, setSettingsCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
 
@@ -392,6 +393,7 @@ function App() {
       setSettingsVisualizerEnabled(viz !== "false");
       setSettingsAlbumArtEnabled(getVal("bloom-media-album-art-enabled", "true") !== "false");
       setSettingsAmbienceEnabled(getVal("bloom-media-ambience-enabled", "true") !== "false");
+      setSettingsCompactGlowEnabled(getVal("bloom-media-compact-glow-enabled", "true") !== "false");
       setSettingsCornersEnabled(getVal("bloom-corners-enabled", "false") === "true");
       setTempUnit(getVal("bloom-temp-unit", "celsius") as string);
 
@@ -469,6 +471,7 @@ function App() {
       if (key === "visualizer") setSettingsVisualizerEnabled(value);
       if (key === "album-art") setSettingsAlbumArtEnabled(value);
       if (key === "media-ambience-enabled") setSettingsAmbienceEnabled(value as boolean);
+      if (key === "media-compact-glow-enabled") setSettingsCompactGlowEnabled(value as boolean);
       if (key === "temp-unit") setTempUnit(value ? "fahrenheit" : "celsius");
       if (key === "weather-refresh") {
         // Re-trigger the init function or just update from localStorage
@@ -1503,50 +1506,60 @@ function App() {
                             <div className="side-content right">
                               {isMusicMode && settingsAlbumArtEnabled ? (
                                 <AnimatePresence mode="wait">
-                                  <motion.button
+                                  <motion.div
                                     key="album-art"
-                                    className={`album-art${isHovered ? ' album-art-large' : ''}${!isPlaying ? ' paused' : ''}`}
+                                    className="album-art-glow-wrapper"
                                     initial={{ opacity: 0, scale: 0.8 }}
                                     animate={{ opacity: 1, scale: 1 }}
                                     exit={{ opacity: 0, y: -20, scale: 0.8, filter: "blur(8px)" }}
                                     transition={{ duration: 0.12 }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      togglePlayPause();
-                                    }}
-                                    onDoubleClick={(e) => {
-                                      e.stopPropagation();
-                                      skipNext();
-                                    }}
-                                    onContextMenu={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      skipPrevious();
-                                    }}
                                   >
-                                    <div className="album-art-inner">
-                                      <AnimatePresence mode="wait" initial={false}>
-                                        {albumArtUrl ? (
-                                          <motion.img
-                                            key={`compact-art-${albumArtKey}`}
-                                            src={albumArtUrl}
-                                            alt="Art"
-                                            initial={{ rotateY: 90, opacity: 0 }}
-                                            animate={{ rotateY: 0, opacity: 1 }}
-                                            exit={{ rotateY: -90, opacity: 0 }}
-                                            transition={{ duration: 0.25, ease: "easeInOut" }}
-                                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                          />
-                                        ) : (
-                                          <motion.div
-                                            key="compact-placeholder"
-                                            className="album-art-placeholder"
-                                            initial={{ rotateY: 90, opacity: 0 }}
-                                            animate={{ rotateY: 0, opacity: 1 }}
-                                            exit={{ rotateY: -90, opacity: 0 }}
-                                            transition={{ duration: 0.25, ease: "easeInOut" }}
-                                          >
-                                            <MusicNoteIcon className="music-placeholder-svg-small" />
+                                    {albumArtUrl && settingsCompactGlowEnabled && (
+                                      <img
+                                        src={albumArtUrl}
+                                        alt=""
+                                        className="album-art-glow-bg"
+                                      />
+                                    )}
+                                    <button
+                                      className={`album-art${isHovered ? ' album-art-large' : ''}${!isPlaying ? ' paused' : ''}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        togglePlayPause();
+                                      }}
+                                      onDoubleClick={(e) => {
+                                        e.stopPropagation();
+                                        skipNext();
+                                      }}
+                                      onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        skipPrevious();
+                                      }}
+                                    >
+                                      <div className="album-art-inner">
+                                        <AnimatePresence mode="wait" initial={false}>
+                                          {albumArtUrl ? (
+                                            <motion.img
+                                              key={`compact-art-${albumArtKey}`}
+                                              src={albumArtUrl}
+                                              alt="Art"
+                                              initial={{ rotateY: 90, opacity: 0 }}
+                                              animate={{ rotateY: 0, opacity: 1 }}
+                                              exit={{ rotateY: -90, opacity: 0 }}
+                                              transition={{ duration: 0.25, ease: "easeInOut" }}
+                                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                            />
+                                          ) : (
+                                            <motion.div
+                                              key="compact-placeholder"
+                                              className="album-art-placeholder"
+                                              initial={{ rotateY: 90, opacity: 0 }}
+                                              animate={{ rotateY: 0, opacity: 1 }}
+                                              exit={{ rotateY: -90, opacity: 0 }}
+                                              transition={{ duration: 0.25, ease: "easeInOut" }}
+                                            >
+                                              <MusicNoteIcon className="music-placeholder-svg-small" />
                                           </motion.div>
                                         )}
                                       </AnimatePresence>
@@ -1556,7 +1569,8 @@ function App() {
                                         </div>
                                       </div>
                                     </div>
-                                  </motion.button>
+                                  </button>
+                                  </motion.div>
                                 </AnimatePresence>
                               ) : (!isMusicMode && isHovered) ? (
                                 <motion.div

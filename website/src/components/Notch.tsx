@@ -568,56 +568,71 @@ export default function Notch({
                         {/* Right Side: Album Art or Battery */}
                         <div className="side-content right">
                           {isMusicMode ? (
-                            <motion.button
-                              className={`album-art ${playback.isPlaying ? '' : 'paused'}`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                togglePlayPause();
-                              }}
-                              onDoubleClick={(e) => {
-                                e.stopPropagation();
-                                skipNext();
-                              }}
-                              onContextMenu={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                skipPrevious();
-                              }}
+                            <motion.div
+                              className="album-art-glow-wrapper"
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.8 }}
+                              transition={{ duration: 0.12 }}
                             >
-                              <div className="album-art-inner">
-                                <AnimatePresence mode="wait" initial={false}>
-                                  {playback.trackCover ? (
-                                    <motion.img
-                                      key={`compact-art-${albumArtKey}`}
-                                      src={playback.trackCover}
-                                      alt="Art"
-                                      className="object-cover rounded-[3px]"
-                                      initial={{ rotateY: 90, opacity: 0 }}
-                                      animate={{ rotateY: 0, opacity: 1 }}
-                                      exit={{ rotateY: -90, opacity: 0 }}
-                                      transition={{ duration: 0.25, ease: "easeInOut" }}
-                                      style={{ width: 18, height: 18 }}
-                                    />
-                                  ) : (
-                                    <motion.div
-                                      key="compact-placeholder"
-                                      className="w-full h-full bg-white/10 flex items-center justify-center text-xs"
-                                      initial={{ rotateY: 90, opacity: 0 }}
-                                      animate={{ rotateY: 0, opacity: 1 }}
-                                      exit={{ rotateY: -90, opacity: 0 }}
-                                      transition={{ duration: 0.25, ease: "easeInOut" }}
-                                    >
-                                      🎵
-                                    </motion.div>
-                                  )}
-                                </AnimatePresence>
+                              {playback.trackCover && (
+                                <img
+                                  src={playback.trackCover}
+                                  alt=""
+                                  className="album-art-glow-bg"
+                                />
+                              )}
+                              <button
+                                className={`album-art ${playback.isPlaying ? '' : 'paused'}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  togglePlayPause();
+                                }}
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  skipNext();
+                                }}
+                                onContextMenu={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  skipPrevious();
+                                }}
+                              >
+                                <div className="album-art-inner">
+                                  <AnimatePresence mode="wait" initial={false}>
+                                    {playback.trackCover ? (
+                                      <motion.img
+                                        key={`compact-art-${albumArtKey}`}
+                                        src={playback.trackCover}
+                                        alt="Art"
+                                        className="object-cover rounded-[3px]"
+                                        initial={{ rotateY: 90, opacity: 0 }}
+                                        animate={{ rotateY: 0, opacity: 1 }}
+                                        exit={{ rotateY: -90, opacity: 0 }}
+                                        transition={{ duration: 0.25, ease: "easeInOut" }}
+                                        style={{ width: 18, height: 18 }}
+                                      />
+                                    ) : (
+                                      <motion.div
+                                        key="compact-placeholder"
+                                        className="w-full h-full bg-white/10 flex items-center justify-center text-xs"
+                                        initial={{ rotateY: 90, opacity: 0 }}
+                                        animate={{ rotateY: 0, opacity: 1 }}
+                                        exit={{ rotateY: -90, opacity: 0 }}
+                                        transition={{ duration: 0.25, ease: "easeInOut" }}
+                                      >
+                                        🎵
+                                      </motion.div>
+                                    )}
+                                  </AnimatePresence>
                                 <div className="album-art-overlay">
                                   <div className="control-icon-small">
                                     {playback.isPlaying ? <PauseIcon /> : <PlayIcon />}
                                   </div>
                                 </div>
                               </div>
-                            </motion.button>
+                              </button>
+                            </motion.div>
                           ) : (
                             isHovered && (
                               <motion.div
