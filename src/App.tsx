@@ -227,6 +227,7 @@ function App() {
     has_media: false
   });
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
+  const [albumArtKey, setAlbumArtKey] = useState(0);
   const [volume, setVolume] = useState(0.5);
   const [wifiEnabled, setWifiEnabled] = useState(true);
   const [bluetoothEnabled, setBluetoothEnabled] = useState(true);
@@ -889,7 +890,13 @@ function App() {
 
         if (info.artwork && info.artwork.length > 0) {
           const newArt = info.artwork[0];
-          setAlbumArtUrl(prev => prev === newArt ? prev : newArt);
+          setAlbumArtUrl(prev => {
+            if (prev !== newArt) {
+              setAlbumArtKey(k => k + 1);
+              return newArt;
+            }
+            return prev;
+          });
         } else {
           setAlbumArtUrl(null);
         }
@@ -1214,11 +1221,29 @@ function App() {
         }}
       >
 
-        {isMusicMode && settingsAmbienceEnabled && albumArtUrl && isHovered && !isCalendarMode && (
-          <div className="notch-ambient-glow">
-            <img src={albumArtUrl} alt="" />
-          </div>
-        )}
+        <AnimatePresence>
+          {isMusicMode && settingsAmbienceEnabled && albumArtUrl && isHovered && !isCalendarMode && (
+            <motion.div
+              className="notch-ambient-glow"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              <AnimatePresence mode="wait">
+                <motion.img
+                  key={albumArtUrl}
+                  src={albumArtUrl}
+                  alt=""
+                  initial={{ opacity: 0, scale: 1.1 }}
+                  animate={{ opacity: 1, scale: 1.8 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                />
+              </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <AnimatePresence mode="wait">
           {isExpanded && (
             <motion.div
@@ -1247,13 +1272,31 @@ function App() {
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
                         >
-                          {albumArtUrl ? (
-                            <img src={albumArtUrl} alt="Art" />
-                          ) : (
-                            <div className="art-placeholder-mini">
-                              <MusicNoteIcon size={32} className="music-placeholder-svg" />
-                            </div>
-                          )}
+                          <AnimatePresence mode="wait" initial={false}>
+                            {albumArtUrl ? (
+                              <motion.img
+                                key={`art-${albumArtKey}`}
+                                src={albumArtUrl}
+                                alt="Art"
+                                initial={{ rotateY: 90, opacity: 0 }}
+                                animate={{ rotateY: 0, opacity: 1 }}
+                                exit={{ rotateY: -90, opacity: 0 }}
+                                transition={{ duration: 0.3, ease: "easeInOut" }}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                              />
+                            ) : (
+                              <motion.div
+                                key="placeholder"
+                                className="art-placeholder-mini"
+                                initial={{ rotateY: 90, opacity: 0 }}
+                                animate={{ rotateY: 0, opacity: 1 }}
+                                exit={{ rotateY: -90, opacity: 0 }}
+                                transition={{ duration: 0.3, ease: "easeInOut" }}
+                              >
+                                <MusicNoteIcon size={32} className="music-placeholder-svg" />
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </motion.div>
                       </div>
 
@@ -1482,13 +1525,31 @@ function App() {
                                     }}
                                   >
                                     <div className="album-art-inner">
-                                      {albumArtUrl ? (
-                                        <img src={albumArtUrl} alt="Art" />
-                                      ) : (
-                                        <div className="album-art-placeholder">
-                                          <MusicNoteIcon className="music-placeholder-svg-small" />
-                                        </div>
-                                      )}
+                                      <AnimatePresence mode="wait" initial={false}>
+                                        {albumArtUrl ? (
+                                          <motion.img
+                                            key={`compact-art-${albumArtKey}`}
+                                            src={albumArtUrl}
+                                            alt="Art"
+                                            initial={{ rotateY: 90, opacity: 0 }}
+                                            animate={{ rotateY: 0, opacity: 1 }}
+                                            exit={{ rotateY: -90, opacity: 0 }}
+                                            transition={{ duration: 0.25, ease: "easeInOut" }}
+                                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                          />
+                                        ) : (
+                                          <motion.div
+                                            key="compact-placeholder"
+                                            className="album-art-placeholder"
+                                            initial={{ rotateY: 90, opacity: 0 }}
+                                            animate={{ rotateY: 0, opacity: 1 }}
+                                            exit={{ rotateY: -90, opacity: 0 }}
+                                            transition={{ duration: 0.25, ease: "easeInOut" }}
+                                          >
+                                            <MusicNoteIcon className="music-placeholder-svg-small" />
+                                          </motion.div>
+                                        )}
+                                      </AnimatePresence>
                                       <div className="album-art-overlay">
                                         <div className="control-icon-small">
                                           {isPlaying ? <PauseIcon /> : <PlayIcon />}

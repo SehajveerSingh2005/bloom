@@ -345,6 +345,12 @@ body {
     width: 24px;
     height: 24px;
     transition: width 0.2s ease, height 0.2s ease, border-radius 0.2s ease;
+    perspective: 200px;
+}
+
+.album-art img,
+.album-art .album-art-placeholder {
+    backface-visibility: hidden;
 }
 
 /* Expanded album art on hover */
@@ -709,6 +715,14 @@ body {
     background: rgba(255, 255, 255, 0.05);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
     border: 0.5px solid rgba(255, 255, 255, 0.1);
+    perspective: 400px;
+}
+
+.premium-album-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    backface-visibility: hidden;
 }
 
 .metadata-controls-section-middle {
@@ -906,7 +920,7 @@ body {
     filter: blur(52px) saturate(3.5) contrast(1.1) brightness(1.4);
     transform: scale(1.8);
     opacity: 0.85;
-    transition: opacity 0.5s ease;
+    transition: opacity 0.6s ease, filter 0.8s ease;
 }
 
 /* Gradient overlay to smoothly fade the image to the notch's background color without using buggy WebView2 mask-image */

@@ -60,6 +60,14 @@ export default function Notch({
     setPlaybackState({ trackIndex: prevIdx, isPlaying: true, currentTime: 0 });
   };
 
+  // Track album art changes for flip animation
+  const [albumArtKey, setAlbumArtKey] = useState(0);
+  const prevTrackCoverRef = useRef(playback.trackCover);
+  if (prevTrackCoverRef.current !== playback.trackCover) {
+    prevTrackCoverRef.current = playback.trackCover;
+    setAlbumArtKey(k => k + 1);
+  }
+
   // Slide-push animation for prev/next buttons
   const prevFront = useAnimation();
   const prevBack = useAnimation();
@@ -383,13 +391,32 @@ export default function Notch({
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
                         >
-                          {playback.trackCover ? (
-                            <img src={playback.trackCover} alt="Art" className="w-full h-full object-cover select-none" />
-                          ) : (
-                            <div className="w-full h-full bg-white/5 flex items-center justify-center text-3xl select-none">
-                              🎵
-                            </div>
-                          )}
+                          <AnimatePresence mode="wait" initial={false}>
+                            {playback.trackCover ? (
+                              <motion.img
+                                key={`art-${albumArtKey}`}
+                                src={playback.trackCover}
+                                alt="Art"
+                                className="select-none"
+                                initial={{ rotateY: 90, opacity: 0 }}
+                                animate={{ rotateY: 0, opacity: 1 }}
+                                exit={{ rotateY: -90, opacity: 0 }}
+                                transition={{ duration: 0.3, ease: "easeInOut" }}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                              />
+                            ) : (
+                              <motion.div
+                                key="placeholder"
+                                className="w-full h-full bg-white/5 flex items-center justify-center text-3xl select-none"
+                                initial={{ rotateY: 90, opacity: 0 }}
+                                animate={{ rotateY: 0, opacity: 1 }}
+                                exit={{ rotateY: -90, opacity: 0 }}
+                                transition={{ duration: 0.3, ease: "easeInOut" }}
+                              >
+                                🎵
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </motion.div>
                       </div>
 
@@ -558,13 +585,32 @@ export default function Notch({
                               }}
                             >
                               <div className="album-art-inner">
-                                {playback.trackCover ? (
-                                  <img src={playback.trackCover} alt="Art" className="w-[18px] h-[18px] object-cover rounded-[3px]" />
-                                ) : (
-                                  <div className="w-full h-full bg-white/10 flex items-center justify-center text-xs">
-                                    🎵
-                                  </div>
-                                )}
+                                <AnimatePresence mode="wait" initial={false}>
+                                  {playback.trackCover ? (
+                                    <motion.img
+                                      key={`compact-art-${albumArtKey}`}
+                                      src={playback.trackCover}
+                                      alt="Art"
+                                      className="object-cover rounded-[3px]"
+                                      initial={{ rotateY: 90, opacity: 0 }}
+                                      animate={{ rotateY: 0, opacity: 1 }}
+                                      exit={{ rotateY: -90, opacity: 0 }}
+                                      transition={{ duration: 0.25, ease: "easeInOut" }}
+                                      style={{ width: 18, height: 18 }}
+                                    />
+                                  ) : (
+                                    <motion.div
+                                      key="compact-placeholder"
+                                      className="w-full h-full bg-white/10 flex items-center justify-center text-xs"
+                                      initial={{ rotateY: 90, opacity: 0 }}
+                                      animate={{ rotateY: 0, opacity: 1 }}
+                                      exit={{ rotateY: -90, opacity: 0 }}
+                                      transition={{ duration: 0.25, ease: "easeInOut" }}
+                                    >
+                                      🎵
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
                                 <div className="album-art-overlay">
                                   <div className="control-icon-small">
                                     {playback.isPlaying ? <PauseIcon /> : <PlayIcon />}
