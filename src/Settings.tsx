@@ -905,30 +905,6 @@ function SettingsApp() {
             <div className="setting-divider" />
             <div className="setting-item">
               <div className="setting-info" style={{ marginLeft: '42px' }}>
-                <span className="setting-label">Visualizer Bars</span>
-                <span className="setting-desc">Audio-reactive animation</span>
-              </div>
-              <label className="toggle-switch">
-                <input type="checkbox" checked={mediaVisualizerEnabled} onChange={toggleVisualizer} />
-                <span className="slider"></span>
-              </label>
-            </div>
-
-            <div className="setting-divider" />
-            <div className="setting-item">
-              <div className="setting-info" style={{ marginLeft: '42px' }}>
-                <span className="setting-label">Album Artwork</span>
-                <span className="setting-desc">Show high-res covers</span>
-              </div>
-              <label className="toggle-switch">
-                <input type="checkbox" checked={mediaAlbumArtEnabled} onChange={toggleAlbumArt} />
-                <span className="slider"></span>
-              </label>
-            </div>
-
-            <div className="setting-divider" />
-            <div className="setting-item">
-              <div className="setting-info" style={{ marginLeft: '42px' }}>
                 <span className="setting-label">Ambient Glow</span>
                 <span className="setting-desc">Colored glow behind expanded album art</span>
               </div>
