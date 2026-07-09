@@ -26,8 +26,6 @@ function SettingsApp() {
   const [volumeEdgeEnabled, setVolumeEdgeEnabled] = useState(() => localStorage.getItem("bloom-volume-edge-enabled") !== "false");
   const [brightnessOverlayEnabled, setBrightnessOverlayEnabled] = useState(true);
   const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(() => localStorage.getItem("bloom-brightness-edge-enabled") !== "false");
-  const [mediaVisualizerEnabled, setMediaVisualizerEnabled] = useState(true);
-  const [mediaAlbumArtEnabled, setMediaAlbumArtEnabled] = useState(true);
   const [mediaAmbienceEnabled, setMediaAmbienceEnabled] = useState(true);
   const [mediaCompactGlowEnabled, setMediaCompactGlowEnabled] = useState(true);
   const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
@@ -117,12 +115,6 @@ function SettingsApp() {
       const volume = getVal("bloom-volume-overlay-enabled");
       if (volume !== null) setVolumeOverlayEnabled(volume === "true");
 
-      const visualizer = getVal("bloom-media-visualizer-enabled");
-      if (visualizer !== null) setMediaVisualizerEnabled(visualizer === "true");
-
-      const art = getVal("bloom-media-album-art-enabled");
-      if (art !== null) setMediaAlbumArtEnabled(art === "true");
-
       const ambience = getVal("bloom-media-ambience-enabled");
       if (ambience !== null) setMediaAmbienceEnabled(ambience === "true");
 
@@ -195,8 +187,6 @@ function SettingsApp() {
       if (key === "calendar") setCalendarEnabled(value);
       if (key === "music-mode-enabled") setMusicModeEnabled(value);
       if (key === "music-compact-notch") setMusicCompactNotch(value);
-      if (key === "visualizer") setMediaVisualizerEnabled(value);
-      if (key === "album-art") setMediaAlbumArtEnabled(value);
       if (key === "media-ambience-enabled") setMediaAmbienceEnabled(value);
       if (key === "media-compact-glow-enabled") setMediaCompactGlowEnabled(value);
       if (key === "corners-enabled") setCornersEnabled(value);
@@ -352,20 +342,6 @@ function SettingsApp() {
     setBrightnessEdgeEnabled(newVal);
     saveAndLocal("bloom-brightness-edge-enabled", String(newVal));
     notifyChange("brightness-edge", newVal);
-  };
-
-  const toggleVisualizer = () => {
-    const newVal = !mediaVisualizerEnabled;
-    setMediaVisualizerEnabled(newVal);
-    saveAndLocal("bloom-media-visualizer-enabled", String(newVal));
-    notifyChange("visualizer", newVal);
-  };
-
-  const toggleAlbumArt = () => {
-    const newVal = !mediaAlbumArtEnabled;
-    setMediaAlbumArtEnabled(newVal);
-    saveAndLocal("bloom-media-album-art-enabled", String(newVal));
-    notifyChange("album-art", newVal);
   };
 
   const toggleAmbience = () => {
