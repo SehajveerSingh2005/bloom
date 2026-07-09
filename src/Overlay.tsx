@@ -215,7 +215,7 @@ function OverlayApp() {
     const storedVersion = localStorage.getItem("bloom-app-version");
 
     getVersion().then((currentVersion) => {
-      const isUpdate = storedVersion !== null && storedVersion !== currentVersion;
+      const isUpdate = storedVersion === null || storedVersion !== currentVersion;
 
       if (firstRun || isUpdate) {
         splashActiveRef.current = true;
