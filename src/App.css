@@ -791,10 +791,18 @@ body {
     font-weight: 600;
     color: var(--bloom-text, white);
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     letter-spacing: -0.15px;
-    width: 100%;
+    display: inline-block;
+}
+
+.premium-title.marquee {
+    animation: marquee-scroll 8s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+}
+
+@keyframes marquee-scroll {
+    0%, 12% { transform: translateX(0); }
+    42%, 55% { transform: translateX(calc(var(--scroll-distance, -100%) + 20px)); }
+    80%, 100% { transform: translateX(0); }
 }
 
 .premium-artist {

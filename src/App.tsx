@@ -165,6 +165,39 @@ interface MediaInfo {
   artwork?: string[];
 }
 
+const TitleMarquee = ({ title }: { title: string }) => {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  useEffect(() => {
+    const check = () => {
+      if (textRef.current && containerRef.current) {
+        const overflow = textRef.current.scrollWidth > containerRef.current.clientWidth;
+        setIsOverflowing(overflow);
+        setContainerWidth(containerRef.current.clientWidth);
+      }
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    if (containerRef.current) observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [title]);
+
+  return (
+    <div ref={containerRef} style={{ width: '100%', overflow: 'hidden' }}>
+      <span
+        ref={textRef}
+        className={`premium-title ${isOverflowing ? 'marquee' : ''}`}
+        style={{ '--scroll-distance': `calc(-100% + ${containerWidth}px)` } as React.CSSProperties}
+      >
+        {title}
+      </span>
+    </div>
+  );
+};
+
 
 
 
@@ -1345,7 +1378,7 @@ function App() {
                       <div className="metadata-controls-section-middle">
                         <div className="track-header-row">
                           <div className="track-info-middle">
-                            <span className="premium-title">{mediaInfo.title}</span>
+                            <TitleMarquee title={mediaInfo.title} />
                             <span className="premium-artist">{mediaInfo.artist}</span>
                           </div>
                           <div className="header-visualizer">
