@@ -30,3 +30,6 @@ dist-ssr
 #skills
 .agents/*
 skills-lock.json
+
+#agents
+.mimocode
