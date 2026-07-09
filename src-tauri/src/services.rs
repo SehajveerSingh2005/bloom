@@ -1087,68 +1087,63 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                         }
                     }
 
-                    // --- Left Edge (Volume Overlay) ---
-                    if let Some(vol_win) = app_handle.get_webview_window("volume-overlay") {
-                        let at_left_edge = pt.x <= (cached_monitor_pos.x + 8) &&
-                                            pt.y >= cached_monitor_pos.y &&
-                                            pt.y <= (cached_monitor_pos.y + cached_monitor_size.height as i32);
+                    // --- Left Edge (Volume) ---
+                    let at_left_edge = pt.x <= (cached_monitor_pos.x + 8) &&
+                                        pt.y >= cached_monitor_pos.y &&
+                                        pt.y <= (cached_monitor_pos.y + cached_monitor_size.height as i32);
 
-                        if at_left_edge {
-                            left_edge_expiry = now + Duration::from_millis(500);
-                        }
-
-                        let final_left_hover = now < left_edge_expiry;
-                        if last_left_edge_hover != Some(final_left_hover) {
-                            let _ = app_handle.emit("volume-edge-hover", final_left_hover);
-                            last_left_edge_hover = Some(final_left_hover);
-                        }
-
-                        // Check if cursor is over the actual visible volume HUD notch (42px wide, 196px high, centered vertically)
-                        let vol_over = if let Ok(Some(m)) = vol_win.primary_monitor() {
-                            let ms = m.size();
-                            let mp = m.position();
-                            let scale = m.scale_factor();
-                            let notch_w = (42.0 * scale) as i32;
-                            let notch_h = (196.0 * scale) as i32;
-                            let notch_x = mp.x;
-                            let notch_y = mp.y + (ms.height as i32 / 2) - (notch_h / 2);
-                            pt.x >= notch_x && pt.x <= notch_x + notch_w &&
-                            pt.y >= notch_y && pt.y <= notch_y + notch_h
-                        } else { false };
-
-                        let _ = vol_win.set_ignore_cursor_events(!vol_over);
+                    if at_left_edge {
+                        left_edge_expiry = now + Duration::from_millis(500);
                     }
 
-                    // --- Right Edge (Brightness Overlay) ---
-                    if let Some(br_win) = app_handle.get_webview_window("brightness-overlay") {
-                        let at_right_edge = pt.x >= (cached_monitor_pos.x + cached_monitor_size.width as i32 - 8) &&
-                                             pt.y >= cached_monitor_pos.y &&
-                                             pt.y <= (cached_monitor_pos.y + cached_monitor_size.height as i32);
+                    let final_left_hover = now < left_edge_expiry;
+                    if last_left_edge_hover != Some(final_left_hover) {
+                        let _ = app_handle.emit("volume-edge-hover", final_left_hover);
+                        last_left_edge_hover = Some(final_left_hover);
+                    }
 
-                        if at_right_edge {
-                            right_edge_expiry = now + Duration::from_millis(500);
-                        }
+                    // --- Right Edge (Brightness) ---
+                    let at_right_edge = pt.x >= (cached_monitor_pos.x + cached_monitor_size.width as i32 - 8) &&
+                                         pt.y >= cached_monitor_pos.y &&
+                                         pt.y <= (cached_monitor_pos.y + cached_monitor_size.height as i32);
 
-                        let final_right_hover = now < right_edge_expiry;
-                        if last_right_edge_hover != Some(final_right_hover) {
-                            let _ = app_handle.emit("brightness-edge-hover", final_right_hover);
-                            last_right_edge_hover = Some(final_right_hover);
-                        }
+                    if at_right_edge {
+                        right_edge_expiry = now + Duration::from_millis(500);
+                    }
 
-                        // Check if cursor is over the actual visible brightness HUD notch (42px wide, 196px high, centered vertically)
-                        let br_over = if let Ok(Some(m)) = br_win.primary_monitor() {
+                    let final_right_hover = now < right_edge_expiry;
+                    if last_right_edge_hover != Some(final_right_hover) {
+                        let _ = app_handle.emit("brightness-edge-hover", final_right_hover);
+                        last_right_edge_hover = Some(final_right_hover);
+                    }
+
+                    // --- Overlay cursor passthrough ---
+                    if let Some(ov_win) = app_handle.get_webview_window("overlay") {
+                        // Check if cursor is over the notch at the left edge (volume)
+                        let over_left = if let Ok(Some(m)) = ov_win.primary_monitor() {
                             let ms = m.size();
                             let mp = m.position();
-                            let scale = m.scale_factor();
-                            let notch_w = (42.0 * scale) as i32;
-                            let notch_h = (196.0 * scale) as i32;
-                            let notch_x = mp.x + ms.width as i32 - notch_w;
-                            let notch_y = mp.y + (ms.height as i32 / 2) - (notch_h / 2);
-                            pt.x >= notch_x && pt.x <= notch_x + notch_w &&
-                            pt.y >= notch_y && pt.y <= notch_y + notch_h
+                            let sc = m.scale_factor();
+                            let nw = (42.0 * sc) as i32;
+                            let nh = (196.0 * sc) as i32;
+                            let nx = mp.x;
+                            let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
+                            pt.x >= nx && pt.x <= nx + nw && pt.y >= ny && pt.y <= ny + nh
                         } else { false };
 
-                        let _ = br_win.set_ignore_cursor_events(!br_over);
+                        // Check if cursor is over the notch at the right edge (brightness)
+                        let over_right = if let Ok(Some(m)) = ov_win.primary_monitor() {
+                            let ms = m.size();
+                            let mp = m.position();
+                            let sc = m.scale_factor();
+                            let nw = (42.0 * sc) as i32;
+                            let nh = (196.0 * sc) as i32;
+                            let nx = mp.x + ms.width as i32 - nw;
+                            let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
+                            pt.x >= nx && pt.x <= nx + nw && pt.y >= ny && pt.y <= ny + nh
+                        } else { false };
+
+                        let _ = ov_win.set_ignore_cursor_events(!(over_left || over_right));
                     }
                 }
             }
@@ -1253,7 +1248,7 @@ fn collect_shortcuts(dir: &std::path::Path, apps: &mut Vec<AppInfo>, depth: i32)
             let path = entry.path();
             if path.is_dir() {
                 collect_shortcuts(&path, apps, depth + 1);
-            } else if path.extension().map_or(false, |e| e.eq_ignore_ascii_case("lnk")) {
+            } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("lnk")) {
                 let name = path.file_stem().unwrap().to_string_lossy().to_string();
                 if name.to_lowercase().contains("uninstall") || name.starts_with("Install") { continue; }
 
@@ -1280,32 +1275,18 @@ fn collect_shortcuts(dir: &std::path::Path, apps: &mut Vec<AppInfo>, depth: i32)
 }
 
 pub fn sync_overlays(app: &AppHandle) {
-    if let Some(vol_win) = app.get_webview_window("volume-overlay") {
-        if let Ok(Some(monitor)) = vol_win.primary_monitor() {
-            let size = monitor.size();
-            let pos = monitor.position();
-            let scale = monitor.scale_factor();
-            let pw = (200.0 * scale) as i32;
-            let ph = (400.0 * scale) as i32;
-            let _ = vol_win.set_position(tauri::PhysicalPosition::new(
-                pos.x,
-                pos.y + (size.height as i32 / 2) - (ph / 2),
-            ));
-            let _ = vol_win.set_size(tauri::PhysicalSize::new(pw as u32, ph as u32));
-        }
+    // Don't reposition while splash is playing
+    if crate::state::OVERLAY_IN_SPLASH.load(Ordering::Relaxed) {
+        return;
     }
-    if let Some(br_win) = app.get_webview_window("brightness-overlay") {
-        if let Ok(Some(monitor)) = br_win.primary_monitor() {
+    // Full-screen overlay — notches render at left/right edges via CSS
+    // The window covers the entire primary monitor so it never needs repositioning
+    if let Some(ov_win) = app.get_webview_window("overlay") {
+        if let Ok(Some(monitor)) = ov_win.primary_monitor() {
             let size = monitor.size();
             let pos = monitor.position();
-            let scale = monitor.scale_factor();
-            let pw = (200.0 * scale) as i32;
-            let ph = (400.0 * scale) as i32;
-            let _ = br_win.set_position(tauri::PhysicalPosition::new(
-                pos.x + (size.width as i32 - pw),
-                pos.y + (size.height as i32 / 2) - (ph / 2),
-            ));
-            let _ = br_win.set_size(tauri::PhysicalSize::new(pw as u32, ph as u32));
+            let _ = ov_win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+            let _ = ov_win.set_size(tauri::PhysicalSize::new(size.width, size.height));
         }
     }
 }

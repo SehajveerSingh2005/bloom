@@ -77,8 +77,9 @@ fn main() {
             set_ignore_cursor_events,
             set_window_height,
             resize_settings_window,
-            hide_volume_overlay,
-            hide_brightness_overlay,
+            hide_overlay,
+            set_splash_fullscreen,
+            sync_overlay_position,
             media_play_pause,
             media_next,
             media_previous,
@@ -194,6 +195,15 @@ fn main() {
             });
 
             sync_overlays(app.handle());
+
+            // Initialize the overlay window — on Windows, set_position doesn't
+            // take effect on a window that has never been shown. Show it once
+            // to register it with the compositor, then hide immediately.
+            if let Some(ov_win) = app.get_webview_window("overlay") {
+                let _ = ov_win.show();
+                let _ = ov_win.hide();
+            }
+
             setup_cursor_monitor(app.handle().clone());
             setup_display_change_monitor(app.handle().clone());
             {

@@ -765,13 +765,33 @@ pub fn open_settings_window(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn hide_volume_overlay(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("volume-overlay") { let _ = win.hide(); }
+pub fn hide_overlay(app: AppHandle) {
+    if let Some(win) = app.get_webview_window("overlay") { let _ = win.hide(); }
 }
 
 #[tauri::command]
-pub fn hide_brightness_overlay(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("brightness-overlay") { let _ = win.hide(); }
+pub fn set_splash_fullscreen(app: AppHandle, fullscreen: bool) {
+    crate::state::OVERLAY_IN_SPLASH.store(fullscreen, Ordering::Relaxed);
+    if let Some(win) = app.get_webview_window("overlay") {
+        if fullscreen {
+            let _ = win.hide();
+            if let Ok(Some(monitor)) = win.primary_monitor() {
+                let size = monitor.size();
+                let pos = monitor.position();
+                let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+                let _ = win.set_size(tauri::PhysicalSize::new(size.width, size.height));
+            }
+            let _ = win.show();
+        } else {
+            let _ = win.hide();
+            crate::services::sync_overlays(&app);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn sync_overlay_position(app: AppHandle) {
+    crate::services::sync_overlays(&app);
 }
 
 #[tauri::command]
