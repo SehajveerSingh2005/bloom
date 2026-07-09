@@ -214,17 +214,27 @@ function OverlayApp() {
     const firstRun = localStorage.getItem("bloom-first-run") === null;
     const storedVersion = localStorage.getItem("bloom-app-version");
 
-    getVersion().then((currentVersion) => {
-      const isUpdate = storedVersion === null || storedVersion !== currentVersion;
+    const showSplash = (version?: string) => {
+      splashActiveRef.current = true;
+      setMode('splash');
+      invoke('set_splash_fullscreen', { fullscreen: true });
+      if (version) localStorage.setItem("bloom-app-version", version);
+      setTimeout(() => emit('splash-done'), 2800);
+    };
 
-      if (firstRun || isUpdate) {
-        splashActiveRef.current = true;
-        setMode('splash');
-        invoke('set_splash_fullscreen', { fullscreen: true });
-        localStorage.setItem("bloom-app-version", currentVersion);
-        setTimeout(() => emit('splash-done'), 2800);
+    // First run or old version without version key — splash immediately
+    if (firstRun || storedVersion === null) {
+      showSplash();
+      // Still try to store the version in the background
+      getVersion().then((v) => localStorage.setItem("bloom-app-version", v)).catch(() => {});
+      return;
+    }
+
+    // Has version key — check if it matches
+    getVersion().then((currentVersion) => {
+      if (storedVersion !== currentVersion) {
+        showSplash(currentVersion);
       } else {
-        // No splash needed — tell bloom to start immediately
         emit('splash-done');
       }
     }).catch(() => {
