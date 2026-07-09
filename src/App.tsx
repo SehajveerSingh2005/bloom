@@ -336,29 +336,56 @@ function App() {
       return;
     }
 
-    const checkVisibility = async () => {
-      try {
-        const win = getCurrentWebviewWindow();
-        const visible = await win.isVisible();
-        if (visible) {
-          setIsReady(true);
-          // Impact and Expansion start together once it reaches the top
-          setTimeout(() => {
-            setIsImpacted(true);
-            setIsExpanded(true);
-          }, 240);
-          return true;
-        }
-      } catch (e) { }
-      return false;
+    const proceedWithStartup = () => {
+      const checkVisibility = async () => {
+        try {
+          const win = getCurrentWebviewWindow();
+          const visible = await win.isVisible();
+          if (visible) {
+            setIsReady(true);
+            setTimeout(() => {
+              setIsImpacted(true);
+              setIsExpanded(true);
+            }, 240);
+            return true;
+          }
+        } catch (e) { }
+        return false;
+      };
+
+      const interval = setInterval(async () => {
+        if (await checkVisibility()) clearInterval(interval);
+      }, 100);
+
+      checkVisibility();
+      return interval;
     };
 
-    const interval = setInterval(async () => {
-      if (await checkVisibility()) clearInterval(interval);
-    }, 100);
+    // Synchronous check — if first run, splash is coming, so wait for it
+    const isFirstRun = localStorage.getItem("bloom-first-run") === null;
 
-    checkVisibility();
-    return () => clearInterval(interval);
+    if (isFirstRun) {
+      // First launch: splash will show, wait for it
+      let interval: any;
+      const unlistenSplash = listen("splash-done", () => {
+        interval = proceedWithStartup();
+        unlistenSplash.then(fn => fn());
+      });
+      const safetyTimer = setTimeout(() => {
+        interval = proceedWithStartup();
+        unlistenSplash.then(fn => fn());
+      }, 5000);
+      return () => {
+        clearTimeout(safetyTimer);
+        if (interval) clearInterval(interval);
+        unlistenSplash.then(fn => fn());
+      };
+    } else {
+      // Not first launch — check for update asynchronously, but start immediately
+      // The overlay will show splash on top if there's an update
+      const interval = proceedWithStartup();
+      return () => clearInterval(interval);
+    }
   }, [windowLabel]);
 
   // Settings state
@@ -432,21 +459,33 @@ function App() {
           await invoke("sync_appbar");
         };
 
-        // 1. Snappy initial sync (fast as possible)
-        setTimeout(syncWindows, 400);
+        const dockEnabled = getVal("bloom-dock-enabled", "true") === "true";
+        const runDockInit = () => {
+          // 1. Snappy initial sync
+          setTimeout(syncWindows, 400);
+          // 2. Safety-net dock retry
+          if (dockEnabled) {
+            setTimeout(() => invoke("init_dock", { mode: dockMode }).catch(() => {}), 1500);
+          }
+          // 3. Layout corrections
+          setTimeout(() => invoke("sync_appbar"), 1000);
+          setTimeout(() => invoke("sync_appbar"), 2500);
+          setTimeout(() => invoke("sync_appbar"), 5000);
+        };
 
-        // 2. Safety-net dock retry at 1.5s — catches cases where the dock webview
-        //    wasn't fully initialized when the 400ms call fired
-          const dockEnabled = getVal("bloom-dock-enabled", "true") === "true";
-        if (dockEnabled) {
-          setTimeout(() => invoke("init_dock", { mode: dockMode }).catch(() => {}), 1500);
+        if (firstRun) {
+          // First launch: wait for splash to finish before initializing dock
+          const unlistenDock = listen("splash-done", () => {
+            runDockInit();
+            unlistenDock.then(fn => fn());
+          });
+          setTimeout(() => {
+            runDockInit();
+            unlistenDock.then(fn => fn());
+          }, 5000);
+        } else {
+          runDockInit();
         }
-
-        // 3. Layout corrections (position only, no visibility toggle)
-        setTimeout(() => invoke("sync_appbar"), 1000);
-        setTimeout(() => invoke("sync_appbar"), 2500);
-        // Last-resort recovery for very slow systems
-        setTimeout(() => invoke("sync_appbar"), 5000);
       }
 
       const scaleVal = getVal("bloom-scale");
