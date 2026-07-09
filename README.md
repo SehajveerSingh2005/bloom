@@ -7,146 +7,141 @@
 
 # Bloom
 
-### Your Windows, alive.
+<br/>
 
-*A desktop companion that moves like thought — fluid, responsive, and unapologetically beautiful.*
-
-<!-- HERO SHOWCASE — full-screen hero image or video goes here -->
-<!-- ![Hero](your-hero-image-or-video-url) -->
-<img width="1920" height="1080" alt="Screenshot (170)" src="https://github.com/user-attachments/assets/22041f25-a69e-457d-80d9-7dfbfbed2d29" />
+<!-- HERO SHOWCASE — full-width cinematic shot or video -->
+<!-- ![Hero](your-hero-url) -->
+<img width="1920" height="1080" alt="Bloom Hero" src="https://github.com/user-attachments/assets/22041f25-a69e-457d-80d9-7dfbfbed2d29" />
 
 </div>
 
 ---
 
-Bloom is not a skin. It's not a theme pack. It's a ground-up reimagining of how you interact with your Windows desktop — built on a high-performance Rust engine, rendered through physics-driven React animations, and deeply integrated into the Windows shell at a level most apps never touch.
+Bloom makes your Windows desktop feel alive.
 
-It feels alive because every pixel is in motion. It feels premium because every transition is intentional. It feels like *yours* because it adapts to how you actually work.
+Every transition is a physics simulation.
+Every element responds to touch.
+Every pixel is in motion.
+
+Your desktop has been asleep for years.
+This wakes it up.
 
 ---
 
 ## The Island
 
-<!-- SHOWCASE: GIF or short clip of the notch expanding, music mode, command center — 3-5 seconds -->
+<!-- SHOWCASE: GIF or short clip — Island expanding, cycling through modes (3-5s) -->
+<!-- ![Island Demo](your-island-gif-url) -->
 
 <p align="center">
   <img width="430" height="70" alt="Bloom Island" src="https://github.com/user-attachments/assets/0d723558-9df4-4214-b20e-4a1f97eb1f22" />
 </p>
 
-At the top of your screen lives a context-aware hub that morphs based on what you're doing. Swipe or scroll left and right to cycle through four modes:
+A notch at the top of your screen that adapts to what you're doing.
 
-- **Music** — A reactive audio visualizer powered by real-time WASAPI loopback capture and DFT analysis. Album art, track info, playback controls — all from a single glance. The visualizer bars respond to 5 frequency bands with individually tuned spring physics.
+Scroll or swipe to switch modes.
+Watch it transform.
 
-- **Command Center** — WiFi, Bluetooth, dock/notch mode toggles, Do Not Disturb, system tray access, volume and brightness sliders. A minimal control surface that replaces digging through settings menus.
+**Music** — album art, track info, playback controls. A visualizer that reacts to five frequency bands with spring physics. It moves when the music plays.
 
-- **Status** — Battery status, weather, and more — all at a glance. More coming soon.
+<!-- SHOWCASE: GIF — music mode reacting to a song -->
+<!-- ![Music Visualizer](your-music-gif-url) -->
 
-- **Calendar** — A month view with an integrated Pomodoro timer. Focus without leaving your workspace.
+**Command Center** — WiFi, Bluetooth, Do Not Disturb, volume, brightness. Everything you usually dig through settings for.
 
-Every mode transition is a spring-loaded animation — no easing curves, no linear interpolations. Width, height, border-radius, and position each animate with independent spring parameters, creating a staggered, mechanical fluidity that feels physical.
+<!-- SHOWCASE: GIF — command center toggling controls -->
+<!-- ![Command Center](your-command-center-gif-url) -->
+
+**Status** — Battery, weather. Your desktop, summarized.
+
+**Calendar** — A month view with a Pomodoro timer. Focus without switching apps.
+
+Each transition is spring-loaded.
+Width, height, border-radius, position — all animate independently.
+It feels mechanical. In a good way.
 
 ---
 
 ## The Dock
 
-<!-- SHOWCASE: GIF or clip of dock appearing, drag-reorder, window previews — 3-5 seconds -->
+<!-- SHOWCASE: GIF — dock appearing on hover, drag-reorder, window previews -->
+<!-- ![Dock Demo](your-dock-gif-url) -->
 
 <p align="center">
   <img width="576" height="102" alt="Bloom Dock" src="https://github.com/user-attachments/assets/96229f0e-1246-4baf-b8ad-3e8f77142a12" />
 </p>
 
-A taskbar that breathes. Bloom's dock floats above your desktop in auto-hide mode by default — appearing when you need it, vanishing when you don't. The native Windows taskbar is suppressed entirely — Bloom *is* your taskbar.
+A taskbar that actually moves.
 
-- **Pinned apps** with persistent ordering via drag-and-drop (powered by `framer-motion` Reorder)
-- **Running apps** detected through real-time `EnumWindows` polling
-- **Window previews** captured via `PrintWindow` with a disk-persisted thumbnail cache
-- **Click-through intelligence** — a Rust-side cursor monitor running at 32ms intervals determines when to intercept clicks and when to pass them through to the desktop below
-- **Context menus** for pin/unpin, app search, and Bloom options
+Bloom replaces your native Windows taskbar.
+It sits at the bottom of your screen, always there when you need it.
+
+Drag to reorder.
+Hover for window previews.
+Right-click for context menus.
+
+It's not an overlay.
+It *is* your taskbar.
+
+<!-- SHOWCASE: GIF — dock hover previews in action -->
+<!-- ![Window Previews](your-preview-gif-url) -->
 
 ---
 
 ## Under the Hood
 
-<!-- SHOWCASE: Optional — architecture diagram or a visual showing the 5-window system -->
+<!-- SHOWCASE: Optional — architecture diagram or visual of the 5-window system -->
+<!-- ![Architecture](your-arch-url) -->
 
-Bloom runs **5 independent Tauri webview windows** — each a separate React application — coordinated through a Rust backend that speaks directly to the Windows shell.
+A Rust backend that speaks directly to the Windows shell.
 
-| Window | Purpose |
-|---|---|
-| `main` | The Island (notch) |
-| `dock` | The Dock (taskbar replacement) |
-| `settings` | Mica-backed settings panel |
-| `volume-overlay` | Left-edge volume HUD |
-| `brightness-overlay` | Right-edge brightness HUD |
+Global hooks intercepting keys before Windows sees them.
+WASAPI capturing system audio in real-time.
+COM controlling your media sessions.
+WMI monitoring your hardware.
 
-### The Engine
+The whole thing sleeps when you don't need it.
+The audio visualizer pauses when nothing's playing.
+The cursor monitor hides when the dock is gone.
+Thumbnails only refresh on focus.
 
-- **Rust core** (`Tauri v2`) — Zero-jank execution. Global keyboard hooks intercept volume/brightness keys before Windows sees them. WASAPI loopback captures system audio for real-time visualization. COM interfaces control media sessions, audio endpoints, and display brightness. WMI monitors hardware state. `SetWinEventHook` tracks window focus, minimize, and foreground changes.
-
-- **React frontend** (`framer-motion`) — Every animation is a physics simulation. Spring stiffness, damping, and mass are tuned per-property. The result is motion that feels weighty and deliberate, not computed.
-
-- **Deep system integration** — AppBar registration via `SHAppBarMessage`. Taskbar suppression via `ShowWindow(SW_HIDE)` with a hook to prevent re-show. Cursor tracking with `GetCursorInfo` for pixel-accurate click-through. Window thumbnails via `PrintWindow` with a capped image cache. App enumeration through Shell API's `FOLDERID_AppsFolder` and filesystem scanning.
-
-### Performance Philosophy
-
-Bloom is obsessive about idle cost. The audio visualizer skips processing when no media is playing. The cursor monitor sleeps when the dock isn't visible. Window thumbnails are cached and invalidated on focus events. Icon extraction uses a persistent disk cache with in-memory lookup. The entire application is designed to be *there* without being *heavy*.
+It's fast because it has to be.
 
 ---
 
-## Quick Start
+<!-- SHOWCASE: Full-width cinematic video or GIF montage -->
+<!-- ![Bloom Montage](your-montage-url) -->
 
-### Prerequisites
+---
 
-- [Rust](https://rustup.rs/) (stable)
-- [Bun](https://bun.sh/)
+## Get It Running
+
+**Download** the latest build from [Releases](https://github.com/SehajveerSingh2005/bloom/releases/latest).
+
+Or build from source:
 
 ```bash
-# Clone
 git clone https://github.com/SehajveerSingh2005/bloom.git
 cd bloom
-
-# Install
 bun install
-
-# Develop
 bun run tauri dev
-
-# Build for production
-bun run tauri build
 ```
+
+You'll need [Rust](https://rustup.rs/) and [Bun](https://bun.sh/). That's it.
 
 ---
 
-## Built With
+## Contributing
 
-<table>
-  <tr>
-    <td align="center"><strong>Backend</strong></td>
-    <td align="center"><strong>Frontend</strong></td>
-    <td align="center"><strong>System</strong></td>
-  </tr>
-  <tr>
-    <td>Rust · Tauri v2</td>
-    <td>React 19 · TypeScript · Vite 7</td>
-    <td>windows-rs · WASAPI · WMI · COM</td>
-  </tr>
-  <tr>
-    <td>tokio · serde</td>
-    <td>framer-motion · Tailwind CSS 4</td>
-    <td>SHAppBarMessage · DWM · GDI</td>
-  </tr>
-  <tr>
-    <td>window-vibrancy</td>
-    <td>Rollup (multi-entry)</td>
-    <td>Shell API · Global Hooks</td>
-  </tr>
-</table>
+Bloom is open source.
+Found a bug? Open an issue.
+Have an idea? Send a PR.
+Want to just say it's cool? A star goes a long way.
 
 ---
 
 <div align="center">
 
-**Bloom is an open-source project.**
-If it makes your desktop a little more alive, consider giving it a star.
+**Your desktop is waiting.**
 
 </div>
