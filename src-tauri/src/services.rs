@@ -1027,6 +1027,7 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                             let should_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
                             if last_dock_ignore != Some(should_ignore) {
                                 let _ = dock_win.set_ignore_cursor_events(should_ignore);
+                                let _ = dock_win.set_always_on_top(true);
                                 last_dock_ignore = Some(should_ignore);
                             }
                         }
@@ -1082,6 +1083,7 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                             let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
                             if last_main_ignore != Some(final_ignore) {
                                 let _ = main_win.set_ignore_cursor_events(final_ignore);
+                                let _ = main_win.set_always_on_top(true);
                                 last_main_ignore = Some(final_ignore);
                             }
                         }
@@ -1288,6 +1290,7 @@ pub fn sync_overlays(app: &AppHandle) {
             let _ = ov_win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
             let _ = ov_win.set_size(tauri::PhysicalSize::new(size.width, size.height));
         }
+        let _ = ov_win.set_always_on_top(true);
     }
 }
 
@@ -1350,7 +1353,12 @@ pub fn register_appbar(window: tauri::WebviewWindow) {
             if !already_positioned {
                 let _ = SetWindowPos(hwnd, None, abd.rc.left, abd.rc.top, final_width, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             }
-            
+
+            // Re-assert topmost after repositioning — SetWindowPos with SWP_NOZORDER
+            // preserves current z-order, but z-order may have been lost due to other
+            // windows or style changes (e.g. set_ignore_cursor_events).
+            let _ = window.set_always_on_top(true);
+
             if !window.is_visible().unwrap_or(false) {
                 let _ = window.show();
             }
@@ -1451,7 +1459,10 @@ fn register_dock_appbar_inner(window: tauri::WebviewWindow, attempt: i32) {
             if !already_positioned {
                 let _ = SetWindowPos(hwnd, None, abd.rc.left, final_y, final_width, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             }
-            
+
+            // Re-assert topmost after repositioning — same reason as register_appbar.
+            let _ = window.set_always_on_top(true);
+
             // Always ensure the window is visible — show() is idempotent
             if !window.is_visible().unwrap_or(false) {
                 let _ = window.show();
@@ -1592,6 +1603,13 @@ fn reposition_all_windows(app_handle: &AppHandle) {
         set_taskbar_visibility(false, false);
     }
     sync_overlays(app_handle);
+    // Re-assert topmost on all windows after repositioning to recover from any z-order loss
+    if let Some(main_win) = app_handle.get_webview_window("main") {
+        let _ = main_win.set_always_on_top(true);
+    }
+    if let Some(dock_win) = app_handle.get_webview_window("dock") {
+        let _ = dock_win.set_always_on_top(true);
+    }
 }
 
 fn reposition_autohide_dock(app_handle: &AppHandle, dock_win: tauri::WebviewWindow) {
@@ -1627,6 +1645,7 @@ fn reposition_autohide_dock(app_handle: &AppHandle, dock_win: tauri::WebviewWind
                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
                     );
                 }
+                let _ = dock_clone.set_always_on_top(true);
                 let _ = dock_clone.show();
                 break;
             }

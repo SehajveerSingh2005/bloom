@@ -114,6 +114,8 @@ pub async fn init_dock(app: AppHandle, mode: String) {
                                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
                                 );
                             }
+                            // Re-assert topmost after repositioning
+                            let _ = dock_clone.set_always_on_top(true);
                             // Ensure visible after positioning
                             let _ = dock_clone.show();
                             break;
@@ -230,6 +232,7 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
                                     use windows::Win32::Foundation::HWND;
                                     let _ = SetWindowPos(HWND(hwnd_val as *mut _), None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
                                 }
+                                let _ = dock_clone.set_always_on_top(true);
                                 break;
                             }
                         }
