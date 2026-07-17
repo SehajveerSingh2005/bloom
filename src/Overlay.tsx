@@ -402,7 +402,7 @@ function OverlayApp() {
             <motion.img
               src="/bloom.png"
               className="splash-logo"
-              initial={{ scale: 0, opacity: 0 }}
+              initial={{ scale: 0, opacity: 0, rotate: 0 }}
               animate={{
                 scale: [0, 1.1, 1, 1.2, 1, 1, 0.2],
                 opacity: [0, 1, 1, 1, 1, 1, 0],
@@ -411,7 +411,7 @@ function OverlayApp() {
               transition={{
                 duration: 3.2,
                 times: [0, 0.17, 0.3, 0.43, 0.56, 0.78, 1],
-                ease: ["easeOut", "easeInOut", "easeInOut", "easeInOut", "easeIn", "easeIn"],
+                ease: ["easeOut", "easeInOut", "easeInOut", "easeInOut", "linear", "linear"],
               }}
               onAnimationComplete={onSplashComplete}
             />

@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { check } from "@tauri-apps/plugin-updater";
+import { getVersion } from "@tauri-apps/api/app";
 import "./App.css";
 import { initTheme } from "./theme";
 import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, VolumeLowIcon, VolumeHighIcon, MusicNoteIcon } from "./icons";
@@ -412,31 +413,56 @@ function App() {
       return interval;
     };
 
-    // Synchronous check — if first run, splash is coming, so wait for it
-    const isFirstRun = localStorage.getItem("bloom-first-run") === null;
+    // Mirror Overlay.tsx's splash decision so we only wait when a splash will actually fire.
+    // Overlay always emits splash-done, but on a normal relaunch it emits it near-instantly
+    // (after one async getVersion() call) — before this listener would be registered.
+    // By making the same decision here we avoid a race and avoid any unnecessary delay.
+    const firstRun = localStorage.getItem("bloom-first-run") === null;
+    const storedVersion = localStorage.getItem("bloom-app-version");
 
-    if (isFirstRun) {
-      // First launch: splash will show, wait for it
+    const waitForSplash = () => {
+      // Splash is definitely coming — register listener now (2800ms animation gives us plenty of time)
+      let started = false;
       let interval: any;
       const unlistenSplash = listen("splash-done", () => {
+        if (started) return;
+        started = true;
         interval = proceedWithStartup();
         unlistenSplash.then(fn => fn());
       });
       const safetyTimer = setTimeout(() => {
+        if (started) return;
+        started = true;
         interval = proceedWithStartup();
         unlistenSplash.then(fn => fn());
-      }, 5000);
+      }, 6000);
       return () => {
         clearTimeout(safetyTimer);
         if (interval) clearInterval(interval);
         unlistenSplash.then(fn => fn());
       };
-    } else {
-      // Not first launch — check for update asynchronously, but start immediately
-      // The overlay will show splash on top if there's an update
-      const interval = proceedWithStartup();
-      return () => clearInterval(interval);
+    };
+
+    if (firstRun || storedVersion === null) {
+      // Splash is definitely showing — wait for it
+      return waitForSplash();
     }
+
+    // Has a version key — need async check to know if version changed
+    let interval: any;
+    getVersion().then(currentVersion => {
+      if (storedVersion !== currentVersion) {
+        // Version changed — splash is coming, wait for it
+        // (splash takes 2800ms so there's plenty of time to register the listener)
+        waitForSplash();
+      } else {
+        // Same version — no splash, start immediately
+        interval = proceedWithStartup();
+      }
+    }).catch(() => {
+      interval = proceedWithStartup();
+    });
+    return () => { if (interval) clearInterval(interval); };
   }, [windowLabel]);
 
   // Settings state
@@ -526,18 +552,35 @@ function App() {
           setTimeout(() => invoke("sync_appbar"), 5000);
         };
 
-        if (firstRun) {
-          // First launch: wait for splash to finish before initializing dock
+        // Mirror Overlay.tsx's splash decision for dock init too — only wait when
+        // a splash is actually coming, otherwise init immediately.
+        const runDockInitAfterSplash = () => {
+          let dockStarted = false;
           const unlistenDock = listen("splash-done", () => {
+            if (dockStarted) return;
+            dockStarted = true;
             runDockInit();
             unlistenDock.then(fn => fn());
           });
           setTimeout(() => {
+            if (dockStarted) return;
+            dockStarted = true;
             runDockInit();
             unlistenDock.then(fn => fn());
-          }, 5000);
+          }, 6000);
+        };
+
+        const storedVersion = localStorage.getItem("bloom-app-version");
+        if (firstRun || storedVersion === null) {
+          runDockInitAfterSplash();
         } else {
-          runDockInit();
+          getVersion().then(currentVersion => {
+            if (storedVersion !== currentVersion) {
+              runDockInitAfterSplash();
+            } else {
+              runDockInit();
+            }
+          }).catch(() => runDockInit());
         }
       }
 
