@@ -3,7 +3,7 @@ use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 use std::sync::atomic::Ordering;
 
-use crate::types::{IntRect, AppInfo};
+use crate::types::{IntRect, AppInfo, AudioDevice};
 use crate::state::*;
 use crate::utils::*;
 use crate::services::{register_appbar, register_dock_appbar, sync_overlays, unregister_appbar_native, enum_windows_proc};
@@ -808,6 +808,16 @@ pub fn open_wifi_settings() {
 }
 
 #[tauri::command]
+pub fn open_sound_settings() {
+    unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use windows::Win32::UI::Shell::ShellExecuteA;
+        let _ = ShellExecuteA(Some(HWND(std::ptr::null_mut())), windows::core::PCSTR(c"open".as_ptr() as *const u8), windows::core::PCSTR(c"ms-settings:sound".as_ptr() as *const u8), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
+    }
+}
+
+#[tauri::command]
 pub fn open_notification_center() {
     unsafe {
         use windows::Win32::Foundation::HWND;
@@ -946,6 +956,201 @@ pub fn media_next() { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ 
 
 #[tauri::command]
 pub fn media_previous() { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::MediaPrevious); } } }
+
+#[tauri::command]
+pub fn media_seek(position_ms: f64) { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::MediaSeek(position_ms as i64)); } } }
+
+#[tauri::command]
+pub fn open_media_source_app() {
+    unsafe {
+        use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+        use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, IsIconic, IsWindowVisible, FindWindowW, EnumWindows, GetWindowThreadProcessId};
+        use windows::Win32::Foundation::{HWND, LPARAM};
+        use windows::Win32::System::Threading::OpenProcess;
+
+        let mgr = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync().and_then(|op| op.get()) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        let session = match mgr.GetCurrentSession() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let app_id = match session.SourceAppUserModelId() {
+            Ok(id) => id.to_string(),
+            Err(_) => return,
+        };
+        if app_id.is_empty() { return; }
+
+        // First try: FindWindow with the AppUserModelId directly (works for UWP)
+        let h_app_id = windows::core::HSTRING::from(&app_id);
+        if let Ok(hwnd) = FindWindowW(None, windows::core::PCWSTR(h_app_id.as_ptr())) {
+            if !hwnd.is_invalid() {
+                if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+                    let _ = ShowWindow(hwnd, SW_RESTORE);
+                }
+                let _ = SetForegroundWindow(hwnd);
+                return;
+            }
+        }
+
+        // Second try: find window by process name extracted from app_id
+        let process_name = app_id.split('.').next().unwrap_or(&app_id).to_lowercase();
+
+        struct EnumData { process_name: String, found_hwnd: Option<HWND> }
+
+        unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
+            let data = &mut *(lparam.0 as *mut EnumData);
+            if !IsWindowVisible(hwnd).as_bool() {
+                return windows::core::BOOL(1);
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid == 0 { return windows::core::BOOL(1); }
+
+            if let Ok(proc) = OpenProcess(
+                windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
+                false,
+                pid,
+            ) {
+                let mut buf = [0u16; 260];
+                let mut size = buf.len() as u32;
+                let ok = windows::Win32::System::Threading::QueryFullProcessImageNameW(
+                    proc,
+                    windows::Win32::System::Threading::PROCESS_NAME_FORMAT(0),
+                    windows::core::PWSTR(buf.as_mut_ptr()),
+                    &mut size,
+                );
+                let _ = windows::Win32::Foundation::CloseHandle(proc);
+                if ok.is_ok() {
+                    let path = String::from_utf16_lossy(&buf[..size as usize]);
+                    let file_name = path.rsplit('\\').next().unwrap_or("").to_lowercase().replace(".exe", "");
+                    if file_name == data.process_name {
+                        data.found_hwnd = Some(hwnd);
+                        return windows::core::BOOL(0);
+                    }
+                }
+            }
+            windows::core::BOOL(1)
+        }
+
+        let mut data = EnumData { process_name, found_hwnd: None };
+        let callback: unsafe extern "system" fn(HWND, LPARAM) -> windows::core::BOOL = enum_callback;
+        let _ = EnumWindows(Some(callback), LPARAM(&mut data as *mut EnumData as isize));
+
+        if let Some(hwnd) = data.found_hwnd {
+            if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+            }
+            let _ = SetForegroundWindow(hwnd);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_audio_output_devices() -> Result<Vec<AudioDevice>, String> {
+    unsafe {
+        use windows::Win32::Media::Audio::{IMMDeviceEnumerator, eRender, eConsole, DEVICE_STATE_ACTIVE};
+        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL, STGM_READ};
+        use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+            &windows::Win32::Media::Audio::MMDeviceEnumerator,
+            None,
+            CLSCTX_ALL,
+        ).map_err(|e| format!("Failed to create device enumerator: {}", e))?;
+
+        // Get default device ID
+        let default_device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
+            .map_err(|e| format!("Failed to get default endpoint: {}", e))?;
+        let default_id = default_device.GetId()
+            .map(|id| {
+                let s = windows::core::PCWSTR::from_raw(id.0).to_string().unwrap_or_default();
+                windows::Win32::System::Com::CoTaskMemFree(Some(id.0 as *const _));
+                s
+            })
+            .unwrap_or_default();
+
+        // Enumerate all active render endpoints
+        let collection = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
+            .map_err(|e| format!("Failed to enumerate endpoints: {}", e))?;
+        let count = collection.GetCount().map_err(|e| format!("Failed to get count: {}", e))?;
+
+        let mut devices = Vec::new();
+        for i in 0..count {
+            if let Ok(device) = collection.Item(i) {
+                let id = device.GetId().map(|id| {
+                    let s = windows::core::PCWSTR::from_raw(id.0).to_string().unwrap_or_default();
+                    windows::Win32::System::Com::CoTaskMemFree(Some(id.0 as *const _));
+                    s
+                }).unwrap_or_default();
+
+                let name = device.OpenPropertyStore(STGM_READ).ok()
+                    .and_then(|store| store.GetValue(&PKEY_Device_FriendlyName).ok())
+                    .map(|val| {
+                        let pwstr = val.Anonymous.Anonymous.Anonymous.pwszVal;
+                        let s = windows::core::PCWSTR(pwstr.0 as *const _).to_string().unwrap_or_default();
+                        s
+                    })
+                    .unwrap_or_else(|| "Unknown Device".to_string());
+
+                let is_default = id == default_id;
+                devices.push(AudioDevice { id, name, is_default });
+            }
+        }
+
+        Ok(devices)
+    }
+}
+
+#[tauri::command]
+pub fn set_audio_output_device(device_id: String) -> Result<(), String> {
+    // Use PowerShell with C# Add-Type to properly call IPolicyConfig COM
+    let ps_script = format!(
+        r#"
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+
+[ComImport]
+[Guid("f8679f50-84e7-43cd-b950-c298f2188e5c")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IPolicyConfig {{
+    [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string deviceId, int role);
+}}
+
+[ComImport]
+[Guid("870af99c-e543-481c-8303-f0d7e7e06526")]
+class PolicyConfigClient {{ }}
+
+try {{
+    var client = (IPolicyConfig)new PolicyConfigClient();
+    int hr = client.SetDefaultEndpoint("{device_id}", 0);
+    if (hr != 0) {{
+        Start-Process ms-settings:sound;
+    }}
+}} catch {{
+    Start-Process ms-settings:sound;
+}}
+"@
+        "#,
+        device_id = device_id.replace('"', "`\"")
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => Ok(()),
+        _ => {
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", "ms-settings:sound"])
+                .spawn();
+            Ok(())
+        }
+    }
+}
 
 #[tauri::command]
 pub fn set_volume(volume: f32) { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::SetVolume(volume)); } } }
