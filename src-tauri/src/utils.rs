@@ -186,3 +186,34 @@ pub fn get_setting_str(app: &tauri::AppHandle, key: &str) -> Option<String> {
         serde_json::from_str(&content).ok()?;
     settings.get(key)?.as_str().map(|s| s.to_string())
 }
+
+/// Re-assert HWND_TOPMOST without activating the window.
+///
+/// Tauri's `set_always_on_top(true)` calls `SetWindowPos(HWND_TOPMOST)` without
+/// `SWP_NOACTIVATE`, which causes Windows to send `WM_ACTIVATE` to the WebView2 window.
+/// This activation message makes the WebView compositor briefly blank/hide the window,
+/// and can also strip the `WS_EX_NOACTIVATE` extended style.
+///
+/// This helper uses the raw Win32 call with the correct flags and re-stamps
+/// `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` to prevent both problems.
+pub fn re_assert_topmost(hwnd: HWND) {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, GetWindowLongPtrW, SetWindowLongPtrW,
+            HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE, SWP_NOSENDCHANGING,
+            GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        };
+        // Set topmost without activating or notifying the window
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOSENDCHANGING,
+        );
+        // Re-stamp NOACTIVATE + TOOLWINDOW — HWND_TOPMOST can cause these to be reset
+        // by the shell on some Windows builds
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as usize;
+        let new_ex = ex | WS_EX_NOACTIVATE.0 as usize | WS_EX_TOOLWINDOW.0 as usize;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex as isize);
+    }
+}

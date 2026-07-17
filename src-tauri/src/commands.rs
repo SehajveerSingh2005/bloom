@@ -69,7 +69,7 @@ pub async fn init_dock(app: AppHandle, mode: String) {
     if let Some(dock_win) = app.get_webview_window("dock") {
         // 1. Always show first — idempotent, required before any positioning
         let _ = dock_win.show();
-        let _ = dock_win.set_always_on_top(true);
+        if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
 
         // 2. Register as appbar (fixed) or manually position (auto-hide)
         if mode == "fixed" {
@@ -115,7 +115,7 @@ pub async fn init_dock(app: AppHandle, mode: String) {
                                 );
                             }
                             // Re-assert topmost after repositioning
-                            let _ = dock_clone.set_always_on_top(true);
+                            if let Ok(hwnd) = dock_clone.hwnd() { re_assert_topmost(hwnd); }
                             // Ensure visible after positioning
                             let _ = dock_clone.show();
                             break;
@@ -174,7 +174,7 @@ pub async fn sync_appbar(app: AppHandle) {
         if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
             register_appbar(main_win);
         } else {
-            let _ = main_win.set_always_on_top(true);
+            if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
         }
     }
     if let Some(dock_win) = app.get_webview_window("dock") {
@@ -184,7 +184,7 @@ pub async fn sync_appbar(app: AppHandle) {
         if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
             register_dock_appbar(dock_win);
         } else {
-            let _ = dock_win.set_always_on_top(true);
+            if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
         }
     }
     sync_overlays(&app);
@@ -232,7 +232,7 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
                                     use windows::Win32::Foundation::HWND;
                                     let _ = SetWindowPos(HWND(hwnd_val as *mut _), None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
                                 }
-                                let _ = dock_clone.set_always_on_top(true);
+                                if let Ok(hwnd) = dock_clone.hwnd() { re_assert_topmost(hwnd); }
                                 break;
                             }
                         }
@@ -245,7 +245,7 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
         }
         
         // Ensure always on top and native taskbar stays hidden
-        let _ = dock_win.set_always_on_top(true);
+        if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
         set_taskbar_visibility(false, false);
         NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
 
@@ -285,7 +285,7 @@ pub async fn change_notch_mode(app: AppHandle, mode: String) {
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     if !MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
-                        let _ = main_clone.set_always_on_top(true);
+                        if let Ok(hwnd) = main_clone.hwnd() { re_assert_topmost(hwnd); }
                     }
                 });
             }
@@ -1089,8 +1089,7 @@ pub fn get_audio_output_devices() -> Result<Vec<AudioDevice>, String> {
                     .and_then(|store| store.GetValue(&PKEY_Device_FriendlyName).ok())
                     .map(|val| {
                         let pwstr = val.Anonymous.Anonymous.Anonymous.pwszVal;
-                        let s = windows::core::PCWSTR(pwstr.0 as *const _).to_string().unwrap_or_default();
-                        s
+                        windows::core::PCWSTR(pwstr.0 as *const _).to_string().unwrap_or_default()
                     })
                     .unwrap_or_else(|| "Unknown Device".to_string());
 

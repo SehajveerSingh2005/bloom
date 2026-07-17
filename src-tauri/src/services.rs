@@ -511,6 +511,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
             let mut manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().and_then(|op| op.get()).ok();
             let mut last_processed_media = std::time::Instant::now();
             let mut last_device_check = std::time::Instant::now();
+            #[allow(clippy::type_complexity)]
             let mut last_emitted_info: Option<(String, String, bool, bool, Option<String>, i64, i64)> = None;
             let mut last_volume: f32 = -1.0;
             let mut last_muted: bool = false;
@@ -643,9 +644,9 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                                 let defaults = (0i64, 0i64, false);
                                                 match session.GetTimelineProperties() {
                                                     Ok(timeline) => {
-                                                        let start = timeline.StartTime().map(|t| t.Duration as i64 / 10_000).unwrap_or(0);
-                                                        let end = timeline.EndTime().map(|t| t.Duration as i64 / 10_000).unwrap_or(0);
-                                                        let pos = timeline.Position().map(|t| t.Duration as i64 / 10_000).unwrap_or(0);
+                                                        let start = timeline.StartTime().map(|t| t.Duration / 10_000).unwrap_or(0);
+                                                        let end = timeline.EndTime().map(|t| t.Duration / 10_000).unwrap_or(0);
+                                                        let pos = timeline.Position().map(|t| t.Duration / 10_000).unwrap_or(0);
                                                         let dur = (end - start).max(0);
                                                         // If duration is 0 but position > 0, some players don't report start/end
                                                         // but still track position — use position as fallback duration indicator
@@ -1066,7 +1067,7 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                             let should_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
                             if last_dock_ignore != Some(should_ignore) {
                                 let _ = dock_win.set_ignore_cursor_events(should_ignore);
-                                let _ = dock_win.set_always_on_top(true);
+                                if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
                                 last_dock_ignore = Some(should_ignore);
                             }
                         }
@@ -1122,7 +1123,7 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                             let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
                             if last_main_ignore != Some(final_ignore) {
                                 let _ = main_win.set_ignore_cursor_events(final_ignore);
-                                let _ = main_win.set_always_on_top(true);
+                                if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
                                 last_main_ignore = Some(final_ignore);
                             }
                         }
@@ -1329,7 +1330,7 @@ pub fn sync_overlays(app: &AppHandle) {
             let _ = ov_win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
             let _ = ov_win.set_size(tauri::PhysicalSize::new(size.width, size.height));
         }
-        let _ = ov_win.set_always_on_top(true);
+        if let Ok(hwnd) = ov_win.hwnd() { re_assert_topmost(hwnd); }
     }
 }
 
@@ -1393,10 +1394,11 @@ pub fn register_appbar(window: tauri::WebviewWindow) {
                 let _ = SetWindowPos(hwnd, None, abd.rc.left, abd.rc.top, final_width, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             }
 
-            // Re-assert topmost after repositioning — SetWindowPos with SWP_NOZORDER
-            // preserves current z-order, but z-order may have been lost due to other
-            // windows or style changes (e.g. set_ignore_cursor_events).
-            let _ = window.set_always_on_top(true);
+            // Re-assert topmost after repositioning — use re_assert_topmost instead of
+            // set_always_on_top(true) to include SWP_NOACTIVATE and re-stamp WS_EX_NOACTIVATE.
+            // This prevents WM_ACTIVATE from reaching WebView2, which caused bloom windows
+            // to blank/hide when other windows were minimized or closed.
+            re_assert_topmost(hwnd);
 
             if !window.is_visible().unwrap_or(false) {
                 let _ = window.show();
@@ -1499,8 +1501,8 @@ fn register_dock_appbar_inner(window: tauri::WebviewWindow, attempt: i32) {
                 let _ = SetWindowPos(hwnd, None, abd.rc.left, final_y, final_width, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             }
 
-            // Re-assert topmost after repositioning — same reason as register_appbar.
-            let _ = window.set_always_on_top(true);
+            // Re-assert topmost — same reason as register_appbar.
+            re_assert_topmost(hwnd);
 
             // Always ensure the window is visible — show() is idempotent
             if !window.is_visible().unwrap_or(false) {
@@ -1644,10 +1646,10 @@ fn reposition_all_windows(app_handle: &AppHandle) {
     sync_overlays(app_handle);
     // Re-assert topmost on all windows after repositioning to recover from any z-order loss
     if let Some(main_win) = app_handle.get_webview_window("main") {
-        let _ = main_win.set_always_on_top(true);
+        if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
     }
     if let Some(dock_win) = app_handle.get_webview_window("dock") {
-        let _ = dock_win.set_always_on_top(true);
+        if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
     }
 }
 
@@ -1684,7 +1686,7 @@ fn reposition_autohide_dock(app_handle: &AppHandle, dock_win: tauri::WebviewWind
                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
                     );
                 }
-                let _ = dock_clone.set_always_on_top(true);
+                if let Ok(hwnd) = dock_clone.hwnd() { re_assert_topmost(hwnd); }
                 let _ = dock_clone.show();
                 break;
             }
