@@ -69,7 +69,7 @@ pub fn setup_taskbar_hook() {
     unsafe {
         use windows::Win32::UI::Accessibility::SetWinEventHook;
         use windows::Win32::UI::WindowsAndMessaging::{EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE, WINEVENT_OUTOFCONTEXT};
-        
+
         // Hook both "Show" and "Location Change" (happen when maximizing/switching apps)
         let _show_hook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, None, Some(taskbar_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT);
         let _loc_hook = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, None, Some(taskbar_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT);
@@ -511,7 +511,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
             let mut manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().and_then(|op| op.get()).ok();
             let mut last_processed_media = std::time::Instant::now();
             let mut last_device_check = std::time::Instant::now();
-            let mut last_emitted_info: Option<(String, String, bool, bool, Option<String>)> = None;
+            let mut last_emitted_info: Option<(String, String, bool, bool, Option<String>, i64, i64)> = None;
             let mut last_volume: f32 = -1.0;
             let mut last_muted: bool = false;
 
@@ -563,6 +563,14 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                             SystemCommand::MediaPlayPause => { if let Some(ref mgr) = manager { if let Ok(session) = mgr.GetCurrentSession() { let _ = session.TryTogglePlayPauseAsync(); } } }
                             SystemCommand::MediaNext => { if let Some(ref mgr) = manager { if let Ok(session) = mgr.GetCurrentSession() { let _ = session.TrySkipNextAsync(); } } }
                             SystemCommand::MediaPrevious => { if let Some(ref mgr) = manager { if let Ok(session) = mgr.GetCurrentSession() { let _ = session.TrySkipPreviousAsync(); } } }
+                            SystemCommand::MediaSeek(position_ms) => {
+                                if let Some(ref mgr) = manager {
+                                    if let Ok(session) = mgr.GetCurrentSession() {
+                                        let ticks = position_ms * 10_000;
+                                        let _ = session.TryChangePlaybackPositionAsync(ticks);
+                                    }
+                                }
+                            }
                             SystemCommand::ToggleVisibility(visible) => {
                                 let _ = handle_system.emit("visibility-change", visible);
                                 if let Some(w) = handle_system.get_webview_window("bottom-corners") { if visible { let _ = w.show(); } else { let _ = w.hide(); } }
@@ -612,7 +620,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                             let artist = props.Artist().unwrap_or_default().to_string();
                                             let mut artwork = None;
                                             let mut got_art_from_cache = false;
-                                            if let Some((ref last_title, ref last_artist, _, _, ref last_art)) = last_emitted_info {
+                                            if let Some((ref last_title, ref last_artist, _, _, ref last_art, _, _)) = last_emitted_info {
                                                 if last_title == &title && last_artist == &artist {
                                                     artwork = last_art.as_ref().map(|art| vec![art.clone()]);
                                                     got_art_from_cache = true;
@@ -630,7 +638,34 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                                 })();
                                             }
 
-                                            let info = MediaInfo { title, artist, is_playing, has_media: true, artwork };
+                                            // Extract timeline properties for progress bar
+                                            let (position_ms, duration_ms, seek_enabled) = {
+                                                let defaults = (0i64, 0i64, false);
+                                                match session.GetTimelineProperties() {
+                                                    Ok(timeline) => {
+                                                        let start = timeline.StartTime().map(|t| t.Duration as i64 / 10_000).unwrap_or(0);
+                                                        let end = timeline.EndTime().map(|t| t.Duration as i64 / 10_000).unwrap_or(0);
+                                                        let pos = timeline.Position().map(|t| t.Duration as i64 / 10_000).unwrap_or(0);
+                                                        let dur = (end - start).max(0);
+                                                        // If duration is 0 but position > 0, some players don't report start/end
+                                                        // but still track position — use position as fallback duration indicator
+                                                        let effective_dur = if dur > 0 { dur } else { 0 };
+                                                        // Check if seeking is supported
+                                                        let seek = session.GetPlaybackInfo().ok()
+                                                            .and_then(|pi| pi.Controls().ok())
+                                                            .map(|c| c.IsPlaybackPositionEnabled().unwrap_or(false))
+                                                            .unwrap_or(false);
+                                                        (pos, effective_dur, seek)
+                                                    }
+                                                    Err(_) => defaults,
+                                                }
+                                            };
+
+                                            let now_ms = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_millis() as u64)
+                                                .unwrap_or(0);
+                                            let info = MediaInfo { title, artist, is_playing, has_media: true, artwork, position_ms, duration_ms, seek_enabled, position_updated_at: now_ms };
                                             if is_playing { best_info = Some(info); break; } else if best_info.is_none() { best_info = Some(info); }
                                         }
                                     }
@@ -638,12 +673,16 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                             }
                         }
                     }
-                    let current = best_info.unwrap_or(MediaInfo { title: "".into(), artist: "".into(), is_playing: false, has_media: false, artwork: None });
+                    let current = best_info.unwrap_or(MediaInfo { title: "".into(), artist: "".into(), is_playing: false, has_media: false, artwork: None, position_ms: 0, duration_ms: 0, seek_enabled: false, position_updated_at: 0 });
                     let art_str = current.artwork.as_ref().and_then(|a| a.first()).cloned();
-                    if last_emitted_info.as_ref().is_none_or(|(t, a, p, h, art)| t != &current.title || a != &current.artist || p != &current.is_playing || h != &current.has_media || art != &art_str) {
+                    if last_emitted_info.as_ref().is_none_or(|(t, a, p, h, art, pos, _dur)| {
+                        t != &current.title || a != &current.artist || p != &current.is_playing || h != &current.has_media || art != &art_str ||
+                        // For position: emit if >1s difference (avoid spamming on every poll)
+                        (*pos - current.position_ms).abs() > 1000
+                    }) {
                         let _ = handle_system.emit("media-update", current.clone());
                         ANY_MEDIA_PLAYING.store(current.is_playing, Ordering::Relaxed);
-                        last_emitted_info = Some((current.title, current.artist, current.is_playing, current.has_media, art_str));
+                        last_emitted_info = Some((current.title, current.artist, current.is_playing, current.has_media, art_str, current.position_ms, current.duration_ms));
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(64));

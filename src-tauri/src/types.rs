@@ -19,6 +19,21 @@ pub struct MediaInfo {
     pub is_playing: bool,
     pub has_media: bool,
     pub artwork: Option<Vec<String>>,
+    #[serde(default)]
+    pub position_ms: i64,
+    #[serde(default)]
+    pub duration_ms: i64,
+    #[serde(default)]
+    pub seek_enabled: bool,
+    #[serde(default)]
+    pub position_updated_at: u64,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct AudioDevice {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
 }
 
 pub enum SystemCommand {
@@ -29,6 +44,7 @@ pub enum SystemCommand {
     MediaPlayPause,
     MediaNext,
     MediaPrevious,
+    MediaSeek(i64),
     ToggleVisibility(bool),
     BrightnessUp,
     BrightnessDown,
