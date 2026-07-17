@@ -28,6 +28,7 @@ function SettingsApp() {
   const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(() => localStorage.getItem("bloom-brightness-edge-enabled") !== "false");
   const [mediaAmbienceEnabled, setMediaAmbienceEnabled] = useState(true);
   const [mediaCompactGlowEnabled, setMediaCompactGlowEnabled] = useState(true);
+  const [mediaLayout, setMediaLayout] = useState<'classic' | 'compact'>(() => (localStorage.getItem("bloom-media-layout") as 'classic' | 'compact') || 'classic');
   const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
   const [cityName, setCityName] = useState("");
@@ -189,6 +190,7 @@ function SettingsApp() {
       if (key === "music-compact-notch") setMusicCompactNotch(value);
       if (key === "media-ambience-enabled") setMediaAmbienceEnabled(value);
       if (key === "media-compact-glow-enabled") setMediaCompactGlowEnabled(value);
+      if (key === "media-layout") setMediaLayout(value as 'classic' | 'compact');
       if (key === "corners-enabled") setCornersEnabled(value);
       if (key === "low-battery-threshold") setLowBatteryThreshold(value);
       if (key === "bloom-scale") setScale(Number(value));
@@ -314,6 +316,12 @@ function SettingsApp() {
     setMusicCompactNotch(newVal);
     saveAndLocal("bloom-music-compact-notch", String(newVal));
     notifyChange("music-compact-notch", newVal);
+  };
+
+  const toggleMediaLayout = (layout: 'classic' | 'compact') => {
+    setMediaLayout(layout);
+    saveAndLocal("bloom-media-layout", layout);
+    notifyChange("media-layout", layout);
   };
 
   const toggleVolumeOverlay = () => {
@@ -876,6 +884,18 @@ function SettingsApp() {
                 <input type="checkbox" checked={musicCompactNotch} onChange={toggleMusicCompactNotch} />
                 <span className="slider"></span>
               </label>
+            </div>
+
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-info" style={{ marginLeft: '42px' }}>
+                <span className="setting-label">Media Layout</span>
+                <span className="setting-desc">Choose expanded player style</span>
+              </div>
+              <div className="unit-toggle-minimal wide">
+                <span className={mediaLayout === 'classic' ? 'active' : ''} onClick={() => toggleMediaLayout('classic')}>Classic</span>
+                <span className={mediaLayout === 'compact' ? 'active' : ''} onClick={() => toggleMediaLayout('compact')}>Compact</span>
+              </div>
             </div>
 
             <div className="setting-divider" />

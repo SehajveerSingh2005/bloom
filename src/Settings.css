@@ -390,6 +390,12 @@ input:checked + .slider:before {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
+.unit-toggle-minimal.wide span {
+  width: auto;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
 .manual-city-input {
   position: relative;
   margin: 4px 14px 4px 54px;

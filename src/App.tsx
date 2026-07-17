@@ -7,6 +7,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import "./App.css";
 import { initTheme } from "./theme";
 import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, VolumeLowIcon, VolumeHighIcon, MusicNoteIcon } from "./icons";
+import { CompactMediaPlayer } from "./CompactMediaPlayer";
 
 // Simple SVG icons
 function WifiIcon({ connected }: { connected: boolean }) {
@@ -112,7 +113,7 @@ function GreenDownArrowIcon() {
   );
 }
 
-const Visualizer = memo(function Visualizer({ isPlaying, bars = 5, height = 20 }: { isPlaying: boolean; bars?: number; height?: number }) {
+export const Visualizer = memo(function Visualizer({ isPlaying, bars = 5, height = 20 }: { isPlaying: boolean; bars?: number; height?: number }) {
   const [audioData, setAudioData] = useState<number[]>(new Array(bars).fill(0.18));
 
   useEffect(() => {
@@ -163,20 +164,34 @@ interface MediaInfo {
   is_playing: boolean;
   has_media: boolean;
   artwork?: string[];
+  position_ms?: number;
+  duration_ms?: number;
+  seek_enabled?: boolean;
+  position_updated_at?: number;
 }
+
+const MARQUEE_SPEED = 30; // px/s — constant for all titles
+const MARQUEE_MIN_DURATION = 5; // floor so short titles don't flicker
 
 const TitleMarquee = ({ title }: { title: string }) => {
   const textRef = useRef<HTMLSpanElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isOverflowing, setIsOverflowing] = useState(false);
-  const [containerWidth, setContainerWidth] = useState(0);
+  const [scrollDistance, setScrollDistance] = useState(0);
+  const [scrollDuration, setScrollDuration] = useState(8);
 
   useEffect(() => {
     const check = () => {
       if (textRef.current && containerRef.current) {
-        const overflow = textRef.current.scrollWidth > containerRef.current.clientWidth;
+        const textWidth = textRef.current.scrollWidth;
+        const containerWidth = containerRef.current.clientWidth;
+        const overflow = textWidth > containerWidth;
         setIsOverflowing(overflow);
-        setContainerWidth(containerRef.current.clientWidth);
+        if (overflow) {
+          const distance = textWidth - containerWidth;
+          setScrollDistance(distance);
+          setScrollDuration(Math.max(distance / MARQUEE_SPEED, MARQUEE_MIN_DURATION));
+        }
       }
     };
     check();
@@ -186,11 +201,14 @@ const TitleMarquee = ({ title }: { title: string }) => {
   }, [title]);
 
   return (
-    <div ref={containerRef} style={{ width: '100%', overflow: 'hidden' }}>
+    <div ref={containerRef} className="premium-title-wrap" style={{ width: '100%', overflow: 'hidden' }}>
       <span
         ref={textRef}
         className={`premium-title ${isOverflowing ? 'marquee' : ''}`}
-        style={{ '--scroll-distance': `calc(-100% + ${containerWidth}px)` } as React.CSSProperties}
+        style={{
+          '--scroll-distance': isOverflowing ? `-${scrollDistance}px` : undefined,
+          '--scroll-duration': `${scrollDuration}s`,
+        } as React.CSSProperties}
       >
         {title}
       </span>
@@ -431,6 +449,8 @@ function App() {
   const [settingsAmbienceEnabled, setSettingsAmbienceEnabled] = useState(() => localStorage.getItem("bloom-media-ambience-enabled") !== "false");
   const [settingsCompactGlowEnabled, setSettingsCompactGlowEnabled] = useState(() => localStorage.getItem("bloom-media-compact-glow-enabled") !== "false");
   const [settingsCornersEnabled, setSettingsCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
+  const [mediaLayout, setMediaLayout] = useState<'classic' | 'compact'>(() => (localStorage.getItem("bloom-media-layout") as 'classic' | 'compact') || 'classic');
+  const [compactVolumeExpanded, setCompactVolumeExpanded] = useState(false);
   const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
 
   useEffect(() => {
@@ -544,6 +564,7 @@ function App() {
       if (key === "album-art") setSettingsAlbumArtEnabled(value);
       if (key === "media-ambience-enabled") setSettingsAmbienceEnabled(value as boolean);
       if (key === "media-compact-glow-enabled") setSettingsCompactGlowEnabled(value as boolean);
+      if (key === "media-layout") setMediaLayout(value as 'classic' | 'compact');
       if (key === "temp-unit") setTempUnit(value ? "fahrenheit" : "celsius");
       if (key === "weather-refresh") {
         // Re-trigger the init function or just update from localStorage
@@ -956,7 +977,9 @@ function App() {
           prev.artist === info.artist &&
           prev.is_playing === info.is_playing &&
           prev.has_media === info.has_media &&
-          !artChanged) {
+          !artChanged &&
+          prev.position_ms === info.position_ms &&
+          prev.duration_ms === info.duration_ms) {
           return prev;
         }
 
@@ -1189,7 +1212,7 @@ function App() {
     if (isCalendarMode) return 480;
     if (bloomMode === 'command-center' && isHovered) return 350;
     if (bloomMode === 'status' && isHovered) return 280;
-    if (isMusicMode && isHovered) return 340;
+    if (isMusicMode && isHovered) return mediaLayout === 'compact' ? 300 : 340;
     if ((showPowerPulse || showLowBatteryPulse || showUpdatePulse) && !isHovered) return 200;
 
     let w = 140;
@@ -1213,11 +1236,25 @@ function App() {
     if (bloomMode === 'calendar') return 310;
     if (bloomMode === 'command-center') return isHovered ? 230 : 36;
     if (bloomMode === 'status') return 36;
-    if (isMusicMode && isHovered) return 120;
+    if (isMusicMode && isHovered) {
+      const hasProgressBar = (mediaInfo.duration_ms ?? 0) > 0;
+      let h = mediaLayout === 'compact' ? (hasProgressBar ? 132 : 116) : 120;
+      if (mediaLayout === 'compact') {
+        if (compactVolumeExpanded) h += 36;
+      }
+      return h;
+    }
     return 36;
   };
 
   const isCalendarMode = bloomMode === 'calendar';
+
+  // Close compact media player expansions when notch is unhovered or mode changes
+  useEffect(() => {
+    if (mediaLayout === 'compact') {
+      setCompactVolumeExpanded(false);
+    }
+  }, [isHovered, mediaLayout, bloomMode]);
 
 
 
@@ -1340,12 +1377,33 @@ function App() {
                     exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.1 } }}
                     transition={{ type: "spring", stiffness: 500, damping: 30 }}
                   >
+                    {mediaLayout === 'compact' ? (
+                      <CompactMediaPlayer
+                        mediaInfo={mediaInfo}
+                        albumArtUrl={albumArtUrl}
+                        albumArtKey={albumArtKey}
+                        isPlaying={isPlaying}
+                        volume={volume}
+                        volumeExpanded={compactVolumeExpanded}
+                        onVolumeExpandedChange={setCompactVolumeExpanded}
+                        onTogglePlayPause={togglePlayPause}
+                        onVolumeChange={handleVolumeChange}
+                        prevFront={prevFront}
+                        prevBack={prevBack}
+                        nextFront={nextFront}
+                        nextBack={nextBack}
+                        onAnimatePrev={animatePrev}
+                        onAnimateNext={animateNext}
+                      />
+                    ) : (
                     <div className="compact-premium-layout">
                       <div className="album-art-section">
                         <motion.div
                           className="premium-album-art"
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
+                          onClick={(e) => { e.stopPropagation(); invoke('open_media_source_app').catch(() => {}); }}
+                          style={{ cursor: 'pointer' }}
                         >
                           <AnimatePresence mode="wait" initial={false}>
                             {albumArtUrl ? (
@@ -1464,6 +1522,7 @@ function App() {
                       </div>
 
                     </div>
+                    )}
                   </motion.div>
                 ) : (
                   <motion.div
