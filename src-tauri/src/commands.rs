@@ -66,6 +66,20 @@ pub fn set_ignore_cursor_events(window: Window, ignore: bool) {
 
 #[tauri::command]
 pub async fn init_dock(app: AppHandle, mode: String) {
+    // Backend guard: bail if dock is disabled in settings.
+    // The frontend already checks this, but settings.json may have a stale
+    // value if the write didn't complete before restart. Reading here too
+    // makes the dock reliably stay hidden regardless of frontend timing.
+    let enabled = get_setting_str(&app, "bloom-dock-enabled")
+        .unwrap_or_else(|| "true".to_string());
+    if enabled != "true" {
+        if let Some(dock_win) = app.get_webview_window("dock") {
+            let _ = dock_win.hide();
+            DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
+        }
+        return;
+    }
+
     if let Some(dock_win) = app.get_webview_window("dock") {
         // 1. Always show first — idempotent, required before any positioning
         let _ = dock_win.show();
@@ -178,10 +192,10 @@ pub async fn sync_appbar(app: AppHandle) {
         }
     }
     if let Some(dock_win) = app.get_webview_window("dock") {
-        // Do NOT gate on is_visible() — register_dock_appbar handles show() internally.
-        // Gating here was preventing the dock from recovering after a reload where it
-        // starts hidden and DOCK_APPBAR_REGISTERED is still true from the previous session.
-        if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+        // Skip dock re-registration if dock is disabled in settings.
+        let dock_enabled = get_setting_str(&app, "bloom-dock-enabled")
+            .unwrap_or_else(|| "true".to_string());
+        if dock_enabled == "true" && DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
             register_dock_appbar(dock_win);
         } else {
             if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
