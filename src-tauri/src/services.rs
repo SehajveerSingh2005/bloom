@@ -891,6 +891,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                 // Update overlap state
                 CURRENT_DOCK_OVERLAP.store(if effective_dock_overlap { 1 } else { 0 }, Ordering::Relaxed);
                 CURRENT_NOTCH_OVERLAP.store(if should_notch_overlap { 1 } else { 0 }, Ordering::Relaxed);
+                CURRENT_FOREGROUND_FULLSCREEN.store(current_is_fs, Ordering::Relaxed);
                 
                 if Some(effective_dock_overlap) != last_dock_overlap || last_emit.elapsed() >= Duration::from_secs(3) {
                     let _ = handle_visibility.emit("dock-overlap", effective_dock_overlap);
@@ -1074,58 +1075,78 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                     }
 
                     // --- Main (TopBar) Interaction ---
-                    if let Some(main_win) = app_handle.get_webview_window("main") {
-                        if main_win.is_visible().unwrap_or(false) {
-                            // 3. Hot-edge detection (Top edge)
-                            let in_notch_hover = NOTCH_IS_HOVERED.load(Ordering::Relaxed);
-                            let mut is_notch_hovered = false;
-                            let scale = main_win.scale_factor().unwrap_or(1.0);
-                            let at_top_edge = pt.y <= (cached_monitor_pos.y + (8.0 * scale) as i32) && 
-                                              pt.x >= cached_monitor_pos.x && pt.x <= (cached_monitor_pos.x + cached_monitor_size.width as i32);
-                            
-                            if at_top_edge || in_notch_hover {
-                                is_notch_hovered = true;
-                                topbar_interaction_expiry = now + Duration::from_millis(500);
-                            }
+                    // Skip all edge detection when a fullscreen app is in the foreground —
+                    // the main window is CSS-hidden but still OS-level visible, so calling
+                    // set_ignore_cursor_events / re_assert_topmost steals focus from the game.
+                    let fg_fs = CURRENT_FOREGROUND_FULLSCREEN.load(Ordering::Relaxed);
+                    if !fg_fs {
+                        if let Some(main_win) = app_handle.get_webview_window("main") {
+                            if main_win.is_visible().unwrap_or(false) {
+                                // 3. Hot-edge detection (Top edge)
+                                let in_notch_hover = NOTCH_IS_HOVERED.load(Ordering::Relaxed);
+                                let mut is_notch_hovered = false;
+                                let scale = main_win.scale_factor().unwrap_or(1.0);
+                                let at_top_edge = pt.y <= (cached_monitor_pos.y + (8.0 * scale) as i32) &&
+                                                  pt.x >= cached_monitor_pos.x && pt.x <= (cached_monitor_pos.x + cached_monitor_size.width as i32);
 
-                            let mut is_click_interactive = false;
-                            let main_rect_val = if let Ok(lock) = MAIN_WINDOW_RECT.lock() {
-                                *lock
-                            } else {
-                                None
-                            };
+                                if at_top_edge || in_notch_hover {
+                                    is_notch_hovered = true;
+                                    topbar_interaction_expiry = now + Duration::from_millis(500);
+                                }
 
-                            if let Some((win_pos, _)) = main_rect_val {
-                                if let Ok(region) = NOTCH_RECT.try_lock() {
-                                    if let Some(r) = *region {
-                                        let scale = main_win.scale_factor().unwrap_or(1.0);
-                                        let pad_x = (20.0 * scale) as i32;
-                                        let pad_y_bottom = (5.0 * scale) as i32;
-                                        let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x;
-                                        let rw = (r.width as f64 * scale) as i32 + (pad_x * 2);
-                                        
-                                        let ry_top = win_pos.y;
-                                        let ry_bottom = win_pos.y + (r.height as f64 * scale) as i32 + pad_y_bottom;
-                                        
-                                        if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry_top && pt.y <= ry_bottom {
-                                            is_click_interactive = true;
+                                let mut is_click_interactive = false;
+                                let main_rect_val = if let Ok(lock) = MAIN_WINDOW_RECT.lock() {
+                                    *lock
+                                } else {
+                                    None
+                                };
+
+                                if let Some((win_pos, _)) = main_rect_val {
+                                    if let Ok(region) = NOTCH_RECT.try_lock() {
+                                        if let Some(r) = *region {
+                                            let scale = main_win.scale_factor().unwrap_or(1.0);
+                                            let pad_x = (20.0 * scale) as i32;
+                                            let pad_y_bottom = (5.0 * scale) as i32;
+                                            let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x;
+                                            let rw = (r.width as f64 * scale) as i32 + (pad_x * 2);
+
+                                            let ry_top = win_pos.y;
+                                            let ry_bottom = win_pos.y + (r.height as f64 * scale) as i32 + pad_y_bottom;
+
+                                            if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry_top && pt.y <= ry_bottom {
+                                                is_click_interactive = true;
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            let final_notch_hover = is_notch_hovered || now < topbar_interaction_expiry;
-                            if last_top_edge_hover != Some(final_notch_hover) {
-                                let _ = app_handle.emit("notch-edge-hover", final_notch_hover);
-                                last_top_edge_hover = Some(final_notch_hover);
-                            }
+                                let final_notch_hover = is_notch_hovered || now < topbar_interaction_expiry;
+                                if last_top_edge_hover != Some(final_notch_hover) {
+                                    let _ = app_handle.emit("notch-edge-hover", final_notch_hover);
+                                    last_top_edge_hover = Some(final_notch_hover);
+                                }
 
-                            let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
-                            if last_main_ignore != Some(final_ignore) {
-                                let _ = main_win.set_ignore_cursor_events(final_ignore);
+                                let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
+                                if last_main_ignore != Some(final_ignore) {
+                                    let _ = main_win.set_ignore_cursor_events(final_ignore);
+                                    if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
+                                    last_main_ignore = Some(final_ignore);
+                                }
+                            }
+                        }
+                    } else {
+                        // Fullscreen app in foreground — ensure main window stays click-through
+                        // and clear any stale edge-hover state
+                        if let Some(main_win) = app_handle.get_webview_window("main") {
+                            if last_main_ignore != Some(true) {
+                                let _ = main_win.set_ignore_cursor_events(true);
                                 if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
-                                last_main_ignore = Some(final_ignore);
+                                last_main_ignore = Some(true);
                             }
+                        }
+                        if last_top_edge_hover != Some(false) {
+                            let _ = app_handle.emit("notch-edge-hover", false);
+                            last_top_edge_hover = Some(false);
                         }
                     }
 

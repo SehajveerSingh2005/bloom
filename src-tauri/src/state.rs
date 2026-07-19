@@ -29,6 +29,7 @@ pub static CURRENT_VOLUME: AtomicU32 = AtomicU32::new(50);
 pub static LAST_BRIGHTNESS_CHANGE: AtomicI64 = AtomicI64::new(0);
 pub static ANY_MEDIA_PLAYING: AtomicBool = AtomicBool::new(false);
 pub static OVERLAY_IN_SPLASH: AtomicBool = AtomicBool::new(false);
+pub static CURRENT_FOREGROUND_FULLSCREEN: AtomicBool = AtomicBool::new(false);
 
 pub static mut SINGLE_INSTANCE_MUTEX_HANDLE: isize = 0;
 pub static mut SINGLE_INSTANCE_EVENT_HANDLE: isize = 0;
