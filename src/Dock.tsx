@@ -504,7 +504,6 @@ const Dock = memo(function Dock() {
       <div style={{ zoom: scale, width: '100%', height: '100%', display: 'flex', alignItems: 'flex-end' }}>
         <motion.div
           ref={dockRef}
-          layout
           className={`dock ${isExpanded && !isHidden ? 'dock-expanded' : ''} ${isImpacted && !isExpanded && !isHidden ? 'dock-impacted' : ''}`}
           onMouseEnter={() => setIsDockHovered(true)}
           onMouseLeave={() => { setIsDockHovered(false); setHoveredApp(null); setPressedApp(null); }}
@@ -523,7 +522,6 @@ const Dock = memo(function Dock() {
           y: { type: "spring", stiffness: 400, damping: 35, mass: 0.8 },
           width: { type: "spring", stiffness: 250, damping: 22, mass: 0.8 },
           height: { type: "spring", stiffness: 250, damping: 22, mass: 0.8 },
-          layout: { type: "spring", stiffness: 300, damping: 25 },
           borderTopLeftRadius: { type: "spring", stiffness: 500, damping: 30 },
           borderTopRightRadius: { type: "spring", stiffness: 500, damping: 30 },
           borderBottomLeftRadius: { type: "spring", stiffness: 500, damping: 30 },
@@ -537,16 +535,14 @@ const Dock = memo(function Dock() {
           {isExpanded && (
             <motion.div
               key="dock-content"
-              layout
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.15, layout: { type: "spring", stiffness: 350, damping: 25 } }}
+              transition={{ duration: 0.15 }}
               className="dock-reorder-container"
             >
               {startItem && (
                 <motion.div
-                  layout
                   initial={{ opacity: 0, scale: 0 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ opacity: { duration: 0.15, delay: 0.15 }, scale: { type: "spring", stiffness: 400, damping: 25, delay: 0.15 } }}
