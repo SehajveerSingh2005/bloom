@@ -504,6 +504,7 @@ const Dock = memo(function Dock() {
       <div style={{ zoom: scale, width: '100%', height: '100%', display: 'flex', alignItems: 'flex-end' }}>
         <motion.div
           ref={dockRef}
+          layout
           className={`dock ${isExpanded && !isHidden ? 'dock-expanded' : ''} ${isImpacted && !isExpanded && !isHidden ? 'dock-impacted' : ''}`}
           onMouseEnter={() => setIsDockHovered(true)}
           onMouseLeave={() => { setIsDockHovered(false); setHoveredApp(null); setPressedApp(null); }}
@@ -522,6 +523,7 @@ const Dock = memo(function Dock() {
           y: { type: "spring", stiffness: 400, damping: 35, mass: 0.8 },
           width: { type: "spring", stiffness: 250, damping: 22, mass: 0.8 },
           height: { type: "spring", stiffness: 250, damping: 22, mass: 0.8 },
+          layout: { type: "spring", stiffness: 300, damping: 25 },
           borderTopLeftRadius: { type: "spring", stiffness: 500, damping: 30 },
           borderTopRightRadius: { type: "spring", stiffness: 500, damping: 30 },
           borderBottomLeftRadius: { type: "spring", stiffness: 500, damping: 30 },
