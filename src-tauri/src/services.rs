@@ -1,4 +1,4 @@
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
@@ -73,6 +73,83 @@ pub fn setup_taskbar_hook() {
         // Hook both "Show" and "Location Change" (happen when maximizing/switching apps)
         let _show_hook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, None, Some(taskbar_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT);
         let _loc_hook = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, None, Some(taskbar_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT);
+    }
+}
+
+static mut WINDOW_CHANGE_APP_HANDLE: Option<AppHandle> = None;
+static mut WINDOW_CHANGE_HOOK_HANDLE: Option<windows::Win32::UI::Accessibility::HWINEVENTHOOK> = None;
+static LAST_WINDOW_CHANGE_MS: AtomicI64 = AtomicI64::new(0);
+
+pub fn setup_window_change_hook(app_handle: AppHandle) {
+    unsafe {
+        WINDOW_CHANGE_APP_HANDLE = Some(app_handle);
+
+        use windows::Win32::UI::Accessibility::SetWinEventHook;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            WINEVENT_OUTOFCONTEXT, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY,
+            EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE,
+        };
+
+        // Hook create and destroy events for top-level windows
+        let _create_hook = SetWinEventHook(
+            EVENT_OBJECT_CREATE, EVENT_OBJECT_CREATE,
+            None, Some(window_change_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT,
+        );
+        let _destroy_hook = SetWinEventHook(
+            EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY,
+            None, Some(window_change_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT,
+        );
+        // Hook show/hide events (fires when windows become visible/invisible)
+        let _show_hook = SetWinEventHook(
+            EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW,
+            None, Some(window_change_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT,
+        );
+        let _hide_hook = SetWinEventHook(
+            EVENT_OBJECT_HIDE, EVENT_OBJECT_HIDE,
+            None, Some(window_change_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT,
+        );
+
+        // Store hooks to prevent them from being dropped
+        WINDOW_CHANGE_HOOK_HANDLE = Some(_create_hook);
+    }
+}
+
+unsafe extern "system" fn window_change_event_proc(
+    _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
+    _event: u32,
+    hwnd: HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _event_thread: u32,
+    _ms_event_time: u32,
+) {
+    if hwnd.0.is_null() { return; }
+
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IsWindow, GetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+        GetWindowThreadProcessId,
+    };
+
+    if !IsWindow(Some(hwnd)).as_bool() { return; }
+
+    // Skip tool windows (docks, trays, etc.)
+    let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+    if (ex_style & WS_EX_TOOLWINDOW.0) != 0 { return; }
+
+    // Skip our own process
+    let my_pid = std::process::id();
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid == my_pid { return; }
+
+    // Throttle: emit at most once per 200ms to avoid flooding
+    let now = crate::utils::get_now_ms();
+    let last = LAST_WINDOW_CHANGE_MS.load(Ordering::Relaxed);
+    if now - last < 200 { return; }
+    LAST_WINDOW_CHANGE_MS.store(now, Ordering::Relaxed);
+
+    if let Some(ref app_handle) = WINDOW_CHANGE_APP_HANDLE {
+        let _ = app_handle.emit("windows-changed", ());
     }
 }
 

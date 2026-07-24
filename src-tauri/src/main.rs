@@ -211,6 +211,7 @@ fn main() {
 
             setup_cursor_monitor(app.handle().clone());
             setup_display_change_monitor(app.handle().clone());
+            setup_window_change_hook(app.handle().clone());
             {
                 let _ = crate::state::THUMBNAIL_CACHE.set(std::sync::Mutex::new(std::collections::HashMap::new()));
                 let _ = crate::state::FOCUS_TIMESTAMPS.set(std::sync::Mutex::new(std::collections::HashMap::new()));

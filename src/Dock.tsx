@@ -184,7 +184,7 @@ const Dock = memo(function Dock() {
       if (isDragging) return;
       const running = await invoke<AppInfo[]>('get_active_windows');
       setActiveApps(running);
-      
+
       setActiveOrder(prev => {
         const newPaths = running.map(r => r.path);
         const existingPaths = prev.filter(p => newPaths.includes(p));
@@ -195,9 +195,17 @@ const Dock = memo(function Dock() {
       running.forEach(app => fetchIcon(app.path, app.name, app.hwnd));
     };
 
-    const interval = setInterval(poll, 2000);
+    const interval = setInterval(poll, 1000);
     poll();
-    return () => clearInterval(interval);
+
+    const unlistenWindowChange = listen("windows-changed", () => {
+      poll();
+    });
+
+    return () => {
+      clearInterval(interval);
+      unlistenWindowChange.then(f => f());
+    };
   }, [isDragging]);
 
   const fetchIcon = async (path: string, name?: string, hwnd?: number, retryCount = 0) => {
@@ -495,52 +503,55 @@ const Dock = memo(function Dock() {
 
   return (
     <div className={`dock-container ${isDragging ? 'dragging' : ''}`} onClick={closeMenu}>
-      <div style={{ zoom: scale, width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'flex-end' }}>
+      <div style={{ zoom: scale, width: '100%', height: '100%', display: 'flex', alignItems: 'flex-end' }}>
         <motion.div
-          layout
           ref={dockRef}
-          className={`dock ${(isImpacted || isExpanded) && !isHidden ? 'dock-expanded' : ''}`}
+          layout
+          className={`dock ${isExpanded && !isHidden ? 'dock-expanded' : ''} ${isImpacted && !isExpanded && !isHidden ? 'dock-impacted' : ''}`}
           onMouseEnter={() => setIsDockHovered(true)}
           onMouseLeave={() => { setIsDockHovered(false); setHoveredApp(null); setPressedApp(null); }}
-        initial={{ y: -800, opacity: 1, width: 34, height: 34, borderTopLeftRadius: 17, borderTopRightRadius: 17, borderBottomLeftRadius: 17, borderBottomRightRadius: 17, scaleX: 0.9, scaleY: 1.3 }}
-        animate={{ 
-          y: !isReady ? -800 : (isVisible ? (isHidden ? 100 : 0) : 150), 
+        initial={{ y: -800, opacity: 1, width: 34, height: 34, borderTopLeftRadius: 17, borderTopRightRadius: 17, borderBottomLeftRadius: 17, borderBottomRightRadius: 17 }}
+        animate={{
+          y: !isReady ? -800 : (isVisible ? (isHidden ? 100 : 0) : 150),
           width: isExpanded && !isHidden && isVisible ? 'auto' : 34,
           height: isExpanded && !isHidden && isVisible ? 'auto' : 34,
-          borderTopLeftRadius: isExpanded && !isHidden && isVisible ? 18 : 17,
-          borderTopRightRadius: isExpanded && !isHidden && isVisible ? 18 : 17,
+          borderTopLeftRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 18 : 17,
+          borderTopRightRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 18 : 17,
           borderBottomLeftRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 0 : 17,
           borderBottomRightRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 0 : 17,
-          scaleX: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 1.15 : 0.9)),
-          scaleY: !isReady ? 1 : (isExpanded ? 1 : (isImpacted ? 0.85 : 1.3)),
           opacity: isVisible ? 1 : 0,
         }}
-        transition={{ 
-          y: { type: "spring", stiffness: 550, damping: 45, mass: 0.8, restDelta: 0.001 },
-          width: { type: "spring", stiffness: 450, damping: 25, mass: 0.8 },
-          height: { type: "spring", stiffness: 450, damping: 25, mass: 0.8 },
-          scaleX: { type: "spring", stiffness: 500, damping: 20 },
-          scaleY: { type: "spring", stiffness: 500, damping: 20 },
-          default: { type: "spring", stiffness: 500, damping: 30, mass: 1 }
+        transition={{
+          y: { type: "spring", stiffness: 400, damping: 35, mass: 0.8 },
+          width: { type: "spring", stiffness: 250, damping: 22, mass: 0.8 },
+          height: { type: "spring", stiffness: 250, damping: 22, mass: 0.8 },
+          layout: { type: "spring", stiffness: 300, damping: 25 },
+          borderTopLeftRadius: { type: "spring", stiffness: 500, damping: 30 },
+          borderTopRightRadius: { type: "spring", stiffness: 500, damping: 30 },
+          borderBottomLeftRadius: { type: "spring", stiffness: 500, damping: 30 },
+          borderBottomRightRadius: { type: "spring", stiffness: 500, damping: 30 },
+          opacity: { type: "tween", duration: 0.2 },
         }}
-        style={{ originY: 1, minWidth: 34 }}
+        style={{ originY: 1, minWidth: 34, margin: '0 auto' }}
         onContextMenu={(e) => handleContextMenu(e, null)}
       >
-        <AnimatePresence mode="wait">
+        <AnimatePresence>
           {isExpanded && (
-            <motion.div 
+            <motion.div
               key="dock-content"
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.8 }}
+              layout
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15, layout: { type: "spring", stiffness: 350, damping: 25 } }}
               className="dock-reorder-container"
-              variants={{
-                show: { transition: { staggerChildren: 0.04 } }
-              }}
             >
               {startItem && (
-                <motion.div 
-                  variants={{ hide: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}
+                <motion.div
+                  layout
+                  initial={{ opacity: 0, scale: 0 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ opacity: { duration: 0.15, delay: 0.15 }, scale: { type: "spring", stiffness: 400, damping: 25, delay: 0.15 } }}
                   className="dock-icon-wrapper"
                   onContextMenu={(e) => handleContextMenu(e, startItem)}
                   onMouseEnter={() => setHoveredApp(startItem.path)}
@@ -580,7 +591,10 @@ const Dock = memo(function Dock() {
                     value={app}
                     dragListener={!!app.is_pinned}
                     layout
-                    variants={{ hide: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}
+                    initial={{ opacity: 0, scale: 0 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0, transition: { duration: 0.12 } }}
+                    transition={{ opacity: { duration: 0.15, delay: 0.15 }, scale: { type: "spring", stiffness: 400, damping: 25, delay: 0.15 } }}
                     className="dock-icon-wrapper"
                     onContextMenu={(e) => handleContextMenu(e, app)}
                     onMouseEnter={() => setHoveredApp(app.path)}

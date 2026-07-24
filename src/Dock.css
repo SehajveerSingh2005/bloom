@@ -211,14 +211,30 @@ body {
   position: relative;
   transform-origin: bottom center;
   pointer-events: auto;
+  transition: padding 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  overflow: visible;
   /* Re-enable pointer events for the dock itself */
 }
 
-.dock-reorder-container,
+.dock.dock-impacted {
+  padding: 8px 14px;
+}
+
+.dock-reorder-container {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  overflow: visible;
+}
+
 .dock-reorder-group {
   display: flex;
   flex-direction: row;
   align-items: center;
+  justify-content: center;
   gap: 12px;
 }
 
