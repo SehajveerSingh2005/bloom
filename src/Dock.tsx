@@ -195,7 +195,6 @@ const Dock = memo(function Dock() {
       running.forEach(app => fetchIcon(app.path, app.name, app.hwnd));
     };
 
-    const interval = setInterval(poll, 1000);
     poll();
 
     const unlistenWindowChange = listen("windows-changed", () => {
@@ -203,7 +202,6 @@ const Dock = memo(function Dock() {
     });
 
     return () => {
-      clearInterval(interval);
       unlistenWindowChange.then(f => f());
     };
   }, [isDragging]);
