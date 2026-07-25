@@ -501,7 +501,7 @@ const Dock = memo(function Dock() {
 
   return (
     <div className={`dock-container ${isDragging ? 'dragging' : ''}`} onClick={closeMenu}>
-      <div style={{ zoom: scale, width: '100%', height: '100%', display: 'flex', alignItems: 'flex-end' }}>
+      <div style={{ transform: `scale(${scale})`, transformOrigin: 'bottom center', width: '100%', height: '100%', display: 'flex', alignItems: 'flex-end' }}>
         <motion.div
           ref={dockRef}
           layout
@@ -523,7 +523,7 @@ const Dock = memo(function Dock() {
           y: { type: "spring", stiffness: 400, damping: 35, mass: 0.8 },
           width: { type: "spring", stiffness: 250, damping: 22, mass: 0.8 },
           height: { type: "spring", stiffness: 250, damping: 22, mass: 0.8 },
-          layout: isDragging ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 25 },
+          layout: { type: "spring", stiffness: 300, damping: 25 },
           borderTopLeftRadius: { type: "spring", stiffness: 500, damping: 30 },
           borderTopRightRadius: { type: "spring", stiffness: 500, damping: 30 },
           borderBottomLeftRadius: { type: "spring", stiffness: 500, damping: 30 },
