@@ -1144,8 +1144,8 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
 
                             let should_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
                             if last_dock_ignore != Some(should_ignore) {
-                                let _ = dock_win.set_ignore_cursor_events(should_ignore);
                                 if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
+                                let _ = dock_win.set_ignore_cursor_events(should_ignore);
                                 last_dock_ignore = Some(should_ignore);
                             }
                         }
@@ -1205,8 +1205,8 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
 
                                 let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
                                 if last_main_ignore != Some(final_ignore) {
-                                    let _ = main_win.set_ignore_cursor_events(final_ignore);
                                     if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
+                                    let _ = main_win.set_ignore_cursor_events(final_ignore);
                                     last_main_ignore = Some(final_ignore);
                                 }
                             }
@@ -1216,8 +1216,11 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                         // and clear any stale edge-hover state
                         if let Some(main_win) = app_handle.get_webview_window("main") {
                             if last_main_ignore != Some(true) {
-                                let _ = main_win.set_ignore_cursor_events(true);
+                                // re_assert_topmost first (may strip WS_EX_TRANSPARENT on
+                                // some Windows builds via SetWindowPos(HWND_TOPMOST)), then
+                                // set ignore_cursor_events last so WS_EX_TRANSPARENT sticks.
                                 if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
+                                let _ = main_win.set_ignore_cursor_events(true);
                                 last_main_ignore = Some(true);
                             }
                         }
