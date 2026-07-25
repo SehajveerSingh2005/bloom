@@ -501,7 +501,7 @@ const Dock = memo(function Dock() {
 
   return (
     <div className={`dock-container ${isDragging ? 'dragging' : ''}`} onClick={closeMenu}>
-      <div style={{ transform: `scale(${scale})`, transformOrigin: 'bottom center', width: '100%', height: '100%', display: 'flex', alignItems: 'flex-end' }}>
+      <div style={{ zoom: scale, width: '100%', height: '100%', display: 'flex', alignItems: 'flex-end' }}>
         <motion.div
           ref={dockRef}
           layout
