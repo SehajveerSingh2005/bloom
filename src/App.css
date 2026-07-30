@@ -26,10 +26,8 @@ body {
     position: relative;
     --notch-bg: var(--bloom-bg, rgba(0, 0, 0, 0.8));
     background: var(--notch-bg);
-    backdrop-filter: blur(20px);
     border-radius: 0 0 18px 18px;
-    border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
-    border-top: none;
+    border: none;
     color: var(--bloom-text, white);
     pointer-events: auto;
     cursor: default;
@@ -170,15 +168,7 @@ body {
     height: 13px;
     background-color: var(--notch-bg);
     pointer-events: none;
-    opacity: 0;
-    animation: corner-fade-in 0.2s forwards;
     transition: background-color 0.3s ease;
-}
-
-@keyframes corner-fade-in {
-    to {
-        opacity: 1;
-    }
 }
 
 .bloom.is-impacted::before {
