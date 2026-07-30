@@ -16,6 +16,16 @@ interface AppInfo {
   all_hwnds?: [number, string][];
 }
 
+// Stable module-level constants so object references never change between renders,
+// preventing Framer Motion from re-triggering animations on every re-render.
+const ITEM_ENTRY_TRANSITION = {
+  opacity: { duration: 0.15, delay: 0.15 },
+  scale: { type: 'spring' as const, stiffness: 400, damping: 25, delay: 0.15 }
+};
+const ITEM_INITIAL = { opacity: 0, scale: 0 };
+const ITEM_ANIMATE = { opacity: 1, scale: 1 };
+const ITEM_EXIT = { opacity: 0, scale: 0 };
+
 const Dock = memo(function Dock() {
   useEffect(() => {
     return initTheme();
@@ -398,20 +408,16 @@ const Dock = memo(function Dock() {
   }, [pinnedApps, activeApps, activeOrder]);
 
   const startItem = useMemo(() => dockItems.find(i => i.path === 'start') as AppInfo, [dockItems]);
-  const otherItems = useMemo(() => dockItems.filter(i => i.path !== 'start'), [dockItems]);
+  const pinnedItems = useMemo(() => dockItems.filter(i => i.path !== 'start' && i.is_pinned), [dockItems]);
+  const unpinnedItems = useMemo(() => dockItems.filter(i => !i.is_pinned), [dockItems]);
 
-  const handleReorder = (newItems: AppInfo[]) => {
-    const newPinned = newItems.filter(item => item.is_pinned);
-    const newPinnedPaths = newPinned.map(p => p.path);
-    const oldPinnedPaths = pinnedApps.map(p => p.path);
-
-    if (JSON.stringify(newPinnedPaths) !== JSON.stringify(oldPinnedPaths)) {
-      setPinnedApps(newPinned);
-    }
-
-    const newActivePaths = newItems.filter(item => !item.is_pinned).map(item => item.path);
-    if (newActivePaths.length > 0 && JSON.stringify(newActivePaths) !== JSON.stringify(activeOrder)) {
-      setActiveOrder(newActivePaths);
+  const handleReorder = (newPaths: string[]) => {
+    const oldPaths = pinnedApps.map(p => p.path);
+    if (JSON.stringify(newPaths) !== JSON.stringify(oldPaths)) {
+      const reordered = newPaths
+        .map(path => pinnedApps.find(p => p.path === path))
+        .filter((p): p is AppInfo => !!p);
+      setPinnedApps(reordered);
     }
   };
 
@@ -501,7 +507,7 @@ const Dock = memo(function Dock() {
 
   return (
     <div className={`dock-container ${isDragging ? 'dragging' : ''}`} onClick={closeMenu}>
-      <div style={{ zoom: scale, width: '100%', height: '100%', display: 'flex', alignItems: 'flex-end' }}>
+      <div style={{ width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'flex-end' }}>
         <motion.div
           ref={dockRef}
           layout
@@ -518,19 +524,21 @@ const Dock = memo(function Dock() {
           borderBottomLeftRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 0 : 17,
           borderBottomRightRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 0 : 17,
           opacity: isVisible ? 1 : 0,
+          scale: scale,
         }}
         transition={{
           y: { type: "spring", stiffness: 400, damping: 35, mass: 0.8 },
           width: { type: "spring", stiffness: 250, damping: 22, mass: 0.8 },
           height: { type: "spring", stiffness: 250, damping: 22, mass: 0.8 },
-          layout: { type: "spring", stiffness: 300, damping: 25 },
+          layout: isDragging ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 25 },
           borderTopLeftRadius: { type: "spring", stiffness: 500, damping: 30 },
           borderTopRightRadius: { type: "spring", stiffness: 500, damping: 30 },
           borderBottomLeftRadius: { type: "spring", stiffness: 500, damping: 30 },
           borderBottomRightRadius: { type: "spring", stiffness: 500, damping: 30 },
           opacity: { type: "tween", duration: 0.2 },
+          scale: { duration: 0 },
         }}
-        style={{ originY: 1, minWidth: 34, margin: '0 auto' }}
+        style={{ originX: 0.5, originY: 1, minWidth: 34 }}
         onContextMenu={(e) => handleContextMenu(e, null)}
       >
         <AnimatePresence>
@@ -576,32 +584,33 @@ const Dock = memo(function Dock() {
               <Reorder.Group
                 as="div"
                 axis="x"
-                values={otherItems}
+                values={pinnedItems.map(i => i.path)}
                 onReorder={handleReorder}
                 className="dock-reorder-group"
               >
-                {otherItems.map((app) => (
+                {pinnedItems.map((app) => (
                   <Reorder.Item
                     as="div"
                     key={app.path}
-                    value={app}
-                    dragListener={!!app.is_pinned}
-                    layout
-                    initial={{ opacity: 0, scale: 0 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0, transition: { duration: 0.12 } }}
-                    transition={{ opacity: { duration: 0.15, delay: 0.15 }, scale: { type: "spring", stiffness: 400, damping: 25, delay: 0.15 } }}
-                    className="dock-icon-wrapper"
-                    onContextMenu={(e) => handleContextMenu(e, app)}
-                    onMouseEnter={() => setHoveredApp(app.path)}
-                    onMouseLeave={() => { if (!isPreviewHoveredRef.current) { setHoveredApp(null); setPressedApp(null); } }}
-                    onDragStart={() => { if (app.is_pinned) { setIsDragging(true); setHoveredApp(null); setPressedApp(null); } }}
+                    value={app.path}
+                    style={{ position: 'relative' }}
+                    onDragStart={() => { setIsDragging(true); setHoveredApp(null); setPressedApp(null); }}
                     onDragEnd={handleDragEnd}
+                    onContextMenu={(e) => handleContextMenu(e, app)}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (!isDragging) handleAppClick(app);
                     }}
                   >
+                    <motion.div
+                      className="dock-icon-wrapper"
+                      initial={ITEM_INITIAL}
+                      animate={ITEM_ANIMATE}
+                      exit={ITEM_EXIT}
+                      transition={ITEM_ENTRY_TRANSITION}
+                      onMouseEnter={() => setHoveredApp(app.path)}
+                      onMouseLeave={() => { if (!isPreviewHoveredRef.current) { setHoveredApp(null); setPressedApp(null); } }}
+                    >
                 <AnimatePresence>
                   {dockPreviewEnabled && previewData && previewData.path === app.path && hoveredApp === app.path && (
                     <motion.div 
@@ -669,10 +678,90 @@ const Dock = memo(function Dock() {
                     );
                   })()}
                 </motion.div>
-                {app.is_running && <div className="active-indicator" />}
-              </Reorder.Item>
+                  {app.is_running && <div className="active-indicator" />}
+                    </motion.div>
+                  </Reorder.Item>
                 ))}
               </Reorder.Group>
+
+              {unpinnedItems.map((app) => (
+                <motion.div
+                  key={app.path}
+                  layout
+                  initial={{ opacity: 0, scale: 0 }}
+                  animate={{ 
+                    opacity: 1, 
+                    scale: 1, 
+                    transition: { opacity: { duration: 0.15, delay: 0.15 }, scale: { type: "spring", stiffness: 400, damping: 25, delay: 0.15 } } 
+                  }}
+                  exit={{ opacity: 0, scale: 0, transition: { duration: 0.12 } }}
+                  className="dock-icon-wrapper"
+                  onContextMenu={(e) => handleContextMenu(e, app)}
+                  onMouseEnter={() => setHoveredApp(app.path)}
+                  onMouseLeave={() => { if (!isPreviewHoveredRef.current) { setHoveredApp(null); setPressedApp(null); } }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAppClick(app);
+                  }}
+                >
+                  <AnimatePresence>
+                    {dockPreviewEnabled && previewData && previewData.path === app.path && hoveredApp === app.path && (
+                      <motion.div
+                        className={`preview-tooltip ${previewData.previews.length > 1 ? 'multi' : ''}`}
+                        initial={{opacity: 0, y: 10, scale: 0.95}}
+                        animate={{opacity: 1, y: 0, scale: 1}}
+                        exit={{opacity: 0, scale: 0.95}}
+                        transition={{duration: 0.15}}
+                        onMouseEnter={() => { isPreviewHoveredRef.current = true; }}
+                        onMouseLeave={() => { isPreviewHoveredRef.current = false; setHoveredApp(null); setPressedApp(null); }}
+                      >
+                        <div className="preview-items">
+                          {previewData.previews.map((prev, idx) => (
+                            <div key={prev.hwnd} className="preview-item" onClick={() => invoke('focus_window', { hwnd: prev.hwnd })}>
+                              <img src={prev.image} alt={`Preview ${idx}`} />
+                              <div className="preview-label">{prev.title || app.name}</div>
+                              <button
+                                className="preview-close-btn"
+                                onClick={(e) => handleClosePreview(e, prev.hwnd)}
+                                title="Close Window"
+                              >
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                                </svg>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  {(!dockPreviewEnabled || (dockPreviewEnabled && hoveredApp === app.path && !previewData)) && (
+                    <div className="tooltip">{app.name}</div>
+                  )}
+                  <motion.div
+                    className="dock-icon"
+                    variants={iconVariants}
+                    animate={pressedApp === app.path ? "tap" : (hoveredApp === app.path && !isDragging ? "hover" : "idle")}
+                    onPointerDown={() => setPressedApp(app.path)}
+                    onPointerUp={() => setPressedApp(null)}
+                    onPointerCancel={() => setPressedApp(null)}
+                  >
+                    {(() => {
+                      const isHost = app.path.toLowerCase().includes("msedge.exe") || app.path.toLowerCase().includes("chrome.exe") || app.path.toLowerCase().includes("applicationframehost.exe");
+                      const cacheKey = isHost ? `${app.path}:${app.name.toLowerCase()}` : (app.hwnd ? `${app.path}-${app.hwnd}` : app.path);
+                      const icon = iconsRef.current[cacheKey] || iconsRef.current[app.path] || app.icon;
+                      const isBloomOrSettings = app.name.toLowerCase() === 'settings' || app.name.toLowerCase() === 'bloom' || app.path.toLowerCase().includes('bloom.exe');
+                      return icon ? (
+                        <img src={icon} alt={app.name} className={isBloomOrSettings ? "bloom-icon-img" : ""} draggable={false} />
+                      ) : (
+                        <div className="fallback-icon">{app.name[0]}</div>
+                      );
+                    })()}
+                  </motion.div>
+                  {app.is_running && <div className="active-indicator" />}
+                </motion.div>
+              ))}
             </motion.div>
           )}
         </AnimatePresence>
@@ -684,8 +773,8 @@ const Dock = memo(function Dock() {
           ref={menuRef}
           className="context-menu" 
           style={{ 
-            left: contextMenu.x / scale, 
-            top: (contextMenu.y / scale) - (contextMenu.app ? 200 : 100),
+            left: contextMenu.x,
+            top: contextMenu.y - (contextMenu.app ? 200 : 100) * scale,
             zoom: scale
           }}
           onClick={(e) => e.stopPropagation()}
