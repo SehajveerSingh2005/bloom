@@ -45,6 +45,50 @@ body,
     object-fit: contain;
 }
 
+/* ─── Auto-Update Splash ─────────────────────────────────────────────────── */
+
+.update-splash {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    z-index: 9999;
+}
+
+.update-splash-logo {
+    width: 100px;
+    height: 100px;
+    object-fit: contain;
+    margin-bottom: 20px;
+}
+
+.update-splash-text {
+    color: var(--bloom-text, rgba(255, 255, 255, 0.9));
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+.update-progress-bar {
+    width: 200px;
+    height: 4px;
+    background: var(--bloom-border, rgba(255, 255, 255, 0.1));
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.update-progress-fill {
+    height: 100%;
+    background: var(--bloom-text, rgba(255, 255, 255, 0.9));
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
 /* ─── Volume Notch (Left Edge) ──────────────────────────────────────────── */
 
 .volume-notch-wrapper {
