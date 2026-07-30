@@ -7,11 +7,11 @@ mod services;
 mod commands;
 
 use tauri::Manager;
+use tauri_plugin_updater::UpdaterExt;
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
 use windows::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
 use windows::core::BOOL;
 use std::sync::atomic::Ordering;
-
 
 use crate::state::*;
 use crate::utils::*;
@@ -133,6 +133,35 @@ fn main() {
             if taskbar_marker_exists() {
                 set_taskbar_visibility(true, true);
                 NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+            }
+
+            // Auto-update check on startup (non-blocking)
+            {
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    if let Some(auto_update) = get_setting_str(&app_handle, "bloom-auto-update") {
+                        if auto_update == "true" {
+                            let rt = tokio::runtime::Runtime::new().unwrap();
+                            rt.block_on(async {
+                                if let Ok(updater) = app_handle.updater() {
+                                    match tokio::time::timeout(
+                                        std::time::Duration::from_secs(10),
+                                        updater.check()
+                                    ).await {
+                                        Ok(Ok(Some(update))) => {
+                                            let _ = update.download_and_install(
+                                                |_, _| {},
+                                                || {}
+                                            ).await;
+                                            app_handle.restart();
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            });
+                        }
+                    }
+                });
             }
 
             let window = app.get_webview_window("main").unwrap();

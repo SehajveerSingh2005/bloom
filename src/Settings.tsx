@@ -41,6 +41,7 @@ function SettingsApp() {
   const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "uptodate" | "error" | "downloading">("idle");
   const [updateVersion, setUpdateVersion] = useState("");
   const [appVersion, setAppVersion] = useState("");
+  const [autoUpdate, setAutoUpdate] = useState(() => localStorage.getItem("bloom-auto-update") === "true");
   const [scale, setScale] = useState(() => parseFloat(localStorage.getItem("bloom-scale") || "1.0"));
   const [themeMode, setThemeMode] = useState(() => localStorage.getItem("bloom-theme-mode") || "dark");
   const [themeColor, setThemeColor] = useState(() => localStorage.getItem("bloom-theme-color") || "#007aff");
@@ -148,6 +149,9 @@ function SettingsApp() {
 
       const scaleVal = getVal("bloom-scale");
       if (scaleVal !== null) setScale(parseFloat(scaleVal));
+
+      const autoUpdateVal = getVal("bloom-auto-update");
+      if (autoUpdateVal !== null) setAutoUpdate(autoUpdateVal === "true");
 
       const tMode = getVal("bloom-theme-mode");
       if (tMode) setThemeMode(tMode);
@@ -425,6 +429,12 @@ function SettingsApp() {
     setThemeBrightness(value);
     saveAndLocal("bloom-theme-brightness", String(value));
     notifyChange("theme-brightness", value);
+  };
+
+  const toggleAutoUpdate = () => {
+    const newVal = !autoUpdate;
+    setAutoUpdate(newVal);
+    saveAndLocal("bloom-auto-update", String(newVal));
   };
 
   const toggleCorners = () => {
@@ -1048,6 +1058,24 @@ function SettingsApp() {
 
       <div className="setting-group-label" style={{ marginTop: '24px' }}>Software Updates</div>
       <div className="setting-group">
+        <div className="setting-item">
+          <div className="setting-icon-bg">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+            </svg>
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Auto Update</span>
+            <span className="setting-desc">Update automatically on startup</span>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={autoUpdate} onChange={toggleAutoUpdate} />
+            <span className="slider"></span>
+          </label>
+        </div>
+
+        <div className="setting-divider" />
+
         <div className="setting-item action" onClick={() => updateStatus === 'available' ? installUpdate() : checkForUpdates()}>
           <div className="setting-icon-bg">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
