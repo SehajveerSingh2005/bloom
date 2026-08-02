@@ -48,7 +48,9 @@ windows = { version = "0.61", features = [
   "Win32_System_LibraryLoader",
   "Win32_Security",
   "Win32_System_Registry",
-  "Win32_Devices_FunctionDiscovery"
+  "Win32_Devices_FunctionDiscovery",
+  "Devices_Radios",
+  "System_Power"
 ] }
 base64 = "0.22"
 tauri-plugin-autostart = "2.5.1"

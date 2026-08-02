@@ -3,7 +3,7 @@ use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 use std::sync::atomic::Ordering;
 
-use crate::types::{IntRect, AppInfo, AudioDevice};
+use crate::types::{IntRect, AppInfo, AudioDevice, BrightnessChangeEvent};
 use crate::state::*;
 use crate::utils::*;
 use crate::services::{register_appbar, register_dock_appbar, sync_overlays, unregister_appbar_native, enum_windows_proc};
@@ -1124,51 +1124,62 @@ pub fn get_audio_output_devices() -> Result<Vec<AudioDevice>, String> {
 
 #[tauri::command]
 pub fn set_audio_output_device(device_id: String) -> Result<(), String> {
-    // Use PowerShell with C# Add-Type to properly call IPolicyConfig COM
-    let ps_script = format!(
-        r#"
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
+    // Uses the undocumented IPolicyConfig COM interface (stable since Vista/Win7).
+    // Replaces the prior approach of generating + running C# via PowerShell Add-Type,
+    // which AV engines classify as reflective code injection.
+    //
+    // PolicyConfigClient CLSID: {870af99c-e543-481c-8303-f0d7e7e06526}
+    // IPolicyConfig      IID:   {f8679f50-84e7-43cd-b950-c298f2188e5c}
+    // Vtable: [0]=QI [1]=AddRef [2]=Release [3–12]=stubs [13]=SetDefaultEndpoint
+    unsafe {
+        #[link(name = "ole32")]
+        extern "system" {
+            fn CoCreateInstance(
+                rclsid: *const windows::core::GUID,
+                punk_outer: *mut std::ffi::c_void,
+                dwclscontext: u32,
+                riid: *const windows::core::GUID,
+                ppv: *mut *mut std::ffi::c_void,
+            ) -> i32;
+        }
 
-[ComImport]
-[Guid("f8679f50-84e7-43cd-b950-c298f2188e5c")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IPolicyConfig {{
-    [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string deviceId, int role);
-}}
+        let clsid = windows::core::GUID {
+            data1: 0x870a_f99c, data2: 0xe543, data3: 0x481c,
+            data4: [0x83, 0x03, 0xf0, 0xd7, 0xe7, 0xe0, 0x65, 0x26],
+        };
+        let iid = windows::core::GUID {
+            data1: 0xf867_9f50, data2: 0x84e7, data3: 0x43cd,
+            data4: [0xb9, 0x50, 0xc2, 0x98, 0xf2, 0x18, 0x8e, 0x5c],
+        };
 
-[ComImport]
-[Guid("870af99c-e543-481c-8303-f0d7e7e06526")]
-class PolicyConfigClient {{ }}
+        let mut ppv: *mut std::ffi::c_void = std::ptr::null_mut();
+        let hr = CoCreateInstance(&clsid, std::ptr::null_mut(), 0x17 /* CLSCTX_ALL */, &iid, &mut ppv);
 
-try {{
-    var client = (IPolicyConfig)new PolicyConfigClient();
-    int hr = client.SetDefaultEndpoint("{device_id}", 0);
-    if (hr != 0) {{
-        Start-Process ms-settings:sound;
-    }}
-}} catch {{
-    Start-Process ms-settings:sound;
-}}
-"@
-        "#,
-        device_id = device_id.replace('"', "`\"")
-    );
-
-    let output = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => Ok(()),
-        _ => {
+        if hr < 0 || ppv.is_null() {
+            // COM failed — open sound settings as fallback
             let _ = std::process::Command::new("cmd")
                 .args(["/c", "start", "ms-settings:sound"])
+                .creation_flags(0x08000000)
                 .spawn();
-            Ok(())
+            return Ok(());
         }
+
+        let vtable = *(ppv as *const *const usize);
+        type SetDefaultEndpointFn = unsafe extern "system" fn(*mut std::ffi::c_void, *const u16, i32) -> i32;
+        let set_default_endpoint: SetDefaultEndpointFn = std::mem::transmute(*vtable.add(13));
+
+        let wide_id: Vec<u16> = device_id.encode_utf16().chain(std::iter::once(0)).collect();
+        // Apply for all three audio roles: eConsole=0, eMultimedia=1, eCommunications=2
+        for role in 0i32..=2 {
+            let _ = set_default_endpoint(ppv, wide_id.as_ptr(), role);
+        }
+
+        // Release the COM object (IUnknown::Release = vtable[2])
+        type ReleaseFn = unsafe extern "system" fn(*mut std::ffi::c_void) -> u32;
+        let release: ReleaseFn = std::mem::transmute(*vtable.add(2));
+        release(ppv);
     }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1371,29 +1382,51 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
     }).await.map_err(|e| e.to_string())
 }
 
-const RADIO_SCRIPT: &str = r#"
-Add-Type -AssemblyName System.Runtime.WindowsRuntime
-[void][Windows.Devices.Radios.Radio,Windows.System.Devices,ContentType=WindowsRuntime]
-[void][Windows.Devices.Radios.RadioAccessStatus,Windows.System.Devices,ContentType=WindowsRuntime]
 
-$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { 
-    $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' 
-})[0]
+// ── Radio helpers — Windows Runtime Windows.Devices.Radios ───────────────────
+// Replaces PowerShell -ExecutionPolicy Bypass scripts for WiFi/Bluetooth state.
 
-function Await-Task($WinRtTask, $ResultType) {
-    $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
-    $netTask = $asTask.Invoke($null, @($WinRtTask))
-    $netTask.Wait(-1) | Out-Null
-    return $netTask.Result
+fn get_radio_state_sync(kind: windows::Devices::Radios::RadioKind) -> Result<bool, String> {
+    use windows::Devices::Radios::{Radio, RadioState};
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None, windows::Win32::System::Com::COINIT_MULTITHREADED,
+        );
+    }
+    let radios = Radio::GetRadiosAsync()
+        .and_then(|op| op.get())
+        .map_err(|e| e.to_string())?;
+    for i in 0..radios.Size().unwrap_or(0) {
+        if let Ok(radio) = radios.GetAt(i) {
+            if radio.Kind().ok() == Some(kind) {
+                return Ok(radio.State().ok() == Some(RadioState::On));
+            }
+        }
+    }
+    Ok(false)
 }
 
-$access = Await-Task ([Windows.Devices.Radios.Radio]::RequestAccessAsync()) ([Windows.Devices.Radios.RadioAccessStatus])
-if ($access -eq 'Allowed') {
-    $radios = Await-Task ([Windows.Devices.Radios.Radio]::GetRadiosAsync()) ([System.Collections.Generic.IReadOnlyList[Windows.Devices.Radios.Radio]])
-} else {
-    $radios = @()
+fn set_radio_state_sync(kind: windows::Devices::Radios::RadioKind, enabled: bool) -> Result<(), String> {
+    use windows::Devices::Radios::{Radio, RadioState};
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None, windows::Win32::System::Com::COINIT_MULTITHREADED,
+        );
+    }
+    let radios = Radio::GetRadiosAsync()
+        .and_then(|op| op.get())
+        .map_err(|e| e.to_string())?;
+    for i in 0..radios.Size().unwrap_or(0) {
+        if let Ok(radio) = radios.GetAt(i) {
+            if radio.Kind().ok() == Some(kind) {
+                let target = if enabled { RadioState::On } else { RadioState::Off };
+                let _ = radio.SetStateAsync(target).and_then(|op| op.get());
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
 }
-"#;
 
 #[tauri::command]
 pub fn get_volume() -> f32 {
@@ -1407,111 +1440,58 @@ pub fn get_brightness() -> u32 {
 
 #[tauri::command]
 pub async fn get_wifi_state() -> Result<bool, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let script = format!(
-            "{}\n\
-             $target = $radios | Where-Object {{ $_.Kind.ToString() -eq 'WiFi' }};\n\
-             if ($target) {{ Write-Host $target.State.ToString() }}",
-            RADIO_SCRIPT
-        );
-        let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", &script])
-            .creation_flags(0x08000000)
-            .output()
-            .map_err(|e| e.to_string())?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(stdout == "On")
+    tauri::async_runtime::spawn_blocking(|| {
+        get_radio_state_sync(windows::Devices::Radios::RadioKind::WiFi)
     }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn set_wifi_state(enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let state = if enabled { "On" } else { "Off" };
-        let script = format!(
-            "{}\n\
-             $target = $radios | Where-Object {{ $_.Kind.ToString() -eq 'WiFi' }};\n\
-             if ($target) {{ $null = Await-Task ($target.SetStateAsync('{}')) ([Windows.Devices.Radios.RadioAccessStatus]) }}",
-            RADIO_SCRIPT, state
-        );
-        let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", &script])
-            .creation_flags(0x08000000)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).to_string())
-        }
+        set_radio_state_sync(windows::Devices::Radios::RadioKind::WiFi, enabled)
     }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn get_bluetooth_state() -> Result<bool, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let script = format!(
-            "{}\n\
-             $target = $radios | Where-Object {{ $_.Kind.ToString() -eq 'Bluetooth' }};\n\
-             if ($target) {{ Write-Host $target.State.ToString() }}",
-            RADIO_SCRIPT
-        );
-        let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", &script])
-            .creation_flags(0x08000000)
-            .output()
-            .map_err(|e| e.to_string())?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(stdout == "On")
+    tauri::async_runtime::spawn_blocking(|| {
+        get_radio_state_sync(windows::Devices::Radios::RadioKind::Bluetooth)
     }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn set_bluetooth_state(enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let state = if enabled { "On" } else { "Off" };
-        let script = format!(
-            "{}\n\
-             $target = $radios | Where-Object {{ $_.Kind.ToString() -eq 'Bluetooth' }};\n\
-             if ($target) {{ $null = Await-Task ($target.SetStateAsync('{}')) ([Windows.Devices.Radios.RadioAccessStatus]) }}",
-            RADIO_SCRIPT, state
-        );
-        let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", &script])
-            .creation_flags(0x08000000)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).to_string())
-        }
+        set_radio_state_sync(windows::Devices::Radios::RadioKind::Bluetooth, enabled)
     }).await.map_err(|e| e.to_string())?
 }
 
+// Settings openers — use ShellExecuteA directly instead of spawning powershell
+
 #[tauri::command]
 pub fn open_bluetooth_settings() {
-    std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NoLogo", "-Command", "Start-Process 'ms-settings:bluetooth'"])
-        .creation_flags(0x08000000)
-        .spawn()
-        .ok();
+    unsafe {
+        use windows::Win32::UI::Shell::ShellExecuteA;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let _ = ShellExecuteA(None, windows::core::PCSTR(c"open".as_ptr() as *const u8), windows::core::PCSTR(c"ms-settings:bluetooth".as_ptr() as *const u8), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
+    }
 }
 
 #[tauri::command]
 pub fn open_airplane_mode_settings() {
-    std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NoLogo", "-Command", "Start-Process 'ms-settings:network-airplanemode'"])
-        .creation_flags(0x08000000)
-        .spawn()
-        .ok();
+    unsafe {
+        use windows::Win32::UI::Shell::ShellExecuteA;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let _ = ShellExecuteA(None, windows::core::PCSTR(c"open".as_ptr() as *const u8), windows::core::PCSTR(c"ms-settings:network-airplanemode".as_ptr() as *const u8), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
+    }
 }
 
 #[tauri::command]
-pub fn set_brightness(brightness: u32) {
+pub fn set_brightness(app: AppHandle, brightness: u32) {
     let val = brightness.min(100);
     crate::state::CURRENT_BRIGHTNESS.store(val, Ordering::Relaxed);
     crate::state::LAST_BRIGHTNESS_CHANGE.store(crate::utils::get_now_ms(), Ordering::Relaxed);
+    let _ = app.emit("brightness-change", BrightnessChangeEvent { brightness: val });
     if let Some(tx) = crate::state::BRIGHTNESS_SENDER.get() {
         let _ = tx.send(val);
     }
@@ -1519,30 +1499,30 @@ pub fn set_brightness(brightness: u32) {
 
 #[tauri::command]
 pub async fn get_battery_saver_state() -> Result<bool, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let script = r#"
-[void][Windows.System.Power.PowerManager,Windows.System.Devices,ContentType=WindowsRuntime]
-$status = [Windows.System.Power.PowerManager]::EnergySaverStatus
-Write-Host ($status -eq 'Activated').ToString()
-"#;
-        let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", script])
-            .creation_flags(0x08000000)
-            .output()
-            .map_err(|e| e.to_string())?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(stdout == "True")
+    // Uses Windows Runtime PowerManager — no PowerShell required.
+    tauri::async_runtime::spawn_blocking(|| {
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None, windows::Win32::System::Com::COINIT_MULTITHREADED,
+            );
+        }
+        use windows::System::Power::{EnergySaverStatus, PowerManager};
+        match PowerManager::EnergySaverStatus() {
+            Ok(status) => Ok(status == EnergySaverStatus::On),
+            Err(_) => Ok(false), // No battery / not supported on this device
+        }
     }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub fn open_battery_saver_settings() {
-    std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NoLogo", "-Command", "Start-Process 'ms-settings:batterysaver'"])
-        .creation_flags(0x08000000)
-        .spawn()
-        .ok();
+    unsafe {
+        use windows::Win32::UI::Shell::ShellExecuteA;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let _ = ShellExecuteA(None, windows::core::PCSTR(c"open".as_ptr() as *const u8), windows::core::PCSTR(c"ms-settings:batterysaver".as_ptr() as *const u8), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
+    }
 }
+
 
 pub fn get_windows_accent_color() -> Option<String> {
     unsafe {

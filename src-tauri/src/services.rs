@@ -1020,27 +1020,172 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
 
 
 
+fn set_physical_monitors_brightness(brightness: u32) {
+    unsafe {
+        use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+        use windows::Win32::Foundation::{RECT, LPARAM};
+        use windows::core::BOOL;
+
+        unsafe extern "system" fn monitor_enum_proc(
+            hmonitor: HMONITOR,
+            _: HDC,
+            _: *mut RECT,
+            lparam: LPARAM,
+        ) -> BOOL {
+            let brightness = lparam.0 as u32;
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            struct PHYSICAL_MONITOR {
+                h_physical_monitor: usize,
+                sz_physical_monitor_description: [u16; 128],
+            }
+            #[link(name = "dxva2")]
+            extern "system" {
+                fn GetNumberOfPhysicalMonitorsFromHMONITOR(
+                    hMonitor: HMONITOR,
+                    pdwNumberOfPhysicalMonitors: *mut u32,
+                ) -> BOOL;
+                fn GetPhysicalMonitorsFromHMONITOR(
+                    hMonitor: HMONITOR,
+                    dwPhysicalMonitorArraySize: u32,
+                    pPhysicalMonitorArray: *mut PHYSICAL_MONITOR,
+                ) -> BOOL;
+                fn DestroyPhysicalMonitors(
+                    dwPhysicalMonitorArraySize: u32,
+                    pPhysicalMonitorArray: *mut PHYSICAL_MONITOR,
+                ) -> BOOL;
+                fn SetMonitorBrightness(
+                    hMonitor: usize,
+                    dwNewBrightness: u32,
+                ) -> BOOL;
+            }
+
+            let mut count = 0u32;
+            if GetNumberOfPhysicalMonitorsFromHMONITOR(hmonitor, &mut count).as_bool() && count > 0 {
+                let mut monitors = vec![std::mem::zeroed::<PHYSICAL_MONITOR>(); count as usize];
+                if GetPhysicalMonitorsFromHMONITOR(hmonitor, count, monitors.as_mut_ptr()).as_bool() {
+                    for mon in &monitors {
+                        if mon.h_physical_monitor != 0 {
+                            let _ = SetMonitorBrightness(mon.h_physical_monitor, brightness);
+                        }
+                    }
+                    let _ = DestroyPhysicalMonitors(count, monitors.as_mut_ptr());
+                }
+            }
+            true.into()
+        }
+
+        let _ = EnumDisplayMonitors(
+            None, None,
+            Some(monitor_enum_proc),
+            LPARAM(brightness as isize),
+        );
+    }
+}
+
 pub fn setup_brightness_worker() {
     let (tx, rx) = channel::<u32>();
     let _ = BRIGHTNESS_SENDER.set(tx);
-    std::thread::spawn(move || {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
-        use std::os::windows::process::CommandExt;
-        let child = Command::new("powershell").args(["-NoProfile", "-NoLogo", "-Command", "-"]).creation_flags(0x08000000).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
-        if let Some(mut child) = child {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(b"$m = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods\n");
-                let _ = stdin.flush();
-                while let Ok(brightness) = rx.recv() {
-                    let _ = stdin.write_all(format!("$m | Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{{Brightness={}; Timeout=0}}\n", brightness).as_bytes());
-                    let _ = stdin.flush();
+    std::thread::spawn(move || unsafe {
+        // Direct WMI COM + DXVA2 implementation (zero child processes spawned).
+        use windows::Win32::System::Com::{
+            CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED, CoCreateInstance, CLSCTX_ALL,
+        };
+        use windows::Win32::System::Wmi::{IWbemLocator, IWbemClassObject, WbemLocator, WBEM_GENERIC_FLAG_TYPE};
+        use windows::Win32::System::Variant::{VARIANT, VariantClear, VARENUM};
+
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+        let locator: IWbemLocator = match CoCreateInstance(&WbemLocator, None, CLSCTX_ALL) {
+            Ok(l) => l,
+            Err(_) => {
+                let _ = CoUninitialize();
+                return;
+            }
+        };
+        let ns = windows::core::BSTR::from("root\\WMI");
+        let empty_bstr = windows::core::BSTR::new();
+        let services = match locator.ConnectServer(&ns, &empty_bstr, &empty_bstr, &empty_bstr, 0, &empty_bstr, None) {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = CoUninitialize();
+                return;
+            }
+        };
+
+        while let Ok(brightness) = rx.recv() {
+            let brightness = brightness.min(100);
+            let mut wmi_success = false;
+
+            // 1. Laptop internal panel via WMI WmiMonitorBrightnessMethods
+            let wql = windows::core::BSTR::from("WQL");
+            let q = windows::core::BSTR::from("SELECT * FROM WmiMonitorBrightnessMethods");
+            if let Ok(enum_obj) = services.ExecQuery(&wql, &q, WBEM_GENERIC_FLAG_TYPE(0), None) {
+                let mut row = [None::<IWbemClassObject>; 1];
+                let mut returned = 0u32;
+                while enum_obj.Next(-1i32, &mut row, &mut returned).is_ok() && returned > 0 {
+                    if let Some(obj) = row[0].take() {
+                        let mut var = VARIANT::default();
+                        if obj.Get(windows::core::w!("__RELPATH"), 0i32, &mut var, None, None).is_ok() {
+                            let relpath_str = var.Anonymous.Anonymous.Anonymous.bstrVal.to_string();
+                            let _ = VariantClear(&mut var);
+                            if !relpath_str.is_empty() {
+                                let obj_path = windows::core::BSTR::from(relpath_str.as_str());
+                                let method_name = windows::core::BSTR::from("WmiSetBrightness");
+
+                                let mut in_cls: Option<IWbemClassObject> = None;
+                                if obj.GetMethod(windows::core::w!("WmiSetBrightness"), 0i32, &mut in_cls, std::ptr::null_mut()).is_ok() {
+                                    if let Some(in_cls) = in_cls {
+                                        if let Ok(in_params) = in_cls.SpawnInstance(0i32) {
+                                            let mut b_var = VARIANT::default();
+                                            let b_anon = &mut b_var.Anonymous.Anonymous;
+                                            b_anon.vt = VARENUM(17); // VT_UI1
+                                            b_anon.Anonymous.bVal = brightness as u8;
+                                            let _ = in_params.Put(windows::core::w!("Brightness"), 0i32, &b_var, 0);
+
+                                            let mut t_var = VARIANT::default();
+                                            let t_anon = &mut t_var.Anonymous.Anonymous;
+                                            t_anon.vt = VARENUM(3); // VT_I4
+                                            t_anon.Anonymous.lVal = 0i32;
+                                            let _ = in_params.Put(windows::core::w!("Timeout"), 0i32, &t_var, 0);
+
+                                            if services.ExecMethod(
+                                                &obj_path, &method_name, WBEM_GENERIC_FLAG_TYPE(0), None,
+                                                Some(&in_params), None, None,
+                                            ).is_ok() {
+                                                wmi_success = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            let _ = child.kill();
+
+            // 2. Desktop external monitor via Physical Monitor API (DXVA2 DDC/CI)
+            set_physical_monitors_brightness(brightness);
+
+            // 3. One-shot PowerShell fallback if WMI COM didn't find active CIM instance
+            if !wmi_success {
+                use std::os::windows::process::CommandExt;
+                let _ = std::process::Command::new("powershell")
+                    .args([
+                        "-NoProfile", "-NonInteractive", "-Command",
+                        &format!(
+                            "(Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightnessMethods).WmiSetBrightness(0, {})",
+                            brightness
+                        ),
+                    ])
+                    .creation_flags(0x08000000)
+                    .spawn();
+            }
         }
+        let _ = CoUninitialize();
     });
 }
+
 
 pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
