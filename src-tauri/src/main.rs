@@ -126,6 +126,15 @@ fn main() {
             get_system_accent_color
         ])
         .setup(|app| {
+            init_taskbar_marker(app.handle());
+            // Crash-recovery: if a previous session was force-killed while the native
+            // taskbar was hidden, restore it now. Runs before the frontend re-hides it
+            // (init_dock fires after a delay), so the flag must be removed first.
+            if taskbar_marker_exists() {
+                set_taskbar_visibility(true, true);
+                NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+            }
+
             let window = app.get_webview_window("main").unwrap();
             let dock_win = app.get_webview_window("dock").unwrap();
 
@@ -169,6 +178,10 @@ fn main() {
                             sync_overlays(&h);
                         });
                     }
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        restore_taskbar_and_exit(&handle_for_events);
+                    }
                     _ => {}
                 }
             });
@@ -195,6 +208,10 @@ fn main() {
                              sync_overlays(&h);
                         }
                     }
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        restore_taskbar_and_exit(&handle_for_dock_events);
+                    }
                     _ => {}
                 }
             });
@@ -207,6 +224,13 @@ fn main() {
             if let Some(ov_win) = app.get_webview_window("overlay") {
                 let _ = ov_win.show();
                 let _ = ov_win.hide();
+                let overlay_handle = app.handle().clone();
+                ov_win.on_window_event(move |e| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                        api.prevent_close();
+                        restore_taskbar_and_exit(&overlay_handle);
+                    }
+                });
             }
 
             setup_cursor_monitor(app.handle().clone());

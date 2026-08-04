@@ -6,6 +6,9 @@ use windows::core::Interface;
 use windows::Win32::UI::WindowsAndMessaging::HICON;
 use windows::Win32::Graphics::Imaging::{IWICImagingFactory, CLSID_WICImagingFactory, GUID_ContainerFormatPng, WICBitmapEncoderNoCache, GUID_WICPixelFormat32bppPBGRA};
 use base64::{Engine as _, engine::general_purpose};
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use tauri::Manager;
 
 pub fn resolve_shortcut(path: &str) -> Option<(String, String)> {
     unsafe {
@@ -35,7 +38,29 @@ static mut ORIGINAL_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
 static mut ORIGINAL_SEC_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
 static ORIGINAL_TASKBAR_STATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
+static TASKBAR_MARKER: OnceLock<PathBuf> = OnceLock::new();
+
+/// Point the crash-recovery marker at this user's app config dir (called from setup).
+pub fn init_taskbar_marker(app: &tauri::AppHandle) {
+    if let Ok(dir) = app.path().app_config_dir() {
+        let _ = TASKBAR_MARKER.set(dir.join("taskbar_hidden.flag"));
+    }
+}
+
+/// True if a previous Bloom session died without restoring the native taskbar.
+pub fn taskbar_marker_exists() -> bool {
+    TASKBAR_MARKER.get().is_some_and(|p| p.exists())
+}
+
 pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
+    // Crash-recovery marker: a hidden taskbar is persisted so the next launch can
+    // undo it if we're ever force-killed (Task Manager / TerminateProcess skips cleanup).
+    if visible {
+        if let Some(p) = TASKBAR_MARKER.get() { let _ = std::fs::remove_file(p); }
+    } else {
+        if let Some(p) = TASKBAR_MARKER.get() { if !p.exists() { let _ = std::fs::write(p, b"1"); } }
+    }
+
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE, SW_SHOW, GetWindowRect};
         use windows::Win32::UI::Shell::{SHAppBarMessage, APPBARDATA, ABM_SETSTATE, ABM_GETSTATE};
