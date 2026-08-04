@@ -1878,12 +1878,19 @@ fn reposition_all_windows(app_handle: &AppHandle) {
             register_appbar(main_win);
         }
     }
-    if let Some(dock_win) = app_handle.get_webview_window("dock") {
-        if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
-            register_dock_appbar(dock_win);
-        } else {
-            // Auto-hide mode: reposition dock at bottom of screen
-            reposition_autohide_dock(app_handle, dock_win);
+    // Only reposition the dock if it's enabled in settings.
+    // Without this guard, power events (plug/unplug, wake) would re-show
+    // a dock that the user had previously disabled.
+    let dock_enabled = get_setting_str(app_handle, "bloom-dock-enabled")
+        .unwrap_or_else(|| "true".to_string());
+    if dock_enabled == "true" {
+        if let Some(dock_win) = app_handle.get_webview_window("dock") {
+            if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                register_dock_appbar(dock_win);
+            } else {
+                // Auto-hide mode: reposition dock at bottom of screen
+                reposition_autohide_dock(app_handle, dock_win);
+            }
         }
     }
     if NATIVE_TASKBAR_HIDDEN.load(Ordering::Relaxed) {
