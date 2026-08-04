@@ -698,11 +698,15 @@ function App() {
 
     if (delta > 0) {
       const nextIndex = (currentIndex + 1) % availableModes.length;
-      setBloomMode(availableModes[nextIndex]);
+      const nextMode = availableModes[nextIndex];
+      manualMusicRef.current = nextMode === 'music';
+      setBloomMode(nextMode);
       lastScrollTime.current = now;
     } else if (delta < 0) {
       const prevIndex = (currentIndex - 1 + availableModes.length) % availableModes.length;
-      setBloomMode(availableModes[prevIndex]);
+      const prevMode = availableModes[prevIndex];
+      manualMusicRef.current = prevMode === 'music';
+      setBloomMode(prevMode);
       lastScrollTime.current = now;
     }
   };
@@ -751,6 +755,7 @@ function App() {
 
   const lastTrackRef = useRef<string | null>(null);
   const lastPlayingRef = useRef<boolean>(false);
+  const manualMusicRef = useRef<boolean>(false);
 
   // Auto-switch to music mode only when a *new* track starts while playing,
   // or when playback transitions from paused to playing.
@@ -762,6 +767,7 @@ function App() {
     if (settingsMusicModeEnabled && mediaInfo.has_media && isPlaying && bloomMode !== 'calendar' && (isNewTrackWhilePlaying || justStartedPlaying)) {
       // Switch if compact notch display is enabled OR we are hovered
       if (settingsMusicCompactNotch || isHovered) {
+        manualMusicRef.current = false;
         setBloomMode('music');
       }
     }
@@ -771,9 +777,10 @@ function App() {
   }, [mediaInfo.has_media, isPlaying, mediaInfo.title, settingsMusicModeEnabled, settingsMusicCompactNotch, isHovered, bloomMode]);
 
   // Auto-switch back from music if music stops for 5 seconds
+  // Skip if user manually scrolled to music mode
   useEffect(() => {
     let timer: any;
-    if (!isPlaying && bloomMode === 'music') {
+    if (!isPlaying && bloomMode === 'music' && !manualMusicRef.current) {
       timer = setTimeout(() => {
         setBloomMode('status');
       }, 5000);
