@@ -686,7 +686,7 @@ function App() {
     const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
     if (Math.abs(delta) < 5) return; // Ignore tiny movements
 
-    const modes: ('music' | 'command-center' | 'status' | 'calendar')[] = ['music', 'command-center', 'status', 'calendar'];
+    const modes: ('command-center' | 'music' | 'status' | 'calendar')[] = ['command-center', 'music', 'status', 'calendar'];
     const availableModes = modes.filter(m => {
       if (m === 'music' && (!settingsMusicModeEnabled || !mediaInfo.has_media)) return false;
       if (m === 'calendar' && !settingsCalendarEnabled) return false;
