@@ -686,7 +686,13 @@ function App() {
     const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
     if (Math.abs(delta) < 5) return; // Ignore tiny movements
 
-    const modes: ('command-center' | 'status' | 'music' | 'calendar')[] = ['command-center', 'status', 'music', 'calendar'];
+    // Music shifts position based on playing state:
+    // Playing: command-center → music → status → calendar (active, near command-center)
+    // Paused:  command-center → status → music → calendar (secondary, after status)
+    const musicBeforeStatus = isPlaying && mediaInfo.has_media && settingsMusicModeEnabled;
+    const modes: ('command-center' | 'status' | 'music' | 'calendar')[] = musicBeforeStatus
+      ? ['command-center', 'music', 'status', 'calendar']
+      : ['command-center', 'status', 'music', 'calendar'];
     const availableModes = modes.filter(m => {
       if (m === 'music' && (!settingsMusicModeEnabled || !mediaInfo.has_media)) return false;
       if (m === 'calendar' && !settingsCalendarEnabled) return false;
