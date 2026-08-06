@@ -6,6 +6,9 @@ use windows::core::Interface;
 use windows::Win32::UI::WindowsAndMessaging::HICON;
 use windows::Win32::Graphics::Imaging::{IWICImagingFactory, CLSID_WICImagingFactory, GUID_ContainerFormatPng, WICBitmapEncoderNoCache, GUID_WICPixelFormat32bppPBGRA};
 use base64::{Engine as _, engine::general_purpose};
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use tauri::Manager;
 
 pub fn resolve_shortcut(path: &str) -> Option<(String, String)> {
     unsafe {
@@ -31,11 +34,33 @@ pub fn resolve_shortcut(path: &str) -> Option<(String, String)> {
     }
 }
 
-static mut ORIGINAL_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
+pub static mut ORIGINAL_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
 static mut ORIGINAL_SEC_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
 static ORIGINAL_TASKBAR_STATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
+static TASKBAR_MARKER: OnceLock<PathBuf> = OnceLock::new();
+
+/// Point the crash-recovery marker at this user's app config dir (called from setup).
+pub fn init_taskbar_marker(app: &tauri::AppHandle) {
+    if let Ok(dir) = app.path().app_config_dir() {
+        let _ = TASKBAR_MARKER.set(dir.join("taskbar_hidden.flag"));
+    }
+}
+
+/// True if a previous Bloom session died without restoring the native taskbar.
+pub fn taskbar_marker_exists() -> bool {
+    TASKBAR_MARKER.get().is_some_and(|p| p.exists())
+}
+
 pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
+    // Crash-recovery marker: a hidden taskbar is persisted so the next launch can
+    // undo it if we're ever force-killed (Task Manager / TerminateProcess skips cleanup).
+    if visible {
+        if let Some(p) = TASKBAR_MARKER.get() { let _ = std::fs::remove_file(p); }
+    } else {
+        if let Some(p) = TASKBAR_MARKER.get() { if !p.exists() { let _ = std::fs::write(p, b"1"); } }
+    }
+
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE, SW_SHOW, GetWindowRect};
         use windows::Win32::UI::Shell::{SHAppBarMessage, APPBARDATA, ABM_SETSTATE, ABM_GETSTATE};
@@ -52,11 +77,7 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
 
         let state_val = if visible {
             let orig = ORIGINAL_TASKBAR_STATE.load(std::sync::atomic::Ordering::Relaxed);
-            if orig != -1 {
-                orig as isize
-            } else {
-                if always_on_top { 2 } else { 1 }
-            }
+            if orig != -1 { orig as isize } else { if always_on_top { 2 } else { 1 } }
         } else {
             1 // Force Auto-hide when hiding
         };
@@ -71,8 +92,16 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
 
         // 2. Control visibility of the primary taskbar
         if let Ok(tray_hwnd) = FindWindowA(tray_class, windows::core::PCSTR::null()) {
-            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE};
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE, GetWindowLongA, SetWindowLongA, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TRANSPARENT, SetLayeredWindowAttributes, LWA_ALPHA};
             if visible {
+                // Revert any lingering WS_EX_LAYERED / WS_EX_TRANSPARENT left by
+                // open_system_tray if the user quit before the tray thread cleaned up.
+                let ex = GetWindowLongA(tray_hwnd, GWL_EXSTYLE);
+                let cleaned = ex & !(WS_EX_LAYERED.0 as i32) & !(WS_EX_TRANSPARENT.0 as i32);
+                if cleaned != ex {
+                    let _ = SetWindowLongA(tray_hwnd, GWL_EXSTYLE, cleaned);
+                    let _ = SetLayeredWindowAttributes(tray_hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
+                }
                 if let Some(rect) = ORIGINAL_TRAY_RECT {
                     let _ = SetWindowPos(tray_hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
                 }
