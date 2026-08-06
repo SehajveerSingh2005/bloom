@@ -74,7 +74,7 @@ export default function App() {
         music: clamp(prev.music.x, prev.music.y, 680, 400),
         terminal: clamp(prev.terminal.x, prev.terminal.y, 500, 320),
         settings: clamp(prev.settings.x, prev.settings.y, 520, 480),
-        changelog: clamp(prev.changelog.x, prev.changelog.y, 480, 400),
+        changelog: clamp(prev.changelog.x, prev.changelog.y, 480, 560),
         performance: clamp(prev.performance.x, prev.performance.y, 420, 440),
         features: clamp(prev.features.x, prev.features.y, 380, 420),
         browser: clamp(prev.browser.x, prev.browser.y, 640, 450),
@@ -262,7 +262,7 @@ export default function App() {
             onMinimize={() => handleMinimizeApp('changelog')}
             onFocus={() => setFocusedApp('changelog')}
             width={480}
-            height={400}
+            height={560}
             defaultPosition={positions.changelog}
             viewport={viewport}
           >

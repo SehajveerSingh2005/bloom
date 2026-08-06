@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Download, ArrowUpRight } from 'lucide-react';
+import TextPressure from '../TextPressure';
 
 interface AboutAppProps {
   githubUrl: string;
@@ -32,7 +33,7 @@ export default function AboutApp({ githubUrl, downloadUrl, accentColor }: AboutA
   }, []);
 
   return (
-    <div className="relative h-full w-full bg-transparent text-white flex flex-col select-none overflow-hidden font-sans">
+    <div className="relative h-full w-full bg-transparent text-white flex flex-col select-none font-sans">
       <style>{`
         @keyframes aboutGlow {
           0%, 100% { opacity: 0.4; }
@@ -67,32 +68,41 @@ export default function AboutApp({ githubUrl, downloadUrl, accentColor }: AboutA
         </div>
 
         {/* Hero */}
-        <div className="flex-1 flex flex-col items-center justify-center -mt-4">
+        <div className="flex-1 flex flex-col items-center justify-center -mt-6">
           {/* Big icon — rotates on hover */}
           <div className="group cursor-default">
             <img
               src="/bloom.png"
               alt="Bloom"
-              className="w-24 h-24 object-contain transition-transform duration-500 ease-out group-hover:rotate-180"
+              className="w-20 h-20 object-contain transition-transform duration-500 ease-out group-hover:rotate-180"
             />
           </div>
 
           {/* Title */}
-          <h1
-            className="text-[56px] font-black tracking-[-0.06em] leading-[0.85] uppercase mt-5"
-            style={{ fontFamily: 'var(--font-display)' }}
-          >
-            BLOOM
-          </h1>
+          <div className="w-full mt-4 min-h-[60px]">
+            <TextPressure
+              text="BLOOM"
+              flex
+              alpha={false}
+              stroke={false}
+              width
+              weight
+              italic
+              textColor="#ffffff"
+              strokeColor="#5227FF"
+              minFontSize={48}
+              invertWeight
+            />
+          </div>
           <p
-            className="text-[14px] text-white/30 mt-1.5 italic"
+            className="text-[13px] text-white/30 mt-1 italic"
             style={{ fontFamily: 'var(--font-display)' }}
           >
             your windows, alive.
           </p>
 
           {/* Tagline */}
-          <p className="text-[10px] text-white/25 mt-5 max-w-[280px] text-center leading-relaxed">
+          <p className="text-[10px] text-white/25 mt-3 max-w-[280px] text-center leading-relaxed">
             A lightweight desktop shell that silences the Windows taskbar and adds a spring-animated notch, a macOS-style dock, and volume/brightness overlays — all under 10MB idle RAM.
           </p>
         </div>
