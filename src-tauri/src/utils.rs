@@ -34,7 +34,7 @@ pub fn resolve_shortcut(path: &str) -> Option<(String, String)> {
     }
 }
 
-static mut ORIGINAL_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
+pub static mut ORIGINAL_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
 static mut ORIGINAL_SEC_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
 static ORIGINAL_TASKBAR_STATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
@@ -76,11 +76,11 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
         }
 
         let state_val = if visible {
-            let orig = ORIGINAL_TASKBAR_STATE.load(std::sync::atomic::Ordering::Relaxed);
-            if orig != -1 {
-                orig as isize
+            if always_on_top {
+                2 // Cleanup / exit path: always restore to Always-on-top
             } else {
-                if always_on_top { 2 } else { 1 }
+                let orig = ORIGINAL_TASKBAR_STATE.load(std::sync::atomic::Ordering::Relaxed);
+                if orig != -1 { orig as isize } else { 1 }
             }
         } else {
             1 // Force Auto-hide when hiding

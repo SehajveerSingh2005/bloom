@@ -845,7 +845,7 @@ pub fn open_notification_center() {
 pub fn open_system_tray() {
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use std::sync::atomic::Ordering;
-        use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, GetWindowLongA, SetWindowLongA, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TRANSPARENT, SetLayeredWindowAttributes, LWA_ALPHA, IsWindowVisible};
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, GetWindowLongA, SetWindowLongA, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TRANSPARENT, SetLayeredWindowAttributes, LWA_ALPHA, IsWindowVisible, ShowWindow, SW_SHOW};
         use windows::core::PCSTR;
 
         let tray_class = PCSTR(c"Shell_TrayWnd".as_ptr() as *const u8);
@@ -859,8 +859,14 @@ pub fn open_system_tray() {
             let _ = SetWindowLongA(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED.0 as i32 | WS_EX_TRANSPARENT.0 as i32);
             let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 0, LWA_ALPHA);
 
-            // 2. Restore taskbar to its screen position and show it WITHOUT work area change (prevents Dock jump)
-            crate::utils::set_taskbar_visibility(true, false);
+            // 2. Show the taskbar window WITHOUT calling ABM_SETSTATE (prevents work-area
+            //    recalculation which would displace the notch/dock appbars).
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE};
+            use crate::utils::ORIGINAL_TRAY_RECT;
+            if let Some(rect) = ORIGINAL_TRAY_RECT {
+                let _ = SetWindowPos(hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            let _ = ShowWindow(hwnd, SW_SHOW);
             crate::state::NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
             
             // Give Windows a moment to realize the taskbar is "there"
