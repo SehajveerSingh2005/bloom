@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { ArrowLeft, ArrowRight, RotateCcw, ExternalLink, Lock, Globe } from 'lucide-react';
+import { RotateCcw, ExternalLink, Lock, Globe } from 'lucide-react';
 
 interface Tab {
   id: string;
@@ -11,6 +11,9 @@ function toEmbedUrl(url: string): string {
   const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
   if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}`;
   if (url.includes('/embed/')) return url;
+  // youtube.com without a video - redirect to a default embed
+  if (url.match(/(?:www\.)?youtube\.com\/?$/)) return 'https://www.youtube.com/embed/dQw4w9WgXcQ';
+  if (url.match(/(?:www\.)?youtu\.be\/?$/)) return 'https://www.youtube.com/embed/dQw4w9WgXcQ';
   return url;
 }
 
@@ -38,6 +41,7 @@ export default function BrowserApp() {
   const [inputValue, setInputValue] = useState('https://en.wikipedia.org');
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const navigate = (targetUrl: string) => {
@@ -151,13 +155,7 @@ export default function BrowserApp() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
         <div className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.02] border-b border-white/[0.05]">
-          <NavBtn onClick={() => iframeRef.current?.contentWindow?.history.back()}>
-            <ArrowLeft size={11} />
-          </NavBtn>
-          <NavBtn onClick={() => iframeRef.current?.contentWindow?.history.forward()}>
-            <ArrowRight size={11} />
-          </NavBtn>
-          <NavBtn onClick={() => { setIsLoading(true); setHasError(false); iframeRef.current?.contentWindow?.location.reload(); }}>
+          <NavBtn onClick={() => { setIsLoading(true); setHasError(false); setRefreshKey((k) => k + 1); }}>
             <RotateCcw size={10} />
           </NavBtn>
 
@@ -210,12 +208,14 @@ export default function BrowserApp() {
             </div>
           ) : (
             <iframe
+              key={refreshKey}
               ref={iframeRef}
               src={currentUrl}
               className="w-full h-full border-0"
+              referrerPolicy="no-referrer"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               onLoad={() => setIsLoading(false)}
               onError={() => { setIsLoading(false); setHasError(true); }}
-              sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
             />
           )}
         </div>

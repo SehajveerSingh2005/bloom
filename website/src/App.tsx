@@ -67,7 +67,7 @@ export default function App() {
     setPositions((prev) => {
       const clamp = (x: number, y: number, w: number, h: number) => ({
         x: Math.max(16, Math.min(x, viewport.w - w - 16)),
-        y: Math.max(56, Math.min(y, viewport.h - h - 80)),
+        y: Math.max(12, Math.min(y, viewport.h - h - 80)),
       });
       return {
         about: clamp(prev.about.x, prev.about.y, 500, 460),
@@ -169,7 +169,7 @@ export default function App() {
       />
 
       {/* Windows */}
-      <div className="absolute inset-0 pt-14 pb-20 px-6 z-20 pointer-events-none">
+      <div className="absolute inset-0 pt-10 pb-16 px-2 z-20 pointer-events-none">
         <div className="relative w-full h-full pointer-events-auto">
           <Window
             id="about"

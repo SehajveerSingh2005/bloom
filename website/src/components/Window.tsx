@@ -39,7 +39,7 @@ export default function Window({
 
   // Clamp position so window never leaves the viewport
   const clampedX = Math.max(16, Math.min(defaultPosition.x, viewport.w - width - 16));
-  const clampedY = Math.max(56, Math.min(defaultPosition.y, viewport.h - height - 80));
+  const clampedY = Math.max(12, Math.min(defaultPosition.y, viewport.h - height - 80));
 
   return (
     <AnimatePresence>
@@ -55,8 +55,8 @@ export default function Window({
           dragConstraints={{
             left: 16,
             right: Math.max(16, viewport.w - 100),
-            top: 56,
-            bottom: Math.max(56, viewport.h - 100),
+            top: 12,
+            bottom: Math.max(12, viewport.h - 100),
           }}
           initial={{ scale: 0.92, opacity: 0, x: clampedX, y: clampedY + 30 }}
           animate={{
@@ -64,8 +64,8 @@ export default function Window({
             opacity: 1,
             x: isMaximized ? 0 : clampedX,
             y: isMaximized ? 0 : clampedY,
-            width: isMaximized ? viewport.w - 48 : width,   // subtract px-6 * 2
-            height: isMaximized ? viewport.h - 136 : height, // subtract pt-14 + pb-20
+            width: isMaximized ? viewport.w - 16 : width,   // subtract px-2 * 2
+            height: isMaximized ? viewport.h - 104 : height, // subtract pt-10 + pb-16
             zIndex: isFocused ? 50 : 20,
           }}
           exit={{ scale: 0.92, opacity: 0, transition: { duration: 0.15 } }}
