@@ -76,12 +76,8 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
         }
 
         let state_val = if visible {
-            if always_on_top {
-                2 // Cleanup / exit path: always restore to Always-on-top
-            } else {
-                let orig = ORIGINAL_TASKBAR_STATE.load(std::sync::atomic::Ordering::Relaxed);
-                if orig != -1 { orig as isize } else { 1 }
-            }
+            let orig = ORIGINAL_TASKBAR_STATE.load(std::sync::atomic::Ordering::Relaxed);
+            if orig != -1 { orig as isize } else { if always_on_top { 2 } else { 1 } }
         } else {
             1 // Force Auto-hide when hiding
         };
