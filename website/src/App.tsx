@@ -11,6 +11,7 @@ import TerminalApp from './components/apps/TerminalApp';
 import ChangelogApp from './components/apps/ChangelogApp';
 import PerformanceApp from './components/apps/PerformanceApp';
 import FeaturesApp from './components/apps/FeaturesApp';
+import BrowserApp from './components/apps/BrowserApp';
 
 import wallpaperImg from './assets/wallpaper.jpg';
 import wallpaper2 from './assets/wallpaper-2.png';
@@ -51,6 +52,7 @@ export default function App() {
     changelog: { x: 300, y: 80 },
     performance: { x: 850, y: 250 },
     features: { x: 200, y: 60 },
+    browser: { x: 400, y: 80 },
   });
 
   const [viewport, setViewport] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -75,6 +77,7 @@ export default function App() {
         changelog: clamp(prev.changelog.x, prev.changelog.y, 480, 400),
         performance: clamp(prev.performance.x, prev.performance.y, 420, 440),
         features: clamp(prev.features.x, prev.features.y, 380, 420),
+        browser: clamp(prev.browser.x, prev.browser.y, 640, 450),
       };
     });
   }, [viewport.w, viewport.h]);
@@ -298,6 +301,23 @@ export default function App() {
             viewport={viewport}
           >
             <FeaturesApp />
+          </Window>
+
+          <Window
+            id="browser"
+            title="Browser"
+            isOpen={openApps.includes('browser')}
+            isFocused={focusedApp === 'browser'}
+            isMinimized={minimizedApps.includes('browser')}
+            onClose={() => handleCloseApp('browser')}
+            onMinimize={() => handleMinimizeApp('browser')}
+            onFocus={() => setFocusedApp('browser')}
+            width={640}
+            height={450}
+            defaultPosition={positions.browser}
+            viewport={viewport}
+          >
+            <BrowserApp />
           </Window>
         </div>
       </div>

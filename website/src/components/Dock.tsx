@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
-import { Music, Settings, Terminal, ScrollText, Activity, Sparkles } from 'lucide-react';
+import { Music, Settings, Terminal, ScrollText, Activity, Sparkles, Globe } from 'lucide-react';
 
 interface DockItem {
   id: string;
@@ -38,6 +38,8 @@ const getAppIcon = (id: string, color: string, size: number = 20) => {
       return <Activity size={size} strokeWidth={2} style={{ color }} />;
     case 'features':
       return <Sparkles size={size} strokeWidth={2} style={{ color }} />;
+    case 'browser':
+      return <Globe size={size} strokeWidth={2} style={{ color }} />;
     default:
       return null;
   }
@@ -58,6 +60,7 @@ const Dock = memo(function Dock({
     { id: 'changelog', name: 'Changelog', accent: '#5e9eff' },
     { id: 'performance', name: 'Performance', accent: '#34d399' },
     { id: 'features', name: 'Features', accent: '#a78bfa' },
+    { id: 'browser', name: 'Browser', accent: '#38bdf8' },
   ]);
 
   const [hoveredApp, setHoveredApp] = useState<string | null>(null);
@@ -118,6 +121,8 @@ const Dock = memo(function Dock({
         return 'System metrics';
       case 'features':
         return 'Feature showcase';
+      case 'browser':
+        return 'Web browser';
       default:
         return 'Running instance';
     }
