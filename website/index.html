@@ -7,9 +7,21 @@
     <title>Bloom - Windows, alive.</title>
     <meta name="description" content="Simulate Bloom's sleek, glassmorphic desktop environment right in your browser. Experience the passive top-notch widgets and bottom dock." />
     <meta name="keywords" content="Windows customizer, desktop overlay, Tauri, Rust shell, Apple Music widget, screen corner bezel, lo-fi player" />
+    <link rel="preload" as="image" href="/src/assets/wallpaper-3.jpg" />
+    <style>
+      html, body, #root {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #0a0a0f;
+        overflow: hidden;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>document.title = '';</script>
   </body>
 </html>

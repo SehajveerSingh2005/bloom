@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Notch from './components/Notch';
 import Dock from './components/Dock';
 import Window from './components/Window';
+import LoadingScreen from './components/LoadingScreen';
 
 import AboutApp from './components/apps/AboutApp';
 import MusicApp from './components/apps/MusicApp';
@@ -14,7 +15,7 @@ import FeaturesApp from './components/apps/FeaturesApp';
 import BrowserApp from './components/apps/BrowserApp';
 
 import wallpaperImg from './assets/wallpaper.jpg';
-import wallpaper2 from './assets/wallpaper-2.png';
+import wallpaper2 from './assets/wallpaper-2.jpg';
 import wallpaper3 from './assets/wallpaper-3.jpg';
 import wallpaper4 from './assets/wallpaper-4.jpg';
 
@@ -43,6 +44,7 @@ export default function App() {
   const [openApps, setOpenApps] = useState<string[]>(['about', 'music', 'terminal']);
   const [minimizedApps, setMinimizedApps] = useState<string[]>([]);
   const [focusedApp, setFocusedApp] = useState<string>('about');
+  const [loaded, setLoaded] = useState(false);
 
   const [positions, setPositions] = useState({
     about: { x: 98, y: 117 },
@@ -148,12 +150,16 @@ export default function App() {
     <div
       className="relative w-screen h-screen overflow-hidden select-none"
       style={{
+        backgroundColor: '#0a0a0f',
         backgroundImage: `url(${activeWallpaperUrl})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         transition: 'background-image 0.5s ease-in-out',
       }}
     >
+      <LoadingScreen onComplete={() => setLoaded(true)} />
+
+      {loaded && (<>
       <div
         className="absolute inset-0 glow-accent pointer-events-none transition-all duration-500"
         style={{ opacity: playback.isPlaying ? 1 : 0 }}
@@ -329,6 +335,7 @@ export default function App() {
         onOpenApp={handleOpenApp}
         onCloseApp={handleCloseApp}
       />
+      </>)}
     </div>
   );
 }

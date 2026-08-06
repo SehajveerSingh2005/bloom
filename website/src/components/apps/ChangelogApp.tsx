@@ -331,9 +331,9 @@ export default function ChangelogApp() {
                                   {section.items.map((item, iIdx) => (
                                     <div
                                       key={iIdx}
-                                      className="flex items-start gap-3 py-2 px-3 rounded-lg bg-white/[0.02] border border-white/[0.04] hover:bg-white/[0.05] transition-colors"
+                                      className="flex items-center gap-3 py-2 px-3 rounded-lg bg-white/[0.02] border border-white/[0.04] hover:bg-white/[0.05] transition-colors"
                                     >
-                                      <div className={`shrink-0 mt-0.5 w-1 h-1 rounded-full ${cfg.color.replace('text-', 'bg-')}`} />
+                                      <div className={`shrink-0 w-1.5 h-1.5 rounded-full ${cfg.color.replace('text-', 'bg-')}`} />
                                       <span className="text-[12px] text-white/60 leading-relaxed">
                                         {item}
                                       </span>
