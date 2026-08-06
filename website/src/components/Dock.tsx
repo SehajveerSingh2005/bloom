@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
-import { Music, Settings, Terminal } from 'lucide-react';
+import { Music, Settings, Terminal, ScrollText, Activity, Sparkles } from 'lucide-react';
 
 interface DockItem {
   id: string;
@@ -32,6 +32,12 @@ const getAppIcon = (id: string, color: string, size: number = 20) => {
       return <Settings size={size} strokeWidth={2} style={{ color }} />;
     case 'terminal':
       return <Terminal size={size} strokeWidth={2} style={{ color }} />;
+    case 'changelog':
+      return <ScrollText size={size} strokeWidth={2} style={{ color }} />;
+    case 'performance':
+      return <Activity size={size} strokeWidth={2} style={{ color }} />;
+    case 'features':
+      return <Sparkles size={size} strokeWidth={2} style={{ color }} />;
     default:
       return null;
   }
@@ -49,6 +55,9 @@ const Dock = memo(function Dock({
     { id: 'music', name: 'Music Player', accent: '#ff2d55' },
     { id: 'settings', name: 'Settings Panel', accent: '#8e8e93' },
     { id: 'terminal', name: 'Developer Logs', accent: '#34c759' },
+    { id: 'changelog', name: 'Changelog', accent: '#5e9eff' },
+    { id: 'performance', name: 'Performance', accent: '#34d399' },
+    { id: 'features', name: 'Features', accent: '#a78bfa' },
   ]);
 
   const [hoveredApp, setHoveredApp] = useState<string | null>(null);
@@ -103,6 +112,12 @@ const Dock = memo(function Dock({
         return 'OS Configurations';
       case 'terminal':
         return 'System terminal logs';
+      case 'changelog':
+        return 'Release history';
+      case 'performance':
+        return 'System metrics';
+      case 'features':
+        return 'Feature showcase';
       default:
         return 'Running instance';
     }

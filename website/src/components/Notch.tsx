@@ -355,6 +355,31 @@ export default function Notch({
         }}
         style={{ originY: 0 }}
       >
+        {/* Ambient Glow Behind Notch (blurred album art when music playing) */}
+        <AnimatePresence>
+          {isMusicMode && playback.trackCover && isHovered && !isCalendarMode && (
+            <motion.div
+              className="notch-ambient-glow"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              <AnimatePresence mode="wait">
+                <motion.img
+                  key={playback.trackCover}
+                  src={playback.trackCover}
+                  alt=""
+                  initial={{ opacity: 0, scale: 1.1 }}
+                  animate={{ opacity: 1, scale: 1.8 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                />
+              </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <AnimatePresence mode="wait">
           {isReady && (
             <motion.div
