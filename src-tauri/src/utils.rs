@@ -96,8 +96,16 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
 
         // 2. Control visibility of the primary taskbar
         if let Ok(tray_hwnd) = FindWindowA(tray_class, windows::core::PCSTR::null()) {
-            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE};
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE, GetWindowLongA, SetWindowLongA, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TRANSPARENT, SetLayeredWindowAttributes, LWA_ALPHA};
             if visible {
+                // Revert any lingering WS_EX_LAYERED / WS_EX_TRANSPARENT left by
+                // open_system_tray if the user quit before the tray thread cleaned up.
+                let ex = GetWindowLongA(tray_hwnd, GWL_EXSTYLE);
+                let cleaned = ex & !(WS_EX_LAYERED.0 as i32) & !(WS_EX_TRANSPARENT.0 as i32);
+                if cleaned != ex {
+                    let _ = SetWindowLongA(tray_hwnd, GWL_EXSTYLE, cleaned);
+                    let _ = SetLayeredWindowAttributes(tray_hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
+                }
                 if let Some(rect) = ORIGINAL_TRAY_RECT {
                     let _ = SetWindowPos(tray_hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
                 }
