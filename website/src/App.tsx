@@ -78,7 +78,7 @@ export default function App() {
         settings: clamp(prev.settings.x, prev.settings.y, 520, 480),
         changelog: clamp(prev.changelog.x, prev.changelog.y, 480, 560),
         performance: clamp(prev.performance.x, prev.performance.y, 420, 440),
-        features: clamp(prev.features.x, prev.features.y, 380, 420),
+        features: clamp(prev.features.x, prev.features.y, 580, 480),
         browser: clamp(prev.browser.x, prev.browser.y, 640, 450),
       };
     });
@@ -301,8 +301,8 @@ export default function App() {
             onClose={() => handleCloseApp('features')}
             onMinimize={() => handleMinimizeApp('features')}
             onFocus={() => setFocusedApp('features')}
-            width={380}
-            height={420}
+            width={580}
+            height={480}
             defaultPosition={positions.features}
             viewport={viewport}
           >
