@@ -52,6 +52,10 @@ const Dock = memo(function Dock() {
   const [isReady, setIsReady] = useState(false);
   const [isImpacted, setIsImpacted] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
+  const [toast, setToast] = useState<string | null>(null);
+  const iconPickerTargetRef = useRef<string | null>(null);
+  const toastTimerRef = useRef<any>(null);
   const dockRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(() => parseFloat(localStorage.getItem("bloom-scale") || "1.0"));
 
@@ -160,6 +164,12 @@ const Dock = memo(function Dock() {
       const pinned = await invoke<AppInfo[]>('load_pinned_apps');
       setPinnedApps(pinned.map(a => ({ ...a, is_pinned: true })));
       pinned.forEach(app => fetchIcon(app.path));
+
+      // Load custom icons
+      try {
+        const icons = await invoke<Record<string, string>>('get_custom_icons');
+        setCustomIcons(icons);
+      } catch (_) {}
     };
     init();
 
@@ -235,6 +245,57 @@ const Dock = memo(function Dock() {
       if (retryCount < 3 && !hwnd) {
         setTimeout(() => fetchIcon(path, name, undefined, retryCount + 1), 3000 * (retryCount + 1));
       }
+    }
+  };
+
+  const handleClearIconCache = async () => {
+    try {
+      await invoke('clear_icon_cache');
+      iconsRef.current = {};
+      setIconsTick(t => t + 1);
+      pinnedApps.forEach(app => fetchIcon(app.path));
+    } catch (e) {
+      console.error("Failed to clear icon cache:", e);
+    }
+  };
+
+  const handleIconFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const target = iconPickerTargetRef.current;
+    if (!file || !target) return;
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUri = reader.result as string;
+      try {
+        const newIcon = await invoke<string>('set_custom_icon', {
+          cacheKey: target,
+          iconData: dataUri
+        });
+        setCustomIcons(prev => ({ ...prev, [target]: newIcon }));
+      } catch (err) {
+        const msg = typeof err === 'string' ? err : 'Failed to set icon';
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        setToast(msg);
+        toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleRemoveCustomIcon = async (cacheKey: string) => {
+    try {
+      await invoke('remove_custom_icon', { cacheKey });
+      setCustomIcons(prev => {
+        const next = { ...prev };
+        delete next[cacheKey];
+        return next;
+      });
+      iconsRef.current[cacheKey] = undefined as any;
+      fetchIcon(cacheKey);
+    } catch (err) {
+      console.error("Failed to remove custom icon:", err);
     }
   };
 
@@ -660,7 +721,7 @@ const Dock = memo(function Dock() {
                   {(() => {
                     const isHost = app.path.toLowerCase().includes("msedge.exe") || app.path.toLowerCase().includes("chrome.exe") || app.path.toLowerCase().includes("applicationframehost.exe");
                     const cacheKey = isHost ? `${app.path}:${app.name.toLowerCase()}` : (app.hwnd ? `${app.path}-${app.hwnd}` : app.path);
-                    const icon = iconsRef.current[cacheKey] || iconsRef.current[app.path] || app.icon;
+                    const icon = customIcons[cacheKey] || customIcons[app.path] || iconsRef.current[cacheKey] || iconsRef.current[app.path] || app.icon;
                     
                     const isBloomOrSettings = app.name.toLowerCase() === 'settings' || 
                                               app.name.toLowerCase() === 'bloom' || 
@@ -750,7 +811,7 @@ const Dock = memo(function Dock() {
                     {(() => {
                       const isHost = app.path.toLowerCase().includes("msedge.exe") || app.path.toLowerCase().includes("chrome.exe") || app.path.toLowerCase().includes("applicationframehost.exe");
                       const cacheKey = isHost ? `${app.path}:${app.name.toLowerCase()}` : (app.hwnd ? `${app.path}-${app.hwnd}` : app.path);
-                      const icon = iconsRef.current[cacheKey] || iconsRef.current[app.path] || app.icon;
+                    const icon = customIcons[cacheKey] || customIcons[app.path] || iconsRef.current[cacheKey] || iconsRef.current[app.path] || app.icon;
                       const isBloomOrSettings = app.name.toLowerCase() === 'settings' || app.name.toLowerCase() === 'bloom' || app.path.toLowerCase().includes('bloom.exe');
                       return icon ? (
                         <img src={icon} alt={app.name} className={isBloomOrSettings ? "bloom-icon-img" : ""} draggable={false} />
@@ -784,6 +845,34 @@ const Dock = memo(function Dock() {
               <div className="menu-item" onClick={() => togglePin(contextMenu.app!)}>
                 {contextMenu.app.is_pinned ? 'Unpin from Dock' : 'Pin to Dock'}
               </div>
+              {contextMenu.app.is_pinned && contextMenu.app.path !== 'start' && (
+                <>
+                  <div className="menu-divider" />
+                  <div className="menu-item" onClick={() => {
+                    const isHost = contextMenu.app!.path.toLowerCase().includes("msedge.exe") || contextMenu.app!.path.toLowerCase().includes("chrome.exe") || contextMenu.app!.path.toLowerCase().includes("applicationframehost.exe");
+                    const ck = isHost ? `${contextMenu.app!.path}:${contextMenu.app!.name.toLowerCase()}` : contextMenu.app!.path;
+                    iconPickerTargetRef.current = ck;
+                    closeMenu();
+                    setTimeout(() => {
+                      document.getElementById('icon-file-input')?.click();
+                    }, 50);
+                  }}>
+                    Change Icon...
+                  </div>
+                  {(() => {
+                    const isHost = contextMenu.app!.path.toLowerCase().includes("msedge.exe") || contextMenu.app!.path.toLowerCase().includes("chrome.exe") || contextMenu.app!.path.toLowerCase().includes("applicationframehost.exe");
+                    const ck = isHost ? `${contextMenu.app!.path}:${contextMenu.app!.name.toLowerCase()}` : contextMenu.app!.path;
+                    return customIcons[ck] ? (
+                      <div className="menu-item" onClick={() => {
+                        handleRemoveCustomIcon(ck);
+                        closeMenu();
+                      }}>
+                        Reset Icon
+                      </div>
+                    ) : null;
+                  })()}
+                </>
+              )}
               <div className="menu-divider" />
               <div className="menu-item" onClick={() => { setShowAddPopup(true); closeMenu(); }}>
                 Add App to Dock...
@@ -798,6 +887,7 @@ const Dock = memo(function Dock() {
                 <div className="submenu">
                   <div className="menu-item" onClick={() => { invoke('open_settings_window'); closeMenu(); }}>Open Settings</div>
                   <div className="menu-item" onClick={() => invoke('restart_bloom')}>Restart Bloom</div>
+                  <div className="menu-item" onClick={() => { handleClearIconCache(); closeMenu(); }}>Clear Icon Cache</div>
                   <div className="menu-divider" />
                   <div className="menu-item quit" onClick={() => invoke('quit_bloom')}>Quit Bloom</div>
                 </div>
@@ -831,6 +921,7 @@ const Dock = memo(function Dock() {
                 <div className="submenu">
                   <div className="menu-item" onClick={() => { invoke('open_settings_window'); closeMenu(); }}>Open Settings</div>
                   <div className="menu-item" onClick={() => invoke('restart_bloom')}>Restart Bloom</div>
+                  <div className="menu-item" onClick={() => { handleClearIconCache(); closeMenu(); }}>Clear Icon Cache</div>
                   <div className="menu-divider" />
                   <div className="menu-item quit" onClick={() => invoke('quit_bloom')}>Quit Bloom</div>
                 </div>
@@ -840,6 +931,14 @@ const Dock = memo(function Dock() {
         </div>
       )}
 
+      <input
+        id="icon-file-input"
+        type="file"
+        accept=".png,.ico,.jpg,.jpeg,.svg,.bmp"
+        style={{ display: 'none' }}
+        onChange={handleIconFileSelect}
+      />
+
       <AnimatePresence>
         {showAddPopup && (
           <AddAppPopup 
@@ -848,6 +947,21 @@ const Dock = memo(function Dock() {
             onAdd={(app: AppInfo) => { togglePin(app); closePopup(); }}
             scale={scale}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            className="dock-toast"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            transition={{ duration: 0.2 }}
+            style={{ zoom: scale }}
+          >
+            {toast}
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

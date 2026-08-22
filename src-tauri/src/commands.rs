@@ -590,20 +590,42 @@ pub async fn focus_window(hwnd: isize) {
     }).await.unwrap_or_default();
 }
 
+fn get_cache_key(path: &str, name: Option<&str>) -> String {
+    let path_lc = path.to_lowercase();
+    let name_lc = name.map(|n| n.to_lowercase()).unwrap_or_default();
+    if path_lc.contains("msedge.exe") || path_lc.contains("chrome.exe") || path_lc.contains("applicationframehost.exe") {
+        format!("{}:{}", path, name_lc)
+    } else {
+        path.to_string()
+    }
+}
+
+fn get_custom_icons_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?.join("custom_icons");
+    let _ = std::fs::create_dir_all(&dir);
+    Ok(dir)
+}
+
+fn sanitize_filename(key: &str) -> String {
+    key.replace(|c: char| c == ':' || c == '\\' || c == '/' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|', "_")
+}
+
 #[tauri::command]
 pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hwnd: Option<isize>) -> Result<Option<String>, String> {
     let cache_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     let cache_path = cache_dir.join("icons_cache.json");
-    
-    let path_lc = path.to_lowercase();
-    let name_lc = name.as_ref().map(|n| n.to_lowercase()).unwrap_or_default();
-    
-    // For host processes, use path + name as cache key to distinguish different PWAs
-    let cache_key = if path_lc.contains("msedge.exe") || path_lc.contains("chrome.exe") || path_lc.contains("applicationframehost.exe") {
-        format!("{}:{}", path, name_lc)
-    } else {
-        path.clone()
-    };
+    let cache_key = get_cache_key(&path, name.as_deref());
+
+    // Strategy 0: Check for custom icon first
+    let custom_icons_dir = cache_dir.join("custom_icons");
+    let custom_file = custom_icons_dir.join(format!("{}.png", sanitize_filename(&cache_key)));
+    if custom_file.exists() {
+        if let Ok(data) = std::fs::read(&custom_file) {
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            return Ok(Some(format!("data:image/png;base64,{}", b64)));
+        }
+    }
 
     let cache = ICON_CACHE.get_or_init(|| {
         let mut map = std::collections::HashMap::new();
@@ -615,12 +637,14 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
         std::sync::Mutex::new(map)
     });
 
+    // Strategy 1: Check persistent in-memory cache
     if let Ok(c) = cache.lock() {
         if let Some(icon) = c.get(&cache_key) {
             return Ok(Some(icon.clone()));
         }
     }
 
+    // Strategy 2: Extract icon from live window HWND
     if let Some(h) = hwnd {
         let result = tauri::async_runtime::spawn_blocking(move || unsafe {
             use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
@@ -655,7 +679,9 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
         }
     }
 
+    // Strategy 3: Extract icon from file path
     let path_clone = path.clone();
+    let ck_clone = cache_key.clone();
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
         use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
@@ -685,21 +711,37 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
                 }
             }
 
+            // Robust path resolution for common apps
             if !std::path::Path::new(&actual_path).is_absolute() {
-                if actual_path.to_lowercase() == "code" || actual_path.to_lowercase() == "code.exe" {
+                let lower = actual_path.to_lowercase();
+                if lower == "code" || lower == "code.exe" {
                     if let Ok(home) = std::env::var("USERPROFILE") {
                         let p = format!("{}\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", home);
                         if std::path::Path::new(&p).exists() { actual_path = p; }
                     }
-                } else if actual_path.to_lowercase() == "msedge" || actual_path.to_lowercase() == "msedge.exe" {
-                    let p = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
+                } else if lower == "msedge" || lower == "msedge.exe" {
+                    let candidates = [
+                        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                    ];
+                    for c in &candidates {
+                        if std::path::Path::new(c).exists() { actual_path = c.to_string(); break; }
+                    }
+                } else if lower == "notepad" || lower == "notepad.exe" {
+                    let candidates = [
+                        r"C:\Windows\System32\notepad.exe",
+                        r"C:\Windows\notepad.exe",
+                    ];
+                    for c in &candidates {
+                        if std::path::Path::new(c).exists() { actual_path = c.to_string(); break; }
+                    }
+                } else if lower == "explorer" || lower == "explorer.exe" {
+                    let p = r"C:\Windows\explorer.exe";
                     if std::path::Path::new(p).exists() { actual_path = p.to_string(); }
                 }
             }
 
             let mut shfi: SHFILEINFOW = std::mem::zeroed();
-            // Always get icon from the resolved target, never from the .lnk itself
-            // (calling SHGetFileInfoW on a .lnk produces the shortcut arrow overlay)
             let icon_path = if is_lnk { &actual_path } else { &path_clone };
             let path_u16: Vec<u16> = icon_path.encode_utf16().chain(std::iter::once(0)).collect();
             let res = SHGetFileInfoW(windows::core::PCWSTR(path_u16.as_ptr()), Default::default(), Some(&mut shfi), std::mem::size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
@@ -708,7 +750,7 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
                 let base64_icon = icon_to_base64(shfi.hIcon);
                 let _ = DestroyIcon(shfi.hIcon);
                 if let Some(ref base64) = base64_icon {
-                    if let Ok(mut lock) = ICON_CACHE.get().unwrap().lock() { lock.insert(cache_key, base64.clone()); }
+                    if let Ok(mut lock) = ICON_CACHE.get().unwrap().lock() { lock.insert(ck_clone, base64.clone()); }
                 }
                 Some(base64_icon)
             } else { None }
@@ -737,7 +779,121 @@ pub async fn load_pinned_apps(app: AppHandle) -> Vec<AppInfo> {
         AppInfo { name: "File Explorer".into(), path: "C:\\Windows\\explorer.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("explorer.exe".into()), all_hwnds: None },
         AppInfo { name: "Microsoft Edge".into(), path: "msedge".into(), icon: None, is_running: false, hwnd: None, executable: Some("msedge.exe".into()), all_hwnds: None },
         AppInfo { name: "Notepad".into(), path: "notepad.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("notepad.exe".into()), all_hwnds: None },
+        AppInfo { name: "Settings".into(), path: "bloom-settings".into(), icon: None, is_running: false, hwnd: None, executable: None, all_hwnds: None },
     ]
+}
+
+#[tauri::command]
+pub async fn clear_icon_cache(app: AppHandle) -> Result<(), String> {
+    let cache_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let cache_path = cache_dir.join("icons_cache.json");
+    let _ = std::fs::remove_file(&cache_path);
+    if let Some(c) = ICON_CACHE.get() {
+        if let Ok(mut lock) = c.lock() {
+            lock.clear();
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_custom_icon(app: AppHandle, cache_key: String, icon_data: String) -> Result<String, String> {
+    use base64::Engine;
+    use image::GenericImageView;
+
+    // Validate and decode the base64 data URI
+    let b64_str = if icon_data.starts_with("data:") {
+        icon_data.split(',').nth(1).ok_or("Invalid data URI")?
+    } else {
+        &icon_data
+    };
+
+    let raw_bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64_str)
+        .map_err(|e| format!("Invalid base64: {}", e))?;
+
+    // Decode image to validate and get dimensions
+    let img = image::load_from_memory(&raw_bytes)
+        .map_err(|e| format!("Invalid image: {}", e))?;
+
+    let (w, h) = img.dimensions();
+    if w < 16 || h < 16 {
+        return Err("Icon must be at least 16x16 pixels".into());
+    }
+
+    // Resize to fit within 256x256 preserving aspect ratio, then center on transparent canvas
+    let target = 256u32;
+    let final_img = if w > target || h > target {
+        let scaled = img.resize(target, target, image::imageops::FilterType::Lanczos3);
+        let (sw, sh) = scaled.dimensions();
+        let mut canvas = image::RgbaImage::new(target, target);
+        let ox = (target - sw) / 2;
+        let oy = (target - sh) / 2;
+        image::imageops::overlay(&mut canvas, &scaled, ox as i64, oy as i64);
+        image::DynamicImage::ImageRgba8(canvas)
+    } else {
+        img
+    };
+
+    // Encode to PNG bytes
+    let mut png_bytes: Vec<u8> = Vec::new();
+    final_img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode PNG: {}", e))?;
+
+    // Save to custom_icons directory
+    let icons_dir = get_custom_icons_dir(&app)?;
+    let filename = format!("{}.png", sanitize_filename(&cache_key));
+    let file_path = icons_dir.join(&filename);
+    std::fs::write(&file_path, &png_bytes).map_err(|e| e.to_string())?;
+
+    // Return the data URI for immediate use
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+    Ok(format!("data:image/png;base64,{}", b64))
+}
+
+#[tauri::command]
+pub async fn remove_custom_icon(app: AppHandle, cache_key: String) -> Result<(), String> {
+    let icons_dir = get_custom_icons_dir(&app)?;
+    let filename = format!("{}.png", sanitize_filename(&cache_key));
+    let file_path = icons_dir.join(&filename);
+    if file_path.exists() {
+        std::fs::remove_file(&file_path).map_err(|e| e.to_string())?;
+    }
+    // Also remove from persistent cache so the original icon is re-fetched
+    if let Some(c) = ICON_CACHE.get() {
+        if let Ok(mut lock) = c.lock() {
+            lock.remove(&cache_key);
+        }
+    }
+    let cache_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let cache_path = cache_dir.join("icons_cache.json");
+    if let Some(c) = ICON_CACHE.get() {
+        if let Ok(lock) = c.lock() {
+            let _ = std::fs::write(&cache_path, serde_json::to_string(&*lock).unwrap_or_default());
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_custom_icons(app: AppHandle) -> Result<HashMap<String, String>, String> {
+    let icons_dir = get_custom_icons_dir(&app)?;
+    let mut result = HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(&icons_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("png") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if let Ok(data) = std::fs::read(&path) {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                        result.insert(stem.to_string(), format!("data:image/png;base64,{}", b64));
+                    }
+                }
+            }
+        }
+    }
+    Ok(result)
 }
 
 #[tauri::command]
