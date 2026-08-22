@@ -32,6 +32,7 @@ interface CompactMediaPlayerProps {
   nextBack: ReturnType<typeof useAnimation>;
   onAnimatePrev: () => void;
   onAnimateNext: () => void;
+  onLayoutChange: (layout: 'classic' | 'compact') => void;
 }
 
 const MARQUEE_SPEED = 30;
@@ -112,6 +113,7 @@ export function CompactMediaPlayer({
   nextBack,
   onAnimatePrev,
   onAnimateNext,
+  onLayoutChange,
 }: CompactMediaPlayerProps) {
   const seekRef = useRef<HTMLInputElement>(null);
 
@@ -176,7 +178,7 @@ export function CompactMediaPlayer({
     <div className="cmp">
       {/* Row 1: Album art + Title/Artist + Visualizer */}
       <div className="cmp-row cmp-row-info">
-        <div className="cmp-art" onClick={(e) => { e.stopPropagation(); invoke('open_media_source_app').catch(() => {}); }} style={{ cursor: 'pointer' }}>
+        <div className="cmp-art" onClick={(e) => { e.stopPropagation(); onLayoutChange('classic'); }} style={{ cursor: 'pointer' }}>
           <AnimatePresence mode="wait" initial={false}>
             {albumArtUrl ? (
               <motion.img

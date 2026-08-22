@@ -7,7 +7,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
 import "./App.css";
 import { initTheme } from "./theme";
-import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, VolumeLowIcon, VolumeHighIcon, MusicNoteIcon } from "./icons";
+import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, VolumeLowIcon, VolumeHighIcon, MusicNoteIcon, HeadphonesIcon } from "./icons";
 import { CompactMediaPlayer } from "./CompactMediaPlayer";
 
 // Simple SVG icons
@@ -1450,6 +1450,11 @@ function App() {
                         nextBack={nextBack}
                         onAnimatePrev={animatePrev}
                         onAnimateNext={animateNext}
+                        onLayoutChange={(layout) => {
+                          setMediaLayout(layout);
+                          localStorage.setItem("bloom-media-layout", layout);
+                          window.dispatchEvent(new CustomEvent("settings-changed", { detail: { key: "media-layout", value: layout } }));
+                        }}
                       />
                     ) : (
                     <div className="compact-premium-layout">
@@ -1458,7 +1463,12 @@ function App() {
                           className="premium-album-art"
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
-                          onClick={(e) => { e.stopPropagation(); invoke('open_media_source_app').catch(() => {}); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMediaLayout('compact');
+                            localStorage.setItem("bloom-media-layout", "compact");
+                            window.dispatchEvent(new CustomEvent("settings-changed", { detail: { key: "media-layout", value: "compact" } }));
+                          }}
                           style={{ cursor: 'pointer' }}
                         >
                           <AnimatePresence mode="wait" initial={false}>
@@ -1495,8 +1505,18 @@ function App() {
                             <TitleMarquee title={mediaInfo.title} />
                             <span className="premium-artist">{mediaInfo.artist}</span>
                           </div>
-                          <div className="header-visualizer">
-                            <Visualizer isPlaying={isPlaying} bars={5} height={18} />
+                          <div className="header-visualizer-wrap">
+                            <div className="header-visualizer">
+                              <Visualizer isPlaying={isPlaying} bars={5} height={18} />
+                            </div>
+                            <motion.button
+                              className="classic-audio-output-btn"
+                              onClick={(e) => { e.stopPropagation(); invoke('open_sound_settings').catch(() => {}); }}
+                              whileTap={{ scale: 0.9 }}
+                              title="Audio Output"
+                            >
+                              <HeadphonesIcon size={18} style={{ opacity: 0.5 }} />
+                            </motion.button>
                           </div>
                         </div>
 

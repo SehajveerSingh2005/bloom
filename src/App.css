@@ -771,9 +771,32 @@ body {
     gap: 1px;
 }
 
-.header-visualizer {
+.header-visualizer-wrap {
+    position: relative;
     padding-top: 4px;
+}
+
+.header-visualizer {
     opacity: 0.8;
+    transition: opacity 0.2s ease;
+}
+
+.header-visualizer-wrap .classic-audio-output-btn {
+    position: absolute;
+    top: 4px;
+    left: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.header-visualizer-wrap:hover .header-visualizer {
+    opacity: 0;
+}
+
+.header-visualizer-wrap:hover .classic-audio-output-btn {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .premium-title-wrap {
@@ -919,6 +942,25 @@ body {
     height: 0;
     background: transparent;
     border: none;
+}
+
+.classic-audio-output-btn {
+    background: none;
+    border: none;
+    color: var(--bloom-text, white);
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    outline: none;
+    flex-shrink: 0;
+    transition: opacity 0.2s ease;
+}
+
+.classic-audio-output-btn:hover {
+    opacity: 1 !important;
 }
 
 .glow-cursor {
