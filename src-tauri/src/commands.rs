@@ -846,6 +846,16 @@ pub async fn set_custom_icon(app: AppHandle, cache_key: String, icon_data: Strin
     let file_path = icons_dir.join(&filename);
     std::fs::write(&file_path, &png_bytes).map_err(|e| e.to_string())?;
 
+    // Update manifest mapping sanitized filename -> original cache key
+    let manifest_path = icons_dir.join("custom_icons.json");
+    let mut manifest: std::collections::HashMap<String, String> = if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
+    manifest.insert(sanitize_filename(&cache_key), cache_key);
+    let _ = std::fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap_or_default());
+
     // Return the data URI for immediate use
     let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
     Ok(format!("data:image/png;base64,{}", b64))
@@ -854,10 +864,19 @@ pub async fn set_custom_icon(app: AppHandle, cache_key: String, icon_data: Strin
 #[tauri::command]
 pub async fn remove_custom_icon(app: AppHandle, cache_key: String) -> Result<(), String> {
     let icons_dir = get_custom_icons_dir(&app)?;
-    let filename = format!("{}.png", sanitize_filename(&cache_key));
+    let sanitized = sanitize_filename(&cache_key);
+    let filename = format!("{}.png", sanitized);
     let file_path = icons_dir.join(&filename);
     if file_path.exists() {
         std::fs::remove_file(&file_path).map_err(|e| e.to_string())?;
+    }
+    // Remove from manifest
+    let manifest_path = icons_dir.join("custom_icons.json");
+    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+        if let Ok(mut manifest) = serde_json::from_str::<std::collections::HashMap<String, String>>(&content) {
+            manifest.remove(&sanitized);
+            let _ = std::fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap_or_default());
+        }
     }
     // Also remove from persistent cache so the original icon is re-fetched
     if let Some(c) = ICON_CACHE.get() {
@@ -878,16 +897,24 @@ pub async fn remove_custom_icon(app: AppHandle, cache_key: String) -> Result<(),
 #[tauri::command]
 pub async fn get_custom_icons(app: AppHandle) -> Result<HashMap<String, String>, String> {
     let icons_dir = get_custom_icons_dir(&app)?;
+    let manifest_path = icons_dir.join("custom_icons.json");
+    let manifest: std::collections::HashMap<String, String> = if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
     let mut result = HashMap::new();
     if let Ok(entries) = std::fs::read_dir(&icons_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("png") {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    // Use original cache key from manifest, fallback to sanitized stem
+                    let key = manifest.get(stem).cloned().unwrap_or_else(|| stem.to_string());
                     if let Ok(data) = std::fs::read(&path) {
                         use base64::Engine;
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                        result.insert(stem.to_string(), format!("data:image/png;base64,{}", b64));
+                        result.insert(key, format!("data:image/png;base64,{}", b64));
                     }
                 }
             }
