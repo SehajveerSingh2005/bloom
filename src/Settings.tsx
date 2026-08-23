@@ -67,6 +67,7 @@ function SettingsApp() {
   const [isSearching, setIsSearching] = useState(false);
   const [dockEnabled, setDockEnabled] = useState(true);
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(true);
+  const [dockIconOnly, setDockIconOnly] = useState(() => localStorage.getItem("bloom-dock-icon-only") === "true");
   const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "auto-hide");
   const [notchMode, setNotchMode] = useState("fixed");
   const [lowBatteryThreshold, setLowBatteryThreshold] = useState(20);
@@ -179,6 +180,9 @@ function SettingsApp() {
       const preview = getVal("bloom-dock-preview-enabled");
       if (preview !== null) setDockPreviewEnabled(preview === "true");
 
+      const iconOnly = getVal("bloom-dock-icon-only");
+      if (iconOnly !== null) setDockIconOnly(iconOnly === "true");
+
       const scaleVal = getVal("bloom-scale");
       if (scaleVal !== null) setScale(parseFloat(scaleVal));
 
@@ -220,6 +224,7 @@ function SettingsApp() {
       if (key === "dock-mode") setDockMode(value);
       if (key === "notch-mode") setNotchMode(value);
       if (key === "dock-enabled") setDockEnabled(value);
+      if (key === "dock-icon-only") setDockIconOnly(value);
       if (key === "weather") setWeatherEnabled(value);
       if (key === "calendar") setCalendarEnabled(value);
       if (key === "music-mode-enabled") setMusicModeEnabled(value);
@@ -495,6 +500,13 @@ function SettingsApp() {
     setDockPreviewEnabled(newVal);
     saveAndLocal("bloom-dock-preview-enabled", String(newVal));
     notifyChange("dock-preview-enabled", newVal);
+  };
+
+  const toggleDockIconOnly = () => {
+    const newVal = !dockIconOnly;
+    setDockIconOnly(newVal);
+    saveAndLocal("bloom-dock-icon-only", String(newVal));
+    notifyChange("dock-icon-only", newVal);
   };
 
   const toggleDockMode = (newMode: string) => {
@@ -859,6 +871,20 @@ function SettingsApp() {
               </div>
               <label className="toggle-switch">
                 <input type="checkbox" checked={dockPreviewEnabled} onChange={toggleDockPreview} />
+                <span className="slider"></span>
+              </label>
+            </div>
+            <div className="setting-divider" />
+            <div className="setting-item">
+              <div className="setting-icon-bg">
+                <Circle size={14} strokeWidth={1.5} />
+              </div>
+              <div className="setting-info">
+                <span className="setting-label">Icon Only</span>
+                <span className="setting-desc">Remove icon background and padding</span>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={dockIconOnly} onChange={toggleDockIconOnly} />
                 <span className="slider"></span>
               </label>
             </div>

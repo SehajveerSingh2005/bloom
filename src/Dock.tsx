@@ -37,6 +37,7 @@ const Dock = memo(function Dock() {
   const [, setIconsTick] = useState(0); 
   const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "auto-hide");
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(() => localStorage.getItem("bloom-dock-preview-enabled") !== "false");
+  const [dockIconOnly, setDockIconOnly] = useState(() => localStorage.getItem("bloom-dock-icon-only") === "true");
   const [previewData, setPreviewData] = useState<{ path: string, previews: { hwnd: number, title: string, image: string }[] } | null>(null);
   const [isDockHovered, setIsDockHovered] = useState(false);
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
@@ -158,6 +159,9 @@ const Dock = memo(function Dock() {
       const preview = getVal("bloom-dock-preview-enabled", "true");
       setDockPreviewEnabled(preview === "true");
 
+      const iconOnly = getVal("bloom-dock-icon-only", "false");
+      setDockIconOnly(iconOnly === "true");
+
       const scaleVal = getVal("bloom-scale");
       if (scaleVal !== null) setScale(parseFloat(scaleVal));
 
@@ -176,6 +180,7 @@ const Dock = memo(function Dock() {
     const unlistenSettings = listen<{ key: string, value: any }>("settings-changed", (event) => {
       if (event.payload.key === "dock-mode") setDockMode(event.payload.value);
       if (event.payload.key === "dock-preview-enabled") setDockPreviewEnabled(event.payload.value);
+      if (event.payload.key === "dock-icon-only") setDockIconOnly(event.payload.value);
       if (event.payload.key === "bloom-scale") setScale(Number(event.payload.value));
     });
 
@@ -572,7 +577,7 @@ const Dock = memo(function Dock() {
         <motion.div
           ref={dockRef}
           layout
-          className={`dock ${isExpanded && !isHidden ? 'dock-expanded' : ''} ${isImpacted && !isExpanded && !isHidden ? 'dock-impacted' : ''}`}
+          className={`dock ${isExpanded && !isHidden ? 'dock-expanded' : ''} ${isImpacted && !isExpanded && !isHidden ? 'dock-impacted' : ''} ${dockIconOnly ? 'dock-icon-only' : ''}`}
           onMouseEnter={() => setIsDockHovered(true)}
           onMouseLeave={() => { setIsDockHovered(false); setHoveredApp(null); setPressedApp(null); }}
         initial={{ y: -800, opacity: 1, width: 34, height: 34, borderTopLeftRadius: 17, borderTopRightRadius: 17, borderBottomLeftRadius: 17, borderBottomRightRadius: 17 }}

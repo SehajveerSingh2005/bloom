@@ -311,6 +311,21 @@ body {
   stroke: rgba(255, 255, 255, 0.9);
 }
 
+.dock-icon-only .dock-icon {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.dock-icon-only .dock-icon img {
+  width: 32px;
+  height: 32px;
+}
+
+.dock-icon-only .fallback-icon {
+  font-size: 16px;
+}
+
 /* Active application indicator */
 .active-indicator {
   position: absolute;
@@ -683,6 +698,10 @@ body {
 
 .light-mode .dock-icon svg {
   stroke: var(--bloom-text);
+}
+
+.light-mode .dock-icon-only .dock-icon {
+  background: none;
 }
 
 .light-mode .active-indicator {
