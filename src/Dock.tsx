@@ -289,16 +289,20 @@ const Dock = memo(function Dock() {
     e.target.value = '';
   };
 
-  const handleRemoveCustomIcon = async (cacheKey: string) => {
+  const handleRemoveCustomIcon = async (app: AppInfo) => {
     try {
-      await invoke('remove_custom_icon', { cacheKey });
+      await invoke('remove_custom_icon', { path: app.path, name: app.name || null });
+      const isHost = app.path.toLowerCase().includes("msedge.exe") || app.path.toLowerCase().includes("chrome.exe") || app.path.toLowerCase().includes("applicationframehost.exe");
+      const ck = isHost ? `${app.path}:${app.name.toLowerCase()}` : app.path;
       setCustomIcons(prev => {
         const next = { ...prev };
-        delete next[cacheKey];
+        delete next[ck];
         return next;
       });
-      iconsRef.current[cacheKey] = undefined as any;
-      fetchIcon(cacheKey);
+      // Clear all cached icons and re-fetch to get fresh originals
+      iconsRef.current = {};
+      setIconsTick(t => t + 1);
+      pinnedApps.forEach(a => fetchIcon(a.path));
     } catch (err) {
       console.error("Failed to remove custom icon:", err);
     }
@@ -869,7 +873,7 @@ const Dock = memo(function Dock() {
                     const ck = isHost ? `${contextMenu.app!.path}:${contextMenu.app!.name.toLowerCase()}` : contextMenu.app!.path;
                     return customIcons[ck] ? (
                       <div className="menu-item" onClick={() => {
-                        handleRemoveCustomIcon(ck);
+                        handleRemoveCustomIcon(contextMenu.app!);
                         closeMenu();
                       }}>
                         Reset Icon

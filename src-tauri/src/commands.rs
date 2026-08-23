@@ -862,7 +862,8 @@ pub async fn set_custom_icon(app: AppHandle, cache_key: String, icon_data: Strin
 }
 
 #[tauri::command]
-pub async fn remove_custom_icon(app: AppHandle, cache_key: String) -> Result<(), String> {
+pub async fn remove_custom_icon(app: AppHandle, path: String, name: Option<String>) -> Result<(), String> {
+    let cache_key = get_cache_key(&path, name.as_deref());
     let icons_dir = get_custom_icons_dir(&app)?;
     let sanitized = sanitize_filename(&cache_key);
     let filename = format!("{}.png", sanitized);
