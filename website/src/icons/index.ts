@@ -1,0 +1,9 @@
+export { PlayIcon } from './PlayIcon';
+export { PauseIcon } from './PauseIcon';
+export { SkipBackIcon } from './SkipBackIcon';
+export { SkipForwardIcon } from './SkipForwardIcon';
+export { VolumeLowIcon } from './VolumeLowIcon';
+export { VolumeHighIcon } from './VolumeHighIcon';
+export { MusicNoteIcon } from './MusicNoteIcon';
+export { SpeakerIcon } from './SpeakerIcon';
+export { HeadphonesIcon } from './HeadphonesIcon';
