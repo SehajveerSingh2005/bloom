@@ -174,7 +174,10 @@ function SettingsApp() {
       if (threshold !== null) setLowBatteryThreshold(parseInt(threshold));
 
       const nMode = getVal("bloom-notch-mode");
-      if (nMode) setNotchMode(nMode);
+      if (nMode) {
+        const mapped = nMode === "auto-hide" ? "smart" : nMode;
+        setNotchMode(mapped);
+      }
 
       const preview = getVal("bloom-dock-preview-enabled");
       if (preview !== null) setDockPreviewEnabled(preview === "true");
@@ -627,7 +630,7 @@ function SettingsApp() {
           </div>
           <div className="setting-info">
             <span className="setting-label">Notch Behavior</span>
-            <span className="setting-desc">Auto-hide top bar</span>
+            <span className="setting-desc">Choose how the notch appears</span>
           </div>
           <select 
             className="settings-select" 
@@ -635,7 +638,8 @@ function SettingsApp() {
             onChange={(e) => toggleNotchMode(e.target.value)}
           >
             <option value="fixed">Fixed</option>
-            <option value="auto-hide">Auto Hide</option>
+            <option value="smart">Smart</option>
+            <option value="peek">Peek</option>
           </select>
         </div>
 
