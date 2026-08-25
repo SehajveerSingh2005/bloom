@@ -35,7 +35,11 @@ const Dock = memo(function Dock() {
   const [activeApps, setActiveApps] = useState<AppInfo[]>([]);
   const iconsRef = useRef<Record<string, string>>({});
   const [, setIconsTick] = useState(0); 
-  const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "auto-hide");
+  const [dockMode, setDockMode] = useState(() => {
+    const raw = localStorage.getItem("bloom-dock-mode") || "fixed";
+    if (raw === "auto-hide") return "smart";
+    return raw;
+  });
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(() => localStorage.getItem("bloom-dock-preview-enabled") !== "false");
   const [previewData, setPreviewData] = useState<{ path: string, previews: { hwnd: number, title: string, image: string }[] } | null>(null);
   const [isDockHovered, setIsDockHovered] = useState(false);
@@ -75,7 +79,8 @@ const Dock = memo(function Dock() {
     }
   }, [isAnyInteraction]);
 
-  const isHidden = dockMode === 'auto-hide' && isOverlapped && interactionState === 'none';
+  const isHidden = (dockMode === 'smart' && isOverlapped && interactionState === 'none') ||
+    (dockMode === 'peek' && interactionState === 'none');
 
   useEffect(() => {
     let cleared = false;
@@ -148,8 +153,11 @@ const Dock = memo(function Dock() {
         return fallback;
       };
       
-      const dMode = getVal("bloom-dock-mode", "auto-hide");
-      setDockMode(dMode as string);
+      const dMode = getVal("bloom-dock-mode", "fixed");
+      if (dMode) {
+        const mapped = dMode === "auto-hide" ? "smart" : dMode;
+        setDockMode(mapped);
+      }
 
       const preview = getVal("bloom-dock-preview-enabled", "true");
       setDockPreviewEnabled(preview === "true");

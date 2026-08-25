@@ -67,7 +67,11 @@ function SettingsApp() {
   const [isSearching, setIsSearching] = useState(false);
   const [dockEnabled, setDockEnabled] = useState(true);
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(true);
-  const [dockMode, setDockMode] = useState(() => localStorage.getItem("bloom-dock-mode") || "auto-hide");
+  const [dockMode, setDockMode] = useState(() => {
+    const raw = localStorage.getItem("bloom-dock-mode") || "fixed";
+    if (raw === "auto-hide") return "smart";
+    return raw;
+  });
   const [notchMode, setNotchMode] = useState("fixed");
   const [lowBatteryThreshold, setLowBatteryThreshold] = useState(20);
   const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "uptodate" | "error" | "downloading">("idle");
@@ -168,7 +172,10 @@ function SettingsApp() {
       if (dock !== null) setDockEnabled(dock === "true");
 
       const dMode = getVal("bloom-dock-mode");
-      if (dMode) setDockMode(dMode);
+      if (dMode) {
+        const mapped = dMode === "auto-hide" ? "smart" : dMode;
+        setDockMode(mapped);
+      }
 
       const threshold = getVal("bloom-low-battery-threshold");
       if (threshold !== null) setLowBatteryThreshold(parseInt(threshold));
@@ -841,7 +848,7 @@ function SettingsApp() {
               </div>
               <div className="setting-info">
                 <span className="setting-label">Behavior</span>
-                <span className="setting-desc">{dockMode === 'fixed' ? 'Reserves screen space' : 'Auto hide when not in use'}</span>
+                <span className="setting-desc">Choose how the dock appears</span>
               </div>
               <select 
                 className="settings-select" 
@@ -849,7 +856,8 @@ function SettingsApp() {
                 onChange={(e) => toggleDockMode(e.target.value)}
               >
                 <option value="fixed">Fixed</option>
-                <option value="auto-hide">Auto Hide</option>
+                <option value="smart">Smart</option>
+                <option value="peek">Peek</option>
               </select>
             </div>
             <div className="setting-divider" />

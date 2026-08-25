@@ -325,8 +325,10 @@ function App() {
     if (raw === "auto-hide") return "smart";
     return raw;
   });
-  const [dockMode, setDockMode] = useState<'fixed' | 'auto-hide'>(() => {
-    return (localStorage.getItem("bloom-dock-mode") as 'fixed' | 'auto-hide') || 'auto-hide';
+  const [dockMode, setDockMode] = useState(() => {
+    const raw = localStorage.getItem("bloom-dock-mode") || "fixed";
+    if (raw === "auto-hide") return "smart";
+    return raw;
   });
   const [dndActive, setDndActive] = useState(false);
   const [isNotchHovered, setIsNotchHovered] = useState(false);
@@ -536,7 +538,8 @@ function App() {
           });
           localStorage.setItem("bloom-first-run", "done");
         }
-        const dockMode = getVal("bloom-dock-mode", "auto-hide") as string;
+        const rawDockMode = getVal("bloom-dock-mode", "fixed") as string;
+        const dockMode = rawDockMode === "auto-hide" ? "smart" : rawDockMode;
         const syncWindows = async () => {
           const dockEnabled = getVal("bloom-dock-enabled", "true") === "true";
           if (dockEnabled) {
@@ -1217,7 +1220,7 @@ function App() {
 
   const toggleDockModeSetting = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
-    const nextMode = dockMode === "fixed" ? "auto-hide" : "fixed";
+    const nextMode = dockMode === "fixed" ? "smart" : dockMode === "smart" ? "peek" : "fixed";
     setDockMode(nextMode);
     localStorage.setItem("bloom-dock-mode", nextMode);
     invoke("save_setting", { key: "bloom-dock-mode", value: nextMode }).catch(console.error);
@@ -1825,14 +1828,14 @@ function App() {
                       <div
                         className={`cc-pill-tile ${dockMode === 'fixed' ? 'active' : ''}`}
                         onClick={toggleDockModeSetting}
-                        title="Toggle Dock fixed / auto-hide"
+                        title="Cycle dock mode: Fixed / Smart / Peek"
                       >
                         <div className="cc-pill-icon-wrapper">
                           <DockIcon />
                         </div>
                         <div className="cc-pill-info">
                           <span className="cc-pill-title">Dock Mode</span>
-                          <span className="cc-pill-status">{dockMode === 'fixed' ? 'Fixed' : 'Auto Hide'}</span>
+                          <span className="cc-pill-status">{dockMode === 'fixed' ? 'Fixed' : dockMode === 'smart' ? 'Smart' : 'Peek'}</span>
                         </div>
                       </div>
 

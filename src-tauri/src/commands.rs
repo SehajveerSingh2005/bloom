@@ -158,7 +158,7 @@ pub async fn toggle_dock(app: AppHandle, enable: bool) {
         if enable {
             // Load the saved dock mode rather than hardcoding "fixed"
             let saved_mode = crate::utils::get_setting_str(&app, "bloom-dock-mode")
-                .unwrap_or_else(|| "auto-hide".to_string());
+                .unwrap_or_else(|| "fixed".to_string());
             init_dock(app, saved_mode).await;
         } else {
             let _ = dock_win.hide();
