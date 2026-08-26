@@ -15,6 +15,7 @@
     "autostart:default",
     "core:app:default",
     "updater:allow-check",
-    "updater:allow-download-and-install"
+    "updater:allow-download-and-install",
+    "dialog:default"
   ]
 }

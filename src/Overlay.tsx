@@ -332,6 +332,24 @@ function OverlayApp() {
       }
     });
 
+    const unlistenExternalSettings = listen<{ key: string, value: any }>("settings-external-changed", (event) => {
+      const { key, value } = event.payload;
+      if (value !== null) {
+        localStorage.setItem(key, String(value));
+      } else {
+        localStorage.removeItem(key);
+      }
+      if (key === "bloom-volume-overlay-enabled") {
+        setVolumeOverlayEnabled(value !== "false");
+      }
+      if (key === "bloom-volume-edge-enabled") setVolumeEdgeEnabled(value !== "false");
+      if (key === "bloom-brightness-overlay-enabled") {
+        setBrightnessOverlayEnabled(value !== "false");
+      }
+      if (key === "bloom-brightness-edge-enabled") setBrightnessEdgeEnabled(value !== "false");
+      if (key === "bloom-scale") setScale(Number(value));
+    });
+
     return () => {
       volPromise.then(fn => fn());
       volEdgePromise.then(fn => fn());
@@ -339,6 +357,7 @@ function OverlayApp() {
       brightEdgePromise.then(fn => fn());
       settingsPromise.then(fn => fn());
       autoUpdatePromise.then(fn => fn());
+      unlistenExternalSettings.then(fn => fn());
       document.removeEventListener('contextmenu', preventContext);
     };
   }, [volumeOverlayEnabled, volumeEdgeEnabled, brightnessOverlayEnabled, brightnessEdgeEnabled, resetHideTimeout]);

@@ -46,6 +46,7 @@ windows = { version = "0.61", features = [
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
   "Win32_System_LibraryLoader",
+  "Win32_System_IO",
   "Win32_Security",
   "Win32_System_Registry",
   "Win32_Devices_FunctionDiscovery",
@@ -60,4 +61,5 @@ wmi = "0.14"
 tokio = { version = "1", features = ["time"] }
 image = "0.25"
 tauri-plugin-drag = "2.1.1"
+tauri-plugin-dialog = "2"
 

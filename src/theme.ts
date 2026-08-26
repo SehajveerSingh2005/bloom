@@ -290,8 +290,27 @@ export function initTheme() {
     }
   });
 
+  const externalPromise = listen<{ key: string; value: any }>('settings-external-changed', (event) => {
+    const { key, value } = event.payload;
+    if (value !== null) {
+      localStorage.setItem(key, String(value));
+    } else {
+      localStorage.removeItem(key);
+    }
+    const themeKeys = ['bloom-theme-mode', 'bloom-theme-color', 'bloom-theme-opacity', 'bloom-theme-saturation', 'bloom-theme-brightness'];
+    if (themeKeys.includes(key)) {
+      const mode = localStorage.getItem('bloom-theme-mode') || 'dark';
+      const color = localStorage.getItem('bloom-theme-color') || '#007aff';
+      const opacity = parseFloat(localStorage.getItem('bloom-theme-opacity') || '0.80');
+      const saturation = parseFloat(localStorage.getItem('bloom-theme-saturation') || '0.50');
+      const brightness = parseFloat(localStorage.getItem('bloom-theme-brightness') || '0.15');
+      applyTheme(mode, color, opacity, saturation, brightness);
+    }
+  });
+
   return () => {
     settingsPromise.then(f => f());
     accentPromise.then(f => f());
+    externalPromise.then(f => f());
   };
 }

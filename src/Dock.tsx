@@ -204,11 +204,28 @@ const Dock = memo(function Dock() {
       setIsVisible(event.payload);
     });
 
+    const unlistenExternalSettings = listen<{ key: string, value: any }>("settings-external-changed", (event) => {
+      const { key, value } = event.payload;
+      if (value !== null) {
+        localStorage.setItem(key, String(value));
+      } else {
+        localStorage.removeItem(key);
+      }
+      if (key === "bloom-dock-mode") {
+        const mapped = value === "auto-hide" ? "smart" : value;
+        setDockMode(mapped);
+      }
+      if (key === "bloom-dock-preview-enabled") setDockPreviewEnabled(value === "true");
+      if (key === "bloom-dock-icon-only") setDockIconOnly(value === "true");
+      if (key === "bloom-scale") setScale(Number(value));
+    });
+
     return () => {
       unlistenSettings.then(f => f());
       unlistenOverlap.then(f => f());
       unlistenEdgeHover.then(f => f());
       unlistenVisibility.then(f => f());
+      unlistenExternalSettings.then(f => f());
     };
   }, []);
 

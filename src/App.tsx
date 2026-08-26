@@ -668,11 +668,60 @@ function App() {
       setIsEdgeHovered(event.payload);
     });
 
+    const unlistenExternalSettings = listen<{ key: string, value: any }>("settings-external-changed", (event) => {
+      const { key, value } = event.payload;
+      if (value !== null) {
+        localStorage.setItem(key, String(value));
+      } else {
+        localStorage.removeItem(key);
+      }
+      if (key === "bloom-weather-enabled") setSettingsWeatherEnabled(value !== "false");
+      if (key === "bloom-calendar-enabled") setSettingsCalendarEnabled(value !== "false");
+      if (key === "bloom-music-mode-enabled") setSettingsMusicModeEnabled(value !== "false");
+      if (key === "bloom-music-compact-notch") setSettingsMusicCompactNotch(value !== "false");
+      const vizKey = key === "bloom-media-visualizer-enabled" || key === "bloom-visualizer-enabled";
+      if (vizKey) setSettingsVisualizerEnabled(value !== "false");
+      if (key === "bloom-media-album-art-enabled") setSettingsAlbumArtEnabled(value !== "false");
+      if (key === "bloom-media-ambience-enabled") setSettingsAmbienceEnabled(value !== "false");
+      if (key === "bloom-media-compact-glow-enabled") setSettingsCompactGlowEnabled(value !== "false");
+      if (key === "bloom-media-layout") setMediaLayout(value as 'classic' | 'compact');
+      if (key === "bloom-temp-unit") setTempUnit(value as string);
+      if (key === "bloom-corners-enabled") setSettingsCornersEnabled(value === "true");
+      if (key === "bloom-scale") setScale(Number(value));
+      if (key === "bloom-low-battery-threshold") setLowBatteryThreshold(parseInt(value));
+      if (key === "bloom-dock-enabled") {
+        if (windowLabel === 'main') {
+          if (value === "true" || value === true) {
+            invoke("init_dock", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
+          } else {
+            invoke("toggle_dock", { enable: false });
+          }
+          setTimeout(() => invoke("sync_appbar"), 200);
+        }
+      }
+      if (key === "bloom-dock-mode") {
+        const mapped = value === "auto-hide" ? "smart" : value;
+        setDockMode(mapped);
+        if (windowLabel === 'main') {
+          invoke("change_dock_mode", { mode: mapped });
+          setTimeout(() => invoke("sync_appbar"), 200);
+        }
+      }
+      if (key === "bloom-notch-mode") {
+        const mapped = value === "auto-hide" ? "smart" : value;
+        setNotchMode(mapped);
+        if (windowLabel === 'main') {
+          invoke("change_notch_mode", { mode: mapped });
+        }
+      }
+    });
+
     return () => {
       unlistenVisibility.then(f => f());
       unlistenSettings.then(f => f());
       unlistenNotchOverlap.then(f => f());
       unlistenNotchEdgeHover.then(f => f());
+      unlistenExternalSettings.then(f => f());
     };
   }, [windowLabel]);
 
