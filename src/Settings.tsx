@@ -5,6 +5,7 @@ import { Effect } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -38,6 +39,8 @@ import {
   Hexagon,
   Info,
   X,
+  Upload,
+  FileDown,
 } from "lucide-react";
 import "./Settings.css";
 import { initTheme, hexToHsl } from "./theme";
@@ -96,6 +99,8 @@ function SettingsApp() {
   });
 
   const [activeTab, setActiveTab] = useState("general");
+  const [exportStatus, setExportStatus] = useState<"idle" | "exporting" | "success" | "error">("idle");
+  const [importStatus, setImportStatus] = useState<"idle" | "importing" | "success" | "error">("idle");
 
   useEffect(() => {
     invoke('resize_settings_window', {
@@ -252,6 +257,45 @@ function SettingsApp() {
       if (key === "theme-brightness") setThemeBrightness(Number(value));
     });
 
+    // Handle external file changes (from file watcher or other tools editing settings.json)
+    const unlistenExternal = listen<{ key: string, value: any }>("settings-external-changed", (event) => {
+      const { key, value } = event.payload;
+      // Sync localStorage with the externally changed value
+      if (value !== null && value !== undefined) {
+        localStorage.setItem(key, String(value));
+      } else {
+        localStorage.removeItem(key);
+      }
+      // Update local state
+      if (key === "bloom-dock-mode") setDockMode(value === "auto-hide" ? "smart" : value);
+      if (key === "bloom-notch-mode") setNotchMode(value === "auto-hide" ? "smart" : value);
+      if (key === "bloom-dock-enabled") setDockEnabled(value === "true");
+      if (key === "bloom-dock-icon-only") setDockIconOnly(value === "true");
+      if (key === "bloom-weather-enabled") setWeatherEnabled(value === "true");
+      if (key === "bloom-calendar-enabled") setCalendarEnabled(value === "true");
+      if (key === "bloom-music-mode-enabled") setMusicModeEnabled(value === "true");
+      if (key === "bloom-music-compact-notch") setMusicCompactNotch(value === "true");
+      if (key === "bloom-media-ambience-enabled") setMediaAmbienceEnabled(value === "true");
+      if (key === "bloom-media-compact-glow-enabled") setMediaCompactGlowEnabled(value === "true");
+      if (key === "bloom-media-layout") setMediaLayout(value as 'classic' | 'compact');
+      if (key === "bloom-corners-enabled") setCornersEnabled(value === "true");
+      if (key === "bloom-low-battery-threshold") setLowBatteryThreshold(Number(value));
+      if (key === "bloom-scale") setScale(Number(value));
+      if (key === "bloom-theme-mode") setThemeMode(value);
+      if (key === "bloom-theme-color") setThemeColor(value);
+      if (key === "bloom-theme-opacity") setThemeOpacity(Number(value));
+      if (key === "bloom-theme-saturation") setThemeSaturation(Number(value));
+      if (key === "bloom-theme-brightness") setThemeBrightness(Number(value));
+      if (key === "bloom-volume-overlay-enabled") setVolumeOverlayEnabled(value === "true");
+      if (key === "bloom-volume-edge-enabled") setVolumeEdgeEnabled(value === "true");
+      if (key === "bloom-brightness-overlay-enabled") setBrightnessOverlayEnabled(value === "true");
+      if (key === "bloom-brightness-edge-enabled") setBrightnessEdgeEnabled(value === "true");
+      if (key === "bloom-dock-preview-enabled") setDockPreviewEnabled(value === "true");
+      if (key === "bloom-auto-update") setAutoUpdate(value === "true");
+      if (key === "bloom-temp-unit") setTempUnitFahrenheit(value === "fahrenheit");
+      if (key === "bloom-weather-city") setCityName(value || "");
+    });
+
     const unlistenAccent = listen<string>("system-accent-changed", (event) => {
       const mode = localStorage.getItem("bloom-theme-mode") || "dark";
       if (mode === "adaptive") {
@@ -267,6 +311,7 @@ function SettingsApp() {
 
     return () => {
       unlisten.then(fn => fn());
+      unlistenExternal.then(fn => fn());
       unlistenAccent.then(fn => fn());
     };
   }, []);
@@ -315,6 +360,111 @@ function SettingsApp() {
     try {
       await appWindow.hide();
     } catch(e) {
+    }
+  };
+
+  const handleExportSettings = async () => {
+    setExportStatus("exporting");
+    try {
+      const settingsJson = await invoke<string>("export_settings");
+      const filePath = await saveDialog({
+        title: "Export Bloom Settings",
+        defaultPath: "bloom-settings.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (filePath) {
+        await invoke("write_settings_to_path", { path: filePath, content: settingsJson });
+        setExportStatus("success");
+        setTimeout(() => setExportStatus("idle"), 2000);
+      } else {
+        setExportStatus("idle");
+      }
+    } catch (e) {
+      console.error("Export failed:", e);
+      setExportStatus("error");
+      setTimeout(() => setExportStatus("idle"), 3000);
+    }
+  };
+
+  const handleImportSettings = async () => {
+    setImportStatus("importing");
+    try {
+      const filePath = await openDialog({
+        title: "Import Bloom Settings",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+        multiple: false,
+      });
+      if (filePath) {
+        const content = await invoke<string>("read_settings_from_path", { path: filePath as string });
+        await invoke("import_settings", { settings: content });
+        // Re-sync all local state from disk
+        const settings: any = await invoke("load_settings");
+        const getVal = (key: string) => {
+          const val = settings[key];
+          if (val !== undefined && val !== null) return String(val);
+          return localStorage.getItem(key);
+        };
+        const weather = getVal("bloom-weather-enabled");
+        if (weather !== null) setWeatherEnabled(weather === "true");
+        const calendar = getVal("bloom-calendar-enabled");
+        if (calendar !== null) setCalendarEnabled(calendar === "true");
+        const musicEnabled = getVal("bloom-music-mode-enabled");
+        if (musicEnabled !== null) setMusicModeEnabled(musicEnabled === "true");
+        const musicCompact = getVal("bloom-music-compact-notch");
+        if (musicCompact !== null) setMusicCompactNotch(musicCompact === "true");
+        const volume = getVal("bloom-volume-overlay-enabled");
+        if (volume !== null) setVolumeOverlayEnabled(volume === "true");
+        const ambience = getVal("bloom-media-ambience-enabled");
+        if (ambience !== null) setMediaAmbienceEnabled(ambience === "true");
+        const compactGlow = getVal("bloom-media-compact-glow-enabled");
+        if (compactGlow !== null) setMediaCompactGlowEnabled(compactGlow === "true");
+        const corners = getVal("bloom-corners-enabled");
+        if (corners !== null) setCornersEnabled(corners === "true");
+        const tempUnit = getVal("bloom-temp-unit");
+        if (tempUnit !== null) setTempUnitFahrenheit(tempUnit === "fahrenheit");
+        const savedCity = getVal("bloom-weather-city");
+        if (savedCity) setCityName(savedCity);
+        const dock = getVal("bloom-dock-enabled");
+        if (dock !== null) setDockEnabled(dock === "true");
+        const dMode = getVal("bloom-dock-mode");
+        if (dMode) setDockMode(dMode === "auto-hide" ? "smart" : dMode);
+        const threshold = getVal("bloom-low-battery-threshold");
+        if (threshold !== null) setLowBatteryThreshold(parseInt(threshold));
+        const nMode = getVal("bloom-notch-mode");
+        if (nMode) setNotchMode(nMode === "auto-hide" ? "smart" : nMode);
+        const preview = getVal("bloom-dock-preview-enabled");
+        if (preview !== null) setDockPreviewEnabled(preview === "true");
+        const iconOnly = getVal("bloom-dock-icon-only");
+        if (iconOnly !== null) setDockIconOnly(iconOnly === "true");
+        const scaleVal = getVal("bloom-scale");
+        if (scaleVal !== null) setScale(parseFloat(scaleVal));
+        const autoUpdateVal = getVal("bloom-auto-update");
+        if (autoUpdateVal !== null) setAutoUpdate(autoUpdateVal === "true");
+        const tMode = getVal("bloom-theme-mode");
+        if (tMode) setThemeMode(tMode);
+        const tColor = getVal("bloom-theme-color");
+        if (tColor) setThemeColor(tColor);
+        const tOpacity = getVal("bloom-theme-opacity");
+        if (tOpacity) setThemeOpacity(parseFloat(tOpacity));
+        const tSaturation = getVal("bloom-theme-saturation");
+        if (tSaturation) setThemeSaturation(parseFloat(tSaturation));
+        const tBrightness = getVal("bloom-theme-brightness");
+        if (tBrightness) setThemeBrightness(parseFloat(tBrightness));
+        const mediaLayout = getVal("bloom-media-layout");
+        if (mediaLayout) setMediaLayout(mediaLayout as 'classic' | 'compact');
+        const volumeEdge = getVal("bloom-volume-edge-enabled");
+        if (volumeEdge !== null) setVolumeEdgeEnabled(volumeEdge === "true");
+        const brightnessEdge = getVal("bloom-brightness-edge-enabled");
+        if (brightnessEdge !== null) setBrightnessEdgeEnabled(brightnessEdge === "true");
+        setImportStatus("success");
+        setTimeout(() => setImportStatus("idle"), 2000);
+      } else {
+        setImportStatus("idle");
+      }
+    } catch (e) {
+      console.error("Import failed:", e);
+      setImportStatus("error");
+      setTimeout(() => setImportStatus("idle"), 3000);
     }
   };
 
@@ -1125,7 +1275,7 @@ function SettingsApp() {
         <p className="about-version">Version {appVersion}</p>
       </div>
 
-      <div className="setting-group-label" style={{ marginTop: '24px' }}>Software Updates</div>
+      <div className="setting-group-label">Software Updates</div>
       <div className="setting-group">
         <div className="setting-item">
           <div className="setting-icon-bg">
@@ -1159,6 +1309,35 @@ function SettingsApp() {
             <span className="setting-desc">
               {updateStatus === 'available' ? "Click to install and restart" : `Currently running v${appVersion}`}
             </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="setting-group-label" style={{ marginTop: '24px' }}>Data</div>
+      <div className="setting-group">
+        <div className="setting-item action" onClick={handleExportSettings}>
+          <div className="setting-icon-bg">
+            <FileDown size={14} strokeWidth={1.5} />
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">
+              {exportStatus === "exporting" ? "Exporting..." : exportStatus === "success" ? "Exported!" : "Export Settings"}
+            </span>
+            <span className="setting-desc">Save settings to a file</span>
+          </div>
+        </div>
+
+        <div className="setting-divider" />
+
+        <div className="setting-item action" onClick={handleImportSettings}>
+          <div className="setting-icon-bg">
+            <Upload size={14} strokeWidth={1.5} />
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">
+              {importStatus === "importing" ? "Importing..." : importStatus === "success" ? "Imported!" : "Import Settings"}
+            </span>
+            <span className="setting-desc">Load settings from a file</span>
           </div>
         </div>
       </div>

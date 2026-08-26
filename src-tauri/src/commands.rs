@@ -1792,3 +1792,183 @@ pub fn get_system_accent_color() -> Result<String, String> {
         }
     }
 }
+
+#[tauri::command]
+pub fn export_settings(app: AppHandle) -> Result<String, String> {
+    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        // Validate it's valid JSON before returning
+        let _settings: HashMap<String, serde_json::Value> =
+            serde_json::from_str(&content).map_err(|e| format!("Invalid settings file: {}", e))?;
+        Ok(content)
+    } else {
+        Err("No settings file found".into())
+    }
+}
+
+#[tauri::command]
+pub fn read_settings_from_path(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
+}
+
+#[tauri::command]
+pub fn write_settings_to_path(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))
+}
+
+#[tauri::command]
+pub fn import_settings(app: AppHandle, settings: String) -> Result<(), String> {
+    let imported: HashMap<String, serde_json::Value> =
+        serde_json::from_str(&settings).map_err(|e| format!("Invalid JSON: {}", e))?;
+
+    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let content = serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    // Broadcast changes for every imported key so all windows re-sync
+    for (key, value) in &imported {
+        let _ = app.emit("settings-changed", serde_json::json!({ "key": key, "value": value }));
+    }
+
+    // Handle bloom-scale special case
+    if imported.get("bloom-scale").is_some() {
+        if let Some(main_win) = app.get_webview_window("main") {
+            let notch_fixed = imported.get("bloom-notch-mode")
+                .map(|v| v.as_str() == Some("fixed"))
+                .unwrap_or(true);
+            if notch_fixed {
+                crate::services::register_appbar(main_win);
+            }
+        }
+        if let Some(dock_win) = app.get_webview_window("dock") {
+            let is_fixed = imported.get("bloom-dock-mode")
+                .map(|v| v.as_str() == Some("fixed"))
+                .unwrap_or(false);
+            if is_fixed {
+                crate::services::register_dock_appbar(dock_win);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn setup_settings_watcher(app: AppHandle) {
+    use tauri::Manager;
+
+    let config_dir = match app.path().app_config_dir() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let settings_path = config_dir.join("settings.json");
+
+    // Read initial state for diffing
+    let initial_state: HashMap<String, serde_json::Value> = std::fs::read_to_string(&settings_path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default();
+
+    let initial_state = std::sync::Arc::new(std::sync::Mutex::new(initial_state));
+
+    std::thread::spawn(move || {
+        use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY,
+            FILE_NOTIFY_CHANGE_LAST_WRITE,
+            OPEN_EXISTING, ReadDirectoryChangesW,
+        };
+        use windows::Win32::System::IO::OVERLAPPED;
+        use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+
+        unsafe {
+            let dir_path: Vec<u16> = config_dir.to_string_lossy()
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let dir_handle = match CreateFileW(
+                windows::core::PCWSTR(dir_path.as_ptr()),
+                FILE_LIST_DIRECTORY.0,
+                windows::Win32::Storage::FileSystem::FILE_SHARE_READ
+                    | windows::Win32::Storage::FileSystem::FILE_SHARE_WRITE
+                    | windows::Win32::Storage::FileSystem::FILE_SHARE_DELETE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS,
+                None,
+            ) {
+                Ok(h) if h != INVALID_HANDLE_VALUE => h,
+                _ => return,
+            };
+
+            let h_event = match CreateEventW(None, false, false, None) {
+                Ok(e) => e,
+                Err(_) => {
+                    let _ = CloseHandle(dir_handle);
+                    return;
+                }
+            };
+
+            let mut notify_buffer = [0u8; 4096];
+            let mut bytes_returned = 0u32;
+            let mut overlapped = OVERLAPPED::default();
+            overlapped.hEvent = h_event;
+
+            loop {
+                let success = ReadDirectoryChangesW(
+                    dir_handle,
+                    notify_buffer.as_mut_ptr() as *mut _,
+                    notify_buffer.len() as u32,
+                    false,
+                    FILE_NOTIFY_CHANGE_LAST_WRITE,
+                    Some(&mut bytes_returned),
+                    Some(&mut overlapped),
+                    None,
+                );
+
+                if success.is_err() {
+                    break;
+                }
+
+                WaitForSingleObject(h_event, INFINITE);
+
+                std::thread::sleep(std::time::Duration::from_millis(200));
+
+                if let Ok(new_content) = std::fs::read_to_string(&settings_path) {
+                    if let Ok(new_settings) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&new_content) {
+                        let mut prev = initial_state.lock().unwrap();
+
+                        for (key, value) in &new_settings {
+                            if prev.get(key) != Some(value) {
+                                let _ = app.emit(
+                                    "settings-external-changed",
+                                    serde_json::json!({ "key": key, "value": value }),
+                                );
+                            }
+                        }
+
+                        let removed_keys: Vec<String> = prev.keys()
+                            .filter(|k| !new_settings.contains_key(*k))
+                            .cloned()
+                            .collect();
+                        for key in removed_keys {
+                            let _ = app.emit(
+                                "settings-external-changed",
+                                serde_json::json!({ "key": key, "value": null }),
+                            );
+                        }
+
+                        *prev = new_settings;
+                    }
+                }
+            }
+
+            let _ = CloseHandle(h_event);
+            let _ = CloseHandle(dir_handle);
+        }
+    });
+}

@@ -63,6 +63,7 @@ fn main() {
     setup_brightness_worker();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -128,7 +129,11 @@ fn main() {
             set_brightness,
             get_battery_saver_state,
             open_battery_saver_settings,
-            get_system_accent_color
+            get_system_accent_color,
+            export_settings,
+            import_settings,
+            read_settings_from_path,
+            write_settings_to_path
         ])
         .setup(|app| {
             init_taskbar_marker(app.handle());
@@ -302,6 +307,7 @@ fn main() {
             let _hook = services::setup_keyboard_hook();
             setup_taskbar_hook();
             setup_audio_visualization(app.handle().clone());
+            setup_settings_watcher(app.handle().clone());
 
             // Listen for second-instance signal to open settings
             unsafe {
