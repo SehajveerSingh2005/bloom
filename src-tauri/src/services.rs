@@ -708,7 +708,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                             if !got_art_from_cache {
                                                 artwork = (|| -> Option<Vec<String>> {
                                                     let stream = props.Thumbnail().ok()?.OpenReadAsync().ok()?.get().ok()?;
-                                                    let content_type = stream.ContentType().ok()?.to_string();
+                                                    let content_type = stream.ContentType().ok()?.to_string().split(',').next().unwrap_or("image/jpeg").trim().to_string();
                                                     let reader = DataReader::CreateDataReader(&stream).ok()?;
                                                     let mut all_bytes = Vec::new();
                                                     let chunk_size = 65536u32;
