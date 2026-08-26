@@ -708,11 +708,19 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                             if !got_art_from_cache {
                                                 artwork = (|| -> Option<Vec<String>> {
                                                     let stream = props.Thumbnail().ok()?.OpenReadAsync().ok()?.get().ok()?;
+                                                    let content_type = stream.ContentType().ok()?.to_string();
                                                     let reader = DataReader::CreateDataReader(&stream).ok()?;
-                                                    reader.LoadAsync(stream.Size().ok()? as u32).ok()?.get().ok()?;
-                                                    let mut bytes = vec![0u8; stream.Size().ok()? as usize];
-                                                    reader.ReadBytes(&mut bytes).ok()?;
-                                                    Some(vec![format!("data:{};base64,{}", stream.ContentType().ok()?.to_string(), general_purpose::STANDARD.encode(bytes))])
+                                                    let mut all_bytes = Vec::new();
+                                                    let chunk_size = 65536u32;
+                                                    loop {
+                                                        let loaded = reader.LoadAsync(chunk_size).ok()?.get().ok()?;
+                                                        if loaded == 0 { break; }
+                                                        let mut chunk = vec![0u8; loaded as usize];
+                                                        reader.ReadBytes(&mut chunk).ok()?;
+                                                        all_bytes.extend_from_slice(&chunk);
+                                                    }
+                                                    if all_bytes.is_empty() { return None; }
+                                                    Some(vec![format!("data:{};base64,{}", content_type, general_purpose::STANDARD.encode(all_bytes))])
                                                 })();
                                             }
 
