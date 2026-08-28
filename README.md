@@ -138,6 +138,8 @@ Found a bug? Open an issue.
 Have an idea? Send a PR.
 Want to just say it's cool? A star goes a long way.
 
+Licensed under [GPLv3](LICENSE).
+
 ---
 
 <div align="center">
