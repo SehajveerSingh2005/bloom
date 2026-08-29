@@ -195,6 +195,10 @@ body {
             transparent 14px);
 }
 
+.time-center {
+    position: relative;
+}
+
 .time-flip-container {
     min-width: 60px;
     height: 24px;
@@ -287,6 +291,19 @@ body {
     line-height: 1;
     margin-bottom: -0.5px;
     /* Optical adjustment for Inter font baseline */
+}
+
+.update-dot {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: -4px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #32D74B;
+    pointer-events: none;
 }
 
 /* Music visualizer - horizontal bars (like iPhone Dynamic Island) */

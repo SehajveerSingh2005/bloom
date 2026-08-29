@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import "./Settings.css";
 import { initTheme, hexToHsl } from "./theme";
+import { StatusWidgetConfig, type WidgetConfig } from "./components/StatusWidgetConfig";
 
 const appWindow = getCurrentWebviewWindow();
 
@@ -65,10 +66,12 @@ function SettingsApp() {
   const [mediaCompactGlowEnabled, setMediaCompactGlowEnabled] = useState(true);
   const [mediaLayout, setMediaLayout] = useState<'classic' | 'compact'>(() => (localStorage.getItem("bloom-media-layout") as 'classic' | 'compact') || 'classic');
   const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
+  const [showUpdateIndicator, setShowUpdateIndicator] = useState(() => localStorage.getItem("bloom-show-update-indicator") !== "false");
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
   const [cityName, setCityName] = useState("");
   const [citySearchResults, setCitySearchResults] = useState<Array<{ name: string; country: string; latitude: number; longitude: number }>>([]);
   const [showCityDropdown, setShowCityDropdown] = useState(false);
+  const [statusWidgets, setStatusWidgets] = useState<WidgetConfig>({ left: ["weather"], right: ["battery"] });
   const [dockEnabled, setDockEnabled] = useState(true);
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(true);
   const [dockIconOnly, setDockIconOnly] = useState(() => localStorage.getItem("bloom-dock-icon-only") === "true");
@@ -219,6 +222,16 @@ function SettingsApp() {
 
       const tBrightness = getVal("bloom-theme-brightness");
       if (tBrightness) setThemeBrightness(parseFloat(tBrightness));
+
+      const widgetsVal = getVal("bloom-status-widgets");
+      if (widgetsVal) {
+        try {
+          const parsed = JSON.parse(widgetsVal);
+          if (parsed && Array.isArray(parsed.left) && Array.isArray(parsed.right)) {
+            setStatusWidgets(parsed);
+          }
+        } catch {}
+      }
     }).catch(console.error);
 
     getVersion().then((ver) => {
@@ -249,6 +262,7 @@ function SettingsApp() {
       if (key === "media-compact-glow-enabled") setMediaCompactGlowEnabled(value);
       if (key === "media-layout") setMediaLayout(value as 'classic' | 'compact');
       if (key === "corners-enabled") setCornersEnabled(value);
+      if (key === "show-update-indicator") setShowUpdateIndicator(value);
       if (key === "low-battery-threshold") setLowBatteryThreshold(value);
       if (key === "bloom-scale") setScale(Number(value));
       if (key === "theme-mode") setThemeMode(value);
@@ -642,6 +656,13 @@ function SettingsApp() {
     notifyChange("corners-enabled", newVal);
   };
 
+  const toggleUpdateIndicator = () => {
+    const newVal = !showUpdateIndicator;
+    setShowUpdateIndicator(newVal);
+    saveAndLocal("bloom-show-update-indicator", String(newVal));
+    notifyChange("show-update-indicator", newVal);
+  };
+
   const toggleTempUnit = () => {
     const newVal = !tempUnitFahrenheit;
     setTempUnitFahrenheit(newVal);
@@ -692,6 +713,14 @@ function SettingsApp() {
     setScale(val);
     saveAndLocal("bloom-scale", val.toString());
     notifyChange("bloom-scale", val);
+  };
+
+  const handleWidgetsChange = (config: WidgetConfig) => {
+    setStatusWidgets(config);
+    const json = JSON.stringify(config);
+    localStorage.setItem("bloom-status-widgets", json);
+    invoke("save_setting", { key: "bloom-status-widgets", value: json }).catch(console.error);
+    notifyChange("status-widgets", json);
   };
 
 
@@ -789,6 +818,20 @@ function SettingsApp() {
           </div>
           <label className="toggle-switch">
             <input type="checkbox" checked={cornersEnabled} onChange={toggleCorners} />
+            <span className="slider"></span>
+          </label>
+        </div>
+
+        <div className="setting-item">
+          <div className="setting-icon-bg">
+            <Download size={14} strokeWidth={1.5} />
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">Update Indicator</span>
+            <span className="setting-desc">Show green dot when update available</span>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={showUpdateIndicator} onChange={toggleUpdateIndicator} />
             <span className="slider"></span>
           </label>
         </div>
@@ -1254,6 +1297,11 @@ function SettingsApp() {
             </div>
           </>
         )}
+      </div>
+
+      <div className="setting-group-label">Status Widgets</div>
+      <div className="setting-group">
+        <StatusWidgetConfig value={statusWidgets} onChange={handleWidgetsChange} />
       </div>
 
       <div className="setting-group-label">Overlays</div>

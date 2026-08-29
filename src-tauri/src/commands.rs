@@ -10,6 +10,7 @@ use crate::services::{register_appbar, register_dock_appbar, sync_overlays, unre
 use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
 
+
 #[tauri::command]
 pub async fn set_menu_open(open: bool, rect: Option<IntRect>) {
     MENU_IS_OPEN.store(open, Ordering::Relaxed);
@@ -1707,7 +1708,117 @@ pub fn open_battery_saver_settings() {
     }
 }
 
+// --- System metrics for status widgets ---
 
+#[tauri::command]
+pub fn get_cpu_usage() -> Result<u32, String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST_IDLE: AtomicU64 = AtomicU64::new(0);
+    static LAST_KERNEL: AtomicU64 = AtomicU64::new(0);
+    static LAST_USER: AtomicU64 = AtomicU64::new(0);
+
+    unsafe {
+        let mut idle = windows::Win32::Foundation::FILETIME::default();
+        let mut kernel = windows::Win32::Foundation::FILETIME::default();
+        let mut user = windows::Win32::Foundation::FILETIME::default();
+        windows::Win32::System::Threading::GetSystemTimes(Some(&mut idle), Some(&mut kernel), Some(&mut user))
+            .map_err(|e| format!("GetSystemTimes failed: {e}"))?;
+
+        let idle_u64 = (idle.dwHighDateTime as u64) << 32 | idle.dwLowDateTime as u64;
+        let kernel_u64 = (kernel.dwHighDateTime as u64) << 32 | kernel.dwLowDateTime as u64;
+        let user_u64 = (user.dwHighDateTime as u64) << 32 | user.dwLowDateTime as u64;
+
+        let prev_idle = LAST_IDLE.swap(idle_u64, Ordering::Relaxed);
+        let prev_kernel = LAST_KERNEL.swap(kernel_u64, Ordering::Relaxed);
+        let prev_user = LAST_USER.swap(user_u64, Ordering::Relaxed);
+
+        let idle_delta = idle_u64.saturating_sub(prev_idle);
+        let kernel_delta = kernel_u64.saturating_sub(prev_kernel);
+        let user_delta = user_u64.saturating_sub(prev_user);
+        let total = kernel_delta + user_delta;
+
+        if total == 0 {
+            return Ok(0);
+        }
+        let usage = ((total - idle_delta) * 100) / total;
+        Ok(usage as u32)
+    }
+}
+
+#[tauri::command]
+pub fn get_ram_usage() -> Result<f32, String> {
+    unsafe {
+        let mut mem = windows::Win32::System::SystemInformation::MEMORYSTATUSEX::default();
+        mem.dwLength = std::mem::size_of::<windows::Win32::System::SystemInformation::MEMORYSTATUSEX>() as u32;
+        windows::Win32::System::SystemInformation::GlobalMemoryStatusEx(&mut mem)
+            .map_err(|e| format!("GlobalMemoryStatusEx failed: {e}"))?;
+        Ok(mem.dwMemoryLoad as f32)
+    }
+}
+
+#[tauri::command]
+pub fn get_disk_space() -> Result<u64, String> {
+    unsafe {
+        let mut free_bytes = 0u64;
+        let mut total_bytes = 0u64;
+        let mut total_free = 0u64;
+        windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+            windows::core::w!("C:\\"),
+            Some(&mut free_bytes),
+            Some(&mut total_bytes),
+            Some(&mut total_free),
+        ).map_err(|e| format!("GetDiskFreeSpaceEx failed: {e}"))?;
+        Ok(free_bytes / (1024 * 1024 * 1024))
+    }
+}
+
+#[tauri::command]
+pub fn get_network_speed() -> Result<(u64, u64), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST_BYTES_SENT: AtomicU64 = AtomicU64::new(0);
+    static LAST_BYTES_RECV: AtomicU64 = AtomicU64::new(0);
+    static LAST_CHECK: AtomicU64 = AtomicU64::new(0);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let last_check = LAST_CHECK.load(Ordering::Relaxed);
+    let elapsed = if last_check > 0 { (now - last_check).max(1) } else { 1000 };
+
+    let (mut total_in, mut total_out) = (0u64, 0u64);
+    unsafe {
+        let mut table_ptr: *mut windows::Win32::NetworkManagement::IpHelper::MIB_IF_TABLE2 = std::ptr::null_mut();
+        let ret = windows::Win32::NetworkManagement::IpHelper::GetIfTable2(&mut table_ptr);
+        if ret.is_ok() && !table_ptr.is_null() {
+            let table = &*table_ptr;
+            let num_entries = table.NumEntries;
+            let rows = table.Table.as_ptr();
+            for i in 0..num_entries as usize {
+                let row = &*rows.add(i);
+                total_in += row.InOctets;
+                total_out += row.OutOctets;
+            }
+            windows::Win32::NetworkManagement::IpHelper::FreeMibTable(table_ptr as *const _);
+        }
+    }
+
+    let prev_sent = LAST_BYTES_SENT.swap(total_out, Ordering::Relaxed);
+    let prev_recv = LAST_BYTES_RECV.swap(total_in, Ordering::Relaxed);
+    LAST_CHECK.store(now, Ordering::Relaxed);
+
+    if last_check == 0 {
+        return Ok((0, 0));
+    }
+
+    let sent_per_sec = if total_out > prev_sent { ((total_out - prev_sent) * 1000) / elapsed } else { 0 };
+    let recv_per_sec = if total_in > prev_recv { ((total_in - prev_recv) * 1000) / elapsed } else { 0 };
+
+    Ok((sent_per_sec, recv_per_sec))
+}
+
+#[tauri::command]
 pub fn get_windows_accent_color() -> Option<String> {
     unsafe {
         use windows::Win32::System::Registry::{RegOpenKeyExW, RegQueryValueExW, RegCloseKey, HKEY_CURRENT_USER, KEY_READ, REG_BINARY, REG_DWORD};

@@ -10,6 +10,13 @@ import { initTheme } from "./theme";
 import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, VolumeLowIcon, VolumeHighIcon, MusicNoteIcon, HeadphonesIcon } from "./icons";
 import { CompactMediaPlayer } from "./CompactMediaPlayer";
 import { useWeather } from "./hooks/useWeather";
+import type { WidgetConfig } from "./components/StatusWidgetConfig";
+import {
+  Cpu,
+  MemoryStick,
+  HardDrive,
+  ArrowUpDown,
+} from "lucide-react";
 
 // Simple SVG icons
 function WifiIcon({ connected }: { connected: boolean }) {
@@ -276,6 +283,15 @@ function App() {
   const [bluetoothEnabled, setBluetoothEnabled] = useState(true);
   const [batterySaverEnabled, setBatterySaverEnabled] = useState(false);
   const [currentBrightness, setCurrentBrightness] = useState(50);
+
+  // System metrics for status widgets
+  const [cpuUsage, setCpuUsage] = useState(0);
+  const [ramUsage, setRamUsage] = useState(0);
+  const [diskSpace, setDiskSpace] = useState(0);
+  const [netUpSpeed, setNetUpSpeed] = useState(0);
+  const [netDownSpeed, setNetDownSpeed] = useState(0);
+  const [statusWidgets, setStatusWidgets] = useState<WidgetConfig>({ left: ["weather"], right: ["battery"] });
+
   const [windowLabel, setWindowLabel] = useState<string>("");
   useEffect(() => {
     setWindowLabel(getCurrentWebviewWindow().label);
@@ -283,6 +299,7 @@ function App() {
 
   // Update state
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [showUpdateIndicator, setShowUpdateIndicator] = useState(() => localStorage.getItem("bloom-show-update-indicator") !== "false");
   const [showUpdatePulse, setShowUpdatePulse] = useState(false);
 
   useEffect(() => {
@@ -580,6 +597,16 @@ function App() {
 
       const scaleVal = getVal("bloom-scale");
       if (scaleVal !== null) setScale(parseFloat(scaleVal));
+
+      const widgetsVal = getVal("bloom-status-widgets");
+      if (widgetsVal) {
+        try {
+          const parsed = JSON.parse(widgetsVal);
+          if (parsed && Array.isArray(parsed.left) && Array.isArray(parsed.right)) {
+            setStatusWidgets(parsed);
+          }
+        } catch {}
+      }
     }).catch(console.error);
   }, [windowLabel]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -943,6 +970,39 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Poll system metrics for status widgets
+  useEffect(() => {
+    const fetchMetrics = () => {
+      invoke<number>("get_cpu_usage").then(setCpuUsage).catch((e) => console.warn("CPU:", e));
+      invoke<number>("get_ram_usage").then(setRamUsage).catch((e) => console.warn("RAM:", e));
+      invoke<number>("get_disk_space").then(setDiskSpace).catch((e) => console.warn("Disk:", e));
+      invoke<[number, number]>("get_network_speed").then(([up, down]) => {
+        setNetUpSpeed(up);
+        setNetDownSpeed(down);
+      }).catch(() => {});
+    };
+    fetchMetrics();
+    const interval = setInterval(fetchMetrics, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Listen for settings changes to widget config
+  useEffect(() => {
+    const unlisten = listen<{ key: string; value: any }>("settings-changed", (event) => {
+      if (event.payload.key === "status-widgets") {
+        try {
+          const parsed = JSON.parse(event.payload.value);
+          if (parsed && Array.isArray(parsed.left) && Array.isArray(parsed.right)) {
+            setStatusWidgets(parsed);
+          }
+        } catch {}
+      } else if (event.payload.key === "show-update-indicator") {
+        setShowUpdateIndicator(String(event.payload.value) === "true");
+      }
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
   // Listen for brightness changes
   useEffect(() => {
     const unlisten = listen<{ brightness: number }>("brightness-change", (event) => {
@@ -1194,6 +1254,63 @@ function App() {
     });
   };
 
+  // Render a status widget by ID
+  const renderStatusWidget = (id: string) => {
+    switch (id) {
+      case "weather":
+        if (!settingsWeatherEnabled || temperature === null) return null;
+        return (
+          <div className="passive-feature" key="weather" title={cityName ? `${weatherCondition} — ${cityName}` : weatherCondition}>
+            <WeatherIcon size={12} strokeWidth={2.2} />
+            <span className="label">{temperature}°{tempUnit === "fahrenheit" ? "F" : "C"}</span>
+          </div>
+        );
+      case "battery":
+        return (
+          <div className="passive-feature" key="battery">
+            <BatteryIcon charging={isCharging} level={batteryLevel} threshold={lowBatteryThreshold} />
+            <span className="label">{batteryLevel}%</span>
+          </div>
+        );
+      case "cpu":
+        return (
+          <div className="passive-feature" key="cpu" title="CPU Usage">
+            <Cpu size={12} strokeWidth={2} />
+            <span className="label">{cpuUsage}%</span>
+          </div>
+        );
+      case "ram":
+        return (
+          <div className="passive-feature" key="ram" title="RAM Usage">
+            <MemoryStick size={12} strokeWidth={2} />
+            <span className="label">{Math.round(ramUsage)}%</span>
+          </div>
+        );
+      case "disk":
+        return (
+          <div className="passive-feature" key="disk" title="Free Disk Space">
+            <HardDrive size={12} strokeWidth={2} />
+            <span className="label">{diskSpace}GB</span>
+          </div>
+        );
+      case "net":
+        return (
+          <div className="passive-feature" key="net" title="Network Speed">
+            <ArrowUpDown size={12} strokeWidth={2} />
+            <span className="label">↑{formatBytes(netUpSpeed)} ↓{formatBytes(netDownSpeed)}</span>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}K`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)}M`;
+  };
+
   // Music mode shows any time we have media info (playing or paused) and music mode setting is enabled
   const isMusicMode = mediaInfo.has_media && bloomMode === 'music' && settingsMusicModeEnabled;
 
@@ -1201,7 +1318,10 @@ function App() {
   const getDynamicWidth = () => {
     if (isCalendarMode) return 480;
     if (bloomMode === 'command-center' && isHovered) return 350;
-    if (bloomMode === 'status' && isHovered) return 280;
+    if (bloomMode === 'status' && isHovered) {
+      const totalWidgets = statusWidgets.left.length + statusWidgets.right.length;
+      return Math.min(200 + totalWidgets * 50, 380);
+    }
     if (isMusicMode && isHovered) return mediaLayout === 'compact' ? 300 : 340;
     if ((showPowerPulse || showLowBatteryPulse || showUpdatePulse) && !isHovered) return 200;
 
@@ -1597,50 +1717,50 @@ function App() {
                                     </motion.div>
                                   )}
                                 </AnimatePresence>
-                              ) : (!isMusicMode && isHovered && settingsWeatherEnabled && temperature !== null) ? (
+                              ) : (!isMusicMode && isHovered && statusWidgets.left.length > 0) ? (
                                 <motion.div
-                                  key="left-weather"
+                                  key="left-widgets"
                                   className="passive-features-group"
                                   initial={{ opacity: 0 }}
                                   animate={{ opacity: 1 }}
                                   exit={{ opacity: 0 }}
                                   transition={{ duration: 0.2 }}
                                 >
-                                  <div className="passive-feature" title={cityName ? `${weatherCondition} — ${cityName}` : weatherCondition}>
-                                    <WeatherIcon size={14} strokeWidth={2.2} />
-                                    <span className="label">{temperature}°{tempUnit === "fahrenheit" ? "F" : "C"}</span>
-                                  </div>
+                                  {statusWidgets.left.map(renderStatusWidget)}
                                 </motion.div>
                               ) : null}
                             </div>
 
                             {/* Center - Time (always visible) */}
-                            <div className="time-flip-container" onClick={toggleCalendarMode}>
-                              <AnimatePresence initial={false}>
-                                {isCompactTimerVisible || isTimerFinished ? (
-                                  <motion.span
-                                    key="timer"
-                                    className={`time compact-timer ${isTimerFinished ? 'timer-finished' : ''}`}
-                                    initial={{ rotateX: -90, opacity: 0 }}
-                                    animate={{ rotateX: 0, opacity: 1 }}
-                                    exit={{ rotateX: 90, opacity: 0 }}
-                                    transition={{ type: "spring", stiffness: 600, damping: 30 }}
-                                  >
-                                    {formatTimerTime(timerSeconds)}
-                                  </motion.span>
-                                ) : (
-                                  <motion.span
-                                    key="clock"
-                                    className="time"
-                                    initial={{ rotateX: -90, opacity: 0 }}
-                                    animate={{ rotateX: 0, opacity: 1 }}
-                                    exit={{ rotateX: 90, opacity: 0 }}
-                                    transition={{ type: "spring", stiffness: 600, damping: 30 }}
-                                  >
-                                    {time}
-                                  </motion.span>
-                                )}
-                              </AnimatePresence>
+                            <div className="time-center">
+                              <div className="time-flip-container" onClick={toggleCalendarMode}>
+                                <AnimatePresence initial={false}>
+                                  {isCompactTimerVisible || isTimerFinished ? (
+                                    <motion.span
+                                      key="timer"
+                                      className={`time compact-timer ${isTimerFinished ? 'timer-finished' : ''}`}
+                                      initial={{ rotateX: -90, opacity: 0 }}
+                                      animate={{ rotateX: 0, opacity: 1 }}
+                                      exit={{ rotateX: 90, opacity: 0 }}
+                                      transition={{ type: "spring", stiffness: 600, damping: 30 }}
+                                    >
+                                      {formatTimerTime(timerSeconds)}
+                                    </motion.span>
+                                  ) : (
+                                    <motion.span
+                                      key="clock"
+                                      className="time"
+                                      initial={{ rotateX: -90, opacity: 0 }}
+                                      animate={{ rotateX: 0, opacity: 1 }}
+                                      exit={{ rotateX: 90, opacity: 0 }}
+                                      transition={{ type: "spring", stiffness: 600, damping: 30 }}
+                                    >
+                                      {time}
+                                    </motion.span>
+                                  )}
+                                </AnimatePresence>
+                              </div>
+                              {updateAvailable && showUpdateIndicator && <div className="update-dot" />}
                             </div>
 
                             {/* Right: album art (music) or battery (command-center, calendar) */}
@@ -1713,20 +1833,16 @@ function App() {
                                   </button>
                                   </motion.div>
                                 </AnimatePresence>
-                              ) : (!isMusicMode && isHovered) ? (
+                              ) : (!isMusicMode && isHovered && statusWidgets.right.length > 0) ? (
                                 <motion.div
-                                  key="right-battery"
+                                  key="right-widgets"
                                   className="passive-features-group"
                                   initial={{ opacity: 0 }}
                                   animate={{ opacity: 1 }}
                                   exit={{ opacity: 0 }}
                                   transition={{ duration: 0.2 }}
                                 >
-                                  <div className="passive-feature">
-                                    {updateAvailable && <GreenDownArrowIcon />}
-                                    <BatteryIcon charging={isCharging} level={batteryLevel} threshold={lowBatteryThreshold} />
-                                    <span className="label">{batteryLevel}%</span>
-                                  </div>
+                                  {statusWidgets.right.map(renderStatusWidget)}
                                 </motion.div>
                               ) : null}
                             </div>
