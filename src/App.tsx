@@ -9,6 +9,7 @@ import "./App.css";
 import { initTheme } from "./theme";
 import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, VolumeLowIcon, VolumeHighIcon, MusicNoteIcon, HeadphonesIcon } from "./icons";
 import { CompactMediaPlayer } from "./CompactMediaPlayer";
+import { useWeather } from "./hooks/useWeather";
 
 // Simple SVG icons
 function WifiIcon({ connected }: { connected: boolean }) {
@@ -18,14 +19,6 @@ function WifiIcon({ connected }: { connected: boolean }) {
       <path d="M1.42 9a16 16 0 0 1 21.16 0" />
       <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
       <line x1="12" y1="20" x2="12.01" y2="20" />
-    </svg>
-  );
-}
-
-function ThermometerIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" />
     </svg>
   );
 }
@@ -266,9 +259,7 @@ function App() {
     }
   }, [batteryLevel, isCharging, lowBatteryThreshold, isReady]);
 
-  // Weather state
-  const [temperature, setTemperature] = useState<number | null>(null);
-  const [weatherCondition, setWeatherCondition] = useState<string>("");
+  // Weather state (managed by useWeather hook)
 
   // Media state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -484,7 +475,9 @@ function App() {
   const [settingsCornersEnabled, setSettingsCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [mediaLayout, setMediaLayout] = useState<'classic' | 'compact'>(() => (localStorage.getItem("bloom-media-layout") as 'classic' | 'compact') || 'classic');
   const [compactVolumeExpanded, setCompactVolumeExpanded] = useState(false);
-  const [tempUnit, setTempUnit] = useState(() => localStorage.getItem("bloom-temp-unit") || "celsius");
+
+  // Weather hook
+  const { temperature, weatherCondition, weatherIcon: WeatherIcon, cityName, tempUnit } = useWeather(settingsWeatherEnabled);
 
   useEffect(() => {
     if (!windowLabel) return;
@@ -508,16 +501,6 @@ function App() {
       setSettingsAmbienceEnabled(getVal("bloom-media-ambience-enabled", "true") !== "false");
       setSettingsCompactGlowEnabled(getVal("bloom-media-compact-glow-enabled", "true") !== "false");
       setSettingsCornersEnabled(getVal("bloom-corners-enabled", "false") === "true");
-      setTempUnit(getVal("bloom-temp-unit", "celsius") as string);
-
-      const cachedTemp = settings["bloom-weather-cached-temp"] ?? localStorage.getItem("bloom-weather-cached-temp");
-      if (cachedTemp !== undefined && cachedTemp !== null) {
-        setTemperature(Number(cachedTemp));
-      }
-      const cachedCond = settings["bloom-weather-cached-condition"] ?? localStorage.getItem("bloom-weather-cached-condition");
-      if (cachedCond) {
-        setWeatherCondition(String(cachedCond));
-      }
 
       const thresholdStr = getVal("bloom-low-battery-threshold", "20");
       if (thresholdStr) setLowBatteryThreshold(parseInt(thresholdStr as string));
@@ -619,11 +602,6 @@ function App() {
       if (key === "media-ambience-enabled") setSettingsAmbienceEnabled(value as boolean);
       if (key === "media-compact-glow-enabled") setSettingsCompactGlowEnabled(value as boolean);
       if (key === "media-layout") setMediaLayout(value as 'classic' | 'compact');
-      if (key === "temp-unit") setTempUnit(value ? "fahrenheit" : "celsius");
-      if (key === "weather-refresh") {
-        // Re-trigger the init function or just update from localStorage
-        window.dispatchEvent(new CustomEvent("refresh-weather"));
-      }
       if (key === "corners-enabled") {
         setSettingsCornersEnabled(value as boolean);
       }
@@ -685,7 +663,6 @@ function App() {
       if (key === "bloom-media-ambience-enabled") setSettingsAmbienceEnabled(value !== "false");
       if (key === "bloom-media-compact-glow-enabled") setSettingsCompactGlowEnabled(value !== "false");
       if (key === "bloom-media-layout") setMediaLayout(value as 'classic' | 'compact');
-      if (key === "bloom-temp-unit") setTempUnit(value as string);
       if (key === "bloom-corners-enabled") setSettingsCornersEnabled(value === "true");
       if (key === "bloom-scale") setScale(Number(value));
       if (key === "bloom-low-battery-threshold") setLowBatteryThreshold(parseInt(value));
@@ -973,109 +950,6 @@ function App() {
     });
     return () => { unlisten.then(fn => fn()); };
   }, []);
-
-  // Weather API (Open-Meteo - free, no API key needed)
-  useEffect(() => {
-    const fetchWeather = async (latitude: number, longitude: number) => {
-      try {
-        const unitParam = tempUnit === "fahrenheit" ? "&temperature_unit=fahrenheit" : "";
-        const response = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,is_day&timezone=auto${unitParam}`
-        );
-        const data = await response.json();
-        const temp = data.current.temperature_2m;
-        const roundedTemp = Math.round(temp);
-        setTemperature(roundedTemp);
-        invoke("save_setting", { key: "bloom-weather-cached-temp", value: roundedTemp }).catch(() => {});
-
-        // Simple weather code mapping
-        const code = data.current.weather_code;
-        const conditions: Record<number, string> = {
-          0: "Clear",
-          1: "Mostly Clear",
-          2: "Partly Cloudy",
-          3: "Overcast",
-          45: "Foggy",
-          48: "Foggy",
-          51: "Drizzle",
-          53: "Drizzle",
-          55: "Drizzle",
-          61: "Rainy",
-          63: "Rainy",
-          65: "Rainy",
-          71: "Snowy",
-          73: "Snowy",
-          75: "Snowy",
-          95: "Stormy",
-          96: "Stormy",
-          99: "Stormy",
-          224: "Stormy",
-        };
-        const cond = conditions[code] || "Unknown";
-        setWeatherCondition(cond);
-        invoke("save_setting", { key: "bloom-weather-cached-condition", value: cond }).catch(() => {});
-      } catch (e) {
-        console.log("Weather fetch failed");
-        if (import.meta.env.DEV) {
-          // Dev mock temperature if offline/rate-limited
-          const mockTemp = tempUnit === "fahrenheit" ? 72 : 22;
-          setTemperature(mockTemp);
-          setWeatherCondition("Partly Cloudy");
-        }
-      }
-    };
-
-    const init = async () => {
-      try {
-        // Load coordinates from settings.json
-        const settings = (await invoke("load_settings").catch(() => ({}))) as Record<string, any>;
-        const savedLat = settings["bloom-weather-lat"] || localStorage.getItem("bloom-weather-lat");
-        const savedLon = settings["bloom-weather-lon"] || localStorage.getItem("bloom-weather-lon");
-
-        if (savedLat && savedLon) {
-          await fetchWeather(parseFloat(savedLat), parseFloat(savedLon));
-          return;
-        }
-
-        // Fetch location directly via JS instead of using a hidden rust process
-        const response = await fetch('https://ipapi.co/json/');
-        if (!response.ok) throw new Error("Primary location source failed");
-
-        const data = await response.json();
-        const lat = data.latitude || data.lat;
-        const lon = data.longitude || data.lon;
-
-        if (lat && lon) {
-          await fetchWeather(lat, lon);
-        } else {
-          // Fallback to second source if fields are missing
-          const fallbackRes = await fetch('http://ip-api.com/json/?fields=status,lat,lon,city,country');
-          const fallbackData = await fallbackRes.json();
-          if (fallbackData.lat && fallbackData.lon) {
-            await fetchWeather(fallbackData.lat, fallbackData.lon);
-          } else {
-            throw new Error("All location sources failed");
-          }
-        }
-      } catch (e) {
-        // Fall back to Delhi (safe bet for UTC+5:30)
-        await fetchWeather(28.6139, 77.2090);
-      }
-    };
-
-    init();
-
-    // Listen for manual refreshes from settings
-    const handleRefresh = () => init();
-    window.addEventListener("refresh-weather", handleRefresh);
-
-    // Refresh weather every 30 minutes
-    const interval = setInterval(init, 30 * 60 * 1000);
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("refresh-weather", handleRefresh);
-    };
-  }, [tempUnit]);
 
   // Native Windows Media Controls - Listen for updates from background worker
   useEffect(() => {
@@ -1732,8 +1606,8 @@ function App() {
                                   exit={{ opacity: 0 }}
                                   transition={{ duration: 0.2 }}
                                 >
-                                  <div className="passive-feature" title={weatherCondition}>
-                                    <ThermometerIcon />
+                                  <div className="passive-feature" title={cityName ? `${weatherCondition} — ${cityName}` : weatherCondition}>
+                                    <WeatherIcon size={14} strokeWidth={2.2} />
                                     <span className="label">{temperature}°{tempUnit === "fahrenheit" ? "F" : "C"}</span>
                                   </div>
                                 </motion.div>

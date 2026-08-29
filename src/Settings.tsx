@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Effect } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
@@ -67,7 +67,8 @@ function SettingsApp() {
   const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
   const [cityName, setCityName] = useState("");
-  const [isSearching, setIsSearching] = useState(false);
+  const [citySearchResults, setCitySearchResults] = useState<Array<{ name: string; country: string; latitude: number; longitude: number }>>([]);
+  const [showCityDropdown, setShowCityDropdown] = useState(false);
   const [dockEnabled, setDockEnabled] = useState(true);
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(true);
   const [dockIconOnly, setDockIconOnly] = useState(() => localStorage.getItem("bloom-dock-icon-only") === "true");
@@ -694,36 +695,68 @@ function SettingsApp() {
   };
 
 
-  const handleCityChange = async (newCity: string) => {
-    setCityName(newCity);
-    if (newCity.trim() === "") {
-      localStorage.removeItem("bloom-weather-city");
-      localStorage.removeItem("bloom-weather-lat");
-      localStorage.removeItem("bloom-weather-lon");
-      notifyChange("weather-refresh", true);
+  // Debounced city search
+  useEffect(() => {
+    if (cityName.trim().length < 2) {
+      setCitySearchResults([]);
+      setShowCityDropdown(false);
       return;
     }
 
-    setIsSearching(true);
-    try {
-      // Use Open-Meteo Geocoding API (free, no key)
-      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(newCity)}&count=1&language=en&format=json`);
-      const data = await res.json();
-      if (data.results && data.results.length > 0) {
-        const { latitude, longitude, name } = data.results[0];
-        saveAndLocal("bloom-weather-city", name);
-        saveAndLocal("bloom-weather-lat", latitude.toString());
-        saveAndLocal("bloom-weather-lon", longitude.toString());
-        setCityName(name);
-        notifyChange("weather-refresh", true);
-      } else {
-        console.warn(`Geocoding: No results found for ${newCity}`);
+    const timeout = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=5&language=en&format=json`
+        );
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+          setCitySearchResults(
+            data.results.map((r: any) => ({
+              name: r.name,
+              country: r.country || "",
+              latitude: r.latitude,
+              longitude: r.longitude,
+            }))
+          );
+          setShowCityDropdown(true);
+        } else {
+          setCitySearchResults([]);
+        }
+      } catch {
+        setCitySearchResults([]);
       }
-    } catch (e) {
-      console.error("Geocoding failed:", e);
-    } finally {
-      setIsSearching(false);
-    }
+    }, 300);
+
+    return () => clearTimeout(timeout);
+  }, [cityName]);
+
+  const selectCity = async (city: { name: string; country: string; latitude: number; longitude: number }) => {
+    setCityName(city.name);
+    setShowCityDropdown(false);
+    setCitySearchResults([]);
+    saveAndLocal("bloom-weather-city", city.name);
+    saveAndLocal("bloom-weather-lat", city.latitude.toString());
+    saveAndLocal("bloom-weather-lon", city.longitude.toString());
+    // Wait for Tauri settings to persist before triggering refresh
+    await invoke("save_setting", { key: "bloom-weather-lat", value: city.latitude.toString() }).catch(() => {});
+    await invoke("save_setting", { key: "bloom-weather-lon", value: city.longitude.toString() }).catch(() => {});
+    await invoke("save_setting", { key: "bloom-weather-city", value: city.name }).catch(() => {});
+    emit("weather-refresh", { lat: city.latitude, lon: city.longitude });
+    notifyChange("weather-city", city.name);
+  };
+
+  const handleCityClear = async () => {
+    setCityName("");
+    setShowCityDropdown(false);
+    setCitySearchResults([]);
+    localStorage.removeItem("bloom-weather-city");
+    localStorage.removeItem("bloom-weather-lat");
+    localStorage.removeItem("bloom-weather-lon");
+    await invoke("save_setting", { key: "bloom-weather-lat", value: null }).catch(() => {});
+    await invoke("save_setting", { key: "bloom-weather-lon", value: null }).catch(() => {});
+    await invoke("save_setting", { key: "bloom-weather-city", value: null }).catch(() => {});
+    emit("weather-refresh", true);
+    notifyChange("weather-city", "");
   };
 
   const renderGeneral = () => (
@@ -1162,7 +1195,7 @@ function SettingsApp() {
           </div>
           <div className="setting-info">
             <span className="setting-label">Weather Status</span>
-            <span className="setting-desc">Passive temperature info</span>
+            <span className="setting-desc">{cityName ? cityName : "Auto-detect location"}</span>
           </div>
           <div className="weather-controls">
             <div className="unit-toggle-minimal" onClick={toggleTempUnit}>
@@ -1180,15 +1213,44 @@ function SettingsApp() {
           <>
             <div className="setting-divider" />
             <div className="manual-city-input">
-              <input
-                type="text"
-                placeholder="Enter city manually..."
-                value={cityName}
-                onChange={(e) => setCityName(e.target.value)}
-                onBlur={() => handleCityChange(cityName)}
-                onKeyDown={(e) => e.key === 'Enter' && handleCityChange(cityName)}
-              />
-              {isSearching && <div className="searching-spinner" />}
+              <div className="city-input-row">
+                <input
+                  type="text"
+                  placeholder="Search city..."
+                  value={cityName}
+                  onChange={(e) => setCityName(e.target.value)}
+                  onFocus={() => citySearchResults.length > 0 && setShowCityDropdown(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && citySearchResults.length > 0) {
+                      e.preventDefault();
+                      selectCity(citySearchResults[0]);
+                    }
+                    if (e.key === "Escape") {
+                      setShowCityDropdown(false);
+                    }
+                  }}
+                  onBlur={() => setTimeout(() => setShowCityDropdown(false), 150)}
+                />
+                {cityName && (
+                  <button className="city-clear-btn" onMouseDown={(e) => { e.preventDefault(); handleCityClear(); }} title="Clear city">
+                    <X size={10} strokeWidth={2.5} />
+                  </button>
+                )}
+              </div>
+              {showCityDropdown && citySearchResults.length > 0 && (
+                <div className="city-dropdown">
+                  {citySearchResults.map((city) => (
+                    <button
+                      key={`${city.name}-${city.latitude}`}
+                      className="city-dropdown-item"
+                      onMouseDown={(e) => { e.preventDefault(); selectCity(city); }}
+                    >
+                      <span className="city-dropdown-name">{city.name}</span>
+                      <span className="city-dropdown-country">{city.country}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </>
         )}

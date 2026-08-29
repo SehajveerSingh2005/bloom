@@ -396,25 +396,6 @@ input:checked + .slider:before {
   font-size: 11px;
 }
 
-.manual-city-input {
-  position: relative;
-  margin: 4px 14px 4px 54px;
-}
-
-.manual-city-input input {
-  width: 100%;
-  background: transparent;
-  border: none;
-  font-size: 12px;
-  color: var(--bloom-text, #fff);
-  padding: 4px 0;
-  outline: none;
-}
-
-.manual-city-input input::placeholder {
-  color: var(--bloom-text-muted, rgba(255, 255, 255, 0.2));
-}
-
 .searching-spinner {
   position: absolute;
   right: 0;
@@ -430,6 +411,98 @@ input:checked + .slider:before {
 
 @keyframes spin {
   to { transform: translateY(-50%) rotate(360deg); }
+}
+
+.manual-city-input {
+  position: relative;
+  margin: 4px 14px 4px 54px;
+}
+
+.city-input-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.city-input-row input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  color: var(--bloom-text, #fff);
+  padding: 4px 20px 4px 0;
+  outline: none;
+}
+
+.city-input-row input::placeholder {
+  color: var(--bloom-text-muted, rgba(255, 255, 255, 0.2));
+}
+
+.city-clear-btn {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--bloom-text-muted, rgba(255, 255, 255, 0.3));
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: all 0.15s ease;
+}
+
+.city-clear-btn:hover {
+  color: var(--bloom-text, #fff);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.city-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bloom-group-bg, rgba(30, 30, 30, 0.95));
+  border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 100;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(20px);
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.city-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  text-align: left;
+}
+
+.city-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.city-dropdown-name {
+  font-size: 12px;
+  color: var(--bloom-text, #fff);
+  font-weight: 500;
+}
+
+.city-dropdown-country {
+  font-size: 10px;
+  color: var(--bloom-text-muted, rgba(255, 255, 255, 0.35));
 }
 
 .settings-select {
