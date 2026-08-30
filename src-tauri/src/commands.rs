@@ -3,13 +3,11 @@ use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 use std::sync::atomic::Ordering;
 
-use crate::types::{IntRect, AppInfo, AudioDevice, BrightnessChangeEvent};
+use crate::types::{IntRect, AppInfo, BrightnessChangeEvent};
 use crate::state::*;
 use crate::utils::*;
 use crate::services::{register_appbar, register_dock_appbar, sync_overlays, unregister_appbar_native, enum_windows_proc};
 use std::collections::HashMap;
-use std::os::windows::process::CommandExt;
-
 
 #[tauri::command]
 pub async fn set_menu_open(open: bool, rect: Option<IntRect>) {
@@ -1250,121 +1248,6 @@ pub fn open_media_source_app() {
             let _ = SetForegroundWindow(hwnd);
         }
     }
-}
-
-#[tauri::command]
-pub fn get_audio_output_devices() -> Result<Vec<AudioDevice>, String> {
-    unsafe {
-        use windows::Win32::Media::Audio::{IMMDeviceEnumerator, eRender, eConsole, DEVICE_STATE_ACTIVE};
-        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL, STGM_READ};
-        use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
-
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-            &windows::Win32::Media::Audio::MMDeviceEnumerator,
-            None,
-            CLSCTX_ALL,
-        ).map_err(|e| format!("Failed to create device enumerator: {}", e))?;
-
-        // Get default device ID
-        let default_device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
-            .map_err(|e| format!("Failed to get default endpoint: {}", e))?;
-        let default_id = default_device.GetId()
-            .map(|id| {
-                let s = windows::core::PCWSTR::from_raw(id.0).to_string().unwrap_or_default();
-                windows::Win32::System::Com::CoTaskMemFree(Some(id.0 as *const _));
-                s
-            })
-            .unwrap_or_default();
-
-        // Enumerate all active render endpoints
-        let collection = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
-            .map_err(|e| format!("Failed to enumerate endpoints: {}", e))?;
-        let count = collection.GetCount().map_err(|e| format!("Failed to get count: {}", e))?;
-
-        let mut devices = Vec::new();
-        for i in 0..count {
-            if let Ok(device) = collection.Item(i) {
-                let id = device.GetId().map(|id| {
-                    let s = windows::core::PCWSTR::from_raw(id.0).to_string().unwrap_or_default();
-                    windows::Win32::System::Com::CoTaskMemFree(Some(id.0 as *const _));
-                    s
-                }).unwrap_or_default();
-
-                let name = device.OpenPropertyStore(STGM_READ).ok()
-                    .and_then(|store| store.GetValue(&PKEY_Device_FriendlyName).ok())
-                    .map(|val| {
-                        let pwstr = val.Anonymous.Anonymous.Anonymous.pwszVal;
-                        windows::core::PCWSTR(pwstr.0 as *const _).to_string().unwrap_or_default()
-                    })
-                    .unwrap_or_else(|| "Unknown Device".to_string());
-
-                let is_default = id == default_id;
-                devices.push(AudioDevice { id, name, is_default });
-            }
-        }
-
-        Ok(devices)
-    }
-}
-
-#[tauri::command]
-pub fn set_audio_output_device(device_id: String) -> Result<(), String> {
-    // Uses the undocumented IPolicyConfig COM interface (stable since Vista/Win7).
-    // Replaces the prior approach of generating + running C# via PowerShell Add-Type,
-    // which AV engines classify as reflective code injection.
-    //
-    // PolicyConfigClient CLSID: {870af99c-e543-481c-8303-f0d7e7e06526}
-    // IPolicyConfig      IID:   {f8679f50-84e7-43cd-b950-c298f2188e5c}
-    // Vtable: [0]=QI [1]=AddRef [2]=Release [3–12]=stubs [13]=SetDefaultEndpoint
-    unsafe {
-        #[link(name = "ole32")]
-        extern "system" {
-            fn CoCreateInstance(
-                rclsid: *const windows::core::GUID,
-                punk_outer: *mut std::ffi::c_void,
-                dwclscontext: u32,
-                riid: *const windows::core::GUID,
-                ppv: *mut *mut std::ffi::c_void,
-            ) -> i32;
-        }
-
-        let clsid = windows::core::GUID {
-            data1: 0x870a_f99c, data2: 0xe543, data3: 0x481c,
-            data4: [0x83, 0x03, 0xf0, 0xd7, 0xe7, 0xe0, 0x65, 0x26],
-        };
-        let iid = windows::core::GUID {
-            data1: 0xf867_9f50, data2: 0x84e7, data3: 0x43cd,
-            data4: [0xb9, 0x50, 0xc2, 0x98, 0xf2, 0x18, 0x8e, 0x5c],
-        };
-
-        let mut ppv: *mut std::ffi::c_void = std::ptr::null_mut();
-        let hr = CoCreateInstance(&clsid, std::ptr::null_mut(), 0x17 /* CLSCTX_ALL */, &iid, &mut ppv);
-
-        if hr < 0 || ppv.is_null() {
-            // COM failed — open sound settings as fallback
-            let _ = std::process::Command::new("cmd")
-                .args(["/c", "start", "ms-settings:sound"])
-                .creation_flags(0x08000000)
-                .spawn();
-            return Ok(());
-        }
-
-        let vtable = *(ppv as *const *const usize);
-        type SetDefaultEndpointFn = unsafe extern "system" fn(*mut std::ffi::c_void, *const u16, i32) -> i32;
-        let set_default_endpoint: SetDefaultEndpointFn = std::mem::transmute(*vtable.add(13));
-
-        let wide_id: Vec<u16> = device_id.encode_utf16().chain(std::iter::once(0)).collect();
-        // Apply for all three audio roles: eConsole=0, eMultimedia=1, eCommunications=2
-        for role in 0i32..=2 {
-            let _ = set_default_endpoint(ppv, wide_id.as_ptr(), role);
-        }
-
-        // Release the COM object (IUnknown::Release = vtable[2])
-        type ReleaseFn = unsafe extern "system" fn(*mut std::ffi::c_void) -> u32;
-        let release: ReleaseFn = std::mem::transmute(*vtable.add(2));
-        release(ppv);
-    }
-    Ok(())
 }
 
 #[tauri::command]

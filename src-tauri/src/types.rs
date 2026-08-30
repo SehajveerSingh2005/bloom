@@ -29,13 +29,6 @@ pub struct MediaInfo {
     pub position_updated_at: u64,
 }
 
-#[derive(Serialize, Clone, Debug)]
-pub struct AudioDevice {
-    pub id: String,
-    pub name: String,
-    pub is_default: bool,
-}
-
 pub enum SystemCommand {
     VolumeMute,
     VolumeUp,

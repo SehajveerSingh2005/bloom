@@ -88,8 +88,7 @@ fn main() {
             media_previous,
             media_seek,
             open_media_source_app,
-            get_audio_output_devices,
-            set_audio_output_device,
+
             init_dock,
             toggle_dock,
             change_dock_mode,
