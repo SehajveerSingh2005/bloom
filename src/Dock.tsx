@@ -57,6 +57,7 @@ const Dock = memo(function Dock() {
   const [isReady, setIsReady] = useState(false);
   const [isImpacted, setIsImpacted] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [startupAnimating, setStartupAnimating] = useState(false);
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<string | null>(null);
   const iconPickerTargetRef = useRef<string | null>(null);
@@ -84,8 +85,10 @@ const Dock = memo(function Dock() {
     }
   }, [isAnyInteraction]);
 
-  const isHidden = (dockMode === 'smart' && isOverlapped && interactionState === 'none') ||
-    (dockMode === 'peek' && interactionState === 'none');
+  const isHidden = !startupAnimating && (
+    (dockMode === 'smart' && isOverlapped && interactionState === 'none') ||
+    (dockMode === 'peek' && interactionState === 'none')
+  );
 
   useEffect(() => {
     let cleared = false;
@@ -95,9 +98,11 @@ const Dock = memo(function Dock() {
         const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
         const visible = await getCurrentWebviewWindow().isVisible();
         if (visible) {
+          setStartupAnimating(true);
           setIsReady(true);
           setTimeout(() => setIsImpacted(true), 280);
           setTimeout(() => setIsExpanded(true), 350);
+          setTimeout(() => setStartupAnimating(false), 1500);
           return true;
         }
       } catch (_) {}

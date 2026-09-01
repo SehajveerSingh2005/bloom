@@ -344,6 +344,7 @@ function App() {
   const [isVisible, setIsVisible] = useState(true);
   const [isImpacted, setIsImpacted] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [startupAnimating, setStartupAnimating] = useState(false);
 
   const [dockMode, setDockMode] = useState(() => {
     const raw = localStorage.getItem("bloom-dock-mode") || "fixed";
@@ -359,8 +360,10 @@ function App() {
   const bloomRef = useRef<HTMLDivElement>(null);
 
   const isAnyInteraction = isHovered || isNotchHovered || isEdgeHovered;
-  const isHidden = (notchMode === 'smart' && isOverlapped && interactionState === 'none') ||
-    (notchMode === 'peek' && interactionState === 'none' && !eventPeek);
+  const isHidden = !startupAnimating && (
+    (notchMode === 'smart' && isOverlapped && interactionState === 'none') ||
+    (notchMode === 'peek' && interactionState === 'none' && !eventPeek)
+  );
 
   useEffect(() => {
     if (isAnyInteraction) {
@@ -421,11 +424,13 @@ function App() {
           const win = getCurrentWebviewWindow();
           const visible = await win.isVisible();
           if (visible) {
+            setStartupAnimating(true);
             setIsReady(true);
             setTimeout(() => {
               setIsImpacted(true);
               setIsExpanded(true);
             }, 240);
+            setTimeout(() => setStartupAnimating(false), 1500);
             return true;
           }
         } catch (e) { }
