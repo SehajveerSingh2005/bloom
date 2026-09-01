@@ -1123,8 +1123,6 @@ pub fn setup_brightness_worker() {
 
         while let Ok(brightness) = rx.recv() {
             let brightness = brightness.min(100);
-            let mut wmi_success = false;
-
             // 1. Laptop internal panel via WMI WmiMonitorBrightnessMethods
             let wql = windows::core::BSTR::from("WQL");
             let q = windows::core::BSTR::from("SELECT * FROM WmiMonitorBrightnessMethods");
@@ -1157,12 +1155,10 @@ pub fn setup_brightness_worker() {
                                             t_anon.Anonymous.lVal = 0i32;
                                             let _ = in_params.Put(windows::core::w!("Timeout"), 0i32, &t_var, 0);
 
-                                            if services.ExecMethod(
+                                            let _ = services.ExecMethod(
                                                 &obj_path, &method_name, WBEM_GENERIC_FLAG_TYPE(0), None,
                                                 Some(&in_params), None, None,
-                                            ).is_ok() {
-                                                wmi_success = true;
-                                            }
+                                            );
                                         }
                                     }
                                 }
@@ -1175,20 +1171,7 @@ pub fn setup_brightness_worker() {
             // 2. Desktop external monitor via Physical Monitor API (DXVA2 DDC/CI)
             set_physical_monitors_brightness(brightness);
 
-            // 3. One-shot PowerShell fallback if WMI COM didn't find active CIM instance
-            if !wmi_success {
-                use std::os::windows::process::CommandExt;
-                let _ = std::process::Command::new("powershell")
-                    .args([
-                        "-NoProfile", "-NonInteractive", "-Command",
-                        &format!(
-                            "(Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightnessMethods).WmiSetBrightness(0, {})",
-                            brightness
-                        ),
-                    ])
-                    .creation_flags(0x08000000)
-                    .spawn();
-            }
+
         }
         let _ = CoUninitialize();
     });
