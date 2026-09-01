@@ -1206,6 +1206,7 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
         let mut last_top_edge_hover = None;
         let mut last_left_edge_hover = None;
         let mut last_right_edge_hover = None;
+        let mut last_ov_ignore: Option<bool> = None;
         let mut dock_interaction_expiry = Instant::now() - Duration::from_secs(1);
         let mut topbar_interaction_expiry = Instant::now() - Duration::from_secs(1);
         let mut left_edge_expiry = Instant::now() - Duration::from_secs(1);
@@ -1384,62 +1385,94 @@ pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
                     }
 
                     // --- Left Edge (Volume) ---
-                    let at_left_edge = pt.x <= (cached_monitor_pos.x + 8) &&
-                                        pt.y >= cached_monitor_pos.y &&
-                                        pt.y <= (cached_monitor_pos.y + cached_monitor_size.height as i32);
+                    // Suppress edge hover events while a fullscreen app is in the
+                    // foreground — the overlay would cover the game and, once the
+                    // cursor lands on the notch area, set_ignore_cursor_events(false)
+                    // steals focus from the game.
+                    if !fg_fs {
+                        let at_left_edge = pt.x <= (cached_monitor_pos.x + 8) &&
+                                            pt.y >= cached_monitor_pos.y &&
+                                            pt.y <= (cached_monitor_pos.y + cached_monitor_size.height as i32);
 
-                    if at_left_edge {
-                        left_edge_expiry = now + Duration::from_millis(500);
-                    }
+                        if at_left_edge {
+                            left_edge_expiry = now + Duration::from_millis(500);
+                        }
 
-                    let final_left_hover = now < left_edge_expiry;
-                    if last_left_edge_hover != Some(final_left_hover) {
-                        let _ = app_handle.emit("volume-edge-hover", final_left_hover);
-                        last_left_edge_hover = Some(final_left_hover);
+                        let final_left_hover = now < left_edge_expiry;
+                        if last_left_edge_hover != Some(final_left_hover) {
+                            let _ = app_handle.emit("volume-edge-hover", final_left_hover);
+                            last_left_edge_hover = Some(final_left_hover);
+                        }
+                    } else if last_left_edge_hover != Some(false) {
+                        let _ = app_handle.emit("volume-edge-hover", false);
+                        last_left_edge_hover = Some(false);
                     }
 
                     // --- Right Edge (Brightness) ---
-                    let at_right_edge = pt.x >= (cached_monitor_pos.x + cached_monitor_size.width as i32 - 8) &&
-                                         pt.y >= cached_monitor_pos.y &&
-                                         pt.y <= (cached_monitor_pos.y + cached_monitor_size.height as i32);
+                    if !fg_fs {
+                        let at_right_edge = pt.x >= (cached_monitor_pos.x + cached_monitor_size.width as i32 - 8) &&
+                                             pt.y >= cached_monitor_pos.y &&
+                                             pt.y <= (cached_monitor_pos.y + cached_monitor_size.height as i32);
 
-                    if at_right_edge {
-                        right_edge_expiry = now + Duration::from_millis(500);
-                    }
+                        if at_right_edge {
+                            right_edge_expiry = now + Duration::from_millis(500);
+                        }
 
-                    let final_right_hover = now < right_edge_expiry;
-                    if last_right_edge_hover != Some(final_right_hover) {
-                        let _ = app_handle.emit("brightness-edge-hover", final_right_hover);
-                        last_right_edge_hover = Some(final_right_hover);
+                        let final_right_hover = now < right_edge_expiry;
+                        if last_right_edge_hover != Some(final_right_hover) {
+                            let _ = app_handle.emit("brightness-edge-hover", final_right_hover);
+                            last_right_edge_hover = Some(final_right_hover);
+                        }
+                    } else if last_right_edge_hover != Some(false) {
+                        let _ = app_handle.emit("brightness-edge-hover", false);
+                        last_right_edge_hover = Some(false);
                     }
 
                     // --- Overlay cursor passthrough ---
+                    // During fullscreen, always keep the overlay click-through to
+                    // prevent focus theft from the game.  The overlay still shows
+                    // for volume/brightness key presses (visual feedback), but it
+                    // must never become interactive while a fullscreen app owns
+                    // the foreground.
                     if let Some(ov_win) = app_handle.get_webview_window("overlay") {
-                        // Check if cursor is over the notch at the left edge (volume)
-                        let over_left = if let Ok(Some(m)) = ov_win.primary_monitor() {
-                            let ms = m.size();
-                            let mp = m.position();
-                            let sc = m.scale_factor();
-                            let nw = (42.0 * sc) as i32;
-                            let nh = (196.0 * sc) as i32;
-                            let nx = mp.x;
-                            let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
-                            pt.x >= nx && pt.x <= nx + nw && pt.y >= ny && pt.y <= ny + nh
-                        } else { false };
+                        if fg_fs {
+                            if last_ov_ignore != Some(true) {
+                                if let Ok(hwnd) = ov_win.hwnd() { re_assert_topmost(hwnd); }
+                                let _ = ov_win.set_ignore_cursor_events(true);
+                                last_ov_ignore = Some(true);
+                            }
+                        } else {
+                            // Check if cursor is over the notch at the left edge (volume)
+                            let over_left = if let Ok(Some(m)) = ov_win.primary_monitor() {
+                                let ms = m.size();
+                                let mp = m.position();
+                                let sc = m.scale_factor();
+                                let nw = (42.0 * sc) as i32;
+                                let nh = (196.0 * sc) as i32;
+                                let nx = mp.x;
+                                let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
+                                pt.x >= nx && pt.x <= nx + nw && pt.y >= ny && pt.y <= ny + nh
+                            } else { false };
 
-                        // Check if cursor is over the notch at the right edge (brightness)
-                        let over_right = if let Ok(Some(m)) = ov_win.primary_monitor() {
-                            let ms = m.size();
-                            let mp = m.position();
-                            let sc = m.scale_factor();
-                            let nw = (42.0 * sc) as i32;
-                            let nh = (196.0 * sc) as i32;
-                            let nx = mp.x + ms.width as i32 - nw;
-                            let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
-                            pt.x >= nx && pt.x <= nx + nw && pt.y >= ny && pt.y <= ny + nh
-                        } else { false };
+                            // Check if cursor is over the notch at the right edge (brightness)
+                            let over_right = if let Ok(Some(m)) = ov_win.primary_monitor() {
+                                let ms = m.size();
+                                let mp = m.position();
+                                let sc = m.scale_factor();
+                                let nw = (42.0 * sc) as i32;
+                                let nh = (196.0 * sc) as i32;
+                                let nx = mp.x + ms.width as i32 - nw;
+                                let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
+                                pt.x >= nx && pt.x <= nx + nw && pt.y >= ny && pt.y <= ny + nh
+                            } else { false };
 
-                        let _ = ov_win.set_ignore_cursor_events(!(over_left || over_right));
+                            let should_ignore = !(over_left || over_right);
+                            if last_ov_ignore != Some(should_ignore) {
+                                if let Ok(hwnd) = ov_win.hwnd() { re_assert_topmost(hwnd); }
+                                let _ = ov_win.set_ignore_cursor_events(should_ignore);
+                                last_ov_ignore = Some(should_ignore);
+                            }
+                        }
                     }
                 }
             }
