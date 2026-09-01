@@ -240,22 +240,38 @@ function App() {
   const powerPulseTimeoutRef = useRef<any>(null);
   const lowBatteryPulseShownRef = useRef<boolean>(false);
 
+  const [eventPeek, setEventPeek] = useState(false);
+  const eventPeekTimeoutRef = useRef<any>(null);
+  const triggerEventPeek = useCallback((duration = 3000) => {
+    setEventPeek(true);
+    if (eventPeekTimeoutRef.current) clearTimeout(eventPeekTimeoutRef.current);
+    eventPeekTimeoutRef.current = setTimeout(() => setEventPeek(false), duration);
+  }, []);
+
+  const [notchMode, setNotchMode] = useState(() => {
+    const raw = localStorage.getItem("bloom-notch-mode") || "fixed";
+    if (raw === "auto-hide") return "smart";
+    return raw;
+  });
+
 
   useEffect(() => {
     if (isReady && prevChargingRef.current !== null && prevChargingRef.current !== isCharging) {
       setShowPowerPulse(true);
+      if (notchMode === 'peek') triggerEventPeek(4000);
       if (powerPulseTimeoutRef.current) clearTimeout(powerPulseTimeoutRef.current);
       powerPulseTimeoutRef.current = setTimeout(() => {
         setShowPowerPulse(false);
       }, 4000);
     }
     prevChargingRef.current = isCharging;
-  }, [isCharging, isReady]);
+  }, [isCharging, isReady, notchMode, triggerEventPeek]);
 
   useEffect(() => {
     // Trigger pulse when dropping below threshold while discharging
     if (isReady && batteryLevel <= lowBatteryThreshold && !isCharging && !lowBatteryPulseShownRef.current) {
       setShowLowBatteryPulse(true);
+      if (notchMode === 'peek') triggerEventPeek(5000);
       lowBatteryPulseShownRef.current = true;
       setTimeout(() => setShowLowBatteryPulse(false), 5000);
     }
@@ -264,7 +280,7 @@ function App() {
     if (isCharging || batteryLevel > lowBatteryThreshold) {
       lowBatteryPulseShownRef.current = false;
     }
-  }, [batteryLevel, isCharging, lowBatteryThreshold, isReady]);
+  }, [batteryLevel, isCharging, lowBatteryThreshold, isReady, notchMode, triggerEventPeek]);
 
   // Weather state (managed by useWeather hook)
 
@@ -311,6 +327,7 @@ function App() {
         if (update?.available) {
           setUpdateAvailable(true);
           setShowUpdatePulse(true);
+          if (notchMode === 'peek') triggerEventPeek(6000);
           const timer = setTimeout(() => {
             setShowUpdatePulse(false);
           }, 6000);
@@ -322,17 +339,12 @@ function App() {
     };
 
     checkForUpdates();
-  }, [windowLabel]);
+  }, [windowLabel, notchMode, triggerEventPeek]);
 
   const [isVisible, setIsVisible] = useState(true);
   const [isImpacted, setIsImpacted] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const [notchMode, setNotchMode] = useState(() => {
-    const raw = localStorage.getItem("bloom-notch-mode") || "fixed";
-    if (raw === "auto-hide") return "smart";
-    return raw;
-  });
   const [dockMode, setDockMode] = useState(() => {
     const raw = localStorage.getItem("bloom-dock-mode") || "fixed";
     if (raw === "auto-hide") return "smart";
@@ -348,7 +360,7 @@ function App() {
 
   const isAnyInteraction = isHovered || isNotchHovered || isEdgeHovered;
   const isHidden = (notchMode === 'smart' && isOverlapped && interactionState === 'none') ||
-    (notchMode === 'peek' && interactionState === 'none');
+    (notchMode === 'peek' && interactionState === 'none' && !eventPeek);
 
   useEffect(() => {
     if (isAnyInteraction) {
@@ -833,6 +845,11 @@ function App() {
     const isNewTrackWhilePlaying = mediaInfo.title !== lastTrackRef.current && isPlaying;
     const justStartedPlaying = isPlaying && !lastPlayingRef.current;
 
+    // Peek notch on media events (play start or track change)
+    if (notchMode === 'peek' && (isNewTrackWhilePlaying || justStartedPlaying)) {
+      triggerEventPeek(3000);
+    }
+
     // Only auto-switch if music mode is enabled
     if (settingsMusicModeEnabled && mediaInfo.has_media && isPlaying && bloomMode !== 'calendar' && (isNewTrackWhilePlaying || justStartedPlaying)) {
       // Switch if compact notch display is enabled OR we are hovered
@@ -844,7 +861,7 @@ function App() {
 
     lastTrackRef.current = mediaInfo.title;
     lastPlayingRef.current = isPlaying;
-  }, [mediaInfo.has_media, isPlaying, mediaInfo.title, settingsMusicModeEnabled, settingsMusicCompactNotch, isHovered, bloomMode]);
+  }, [mediaInfo.has_media, isPlaying, mediaInfo.title, settingsMusicModeEnabled, settingsMusicCompactNotch, isHovered, bloomMode, notchMode, triggerEventPeek]);
 
   // Auto-switch back from music if music stops for 5 seconds
   // Skip if user manually scrolled to music mode
