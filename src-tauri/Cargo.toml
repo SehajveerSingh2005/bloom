@@ -66,4 +66,5 @@ tokio = { version = "1", features = ["time"] }
 image = "0.25"
 tauri-plugin-drag = "2.1.1"
 tauri-plugin-dialog = "2"
+rustfft = "6"
 

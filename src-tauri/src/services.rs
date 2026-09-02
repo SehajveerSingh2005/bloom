@@ -407,7 +407,11 @@ pub fn setup_audio_visualization(app_handle: AppHandle) {
 
                     const FFT_SIZE: usize = 512;
                     let mut fft_buffer = vec![0.0f32; FFT_SIZE];
+                    let mut fft_input: Vec<rustfft::num_complex::Complex<f32>> = vec![rustfft::num_complex::Complex::new(0.0, 0.0); FFT_SIZE];
                     let mut buffer_pos = 0;
+
+                    let mut planner = rustfft::FftPlanner::<f32>::new();
+                    let fft = planner.plan_fft_forward(FFT_SIZE);
 
                     let mut last_device_check = std::time::Instant::now();
                     loop {
@@ -493,27 +497,21 @@ pub fn setup_audio_visualization(app_handle: AppHandle) {
                                         buffer_pos += 1;
                                     }
                                     if buffer_pos >= FFT_SIZE {
+                                        // Run FFT on the windowed buffer
+                                        for (i, &sample) in fft_buffer.iter().enumerate() {
+                                            fft_input[i] = rustfft::num_complex::Complex::new(sample, 0.0);
+                                        }
+                                        fft.process(&mut fft_input);
+
                                         let band_ranges = [(1, 2), (2, 6), (6, 18), (18, 60), (60, 200)];
                                         let mut output = [0.0f32; NUM_BANDS];
                                         for (band_idx, &(bin_start, bin_end)) in band_ranges.iter().enumerate() {
                                             let mut total_mag = 0.0f32;
-                                            // Optimization: Sample fewer bins in higher ranges where we have more of them
-                                            // This drastically reduces CPU usage for DFT
-                                            let step = if bin_end - bin_start > 20 { (bin_end - bin_start) / 10 } else { 1 };
-                                            let mut count = 0;
-                                            
-                                            for bin in (bin_start..bin_end).step_by(step) {
+                                            let mut count = 0u32;
+                                            for bin in bin_start..bin_end {
                                                 if bin >= FFT_SIZE / 2 { break; }
-                                                let freq = 2.0 * std::f32::consts::PI * bin as f32 / FFT_SIZE as f32;
-                                                let mut real = 0.0f32;
-                                                let mut imag = 0.0f32;
-                                                for (sample_idx, &sample) in fft_buffer.iter().enumerate() {
-                                                    if sample == 0.0 { continue; } // Tiny optimization
-                                                    let phase = freq * sample_idx as f32;
-                                                    real += sample * phase.cos();
-                                                    imag -= sample * phase.sin();
-                                                }
-                                                total_mag += (real * real + imag * imag).sqrt();
+                                                let mag = fft_input[bin].norm();
+                                                total_mag += mag;
                                                 count += 1;
                                             }
                                             let avg_mag = total_mag / count.max(1) as f32;
