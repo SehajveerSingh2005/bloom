@@ -1046,8 +1046,10 @@ pub fn open_system_tray() {
             //    recalculation which would displace the notch/dock appbars).
             use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE};
             use crate::utils::ORIGINAL_TRAY_RECT;
-            if let Some(rect) = ORIGINAL_TRAY_RECT {
-                let _ = SetWindowPos(hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            if let Ok(guard) = ORIGINAL_TRAY_RECT.lock() {
+                if let Some(rect) = *guard {
+                    let _ = SetWindowPos(hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                }
             }
             let _ = ShowWindow(hwnd, SW_SHOW);
             crate::state::NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
@@ -1152,16 +1154,16 @@ pub fn open_system_tray() {
 }
 
 #[tauri::command]
-pub fn media_play_pause() { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::MediaPlayPause); } } }
+pub fn media_play_pause() { if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(crate::types::SystemCommand::MediaPlayPause); } }
 
 #[tauri::command]
-pub fn media_next() { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::MediaNext); } } }
+pub fn media_next() { if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(crate::types::SystemCommand::MediaNext); } }
 
 #[tauri::command]
-pub fn media_previous() { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::MediaPrevious); } } }
+pub fn media_previous() { if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(crate::types::SystemCommand::MediaPrevious); } }
 
 #[tauri::command]
-pub fn media_seek(position_ms: f64) { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::MediaSeek(position_ms as i64)); } } }
+pub fn media_seek(position_ms: f64) { if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(crate::types::SystemCommand::MediaSeek(position_ms as i64)); } }
 
 #[tauri::command]
 pub fn open_media_source_app() {
@@ -1251,7 +1253,7 @@ pub fn open_media_source_app() {
 }
 
 #[tauri::command]
-pub fn set_volume(volume: f32) { unsafe { if let Some(ref sender) = COMMAND_SENDER { let _ = sender.send(crate::types::SystemCommand::SetVolume(volume)); } } }
+pub fn set_volume(volume: f32) { if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(crate::types::SystemCommand::SetVolume(volume)); } }
 
 /// Restore the native taskbar, unregister Bloom's appbars, and exit gracefully.
 /// Shared by the tray menu, the in-app Quit button, and the window CloseRequested

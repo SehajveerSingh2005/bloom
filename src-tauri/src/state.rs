@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use crate::types::{SystemCommand, IntRect, AppInfo};
 use tauri::{AppHandle, PhysicalPosition, PhysicalSize};
 
-pub static mut COMMAND_SENDER: Option<Sender<SystemCommand>> = None;
+pub static COMMAND_SENDER: OnceLock<Sender<SystemCommand>> = OnceLock::new();
 pub static MAIN_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub static DOCK_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub static CURRENT_DOCK_OVERLAP: AtomicI32 = AtomicI32::new(-1);
@@ -31,22 +31,20 @@ pub static ANY_MEDIA_PLAYING: AtomicBool = AtomicBool::new(false);
 pub static OVERLAY_IN_SPLASH: AtomicBool = AtomicBool::new(false);
 pub static CURRENT_FOREGROUND_FULLSCREEN: AtomicBool = AtomicBool::new(false);
 
-pub static mut SINGLE_INSTANCE_MUTEX_HANDLE: isize = 0;
-pub static mut SINGLE_INSTANCE_EVENT_HANDLE: isize = 0;
+pub static SINGLE_INSTANCE_MUTEX_HANDLE: OnceLock<isize> = OnceLock::new();
+pub static SINGLE_INSTANCE_EVENT_HANDLE: OnceLock<isize> = OnceLock::new();
 
 pub fn close_single_instance_handles() {
-    unsafe {
-        if SINGLE_INSTANCE_MUTEX_HANDLE != 0 {
-            use windows::Win32::Foundation::CloseHandle;
-            use windows::Win32::Foundation::HANDLE;
-            let _ = CloseHandle(HANDLE(SINGLE_INSTANCE_MUTEX_HANDLE as *mut _));
-            SINGLE_INSTANCE_MUTEX_HANDLE = 0;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Foundation::HANDLE;
+    if let Some(&h) = SINGLE_INSTANCE_MUTEX_HANDLE.get() {
+        if h != 0 {
+            unsafe { let _ = CloseHandle(HANDLE(h as *mut _)); }
         }
-        if SINGLE_INSTANCE_EVENT_HANDLE != 0 {
-            use windows::Win32::Foundation::CloseHandle;
-            use windows::Win32::Foundation::HANDLE;
-            let _ = CloseHandle(HANDLE(SINGLE_INSTANCE_EVENT_HANDLE as *mut _));
-            SINGLE_INSTANCE_EVENT_HANDLE = 0;
+    }
+    if let Some(&h) = SINGLE_INSTANCE_EVENT_HANDLE.get() {
+        if h != 0 {
+            unsafe { let _ = CloseHandle(HANDLE(h as *mut _)); }
         }
     }
 }

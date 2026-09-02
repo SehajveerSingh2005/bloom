@@ -34,8 +34,8 @@ pub fn resolve_shortcut(path: &str) -> Option<(String, String)> {
     }
 }
 
-pub static mut ORIGINAL_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
-static mut ORIGINAL_SEC_TRAY_RECT: Option<windows::Win32::Foundation::RECT> = None;
+pub static ORIGINAL_TRAY_RECT: std::sync::Mutex<Option<windows::Win32::Foundation::RECT>> = std::sync::Mutex::new(None);
+static ORIGINAL_SEC_TRAY_RECT: std::sync::Mutex<Option<windows::Win32::Foundation::RECT>> = std::sync::Mutex::new(None);
 static ORIGINAL_TASKBAR_STATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
 static TASKBAR_MARKER: OnceLock<PathBuf> = OnceLock::new();
@@ -102,16 +102,20 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
                     let _ = SetWindowLongA(tray_hwnd, GWL_EXSTYLE, cleaned);
                     let _ = SetLayeredWindowAttributes(tray_hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
                 }
-                if let Some(rect) = ORIGINAL_TRAY_RECT {
-                    let _ = SetWindowPos(tray_hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                if let Ok(guard) = ORIGINAL_TRAY_RECT.lock() {
+                    if let Some(rect) = *guard {
+                        let _ = SetWindowPos(tray_hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    }
                 }
                 let _ = ShowWindow(tray_hwnd, SW_SHOW);
             } else {
-                let has_rect = { let rect_ptr: *const Option<windows::Win32::Foundation::RECT> = std::ptr::addr_of!(ORIGINAL_TRAY_RECT); (*rect_ptr).is_some() };
+                let has_rect = ORIGINAL_TRAY_RECT.lock().map(|g| g.is_some()).unwrap_or(false);
                 if !has_rect {
                     let mut rect = windows::Win32::Foundation::RECT::default();
                     let _ = GetWindowRect(tray_hwnd, &mut rect);
-                    ORIGINAL_TRAY_RECT = Some(rect);
+                    if let Ok(mut guard) = ORIGINAL_TRAY_RECT.lock() {
+                        *guard = Some(rect);
+                    }
                 }
                 let _ = ShowWindow(tray_hwnd, SW_HIDE);
                 // Move it far off-screen to prevent any "thin line" artifacts or flashes
@@ -123,16 +127,20 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
         if let Ok(secondary_tray_hwnd) = FindWindowA(secondary_tray_class, windows::core::PCSTR::null()) {
             use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE};
             if visible {
-                if let Some(rect) = ORIGINAL_SEC_TRAY_RECT {
-                    let _ = SetWindowPos(secondary_tray_hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                if let Ok(guard) = ORIGINAL_SEC_TRAY_RECT.lock() {
+                    if let Some(rect) = *guard {
+                        let _ = SetWindowPos(secondary_tray_hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    }
                 }
                 let _ = ShowWindow(secondary_tray_hwnd, SW_SHOW);
             } else {
-                let has_sec_rect = { let rect_ptr: *const Option<windows::Win32::Foundation::RECT> = std::ptr::addr_of!(ORIGINAL_SEC_TRAY_RECT); (*rect_ptr).is_some() };
+                let has_sec_rect = ORIGINAL_SEC_TRAY_RECT.lock().map(|g| g.is_some()).unwrap_or(false);
                 if !has_sec_rect {
                     let mut rect = windows::Win32::Foundation::RECT::default();
                     let _ = GetWindowRect(secondary_tray_hwnd, &mut rect);
-                    ORIGINAL_SEC_TRAY_RECT = Some(rect);
+                    if let Ok(mut guard) = ORIGINAL_SEC_TRAY_RECT.lock() {
+                        *guard = Some(rect);
+                    }
                 }
                 let _ = ShowWindow(secondary_tray_hwnd, SW_HIDE);
                 let _ = SetWindowPos(secondary_tray_hwnd, None, -10000, -10000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);

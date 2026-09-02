@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{atomic::{AtomicI64, Ordering}, OnceLock};
 use std::sync::mpsc::{channel, Sender};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
@@ -33,32 +33,30 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: windows::Win32::
 }
 
 fn handle_volume_key_event(vk_code: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) {
-    static mut LAST_TIME: u64 = 0;
+    use std::sync::atomic::AtomicU64;
+    static LAST_TIME: AtomicU64 = AtomicU64::new(0);
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-    unsafe {
-        if now - LAST_TIME < 50 { return; }
-        LAST_TIME = now;
-        if let Some(ref sender) = COMMAND_SENDER {
-            use windows::Win32::UI::Input::KeyboardAndMouse::{VK_VOLUME_MUTE, VK_VOLUME_UP, VK_VOLUME_DOWN};
-            let cmd = match vk_code {
-                VK_VOLUME_MUTE => Some(SystemCommand::VolumeMute),
-                VK_VOLUME_UP => Some(SystemCommand::VolumeUp),
-                VK_VOLUME_DOWN => Some(SystemCommand::VolumeDown),
-                _ => None,
-            };
-            if let Some(cmd) = cmd { let _ = sender.send(cmd); }
-        }
+    let last = LAST_TIME.load(std::sync::atomic::Ordering::Relaxed);
+    if now - last < 50 { return; }
+    LAST_TIME.store(now, std::sync::atomic::Ordering::Relaxed);
+    if let Some(sender) = crate::state::COMMAND_SENDER.get() {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{VK_VOLUME_MUTE, VK_VOLUME_UP, VK_VOLUME_DOWN};
+        let cmd = match vk_code {
+            VK_VOLUME_MUTE => Some(SystemCommand::VolumeMute),
+            VK_VOLUME_UP => Some(SystemCommand::VolumeUp),
+            VK_VOLUME_DOWN => Some(SystemCommand::VolumeDown),
+            _ => None,
+        };
+        if let Some(cmd) = cmd { let _ = sender.send(cmd); }
     }
 }
 
 fn handle_brightness_key_event(vk_code: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) {
-    unsafe {
-        if let Some(ref sender) = COMMAND_SENDER {
-            let cmd = if vk_code.0 == 0x216 { Some(SystemCommand::BrightnessDown) }
-            else if vk_code.0 == 0x217 { Some(SystemCommand::BrightnessUp) }
-            else { None };
-            if let Some(cmd) = cmd { let _ = sender.send(cmd); }
-        }
+    if let Some(sender) = crate::state::COMMAND_SENDER.get() {
+        let cmd = if vk_code.0 == 0x216 { Some(SystemCommand::BrightnessDown) }
+        else if vk_code.0 == 0x217 { Some(SystemCommand::BrightnessUp) }
+        else { None };
+        if let Some(cmd) = cmd { let _ = sender.send(cmd); }
     }
 }
 use crate::types::*;
@@ -76,13 +74,12 @@ pub fn setup_taskbar_hook() {
     }
 }
 
-static mut WINDOW_CHANGE_APP_HANDLE: Option<AppHandle> = None;
-static mut WINDOW_CHANGE_HOOK_HANDLE: Option<windows::Win32::UI::Accessibility::HWINEVENTHOOK> = None;
+static WINDOW_CHANGE_APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 static LAST_WINDOW_CHANGE_MS: AtomicI64 = AtomicI64::new(0);
 
 pub fn setup_window_change_hook(app_handle: AppHandle) {
     unsafe {
-        WINDOW_CHANGE_APP_HANDLE = Some(app_handle);
+        let _ = WINDOW_CHANGE_APP_HANDLE.set(app_handle);
 
         use windows::Win32::UI::Accessibility::SetWinEventHook;
         use windows::Win32::UI::WindowsAndMessaging::{
@@ -110,7 +107,7 @@ pub fn setup_window_change_hook(app_handle: AppHandle) {
         );
 
         // Store hooks to prevent them from being dropped
-        WINDOW_CHANGE_HOOK_HANDLE = Some(_create_hook);
+        Box::leak(Box::new(_create_hook));
     }
 }
 
@@ -148,13 +145,10 @@ unsafe extern "system" fn window_change_event_proc(
     if now - last < 200 { return; }
     LAST_WINDOW_CHANGE_MS.store(now, Ordering::Relaxed);
 
-    if let Some(ref app_handle) = WINDOW_CHANGE_APP_HANDLE {
+    if let Some(app_handle) = WINDOW_CHANGE_APP_HANDLE.get() {
         let _ = app_handle.emit("windows-changed", ());
     }
 }
-
-static mut THUMBNAIL_HOOK_HANDLE: Option<windows::Win32::UI::Accessibility::HWINEVENTHOOK> = None;
-static mut FOCUS_HOOK_HANDLE: Option<windows::Win32::UI::Accessibility::HWINEVENTHOOK> = None;
 
 pub fn setup_thumbnail_capture(_app_handle: AppHandle) {
     unsafe {
@@ -170,7 +164,7 @@ pub fn setup_thumbnail_capture(_app_handle: AppHandle) {
             0,
             WINEVENT_OUTOFCONTEXT,
         );
-        THUMBNAIL_HOOK_HANDLE = Some(hook);
+        Box::leak(Box::new(hook));
 
         let focus_hook = SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND,
@@ -181,7 +175,7 @@ pub fn setup_thumbnail_capture(_app_handle: AppHandle) {
             0,
             WINEVENT_OUTOFCONTEXT,
         );
-        FOCUS_HOOK_HANDLE = Some(focus_hook);
+        Box::leak(Box::new(focus_hook));
     }
 }
 

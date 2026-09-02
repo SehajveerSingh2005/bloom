@@ -55,9 +55,9 @@ fn main() {
         }
 
         if let Ok(h_event) = CreateEventW(None, false, false, windows::core::PCWSTR(event_name.as_ptr())) {
-            SINGLE_INSTANCE_EVENT_HANDLE = h_event.0 as isize;
+            let _ = SINGLE_INSTANCE_EVENT_HANDLE.set(h_event.0 as isize);
         }
-        if let Some(h) = h_mutex { SINGLE_INSTANCE_MUTEX_HANDLE = h.0 as isize; }
+        if let Some(h) = h_mutex { let _ = SINGLE_INSTANCE_MUTEX_HANDLE.set(h.0 as isize); }
     }
 
     setup_brightness_worker();
@@ -304,24 +304,22 @@ fn main() {
             setup_thumbnail_capture(app.handle().clone());
             trigger_app_scan();
             let tx = setup_system_worker(app.handle().clone());
-            unsafe {
-                COMMAND_SENDER = Some(tx.clone());
-            }
+            let _ = COMMAND_SENDER.set(tx.clone());
             let _hook = services::setup_keyboard_hook();
             setup_taskbar_hook();
             setup_audio_visualization(app.handle().clone());
             setup_settings_watcher(app.handle().clone());
 
             // Listen for second-instance signal to open settings
-            unsafe {
-                if SINGLE_INSTANCE_EVENT_HANDLE != 0 {
+            if let Some(&h_event) = SINGLE_INSTANCE_EVENT_HANDLE.get() {
+                if h_event != 0 {
                     let app_handle = app.handle().clone();
                     std::thread::spawn(move || {
                         use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
                         use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
-                        let h_event = HANDLE(SINGLE_INSTANCE_EVENT_HANDLE as *mut _);
+                        let h_event = HANDLE(h_event as *mut _);
                         loop {
-                            let result = WaitForSingleObject(h_event, INFINITE);
+                            let result = unsafe { WaitForSingleObject(h_event, INFINITE) };
                             if result == WAIT_OBJECT_0 {
                                 crate::commands::open_settings_window(app_handle.clone());
                             }
