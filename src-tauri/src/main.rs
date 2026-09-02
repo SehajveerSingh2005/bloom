@@ -308,6 +308,7 @@ fn main() {
             let _hook = services::setup_keyboard_hook();
             setup_taskbar_hook();
             setup_audio_visualization(app.handle().clone());
+            crate::utils::init_settings_cache(app.handle());
             setup_settings_watcher(app.handle().clone());
 
             // Listen for second-instance signal to open settings

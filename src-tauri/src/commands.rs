@@ -1310,7 +1310,9 @@ pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Re
     settings.insert(key.clone(), value);
     let content = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
     std::fs::write(path, content).map_err(|e| e.to_string())?;
-    
+
+    crate::utils::replace_settings_cache(settings.clone());
+
     if key == "bloom-scale" {
         if let Some(main_win) = app.get_webview_window("main") {
             let notch_fixed = settings.get("bloom-notch-mode").map(|v| v.as_str() == Some("fixed")).unwrap_or(true);
@@ -1825,6 +1827,8 @@ pub fn import_settings(app: AppHandle, settings: String) -> Result<(), String> {
     let content = serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())?;
     std::fs::write(&path, content).map_err(|e| e.to_string())?;
 
+    crate::utils::replace_settings_cache(imported.clone());
+
     // Broadcast changes for every imported key so all windows re-sync
     for (key, value) in &imported {
         let _ = app.emit("settings-changed", serde_json::json!({ "key": key, "value": value }));
@@ -1958,7 +1962,8 @@ pub fn setup_settings_watcher(app: AppHandle) {
                             );
                         }
 
-                        *prev = new_settings;
+                        *prev = new_settings.clone();
+                        crate::utils::replace_settings_cache(new_settings);
                     }
                 }
             }

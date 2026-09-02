@@ -190,38 +190,40 @@ pub fn get_now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64
 }
 
-pub fn get_bloom_scale(app: &tauri::AppHandle) -> f64 {
+/// Load settings.json into the in-memory cache. Call once at startup.
+pub fn init_settings_cache(app: &tauri::AppHandle) {
     use tauri::Manager;
-    let path = match app.path().app_config_dir() {
-        Ok(p) => p.join("settings.json"),
-        Err(_) => return 1.0,
-    };
-    if let Ok(content) = std::fs::read_to_string(path) {
-        if let Ok(settings) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&content) {
-            if let Some(val) = settings.get("bloom-scale") {
-                if let Some(scale_str) = val.as_str() {
-                    if let Ok(scale_f) = scale_str.parse::<f64>() {
-                        return scale_f;
-                    }
-                } else if let Some(scale_f) = val.as_f64() {
-                    return scale_f;
-                } else if let Some(scale_i) = val.as_i64() {
-                    return scale_i as f64;
+    use crate::state::SETTINGS_CACHE;
+    let _ = SETTINGS_CACHE.set(std::sync::Mutex::new(std::collections::HashMap::new()));
+    if let Some(path) = app.path().app_config_dir().ok().map(|p| p.join("settings.json")) {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(settings) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&content) {
+                if let Ok(mut cache) = SETTINGS_CACHE.get().unwrap().lock() {
+                    *cache = settings;
                 }
             }
         }
     }
-    1.0
 }
 
-/// Read any string value from settings.json. Returns None if the key is absent.
-pub fn get_setting_str(app: &tauri::AppHandle, key: &str) -> Option<String> {
-    use tauri::Manager;
-    let path = app.path().app_config_dir().ok()?.join("settings.json");
-    let content = std::fs::read_to_string(path).ok()?;
-    let settings: std::collections::HashMap<String, serde_json::Value> =
-        serde_json::from_str(&content).ok()?;
-    settings.get(key)?.as_str().map(|s| s.to_string())
+/// Replace the entire settings cache (used by the file watcher on external changes).
+pub fn replace_settings_cache(new_settings: std::collections::HashMap<String, serde_json::Value>) {
+    if let Ok(mut cache) = crate::state::SETTINGS_CACHE.get().unwrap().lock() {
+        *cache = new_settings;
+    }
+}
+
+pub fn get_bloom_scale(_app: &tauri::AppHandle) -> f64 {
+    get_setting_str(_app, "bloom-scale")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(1.0)
+}
+
+/// Read any string value from the settings cache. Returns None if the key is absent.
+pub fn get_setting_str(_app: &tauri::AppHandle, key: &str) -> Option<String> {
+    let cache = crate::state::SETTINGS_CACHE.get()?;
+    let guard = cache.lock().ok()?;
+    guard.get(key)?.as_str().map(|s| s.to_string())
 }
 
 /// Re-assert HWND_TOPMOST without activating the window.
