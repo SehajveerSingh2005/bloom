@@ -934,11 +934,6 @@ pub async fn get_installed_apps() -> Vec<AppInfo> {
 }
 
 #[tauri::command]
-pub fn broadcast_setting(app: AppHandle, key: String, value: serde_json::Value) {
-    let _ = app.emit("settings-changed", serde_json::json!({ "key": key, "value": value }));
-}
-
-#[tauri::command]
 pub fn hide_native_osd() {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE};
@@ -1302,6 +1297,22 @@ pub async fn close_window(hwnd: isize) {
 }
 
 #[tauri::command]
+fn re_register_appbars(app: &AppHandle, settings: &HashMap<String, serde_json::Value>) {
+    if let Some(main_win) = app.get_webview_window("main") {
+        let notch_fixed = settings.get("bloom-notch-mode").map(|v| v.as_str() == Some("fixed")).unwrap_or(true);
+        if notch_fixed {
+            crate::services::register_appbar(main_win);
+        }
+    }
+    if let Some(dock_win) = app.get_webview_window("dock") {
+        let is_fixed = settings.get("bloom-dock-mode").map(|v| v.as_str() == Some("fixed")).unwrap_or(false);
+        if is_fixed {
+            crate::services::register_dock_appbar(dock_win);
+        }
+    }
+}
+
+#[tauri::command]
 pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
     let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
     if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
@@ -1313,19 +1324,11 @@ pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Re
 
     crate::utils::replace_settings_cache(settings.clone());
 
+    // Broadcast so all windows sync — emit the key as-is (bloom-prefixed)
+    let _ = app.emit("settings-changed", serde_json::json!({ "key": &key, "value": &settings[&key] }));
+
     if key == "bloom-scale" {
-        if let Some(main_win) = app.get_webview_window("main") {
-            let notch_fixed = settings.get("bloom-notch-mode").map(|v| v.as_str() == Some("fixed")).unwrap_or(true);
-            if notch_fixed {
-                crate::services::register_appbar(main_win);
-            }
-        }
-        if let Some(dock_win) = app.get_webview_window("dock") {
-            let is_fixed = settings.get("bloom-dock-mode").map(|v| v.as_str() == Some("fixed")).unwrap_or(false);
-            if is_fixed {
-                crate::services::register_dock_appbar(dock_win);
-            }
-        }
+        re_register_appbars(&app, &settings);
     }
     Ok(())
 }
@@ -1834,24 +1837,8 @@ pub fn import_settings(app: AppHandle, settings: String) -> Result<(), String> {
         let _ = app.emit("settings-changed", serde_json::json!({ "key": key, "value": value }));
     }
 
-    // Handle bloom-scale special case
     if imported.get("bloom-scale").is_some() {
-        if let Some(main_win) = app.get_webview_window("main") {
-            let notch_fixed = imported.get("bloom-notch-mode")
-                .map(|v| v.as_str() == Some("fixed"))
-                .unwrap_or(true);
-            if notch_fixed {
-                crate::services::register_appbar(main_win);
-            }
-        }
-        if let Some(dock_win) = app.get_webview_window("dock") {
-            let is_fixed = imported.get("bloom-dock-mode")
-                .map(|v| v.as_str() == Some("fixed"))
-                .unwrap_or(false);
-            if is_fixed {
-                crate::services::register_dock_appbar(dock_win);
-            }
-        }
+        re_register_appbars(&app, &imported);
     }
 
     Ok(())
@@ -1866,13 +1853,8 @@ pub fn setup_settings_watcher(app: AppHandle) {
     };
     let settings_path = config_dir.join("settings.json");
 
-    // Read initial state for diffing
-    let initial_state: HashMap<String, serde_json::Value> = std::fs::read_to_string(&settings_path)
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default();
-
-    let initial_state = std::sync::Arc::new(std::sync::Mutex::new(initial_state));
+    // Initialize SETTINGS_CACHE if not yet set (backup for race with init_settings_cache)
+    let _ = crate::state::SETTINGS_CACHE.set(std::sync::Mutex::new(HashMap::new()));
 
     std::thread::spawn(move || {
         use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
@@ -1940,30 +1922,41 @@ pub fn setup_settings_watcher(app: AppHandle) {
 
                 if let Ok(new_content) = std::fs::read_to_string(&settings_path) {
                     if let Ok(new_settings) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&new_content) {
-                        let mut prev = initial_state.lock().unwrap();
+                        // Collect diffs while holding the lock, then drop before emitting
+                        let (changed, removed) = {
+                            let mut cache = crate::state::SETTINGS_CACHE
+                                .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+                                .lock()
+                                .unwrap();
 
-                        for (key, value) in &new_settings {
-                            if prev.get(key) != Some(value) {
-                                let _ = app.emit(
-                                    "settings-external-changed",
-                                    serde_json::json!({ "key": key, "value": value }),
-                                );
+                            let mut changed = Vec::new();
+                            for (key, value) in &new_settings {
+                                if cache.get(key) != Some(value) {
+                                    changed.push((key.clone(), value.clone()));
+                                }
                             }
-                        }
 
-                        let removed_keys: Vec<String> = prev.keys()
-                            .filter(|k| !new_settings.contains_key(*k))
-                            .cloned()
-                            .collect();
-                        for key in removed_keys {
+                            let removed: Vec<String> = cache.keys()
+                                .filter(|k| !new_settings.contains_key(*k))
+                                .cloned()
+                                .collect();
+
+                            *cache = new_settings.clone();
+                            (changed, removed)
+                        };
+                        // Lock dropped — safe to emit without blocking save_setting
+                        for (key, value) in &changed {
+                            let _ = app.emit(
+                                "settings-external-changed",
+                                serde_json::json!({ "key": key, "value": value }),
+                            );
+                        }
+                        for key in removed {
                             let _ = app.emit(
                                 "settings-external-changed",
                                 serde_json::json!({ "key": key, "value": null }),
                             );
                         }
-
-                        *prev = new_settings.clone();
-                        crate::utils::replace_settings_cache(new_settings);
                     }
                 }
             }

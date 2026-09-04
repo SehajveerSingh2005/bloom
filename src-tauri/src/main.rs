@@ -70,7 +70,6 @@ fn main() {
             Some(vec![]),
         ))
         .invoke_handler(tauri::generate_handler![
-            broadcast_setting,
             hide_native_osd,
             open_settings_window,
             open_wifi_settings,

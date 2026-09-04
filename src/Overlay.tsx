@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { useSettingsSync } from "./hooks/useSettingsSync";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import "./Overlay.css";
@@ -300,22 +301,6 @@ function OverlayApp() {
       }
     });
 
-    const settingsPromise = listen<{ key: string, value: any }>("settings-changed", (event) => {
-      if (splashActiveRef.current) return;
-      const { key, value } = event.payload;
-      if (key === "volume-overlay") {
-        setVolumeOverlayEnabled(value);
-        if (!value && mode === 'volume') setMode('idle');
-      }
-      if (key === "volume-edge") setVolumeEdgeEnabled(value);
-      if (key === "brightness-overlay") {
-        setBrightnessOverlayEnabled(value);
-        if (!value && mode === 'brightness') setMode('idle');
-      }
-      if (key === "brightness-edge") setBrightnessEdgeEnabled(value);
-      if (key === "bloom-scale") setScale(Number(value));
-    });
-
     const autoUpdatePromise = listen<{ status: string; progress?: number }>("auto-update-status", (event) => {
       const { status, progress } = event.payload;
       setUpdateStatus(status);
@@ -332,35 +317,36 @@ function OverlayApp() {
       }
     });
 
-    const unlistenExternalSettings = listen<{ key: string, value: any }>("settings-external-changed", (event) => {
-      const { key, value } = event.payload;
-      if (value !== null) {
-        localStorage.setItem(key, String(value));
-      } else {
-        localStorage.removeItem(key);
-      }
-      if (key === "bloom-volume-overlay-enabled") {
-        setVolumeOverlayEnabled(value !== "false");
-      }
-      if (key === "bloom-volume-edge-enabled") setVolumeEdgeEnabled(value !== "false");
-      if (key === "bloom-brightness-overlay-enabled") {
-        setBrightnessOverlayEnabled(value !== "false");
-      }
-      if (key === "bloom-brightness-edge-enabled") setBrightnessEdgeEnabled(value !== "false");
-      if (key === "bloom-scale") setScale(Number(value));
-    });
-
     return () => {
       volPromise.then(fn => fn());
       volEdgePromise.then(fn => fn());
       brightPromise.then(fn => fn());
       brightEdgePromise.then(fn => fn());
-      settingsPromise.then(fn => fn());
       autoUpdatePromise.then(fn => fn());
-      unlistenExternalSettings.then(fn => fn());
       document.removeEventListener('contextmenu', preventContext);
     };
   }, [volumeOverlayEnabled, volumeEdgeEnabled, brightnessOverlayEnabled, brightnessEdgeEnabled, resetHideTimeout]);
+
+  useSettingsSync(
+    {
+      "bloom-volume-overlay-enabled": setVolumeOverlayEnabled,
+      "bloom-volume-edge-enabled": setVolumeEdgeEnabled,
+      "bloom-brightness-overlay-enabled": setBrightnessOverlayEnabled,
+      "bloom-brightness-edge-enabled": setBrightnessEdgeEnabled,
+      "bloom-scale": setScale,
+    }
+  );
+
+  // Side effects: reset overlay mode to idle when overlay is disabled
+  useEffect(() => {
+    if (splashActiveRef.current) return;
+    if (!volumeOverlayEnabled && mode === 'volume') setMode('idle');
+  }, [volumeOverlayEnabled, mode]);
+
+  useEffect(() => {
+    if (splashActiveRef.current) return;
+    if (!brightnessOverlayEnabled && mode === 'brightness') setMode('idle');
+  }, [brightnessOverlayEnabled, mode]);
 
   // ── Window Visibility Management ──
   useEffect(() => {

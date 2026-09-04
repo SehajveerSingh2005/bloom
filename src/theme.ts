@@ -234,48 +234,24 @@ export function initTheme() {
     }
   }).catch(console.error);
 
+  // Helper: read all theme values from localStorage and apply
+  const applyThemeFromStorage = () => {
+    const mode = localStorage.getItem('bloom-theme-mode') || 'dark';
+    const color = localStorage.getItem('bloom-theme-color') || '#007aff';
+    const opacity = parseFloat(localStorage.getItem('bloom-theme-opacity') || '0.80');
+    const saturation = parseFloat(localStorage.getItem('bloom-theme-saturation') || '0.50');
+    const brightness = parseFloat(localStorage.getItem('bloom-theme-brightness') || '0.15');
+    applyTheme(mode, color, opacity, saturation, brightness);
+  };
+
+  const bloomThemeKeys = ['bloom-theme-mode', 'bloom-theme-color', 'bloom-theme-opacity', 'bloom-theme-saturation', 'bloom-theme-brightness'];
+
   // Listen to setting changes broadcasted from settings window
+  // (localStorage sync is handled by saveAndLocal in Settings.tsx; we just apply the theme)
   const settingsPromise = listen<{ key: string; value: any }>('settings-changed', (event) => {
-    const { key, value } = event.payload;
-    if (key === 'theme-mode') {
-      localStorage.setItem('bloom-theme-mode', value);
-      const color = localStorage.getItem('bloom-theme-color') || '#007aff';
-      const opacity = parseFloat(localStorage.getItem('bloom-theme-opacity') || '0.80');
-      const saturation = parseFloat(localStorage.getItem('bloom-theme-saturation') || '0.50');
-      const brightness = parseFloat(localStorage.getItem('bloom-theme-brightness') || '0.15');
-      applyTheme(value, color, opacity, saturation, brightness);
-    }
-    if (key === 'theme-color') {
-      localStorage.setItem('bloom-theme-color', value);
-      const mode = localStorage.getItem('bloom-theme-mode') || 'dark';
-      const opacity = parseFloat(localStorage.getItem('bloom-theme-opacity') || '0.80');
-      const saturation = parseFloat(localStorage.getItem('bloom-theme-saturation') || '0.50');
-      const brightness = parseFloat(localStorage.getItem('bloom-theme-brightness') || '0.15');
-      applyTheme(mode, value, opacity, saturation, brightness);
-    }
-    if (key === 'theme-opacity') {
-      localStorage.setItem('bloom-theme-opacity', String(value));
-      const mode = localStorage.getItem('bloom-theme-mode') || 'dark';
-      const color = localStorage.getItem('bloom-theme-color') || '#007aff';
-      const saturation = parseFloat(localStorage.getItem('bloom-theme-saturation') || '0.50');
-      const brightness = parseFloat(localStorage.getItem('bloom-theme-brightness') || '0.15');
-      applyTheme(mode, color, Number(value), saturation, brightness);
-    }
-    if (key === 'theme-saturation') {
-      localStorage.setItem('bloom-theme-saturation', String(value));
-      const mode = localStorage.getItem('bloom-theme-mode') || 'dark';
-      const color = localStorage.getItem('bloom-theme-color') || '#007aff';
-      const opacity = parseFloat(localStorage.getItem('bloom-theme-opacity') || '0.80');
-      const brightness = parseFloat(localStorage.getItem('bloom-theme-brightness') || '0.15');
-      applyTheme(mode, color, opacity, Number(value), brightness);
-    }
-    if (key === 'theme-brightness') {
-      localStorage.setItem('bloom-theme-brightness', String(value));
-      const mode = localStorage.getItem('bloom-theme-mode') || 'dark';
-      const color = localStorage.getItem('bloom-theme-color') || '#007aff';
-      const opacity = parseFloat(localStorage.getItem('bloom-theme-opacity') || '0.80');
-      const saturation = parseFloat(localStorage.getItem('bloom-theme-saturation') || '0.50');
-      applyTheme(mode, color, opacity, saturation, Number(value));
+    const { key } = event.payload;
+    if (bloomThemeKeys.includes(key)) {
+      applyThemeFromStorage();
     }
   });
 
@@ -290,21 +266,12 @@ export function initTheme() {
     }
   });
 
+  // Listen to external edits (e.g. settings.json edited outside the app)
+  // localStorage sync is handled by useSettingsSync hook; we just apply the theme
   const externalPromise = listen<{ key: string; value: any }>('settings-external-changed', (event) => {
-    const { key, value } = event.payload;
-    if (value !== null) {
-      localStorage.setItem(key, String(value));
-    } else {
-      localStorage.removeItem(key);
-    }
-    const themeKeys = ['bloom-theme-mode', 'bloom-theme-color', 'bloom-theme-opacity', 'bloom-theme-saturation', 'bloom-theme-brightness'];
-    if (themeKeys.includes(key)) {
-      const mode = localStorage.getItem('bloom-theme-mode') || 'dark';
-      const color = localStorage.getItem('bloom-theme-color') || '#007aff';
-      const opacity = parseFloat(localStorage.getItem('bloom-theme-opacity') || '0.80');
-      const saturation = parseFloat(localStorage.getItem('bloom-theme-saturation') || '0.50');
-      const brightness = parseFloat(localStorage.getItem('bloom-theme-brightness') || '0.15');
-      applyTheme(mode, color, opacity, saturation, brightness);
+    const { key } = event.payload;
+    if (bloomThemeKeys.includes(key)) {
+      applyThemeFromStorage();
     }
   });
 

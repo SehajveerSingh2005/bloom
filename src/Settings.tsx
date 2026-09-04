@@ -7,6 +7,7 @@ import { listen, emit } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
+import { useSettingsSync } from "./hooks/useSettingsSync";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   Power,
@@ -248,69 +249,6 @@ function SettingsApp() {
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<{ key: string, value: any }>("settings-changed", (event) => {
-      const { key, value } = event.payload;
-      if (key === "dock-mode") setDockMode(value);
-      if (key === "notch-mode") setNotchMode(value);
-      if (key === "dock-enabled") setDockEnabled(value);
-      if (key === "dock-icon-only") setDockIconOnly(value);
-      if (key === "weather") setWeatherEnabled(value);
-      if (key === "calendar") setCalendarEnabled(value);
-      if (key === "music-mode-enabled") setMusicModeEnabled(value);
-      if (key === "music-compact-notch") setMusicCompactNotch(value);
-      if (key === "media-ambience-enabled") setMediaAmbienceEnabled(value);
-      if (key === "media-compact-glow-enabled") setMediaCompactGlowEnabled(value);
-      if (key === "media-layout") setMediaLayout(value as 'classic' | 'compact');
-      if (key === "corners-enabled") setCornersEnabled(value);
-      if (key === "show-update-indicator") setShowUpdateIndicator(value);
-      if (key === "low-battery-threshold") setLowBatteryThreshold(value);
-      if (key === "bloom-scale") setScale(Number(value));
-      if (key === "theme-mode") setThemeMode(value);
-      if (key === "theme-color") setThemeColor(value);
-      if (key === "theme-opacity") setThemeOpacity(Number(value));
-      if (key === "theme-saturation") setThemeSaturation(Number(value));
-      if (key === "theme-brightness") setThemeBrightness(Number(value));
-    });
-
-    // Handle external file changes (from file watcher or other tools editing settings.json)
-    const unlistenExternal = listen<{ key: string, value: any }>("settings-external-changed", (event) => {
-      const { key, value } = event.payload;
-      // Sync localStorage with the externally changed value
-      if (value !== null && value !== undefined) {
-        localStorage.setItem(key, String(value));
-      } else {
-        localStorage.removeItem(key);
-      }
-      // Update local state
-      if (key === "bloom-dock-mode") setDockMode(value === "auto-hide" ? "smart" : value);
-      if (key === "bloom-notch-mode") setNotchMode(value === "auto-hide" ? "smart" : value);
-      if (key === "bloom-dock-enabled") setDockEnabled(value === "true");
-      if (key === "bloom-dock-icon-only") setDockIconOnly(value === "true");
-      if (key === "bloom-weather-enabled") setWeatherEnabled(value === "true");
-      if (key === "bloom-calendar-enabled") setCalendarEnabled(value === "true");
-      if (key === "bloom-music-mode-enabled") setMusicModeEnabled(value === "true");
-      if (key === "bloom-music-compact-notch") setMusicCompactNotch(value === "true");
-      if (key === "bloom-media-ambience-enabled") setMediaAmbienceEnabled(value === "true");
-      if (key === "bloom-media-compact-glow-enabled") setMediaCompactGlowEnabled(value === "true");
-      if (key === "bloom-media-layout") setMediaLayout(value as 'classic' | 'compact');
-      if (key === "bloom-corners-enabled") setCornersEnabled(value === "true");
-      if (key === "bloom-low-battery-threshold") setLowBatteryThreshold(Number(value));
-      if (key === "bloom-scale") setScale(Number(value));
-      if (key === "bloom-theme-mode") setThemeMode(value);
-      if (key === "bloom-theme-color") setThemeColor(value);
-      if (key === "bloom-theme-opacity") setThemeOpacity(Number(value));
-      if (key === "bloom-theme-saturation") setThemeSaturation(Number(value));
-      if (key === "bloom-theme-brightness") setThemeBrightness(Number(value));
-      if (key === "bloom-volume-overlay-enabled") setVolumeOverlayEnabled(value === "true");
-      if (key === "bloom-volume-edge-enabled") setVolumeEdgeEnabled(value === "true");
-      if (key === "bloom-brightness-overlay-enabled") setBrightnessOverlayEnabled(value === "true");
-      if (key === "bloom-brightness-edge-enabled") setBrightnessEdgeEnabled(value === "true");
-      if (key === "bloom-dock-preview-enabled") setDockPreviewEnabled(value === "true");
-      if (key === "bloom-auto-update") setAutoUpdate(value === "true");
-      if (key === "bloom-temp-unit") setTempUnitFahrenheit(value === "fahrenheit");
-      if (key === "bloom-weather-city") setCityName(value || "");
-    });
-
     const unlistenAccent = listen<string>("system-accent-changed", (event) => {
       const mode = localStorage.getItem("bloom-theme-mode") || "dark";
       if (mode === "adaptive") {
@@ -325,11 +263,42 @@ function SettingsApp() {
     });
 
     return () => {
-      unlisten.then(fn => fn());
-      unlistenExternal.then(fn => fn());
       unlistenAccent.then(fn => fn());
     };
   }, []);
+
+  useSettingsSync(
+    {
+      "bloom-dock-mode": setDockMode,
+      "bloom-notch-mode": setNotchMode,
+      "bloom-dock-enabled": setDockEnabled,
+      "bloom-dock-icon-only": setDockIconOnly,
+      "bloom-dock-preview-enabled": setDockPreviewEnabled,
+      "bloom-weather-enabled": setWeatherEnabled,
+      "bloom-calendar-enabled": setCalendarEnabled,
+      "bloom-music-mode-enabled": setMusicModeEnabled,
+      "bloom-music-compact-notch": setMusicCompactNotch,
+      "bloom-media-ambience-enabled": setMediaAmbienceEnabled,
+      "bloom-media-compact-glow-enabled": setMediaCompactGlowEnabled,
+      "bloom-media-layout": setMediaLayout,
+      "bloom-corners-enabled": setCornersEnabled,
+      "bloom-show-update-indicator": setShowUpdateIndicator,
+      "bloom-low-battery-threshold": setLowBatteryThreshold,
+      "bloom-scale": setScale,
+      "bloom-temp-unit": (v) => setTempUnitFahrenheit(v === "fahrenheit"),
+      "bloom-auto-update": setAutoUpdate,
+      "bloom-volume-overlay-enabled": setVolumeOverlayEnabled,
+      "bloom-volume-edge-enabled": setVolumeEdgeEnabled,
+      "bloom-brightness-overlay-enabled": setBrightnessOverlayEnabled,
+      "bloom-brightness-edge-enabled": setBrightnessEdgeEnabled,
+      "bloom-theme-mode": setThemeMode,
+      "bloom-theme-color": setThemeColor,
+      "bloom-theme-opacity": setThemeOpacity,
+      "bloom-theme-saturation": setThemeSaturation,
+      "bloom-theme-brightness": setThemeBrightness,
+      "bloom-weather-city": (v) => setCityName(v || ""),
+    }
+  );
 
 
 
@@ -497,10 +466,6 @@ function SettingsApp() {
     }
   };
 
-  const notifyChange = (key: string, value: string | boolean | number) => {
-    invoke("broadcast_setting", { key, value });
-  };
-
   const saveAndLocal = (key: string, value: string) => {
     localStorage.setItem(key, value);
     invoke("save_setting", { key, value }).catch(console.error);
@@ -510,82 +475,70 @@ function SettingsApp() {
     const newVal = !weatherEnabled;
     setWeatherEnabled(newVal);
     saveAndLocal("bloom-weather-enabled", String(newVal));
-    notifyChange("weather", newVal);
   };
 
   const toggleCalendar = () => {
     const newVal = !calendarEnabled;
     setCalendarEnabled(newVal);
     saveAndLocal("bloom-calendar-enabled", String(newVal));
-    notifyChange("calendar", newVal);
   };
 
   const toggleMusicMode = () => {
     const newVal = !musicModeEnabled;
     setMusicModeEnabled(newVal);
     saveAndLocal("bloom-music-mode-enabled", String(newVal));
-    notifyChange("music-mode-enabled", newVal);
   };
 
   const toggleMusicCompactNotch = () => {
     const newVal = !musicCompactNotch;
     setMusicCompactNotch(newVal);
     saveAndLocal("bloom-music-compact-notch", String(newVal));
-    notifyChange("music-compact-notch", newVal);
   };
 
   const toggleMediaLayout = (layout: 'classic' | 'compact') => {
     setMediaLayout(layout);
     saveAndLocal("bloom-media-layout", layout);
-    notifyChange("media-layout", layout);
   };
 
   const toggleVolumeOverlay = () => {
     const newVal = !volumeOverlayEnabled;
     setVolumeOverlayEnabled(newVal);
     saveAndLocal("bloom-volume-overlay-enabled", String(newVal));
-    notifyChange("volume-overlay", newVal);
   };
 
   const toggleVolumeEdge = () => {
     const newVal = !volumeEdgeEnabled;
     setVolumeEdgeEnabled(newVal);
     saveAndLocal("bloom-volume-edge-enabled", String(newVal));
-    notifyChange("volume-edge", newVal);
   };
 
   const toggleBrightnessOverlay = () => {
     const newVal = !brightnessOverlayEnabled;
     setBrightnessOverlayEnabled(newVal);
     saveAndLocal("bloom-brightness-overlay-enabled", String(newVal));
-    notifyChange("brightness-overlay", newVal);
   };
 
   const toggleBrightnessEdge = () => {
     const newVal = !brightnessEdgeEnabled;
     setBrightnessEdgeEnabled(newVal);
     saveAndLocal("bloom-brightness-edge-enabled", String(newVal));
-    notifyChange("brightness-edge", newVal);
   };
 
   const toggleAmbience = () => {
     const newVal = !mediaAmbienceEnabled;
     setMediaAmbienceEnabled(newVal);
     saveAndLocal("bloom-media-ambience-enabled", String(newVal));
-    notifyChange("media-ambience-enabled", newVal);
   };
 
   const toggleCompactGlow = () => {
     const newVal = !mediaCompactGlowEnabled;
     setMediaCompactGlowEnabled(newVal);
     saveAndLocal("bloom-media-compact-glow-enabled", String(newVal));
-    notifyChange("media-compact-glow-enabled", newVal);
   };
 
   const toggleThemeMode = async (mode: string) => {
     setThemeMode(mode);
     saveAndLocal("bloom-theme-mode", mode);
-    notifyChange("theme-mode", mode);
 
     if (mode === 'adaptive') {
       try {
@@ -594,11 +547,9 @@ function SettingsApp() {
         
         setThemeSaturation(hsl.s / 100);
         saveAndLocal("bloom-theme-saturation", String(hsl.s / 100));
-        notifyChange("theme-saturation", hsl.s / 100);
 
         setThemeBrightness(hsl.l / 100);
         saveAndLocal("bloom-theme-brightness", String(hsl.l / 100));
-        notifyChange("theme-brightness", hsl.l / 100);
       } catch (e) {
         console.error("Failed to parse adaptive accent HSL:", e);
       }
@@ -608,18 +559,15 @@ function SettingsApp() {
   const handleThemeColorChange = (color: string) => {
     setThemeColor(color);
     saveAndLocal("bloom-theme-color", color);
-    notifyChange("theme-color", color);
 
     try {
       const hsl = hexToHsl(color);
       
       setThemeSaturation(hsl.s / 100);
       saveAndLocal("bloom-theme-saturation", String(hsl.s / 100));
-      notifyChange("theme-saturation", hsl.s / 100);
 
       setThemeBrightness(hsl.l / 100);
       saveAndLocal("bloom-theme-brightness", String(hsl.l / 100));
-      notifyChange("theme-brightness", hsl.l / 100);
     } catch (e) {
       console.error("Failed to parse custom color HSL:", e);
     }
@@ -628,19 +576,16 @@ function SettingsApp() {
   const handleOpacityChange = (value: number) => {
     setThemeOpacity(value);
     saveAndLocal("bloom-theme-opacity", String(value));
-    notifyChange("theme-opacity", value);
   };
 
   const handleSaturationChange = (value: number) => {
     setThemeSaturation(value);
     saveAndLocal("bloom-theme-saturation", String(value));
-    notifyChange("theme-saturation", value);
   };
 
   const handleBrightnessChange = (value: number) => {
     setThemeBrightness(value);
     saveAndLocal("bloom-theme-brightness", String(value));
-    notifyChange("theme-brightness", value);
   };
 
   const toggleAutoUpdate = () => {
@@ -653,74 +598,62 @@ function SettingsApp() {
     const newVal = !cornersEnabled;
     setCornersEnabled(newVal);
     saveAndLocal("bloom-corners-enabled", String(newVal));
-    notifyChange("corners-enabled", newVal);
   };
 
   const toggleUpdateIndicator = () => {
     const newVal = !showUpdateIndicator;
     setShowUpdateIndicator(newVal);
     saveAndLocal("bloom-show-update-indicator", String(newVal));
-    notifyChange("show-update-indicator", newVal);
   };
 
   const toggleTempUnit = () => {
     const newVal = !tempUnitFahrenheit;
     setTempUnitFahrenheit(newVal);
     saveAndLocal("bloom-temp-unit", newVal ? "fahrenheit" : "celsius");
-    notifyChange("temp-unit", newVal);
   };
 
   const toggleDock = () => {
     const newVal = !dockEnabled;
     setDockEnabled(newVal);
     saveAndLocal("bloom-dock-enabled", String(newVal));
-    notifyChange("dock-enabled", newVal);
   };
 
   const toggleDockPreview = () => {
     const newVal = !dockPreviewEnabled;
     setDockPreviewEnabled(newVal);
     saveAndLocal("bloom-dock-preview-enabled", String(newVal));
-    notifyChange("dock-preview-enabled", newVal);
   };
 
   const toggleDockIconOnly = () => {
     const newVal = !dockIconOnly;
     setDockIconOnly(newVal);
     saveAndLocal("bloom-dock-icon-only", String(newVal));
-    notifyChange("dock-icon-only", newVal);
   };
 
   const toggleDockMode = (newMode: string) => {
     setDockMode(newMode);
     saveAndLocal("bloom-dock-mode", newMode);
-    notifyChange("dock-mode", newMode);
   };
 
   const toggleNotchMode = (newMode: string) => {
     setNotchMode(newMode);
     saveAndLocal("bloom-notch-mode", newMode);
-    notifyChange("notch-mode", newMode);
   };
 
   const handleThresholdChange = (val: number) => {
     setLowBatteryThreshold(val);
     saveAndLocal("bloom-low-battery-threshold", val.toString());
-    notifyChange("low-battery-threshold", val);
   };
 
   const handleScaleChange = (val: number) => {
     setScale(val);
     saveAndLocal("bloom-scale", val.toString());
-    notifyChange("bloom-scale", val);
   };
 
   const handleWidgetsChange = (config: WidgetConfig) => {
     setStatusWidgets(config);
     const json = JSON.stringify(config);
-    localStorage.setItem("bloom-status-widgets", json);
-    invoke("save_setting", { key: "bloom-status-widgets", value: json }).catch(console.error);
-    notifyChange("status-widgets", json);
+    saveAndLocal("bloom-status-widgets", json);
   };
 
 
@@ -763,15 +696,13 @@ function SettingsApp() {
     setCityName(city.name);
     setShowCityDropdown(false);
     setCitySearchResults([]);
-    saveAndLocal("bloom-weather-city", city.name);
-    saveAndLocal("bloom-weather-lat", city.latitude.toString());
-    saveAndLocal("bloom-weather-lon", city.longitude.toString());
-    // Wait for Tauri settings to persist before triggering refresh
+    localStorage.setItem("bloom-weather-city", city.name);
+    localStorage.setItem("bloom-weather-lat", city.latitude.toString());
+    localStorage.setItem("bloom-weather-lon", city.longitude.toString());
     await invoke("save_setting", { key: "bloom-weather-lat", value: city.latitude.toString() }).catch(() => {});
     await invoke("save_setting", { key: "bloom-weather-lon", value: city.longitude.toString() }).catch(() => {});
     await invoke("save_setting", { key: "bloom-weather-city", value: city.name }).catch(() => {});
     emit("weather-refresh", { lat: city.latitude, lon: city.longitude });
-    notifyChange("weather-city", city.name);
   };
 
   const handleCityClear = async () => {
@@ -785,7 +716,6 @@ function SettingsApp() {
     await invoke("save_setting", { key: "bloom-weather-lon", value: null }).catch(() => {});
     await invoke("save_setting", { key: "bloom-weather-city", value: null }).catch(() => {});
     emit("weather-refresh", true);
-    notifyChange("weather-city", "");
   };
 
   const renderGeneral = () => (

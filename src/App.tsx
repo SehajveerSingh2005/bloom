@@ -10,6 +10,7 @@ import { initTheme } from "./theme";
 import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, VolumeLowIcon, VolumeHighIcon, MusicNoteIcon, HeadphonesIcon } from "./icons";
 import { CompactMediaPlayer } from "./CompactMediaPlayer";
 import { useWeather } from "./hooks/useWeather";
+import { useSettingsSync } from "./hooks/useSettingsSync";
 import type { WidgetConfig } from "./components/StatusWidgetConfig";
 import {
   Cpu,
@@ -352,12 +353,16 @@ function App() {
     return raw;
   });
   const [dndActive, setDndActive] = useState(false);
+  const [dockEnabled, setDockEnabled] = useState(() => localStorage.getItem("bloom-dock-enabled") !== "false");
   const [isNotchHovered, setIsNotchHovered] = useState(false);
 
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
   const [isOverlapped, setIsOverlapped] = useState(false);
   const [interactionState, setInteractionState] = useState<'active' | 'grace' | 'none'>('none');
   const bloomRef = useRef<HTMLDivElement>(null);
+  const dockEnabledInitial = useRef(true);
+  const dockModeInitial = useRef(true);
+  const notchModeInitial = useRef(true);
 
   const isAnyInteraction = isHovered || isNotchHovered || isEdgeHovered;
   const isHidden = !startupAnimating && (
@@ -635,52 +640,6 @@ function App() {
     const unlistenVisibility = listen<boolean>("visibility-change", (event) => {
       setIsVisible(event.payload);
     });
-    const unlistenSettings = listen<{ key: string, value: any }>("settings-changed", (event) => {
-      const { key, value } = event.payload;
-      if (key === "weather") setSettingsWeatherEnabled(value);
-      if (key === "calendar") setSettingsCalendarEnabled(value);
-      if (key === "music-mode-enabled") setSettingsMusicModeEnabled(value);
-      if (key === "music-compact-notch") setSettingsMusicCompactNotch(value);
-      if (key === "visualizer") setSettingsVisualizerEnabled(value);
-      if (key === "album-art") setSettingsAlbumArtEnabled(value);
-      if (key === "media-ambience-enabled") setSettingsAmbienceEnabled(value as boolean);
-      if (key === "media-compact-glow-enabled") setSettingsCompactGlowEnabled(value as boolean);
-      if (key === "media-layout") setMediaLayout(value as 'classic' | 'compact');
-      if (key === "corners-enabled") {
-        setSettingsCornersEnabled(value as boolean);
-      }
-      if (key === "bloom-scale") {
-        setScale(Number(value));
-      }
-      if (key === "low-battery-threshold") {
-        setLowBatteryThreshold(value);
-      }
-      if (key === "dock-enabled") {
-        if (windowLabel === 'main') {
-          if (value) {
-            invoke("init_dock", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
-          } else {
-            invoke("toggle_dock", { enable: false });
-          }
-          // Always re-sync topbar to prevent displacement when dock state changes
-          setTimeout(() => invoke("sync_appbar"), 200);
-        }
-      }
-      if (key === "dock-mode") {
-        setDockMode(value);
-        if (windowLabel === 'main') {
-          invoke("change_dock_mode", { mode: value });
-          setTimeout(() => invoke("sync_appbar"), 200);
-        }
-      }
-
-      if (key === "notch-mode") {
-        setNotchMode(value);
-        if (windowLabel === 'main') {
-          invoke("change_notch_mode", { mode: value });
-        }
-      }
-    });
 
     const unlistenNotchOverlap = listen<boolean>("notch-overlap", (event) => {
       setIsOverlapped(event.payload);
@@ -690,61 +649,72 @@ function App() {
       setIsEdgeHovered(event.payload);
     });
 
-    const unlistenExternalSettings = listen<{ key: string, value: any }>("settings-external-changed", (event) => {
-      const { key, value } = event.payload;
-      if (value !== null) {
-        localStorage.setItem(key, String(value));
-      } else {
-        localStorage.removeItem(key);
-      }
-      if (key === "bloom-weather-enabled") setSettingsWeatherEnabled(value !== "false");
-      if (key === "bloom-calendar-enabled") setSettingsCalendarEnabled(value !== "false");
-      if (key === "bloom-music-mode-enabled") setSettingsMusicModeEnabled(value !== "false");
-      if (key === "bloom-music-compact-notch") setSettingsMusicCompactNotch(value !== "false");
-      const vizKey = key === "bloom-media-visualizer-enabled" || key === "bloom-visualizer-enabled";
-      if (vizKey) setSettingsVisualizerEnabled(value !== "false");
-      if (key === "bloom-media-album-art-enabled") setSettingsAlbumArtEnabled(value !== "false");
-      if (key === "bloom-media-ambience-enabled") setSettingsAmbienceEnabled(value !== "false");
-      if (key === "bloom-media-compact-glow-enabled") setSettingsCompactGlowEnabled(value !== "false");
-      if (key === "bloom-media-layout") setMediaLayout(value as 'classic' | 'compact');
-      if (key === "bloom-corners-enabled") setSettingsCornersEnabled(value === "true");
-      if (key === "bloom-scale") setScale(Number(value));
-      if (key === "bloom-low-battery-threshold") setLowBatteryThreshold(parseInt(value));
-      if (key === "bloom-dock-enabled") {
-        if (windowLabel === 'main') {
-          if (value === "true" || value === true) {
-            invoke("init_dock", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
-          } else {
-            invoke("toggle_dock", { enable: false });
-          }
-          setTimeout(() => invoke("sync_appbar"), 200);
-        }
-      }
-      if (key === "bloom-dock-mode") {
-        const mapped = value === "auto-hide" ? "smart" : value;
-        setDockMode(mapped);
-        if (windowLabel === 'main') {
-          invoke("change_dock_mode", { mode: mapped });
-          setTimeout(() => invoke("sync_appbar"), 200);
-        }
-      }
-      if (key === "bloom-notch-mode") {
-        const mapped = value === "auto-hide" ? "smart" : value;
-        setNotchMode(mapped);
-        if (windowLabel === 'main') {
-          invoke("change_notch_mode", { mode: mapped });
-        }
-      }
-    });
-
     return () => {
       unlistenVisibility.then(f => f());
-      unlistenSettings.then(f => f());
       unlistenNotchOverlap.then(f => f());
       unlistenNotchEdgeHover.then(f => f());
-      unlistenExternalSettings.then(f => f());
+      document.removeEventListener('contextmenu', preventContext);
     };
   }, [windowLabel]);
+
+  // Settings sync — consolidated dispatch for all settings events
+  useSettingsSync(
+    {
+      "bloom-weather-enabled": setSettingsWeatherEnabled,
+      "bloom-calendar-enabled": setSettingsCalendarEnabled,
+      "bloom-music-mode-enabled": setSettingsMusicModeEnabled,
+      "bloom-music-compact-notch": setSettingsMusicCompactNotch,
+      "bloom-media-visualizer-enabled": setSettingsVisualizerEnabled,
+      "bloom-visualizer-enabled": setSettingsVisualizerEnabled,
+      "bloom-media-album-art-enabled": setSettingsAlbumArtEnabled,
+      "bloom-media-ambience-enabled": setSettingsAmbienceEnabled,
+      "bloom-media-compact-glow-enabled": setSettingsCompactGlowEnabled,
+      "bloom-media-layout": setMediaLayout,
+      "bloom-corners-enabled": setSettingsCornersEnabled,
+      "bloom-scale": setScale,
+      "bloom-low-battery-threshold": setLowBatteryThreshold,
+      "bloom-dock-enabled": setDockEnabled,
+      "bloom-dock-mode": setDockMode,
+      "bloom-notch-mode": setNotchMode,
+      "bloom-status-widgets": (value) => {
+        try {
+          const parsed = JSON.parse(value);
+          if (parsed && Array.isArray(parsed.left) && Array.isArray(parsed.right)) {
+            setStatusWidgets(parsed);
+          }
+        } catch {}
+      },
+      "bloom-show-update-indicator": (value) => setShowUpdateIndicator(String(value) === "true"),
+    },
+    [windowLabel]
+  );
+
+  // Side effects: dock-enabled (skip first render — startup code handles initial state)
+  useEffect(() => {
+    if (windowLabel !== 'main') return;
+    if (dockEnabledInitial.current) { dockEnabledInitial.current = false; return; }
+    if (dockEnabled) {
+      invoke("init_dock", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
+    } else {
+      invoke("toggle_dock", { enable: false });
+    }
+    setTimeout(() => invoke("sync_appbar"), 200);
+  }, [dockEnabled, windowLabel]);
+
+  // Side effects: dock-mode (skip first render)
+  useEffect(() => {
+    if (windowLabel !== 'main') return;
+    if (dockModeInitial.current) { dockModeInitial.current = false; return; }
+    invoke("change_dock_mode", { mode: dockMode });
+    setTimeout(() => invoke("sync_appbar"), 200);
+  }, [dockMode, windowLabel]);
+
+  // Side effects: notch-mode (skip first render)
+  useEffect(() => {
+    if (windowLabel !== 'main') return;
+    if (notchModeInitial.current) { notchModeInitial.current = false; return; }
+    invoke("change_notch_mode", { mode: notchMode });
+  }, [notchMode, windowLabel]);
 
   // Bloom mode state: 'music', 'calendar', 'command-center', or 'status'
   const [bloomMode, setBloomMode] = useState<'music' | 'calendar' | 'command-center' | 'status'>('status');
@@ -1008,23 +978,6 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Listen for settings changes to widget config
-  useEffect(() => {
-    const unlisten = listen<{ key: string; value: any }>("settings-changed", (event) => {
-      if (event.payload.key === "status-widgets") {
-        try {
-          const parsed = JSON.parse(event.payload.value);
-          if (parsed && Array.isArray(parsed.left) && Array.isArray(parsed.right)) {
-            setStatusWidgets(parsed);
-          }
-        } catch {}
-      } else if (event.payload.key === "show-update-indicator") {
-        setShowUpdateIndicator(String(event.payload.value) === "true");
-      }
-    });
-    return () => { unlisten.then(fn => fn()); };
-  }, []);
-
   // Listen for brightness changes
   useEffect(() => {
     const unlisten = listen<{ brightness: number }>("brightness-change", (event) => {
@@ -1231,7 +1184,6 @@ function App() {
     invoke("save_setting", { key: "bloom-dock-mode", value: nextMode }).catch(console.error);
     try {
       await invoke("change_dock_mode", { mode: nextMode });
-      await invoke("broadcast_setting", { key: "dock-mode", value: nextMode });
     } catch (err) {
       console.error("Failed to change dock mode:", err);
     }
@@ -1245,7 +1197,6 @@ function App() {
     invoke("save_setting", { key: "bloom-notch-mode", value: nextMode }).catch(console.error);
     try {
       await invoke("change_notch_mode", { mode: nextMode });
-      await invoke("broadcast_setting", { key: "notch-mode", value: nextMode });
     } catch (err) {
       console.error("Failed to change notch mode:", err);
     }
