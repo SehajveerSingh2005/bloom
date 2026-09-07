@@ -1,3 +1,5 @@
+import SpeakerWave1Svg from './sf/speaker.wave.1.fill.svg?react';
+
 interface VolumeLowIconProps {
   size?: number;
   className?: string;
@@ -5,9 +7,5 @@ interface VolumeLowIconProps {
 }
 
 export function VolumeLowIcon({ size = 12, className, style }: VolumeLowIconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
-      <path d="M11 5L6 9H2v6h4l5 4V5z" />
-    </svg>
-  );
+  return <SpeakerWave1Svg width={size} height={size} className={className} style={style} />;
 }

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence, useAnimation } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { Visualizer } from './App';
-import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, MusicNoteIcon, SpeakerIcon, HeadphonesIcon } from './icons';
+import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, MusicNoteIcon, SpeakerIcon, HeadphonesIcon, VolumeLowIcon, VolumeHighIcon } from './icons';
 
 interface MediaInfo {
   title: string;
@@ -249,14 +249,14 @@ export function CompactMediaPlayer({
           whileTap={{ scale: 0.9 }}
           title="Volume"
         >
-          <SpeakerIcon size={20} muted={volume === 0} />
+          <SpeakerIcon size={22} muted={volume === 0} />
         </motion.button>
 
         <div className="cmp-main-controls">
           <motion.button className="cmp-btn" onClick={(e) => { e.stopPropagation(); onAnimatePrev(); }} whileTap={{ scale: 0.9 }}>
             <div className="cmp-slide-wrap">
-              <motion.div animate={prevBack} className="cmp-slide-layer"><SkipBackIcon size={24} /></motion.div>
-              <motion.div animate={prevFront} className="cmp-slide-layer"><SkipBackIcon size={24} /></motion.div>
+              <motion.div animate={prevBack} className="cmp-slide-layer"><SkipBackIcon size={30} /></motion.div>
+              <motion.div animate={prevFront} className="cmp-slide-layer"><SkipBackIcon size={30} /></motion.div>
             </div>
           </motion.button>
 
@@ -270,15 +270,15 @@ export function CompactMediaPlayer({
                 transition={{ duration: 0.12 }}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >
-                {isPlaying ? <PauseIcon size={26} /> : <PlayIcon size={28} />}
+                {isPlaying ? <PauseIcon size={26} /> : <PlayIcon size={26} />}
               </motion.div>
             </AnimatePresence>
           </motion.button>
 
           <motion.button className="cmp-btn" onClick={(e) => { e.stopPropagation(); onAnimateNext(); }} whileTap={{ scale: 0.9 }}>
             <div className="cmp-slide-wrap">
-              <motion.div animate={nextBack} className="cmp-slide-layer"><SkipForwardIcon size={24} /></motion.div>
-              <motion.div animate={nextFront} className="cmp-slide-layer"><SkipForwardIcon size={24} /></motion.div>
+              <motion.div animate={nextBack} className="cmp-slide-layer"><SkipForwardIcon size={30} /></motion.div>
+              <motion.div animate={nextFront} className="cmp-slide-layer"><SkipForwardIcon size={30} /></motion.div>
             </div>
           </motion.button>
         </div>
@@ -292,7 +292,7 @@ export function CompactMediaPlayer({
           whileTap={{ scale: 0.9 }}
           title="Audio Output"
         >
-          <HeadphonesIcon size={20} />
+          <HeadphonesIcon size={22} />
         </motion.button>
       </div>
 
@@ -307,7 +307,7 @@ export function CompactMediaPlayer({
             transition={{ type: "spring", stiffness: 500, damping: 30 }}
           >
             <div className="cmp-volume-row">
-              <SpeakerIcon size={16} style={{ opacity: 0.5, flexShrink: 0 }} />
+              <VolumeLowIcon size={12} style={{ opacity: 0.5, flexShrink: 0 }} />
               <div className="cmp-volume-track">
                 <div className="cmp-volume-fill" style={{ width: `${volume * 100}%` }} />
                 <input
@@ -318,7 +318,7 @@ export function CompactMediaPlayer({
                   onClick={(e) => e.stopPropagation()}
                 />
               </div>
-              <SpeakerIcon size={16} muted={false} style={{ opacity: 0.5, flexShrink: 0 }} />
+              <VolumeHighIcon size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
             </div>
           </motion.div>
         )}

@@ -1591,7 +1591,7 @@ function App() {
                               whileTap={{ scale: 0.9 }}
                               title="Audio Output"
                             >
-                              <HeadphonesIcon size={18} style={{ opacity: 0.5 }} />
+                              <HeadphonesIcon size={20} style={{ opacity: 0.5 }} />
                             </motion.button>
                           </div>
                         </div>
@@ -1604,12 +1604,12 @@ function App() {
                             whileTap={{ scale: 0.9 }}
                             transition={{ type: "spring", stiffness: 400, damping: 25 }}
                           >
-                            <div style={{ position: 'relative', width: 28, height: 14, overflow: 'hidden' }}>
+                            <div style={{ position: 'relative', width: 32, height: 16, overflow: 'hidden' }}>
                               <motion.div animate={prevBack} style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <SkipBackIcon size={28} />
+                                <SkipBackIcon size={32} />
                               </motion.div>
                               <motion.div animate={prevFront} style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <SkipBackIcon size={28} />
+                                <SkipBackIcon size={32} />
                               </motion.div>
                             </div>
                           </motion.button>
@@ -1630,7 +1630,7 @@ function App() {
                                 transition={{ duration: 0.15 }}
                                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                               >
-                                {isPlaying ? <PauseIcon size={24} /> : <PlayIcon size={28} />}
+                                {isPlaying ? <PauseIcon size={26} /> : <PlayIcon size={26} />}
                               </motion.div>
                             </AnimatePresence>
                           </motion.button>
@@ -1642,19 +1642,19 @@ function App() {
                             whileTap={{ scale: 0.9 }}
                             transition={{ type: "spring", stiffness: 400, damping: 25 }}
                           >
-                            <div style={{ position: 'relative', width: 28, height: 14, overflow: 'hidden' }}>
+                            <div style={{ position: 'relative', width: 32, height: 16, overflow: 'hidden' }}>
                               <motion.div animate={nextBack} style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <SkipForwardIcon size={28} />
+                                <SkipForwardIcon size={32} />
                               </motion.div>
                               <motion.div animate={nextFront} style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <SkipForwardIcon size={28} />
+                                <SkipForwardIcon size={32} />
                               </motion.div>
                             </div>
                           </motion.button>
                         </div>
 
                         <div className="volume-slider-container">
-                          <VolumeLowIcon style={{ opacity: 0.5 }} />
+                          <VolumeLowIcon size={12} style={{ opacity: 0.5 }} />
                           <div className="slider-track-premium">
                             <input
                               type="range"
@@ -1669,7 +1669,7 @@ function App() {
                             />
                             <div className="slider-progress-fill" style={{ width: `${volume * 100}%` }} />
                           </div>
-                          <VolumeHighIcon style={{ opacity: 0.5 }} />
+                          <VolumeHighIcon size={14} style={{ opacity: 0.5 }} />
                         </div>
                       </div>
 
