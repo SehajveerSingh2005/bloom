@@ -42,6 +42,7 @@ const Dock = memo(function Dock() {
   });
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(() => localStorage.getItem("bloom-dock-preview-enabled") !== "false");
   const [dockIconOnly, setDockIconOnly] = useState(() => localStorage.getItem("bloom-dock-icon-only") === "true");
+  const [startIcon, setStartIcon] = useState(() => localStorage.getItem("bloom-start-icon") || "default");
   const [previewData, setPreviewData] = useState<{ path: string, previews: { hwnd: number, title: string, image: string }[] } | null>(null);
   const [isDockHovered, setIsDockHovered] = useState(false);
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
@@ -175,6 +176,9 @@ const Dock = memo(function Dock() {
       const iconOnly = getVal("bloom-dock-icon-only", "false");
       setDockIconOnly(iconOnly === "true");
 
+      const sIcon = getVal("bloom-start-icon", "default") || "default";
+      setStartIcon(sIcon);
+
       const scaleVal = getVal("bloom-scale");
       if (scaleVal !== null) setScale(parseFloat(scaleVal));
 
@@ -194,6 +198,7 @@ const Dock = memo(function Dock() {
       if (event.payload.key === "dock-mode") setDockMode(event.payload.value);
       if (event.payload.key === "dock-preview-enabled") setDockPreviewEnabled(event.payload.value);
       if (event.payload.key === "dock-icon-only") setDockIconOnly(event.payload.value);
+      if (event.payload.key === "start-icon") setStartIcon(event.payload.value);
       if (event.payload.key === "bloom-scale") setScale(Number(event.payload.value));
     });
 
@@ -222,6 +227,7 @@ const Dock = memo(function Dock() {
       }
       if (key === "bloom-dock-preview-enabled") setDockPreviewEnabled(value === "true");
       if (key === "bloom-dock-icon-only") setDockIconOnly(value === "true");
+      if (key === "bloom-start-icon") setStartIcon(value);
       if (key === "bloom-scale") setScale(Number(value));
     });
 
@@ -676,7 +682,24 @@ const Dock = memo(function Dock() {
                       handleAppClick(startItem);
                     }}
                   >
-                    <img src="/bloom.png" alt="Bloom" className="bloom-icon-img" draggable={false} />
+                    {(() => {
+                      const iconSrc = startIcon === 'default' ? '/bloom.png'
+                        : startIcon === 'bloom-neon' ? '/bloom-neon.png'
+                        : startIcon === 'bloom-cartoon' ? '/bloom-cartoon.png'
+                        : startIcon === 'windows' ? '/windows.png'
+                        : startIcon.startsWith('custom:') ? startIcon.replace('custom:', '')
+                        : '/bloom.png';
+                      const isCustom = startIcon.startsWith('custom:');
+                      return (
+                        <img
+                          src={iconSrc}
+                          alt="Start"
+                          className="bloom-icon-img"
+                          style={isCustom ? { borderRadius: '8px' } : undefined}
+                          draggable={false}
+                        />
+                      );
+                    })()}
                   </motion.div>
                 </motion.div>
               )}

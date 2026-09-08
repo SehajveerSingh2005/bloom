@@ -75,6 +75,7 @@ function SettingsApp() {
   const [dockEnabled, setDockEnabled] = useState(true);
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(true);
   const [dockIconOnly, setDockIconOnly] = useState(() => localStorage.getItem("bloom-dock-icon-only") === "true");
+  const [startIcon, setStartIcon] = useState(() => localStorage.getItem("bloom-start-icon") || "default");
   const [dockMode, setDockMode] = useState(() => {
     const raw = localStorage.getItem("bloom-dock-mode") || "smart";
     if (raw === "auto-hide") return "smart";
@@ -202,6 +203,9 @@ function SettingsApp() {
       const iconOnly = getVal("bloom-dock-icon-only");
       if (iconOnly !== null) setDockIconOnly(iconOnly === "true");
 
+      const sIcon = getVal("bloom-start-icon");
+      if (sIcon !== null) setStartIcon(sIcon);
+
       const scaleVal = getVal("bloom-scale");
       if (scaleVal !== null) setScale(parseFloat(scaleVal));
 
@@ -254,6 +258,7 @@ function SettingsApp() {
       if (key === "notch-mode") setNotchMode(value);
       if (key === "dock-enabled") setDockEnabled(value);
       if (key === "dock-icon-only") setDockIconOnly(value);
+      if (key === "start-icon") setStartIcon(value);
       if (key === "weather") setWeatherEnabled(value);
       if (key === "calendar") setCalendarEnabled(value);
       if (key === "music-mode-enabled") setMusicModeEnabled(value);
@@ -286,6 +291,7 @@ function SettingsApp() {
       if (key === "bloom-notch-mode") setNotchMode(value === "auto-hide" ? "smart" : value);
       if (key === "bloom-dock-enabled") setDockEnabled(value === "true");
       if (key === "bloom-dock-icon-only") setDockIconOnly(value === "true");
+      if (key === "bloom-start-icon") setStartIcon(value);
       if (key === "bloom-weather-enabled") setWeatherEnabled(value === "true");
       if (key === "bloom-calendar-enabled") setCalendarEnabled(value === "true");
       if (key === "bloom-music-mode-enabled") setMusicModeEnabled(value === "true");
@@ -689,6 +695,24 @@ function SettingsApp() {
     setDockIconOnly(newVal);
     saveAndLocal("bloom-dock-icon-only", String(newVal));
     notifyChange("dock-icon-only", newVal);
+  };
+
+  const handleStartIconChange = (icon: string) => {
+    setStartIcon(icon);
+    saveAndLocal("bloom-start-icon", icon);
+    notifyChange("start-icon", icon);
+  };
+
+  const handleStartIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUri = reader.result as string;
+      handleStartIconChange(`custom:${dataUri}`);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const toggleDockMode = (newMode: string) => {
@@ -1125,6 +1149,101 @@ function SettingsApp() {
                 <input type="checkbox" checked={dockIconOnly} onChange={toggleDockIconOnly} />
                 <span className="slider"></span>
               </label>
+            </div>
+            <div className="setting-divider" />
+            <div className="setting-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%' }}>
+                <div className="setting-icon-bg">
+                  <Sparkles size={14} strokeWidth={1.5} />
+                </div>
+                <div className="setting-info">
+                  <span className="setting-label">Start Menu Icon</span>
+                  <span className="setting-desc">Choose the dock start button icon</span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', paddingLeft: '34px' }}>
+                {[
+                  { key: 'default', src: '/bloom.png', label: 'Bloom' },
+                  { key: 'bloom-neon', src: '/bloom-neon.png', label: 'Neon' },
+                  { key: 'bloom-cartoon', src: '/bloom-cartoon.png', label: 'Cartoon' },
+                  { key: 'windows', src: '/windows.png', label: 'Windows' },
+                ].map((icon) => (
+                  <div
+                    key={icon.key}
+                    onClick={() => handleStartIconChange(icon.key)}
+                    style={{
+                      width: '48px',
+                      height: '48px',
+                      borderRadius: '12px',
+                      border: startIcon === icon.key ? '2px solid var(--bloom-accent, #007aff)' : '2px solid rgba(255,255,255,0.1)',
+                      background: startIcon === icon.key ? 'rgba(0,122,255,0.15)' : 'rgba(255,255,255,0.05)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      padding: '6px',
+                    }}
+                    title={icon.label}
+                  >
+                    <img src={icon.src} alt={icon.label} style={{ width: '100%', height: '100%', objectFit: 'contain' }} draggable={false} />
+                  </div>
+                ))}
+                <div
+                  onClick={() => document.getElementById('start-icon-file-input')?.click()}
+                  style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '12px',
+                    border: startIcon.startsWith('custom:') ? '2px solid var(--bloom-accent, #007aff)' : '2px solid rgba(255,255,255,0.1)',
+                    background: startIcon.startsWith('custom:') ? 'rgba(0,122,255,0.15)' : 'rgba(255,255,255,0.05)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    fontSize: '20px',
+                    color: 'rgba(255,255,255,0.5)',
+                    padding: '6px',
+                  }}
+                  title="Custom icon"
+                >
+                  {startIcon.startsWith('custom:') ? (
+                    <img src={startIcon.replace('custom:', '')} alt="Custom" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '8px' }} draggable={false} />
+                  ) : (
+                    '+'
+                  )}
+                </div>
+                {startIcon !== 'default' && (
+                  <div
+                    onClick={() => handleStartIconChange('default')}
+                    style={{
+                      height: '48px',
+                      borderRadius: '12px',
+                      border: '2px solid rgba(255,255,255,0.1)',
+                      background: 'rgba(255,255,255,0.05)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      fontSize: '11px',
+                      color: 'rgba(255,255,255,0.5)',
+                      padding: '0 12px',
+                    }}
+                    title="Reset to default"
+                  >
+                    Reset
+                  </div>
+                )}
+              </div>
+              <input
+                id="start-icon-file-input"
+                type="file"
+                accept=".png,.ico,.jpg,.jpeg,.svg,.bmp"
+                style={{ display: 'none' }}
+                onChange={handleStartIconUpload}
+              />
             </div>
           </>
         )}
