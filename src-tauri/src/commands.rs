@@ -1296,7 +1296,6 @@ pub async fn close_window(hwnd: isize) {
     }).await.unwrap_or_default();
 }
 
-#[tauri::command]
 fn re_register_appbars(app: &AppHandle, settings: &HashMap<String, serde_json::Value>) {
     if let Some(main_win) = app.get_webview_window("main") {
         let notch_fixed = settings.get("bloom-notch-mode").map(|v| v.as_str() == Some("fixed")).unwrap_or(true);
