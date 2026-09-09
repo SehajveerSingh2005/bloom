@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import './Dock.css';
 import { initTheme } from './theme';
+import { useSettingsSync } from './hooks/useSettingsSync';
 
 interface AppInfo {
   name: string;
@@ -190,13 +191,6 @@ const Dock = memo(function Dock() {
     };
     init();
 
-    const unlistenSettings = listen<{ key: string, value: any }>("settings-changed", (event) => {
-      if (event.payload.key === "dock-mode") setDockMode(event.payload.value);
-      if (event.payload.key === "dock-preview-enabled") setDockPreviewEnabled(event.payload.value);
-      if (event.payload.key === "dock-icon-only") setDockIconOnly(event.payload.value);
-      if (event.payload.key === "bloom-scale") setScale(Number(event.payload.value));
-    });
-
     const unlistenOverlap = listen<boolean>("dock-overlap", (event) => {
       setIsOverlapped(event.payload);
     });
@@ -209,30 +203,21 @@ const Dock = memo(function Dock() {
       setIsVisible(event.payload);
     });
 
-    const unlistenExternalSettings = listen<{ key: string, value: any }>("settings-external-changed", (event) => {
-      const { key, value } = event.payload;
-      if (value !== null) {
-        localStorage.setItem(key, String(value));
-      } else {
-        localStorage.removeItem(key);
-      }
-      if (key === "bloom-dock-mode") {
-        const mapped = value === "auto-hide" ? "smart" : value;
-        setDockMode(mapped);
-      }
-      if (key === "bloom-dock-preview-enabled") setDockPreviewEnabled(value === "true");
-      if (key === "bloom-dock-icon-only") setDockIconOnly(value === "true");
-      if (key === "bloom-scale") setScale(Number(value));
-    });
-
     return () => {
-      unlistenSettings.then(f => f());
       unlistenOverlap.then(f => f());
       unlistenEdgeHover.then(f => f());
       unlistenVisibility.then(f => f());
-      unlistenExternalSettings.then(f => f());
     };
   }, []);
+
+  useSettingsSync(
+    {
+      "bloom-dock-mode": setDockMode,
+      "bloom-dock-preview-enabled": setDockPreviewEnabled,
+      "bloom-dock-icon-only": setDockIconOnly,
+      "bloom-scale": setScale,
+    }
+  );
 
   useEffect(() => {
     const poll = async () => {
