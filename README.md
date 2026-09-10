@@ -114,6 +114,30 @@ It's fast because it has to be.
 
 ---
 
+## 🛡️ Microsoft Defender
+
+Some users may see a Microsoft Defender warning when installing Bloom.
+
+The executable was submitted directly to Microsoft for analysis. Microsoft reviewed the file and confirmed that it **does not meet their criteria for malware or potentially unwanted applications**, and **the detection has been removed**.
+
+<p align="center">
+  <img width="800" alt="Microsoft Security Intelligence" src="https://github.com/user-attachments/assets/67ddddde-9c68-4338-a0f2-c5645e416514" />
+</p>
+
+<details>
+<summary>Still seeing the detection?</summary>
+
+Your system may still have the previous Defender signature cached. Microsoft recommends updating your Defender security intelligence.
+
+Open **Command Prompt as Administrator** and run:
+
+```cmd
+cd "C:\Program Files\Windows Defender"
+MpCmdRun.exe -removedefinitions -dynamicsignatures
+MpCmdRun.exe -SignatureUpdate
+```
+</details>
+
 ## Get It Running
 
 **Download** the latest build from [Releases](https://github.com/SehajveerSingh2005/bloom/releases/latest).
