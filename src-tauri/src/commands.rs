@@ -609,6 +609,35 @@ fn sanitize_filename(key: &str) -> String {
     key.replace(|c: char| c == ':' || c == '\\' || c == '/' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|', "_")
 }
 
+static LAST_ICON_SAVE_REQUEST: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+pub fn schedule_icon_cache_save(app: AppHandle) {
+    let now = crate::utils::get_now_ms();
+    LAST_ICON_SAVE_REQUEST.store(now, Ordering::Relaxed);
+
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+        let last = LAST_ICON_SAVE_REQUEST.load(Ordering::Relaxed);
+        if now == last || crate::utils::get_now_ms() - last >= 950 {
+            if let Ok(dir) = app.path().app_config_dir() {
+                let cache_path = dir.join("icons_cache.json");
+                if let Some(c) = crate::state::ICON_CACHE.get() {
+                    let snapshot = if let Ok(lock) = c.lock() {
+                        serde_json::to_string(&*lock).unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    if !snapshot.is_empty() {
+                        let _ = tauri::async_runtime::spawn_blocking(move || {
+                            let _ = std::fs::write(&cache_path, snapshot);
+                        }).await;
+                    }
+                }
+            }
+        }
+    });
+}
+
 #[tauri::command]
 pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hwnd: Option<isize>) -> Result<Option<String>, String> {
     let cache_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
@@ -672,8 +701,8 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
         if let Some(base64) = result {
             if let Ok(mut c) = cache.lock() {
                 c.insert(cache_key.clone(), base64.clone());
-                let _ = std::fs::write(&cache_path, serde_json::to_string(&*c).unwrap_or_default());
             }
+            schedule_icon_cache_save(app);
             return Ok(Some(base64));
         }
     }
@@ -681,7 +710,7 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
     // Strategy 3: Extract icon from file path
     let path_clone = path.clone();
     let ck_clone = cache_key.clone();
-    tauri::async_runtime::spawn_blocking(move || unsafe {
+    let file_icon = tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
         use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
         use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
@@ -755,8 +784,13 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
             } else { None }
         };
         CoUninitialize();
-        Ok(result.flatten())
-    }).await.map_err(|e| e.to_string())?
+        result.flatten()
+    }).await.map_err(|e| e.to_string())?;
+
+    if file_icon.is_some() {
+        schedule_icon_cache_save(app);
+    }
+    Ok(file_icon)
 }
 
 #[tauri::command]
@@ -884,13 +918,7 @@ pub async fn remove_custom_icon(app: AppHandle, path: String, name: Option<Strin
             lock.remove(&cache_key);
         }
     }
-    let cache_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    let cache_path = cache_dir.join("icons_cache.json");
-    if let Some(c) = ICON_CACHE.get() {
-        if let Ok(lock) = c.lock() {
-            let _ = std::fs::write(&cache_path, serde_json::to_string(&*lock).unwrap_or_default());
-        }
-    }
+    schedule_icon_cache_save(app);
     Ok(())
 }
 

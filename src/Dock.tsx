@@ -308,16 +308,19 @@ const Dock = memo(function Dock() {
     try {
       await invoke('remove_custom_icon', { path: app.path, name: app.name || null });
       const isHost = app.path.toLowerCase().includes("msedge.exe") || app.path.toLowerCase().includes("chrome.exe") || app.path.toLowerCase().includes("applicationframehost.exe");
-      const ck = isHost ? `${app.path}:${app.name.toLowerCase()}` : app.path;
+      const ck = isHost && app.name ? `${app.path}:${app.name.toLowerCase()}` : (app.hwnd ? `${app.path}-${app.hwnd}` : app.path);
       setCustomIcons(prev => {
         const next = { ...prev };
         delete next[ck];
+        delete next[app.path];
         return next;
       });
-      // Clear all cached icons and re-fetch to get fresh originals
-      iconsRef.current = {};
+      // Invalidate only this app's cached icon and re-fetch only this app
+      delete iconsRef.current[ck];
+      delete iconsRef.current[app.path];
+      if (app.hwnd) delete iconsRef.current[`${app.path}-${app.hwnd}`];
       setIconsTick(t => t + 1);
-      pinnedApps.forEach(a => fetchIcon(a.path));
+      fetchIcon(app.path, app.name, app.hwnd);
     } catch (err) {
       console.error("Failed to remove custom icon:", err);
     }
