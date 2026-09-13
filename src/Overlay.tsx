@@ -209,6 +209,12 @@ function OverlayApp() {
       if (settings && settings["bloom-scale"] !== undefined) {
         setScale(parseFloat(settings["bloom-scale"]));
       }
+      if (settings && settings["bloom-brightness-overlay-enabled"] !== undefined) {
+        setBrightnessOverlayEnabled(settings["bloom-brightness-overlay-enabled"] === "true");
+      }
+      if (settings && settings["bloom-volume-overlay-enabled"] !== undefined) {
+        setVolumeOverlayEnabled(settings["bloom-volume-overlay-enabled"] === "true");
+      }
     }).catch(console.error);
   }, []);
 

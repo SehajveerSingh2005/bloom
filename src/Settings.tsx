@@ -61,7 +61,7 @@ function SettingsApp() {
   const [musicCompactNotch, setMusicCompactNotch] = useState(true);
   const [volumeOverlayEnabled, setVolumeOverlayEnabled] = useState(true);
   const [volumeEdgeEnabled, setVolumeEdgeEnabled] = useState(() => localStorage.getItem("bloom-volume-edge-enabled") !== "false");
-  const [brightnessOverlayEnabled, setBrightnessOverlayEnabled] = useState(true);
+  const [brightnessOverlayEnabled, setBrightnessOverlayEnabled] = useState(() => localStorage.getItem("bloom-brightness-overlay-enabled") !== "false");
   const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(() => localStorage.getItem("bloom-brightness-edge-enabled") !== "false");
   const [mediaAmbienceEnabled, setMediaAmbienceEnabled] = useState(true);
   const [mediaCompactGlowEnabled, setMediaCompactGlowEnabled] = useState(true);
@@ -163,6 +163,9 @@ function SettingsApp() {
 
       const volume = getVal("bloom-volume-overlay-enabled");
       if (volume !== null) setVolumeOverlayEnabled(volume === "true");
+
+      const brightnessOverlay = getVal("bloom-brightness-overlay-enabled");
+      if (brightnessOverlay !== null) setBrightnessOverlayEnabled(brightnessOverlay === "true");
 
       const ambience = getVal("bloom-media-ambience-enabled");
       if (ambience !== null) setMediaAmbienceEnabled(ambience === "true");
