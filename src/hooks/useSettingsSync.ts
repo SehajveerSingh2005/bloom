@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 function convertSettingValue(value: any): any {
   if (value === "true") return true;
   if (value === "false") return false;
+  if (typeof value === "string" && !isNaN(Number(value))) return Number(value);
   return value;
 }
 

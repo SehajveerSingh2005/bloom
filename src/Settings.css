@@ -77,6 +77,10 @@ body {
   transform: scale(1.05);
 }
 
+.close-btn-icon {
+  pointer-events: none;
+}
+
 .settings-body {
   display: flex;
   flex-direction: row;
@@ -235,6 +239,10 @@ body {
 
 .setting-group-label:first-of-type {
   margin-top: 4px;
+}
+
+.setting-group-label--spaced {
+  margin-top: 24px;
 }
 
 .setting-group {
@@ -622,6 +630,30 @@ input:checked + .slider:before {
   min-width: 32px;
   text-align: center;
   color: var(--bloom-text, rgba(255, 255, 255, 0.9));
+}
+
+/* Color picker row */
+.color-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-picker-input {
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.color-picker-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 /* About tab container and header */
