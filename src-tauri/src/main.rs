@@ -293,7 +293,7 @@ fn main() {
                 });
             }
 
-            setup_cursor_monitor(app.handle().clone());
+            setup_mouse_hook(app.handle().clone());
             setup_display_change_monitor(app.handle().clone());
             setup_window_change_hook(app.handle().clone());
             {

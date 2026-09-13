@@ -1,10 +1,10 @@
-use std::sync::{atomic::{AtomicI64, Ordering}, OnceLock};
+use std::sync::{atomic::{AtomicI64, AtomicI32, Ordering}, Mutex, OnceLock};
 use std::sync::mpsc::{channel, Sender};
-use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
-use windows::Win32::Foundation::{HWND, LPARAM};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter, Manager};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::core::BOOL;
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindowVisible, GetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW};
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindowVisible, GetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, WH_MOUSE_LL, MSLLHOOKSTRUCT, WM_MOUSEMOVE, SetWindowsHookExW, CallNextHookEx};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_NAME_WIN32};
 use windows::Win32::Foundation::CloseHandle;
@@ -1123,290 +1123,324 @@ pub fn setup_brightness_worker() {
 }
 
 
-pub fn setup_cursor_monitor(app_handle: tauri::AppHandle) {
-    std::thread::spawn(move || {
-        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-        use windows::Win32::Foundation::POINT;
-        
-        let mut last_main_ignore = None;
-        let mut last_dock_ignore = None;
-        let mut last_edge_hover = None;
-        let mut last_top_edge_hover = None;
-        let mut last_left_edge_hover = None;
-        let mut last_right_edge_hover = None;
-        let mut last_ov_ignore: Option<bool> = None;
-        let mut dock_interaction_expiry = Instant::now() - Duration::from_secs(1);
-        let mut topbar_interaction_expiry = Instant::now() - Duration::from_secs(1);
-        let mut left_edge_expiry = Instant::now() - Duration::from_secs(1);
-        let mut right_edge_expiry = Instant::now() - Duration::from_secs(1);
-        let mut last_monitor_update = Instant::now() - Duration::from_secs(5);
-        let mut cached_monitor_pos = PhysicalPosition::<i32>::default();
-        let mut cached_monitor_size = PhysicalSize::<u32>::default();
-        
-        loop {
-            let now = Instant::now();
-            let mut pt = POINT::default();
-            unsafe {
-                if GetCursorPos(&mut pt).is_ok() {
-                    if now.duration_since(last_monitor_update) > Duration::from_millis(1000) {
-                        if let Ok(Some(monitor)) = app_handle.primary_monitor() {
-                            cached_monitor_pos = *monitor.position();
-                            cached_monitor_size = *monitor.size();
-                            last_monitor_update = now;
-                        }
-                    }
-                    // --- Dock Interaction ---
-                    if let Some(dock_win) = app_handle.get_webview_window("dock") {
-                        if dock_win.is_visible().unwrap_or(false) {
-                            let mut is_click_interactive = false;
-                            let mut is_hovered = false;
-                            
-                            let dock_rect_val = if let Ok(lock) = DOCK_WINDOW_RECT.lock() {
-                                *lock
-                            } else {
-                                None
-                            };
+static MOUSE_HOOK_APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+static MH_LAST_MAIN_IGNORE: AtomicI32 = AtomicI32::new(-1);
+static MH_LAST_DOCK_IGNORE: AtomicI32 = AtomicI32::new(-1);
+static MH_LAST_OV_IGNORE: AtomicI32 = AtomicI32::new(-1);
+static MH_LAST_EDGE_HOVER: AtomicI32 = AtomicI32::new(-1);
+static MH_LAST_TOP_EDGE_HOVER: AtomicI32 = AtomicI32::new(-1);
+static MH_LAST_LEFT_EDGE_HOVER: AtomicI32 = AtomicI32::new(-1);
+static MH_LAST_RIGHT_EDGE_HOVER: AtomicI32 = AtomicI32::new(-1);
+static MH_DOCK_EXPIRY_MS: AtomicI64 = AtomicI64::new(0);
+static MH_TOPBAR_EXPIRY_MS: AtomicI64 = AtomicI64::new(0);
+static MH_LEFT_EXPIRY_MS: AtomicI64 = AtomicI64::new(0);
+static MH_RIGHT_EXPIRY_MS: AtomicI64 = AtomicI64::new(0);
+static MH_LAST_MONITOR_UPDATE_MS: AtomicI64 = AtomicI64::new(0);
+static MH_CACHED_MON_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+static MH_CACHED_MON_SIZE: Mutex<Option<(u32, u32)>> = Mutex::new(None);
+static MH_LAST_PROCESS_MS: AtomicI64 = AtomicI64::new(0);
 
-                            if let Some((win_pos, win_size)) = dock_rect_val {
-                                let in_window = pt.x >= win_pos.x && pt.x <= (win_pos.x + win_size.width as i32) &&
-                                                pt.y >= win_pos.y && pt.y <= (win_pos.y + win_size.height as i32);
-                                
-                                if in_window {
-                                    // 1. Check if over actual dock items (DOCK_RECT)
-                                    if let Ok(region) = DOCK_RECT.try_lock() {
-                                        if let Some(r) = *region {
-                                            let scale = dock_win.scale_factor().unwrap_or(1.0);
-                                            let pad_x = (5.0 * scale) as i32;
-                                            let pad_y_top = (8.0 * scale) as i32;
-                                            let pad_y_bottom = (5.0 * scale) as i32;
-                                            let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x;
-                                            let ry = win_pos.y + (r.y as f64 * scale) as i32 - pad_y_top;
-                                            let rw = (r.width as f64 * scale) as i32 + (pad_x * 2);
-                                            let rh = (r.height as f64 * scale) as i32 + pad_y_top + pad_y_bottom;
-                                            if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
-                                                is_click_interactive = true;
-                                            }
-                                        }
-                                    }
+fn now_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64
+}
 
-                                    // 2. Check if over an open menu
-                                    if !is_click_interactive && MENU_IS_OPEN.load(Ordering::Relaxed) {
-                                        if let Ok(rect) = MENU_RECT.try_lock() {
-                                            if let Some(r) = *rect {
-                                                let scale = dock_win.scale_factor().unwrap_or(1.0);
-                                                let rx = win_pos.x + (r.x as f64 * scale) as i32 - (5.0 * scale) as i32;
-                                                let ry = win_pos.y + (r.y as f64 * scale) as i32 - (5.0 * scale) as i32;
-                                                let rw = (r.width as f64 * scale) as i32 + (10.0 * scale) as i32;
-                                                let rh = (r.height as f64 * scale) as i32 + (10.0 * scale) as i32;
-                                                if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry && pt.y <= (ry + rh) {
-                                                    is_click_interactive = true;
-                                                }
-                                            }
-                                        }
+pub fn setup_mouse_hook(app_handle: AppHandle) {
+    let _ = MOUSE_HOOK_APP_HANDLE.set(app_handle);
+    unsafe {
+        SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0)
+            .expect("Failed to install mouse hook");
+    }
+}
+
+unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> windows::Win32::Foundation::LRESULT {
+    if code >= 0 && wparam.0 == WM_MOUSEMOVE as usize {
+        // Throttle to ~30fps (32ms) to match old polling cadence.
+        // Without this, state checks and set_ignore_cursor_events fire on
+        // every pixel of cursor movement, causing notch flicker at edges.
+        let now = now_ms();
+        let last = MH_LAST_PROCESS_MS.load(Ordering::Relaxed);
+        if now - last < 32 {
+            return CallNextHookEx(None, code, wparam, lparam);
+        }
+        MH_LAST_PROCESS_MS.store(now, Ordering::Relaxed);
+
+        if let Some(app_handle) = MOUSE_HOOK_APP_HANDLE.get() {
+            let pt = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+            let cursor = pt.pt;
+
+            // Refresh cached monitor info every 1s
+            if now - MH_LAST_MONITOR_UPDATE_MS.load(Ordering::Relaxed) > 1000 {
+                if let Ok(Some(monitor)) = app_handle.primary_monitor() {
+                    let pos = *monitor.position();
+                    let size = *monitor.size();
+                    *MH_CACHED_MON_POS.lock().unwrap() = Some((pos.x, pos.y));
+                    *MH_CACHED_MON_SIZE.lock().unwrap() = Some((size.width, size.height));
+                    MH_LAST_MONITOR_UPDATE_MS.store(now, Ordering::Relaxed);
+                }
+            }
+
+            let cached_pos = MH_CACHED_MON_POS.lock().unwrap().unwrap_or((0, 0));
+            let cached_size = MH_CACHED_MON_SIZE.lock().unwrap().unwrap_or((1920, 1080));
+            let mon_x = cached_pos.0;
+            let mon_y = cached_pos.1;
+            let mon_w = cached_size.0 as i32;
+            let mon_h = cached_size.1 as i32;
+
+            // --- Dock Interaction ---
+            if let Some(dock_win) = app_handle.get_webview_window("dock") {
+                if dock_win.is_visible().unwrap_or(false) {
+                    let mut is_click_interactive = false;
+                    let mut is_hovered = false;
+
+                    let dock_rect_val = DOCK_WINDOW_RECT.lock().ok().and_then(|g| *g);
+
+                    if let Some((win_pos, win_size)) = dock_rect_val {
+                        let in_window = cursor.x >= win_pos.x && cursor.x <= (win_pos.x + win_size.width as i32) &&
+                                         cursor.y >= win_pos.y && cursor.y <= (win_pos.y + win_size.height as i32);
+
+                        if in_window {
+                            if let Ok(region) = DOCK_RECT.try_lock() {
+                                if let Some(r) = *region {
+                                    let scale = dock_win.scale_factor().unwrap_or(1.0);
+                                    let pad_x = (5.0 * scale) as i32;
+                                    let pad_y_top = (8.0 * scale) as i32;
+                                    let pad_y_bottom = (5.0 * scale) as i32;
+                                    let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x;
+                                    let ry = win_pos.y + (r.y as f64 * scale) as i32 - pad_y_top;
+                                    let rw = (r.width as f64 * scale) as i32 + (pad_x * 2);
+                                    let rh = (r.height as f64 * scale) as i32 + pad_y_top + pad_y_bottom;
+                                    if cursor.x >= rx && cursor.x <= (rx + rw) && cursor.y >= ry && cursor.y <= (ry + rh) {
+                                        is_click_interactive = true;
                                     }
                                 }
                             }
 
-                            // 3. Hot-edge detection (Bottom edge)
-                            let in_dock_hover = DOCK_IS_HOVERED.load(Ordering::Relaxed);
-                            let scale = dock_win.scale_factor().unwrap_or(1.0);
-                            let at_bottom_edge = pt.y >= (cached_monitor_pos.y + cached_monitor_size.height as i32 - (8.0 * scale) as i32) && 
-                                                 pt.x >= cached_monitor_pos.x && pt.x <= (cached_monitor_pos.x + cached_monitor_size.width as i32);
-                            
-                            if at_bottom_edge || in_dock_hover {
-                                is_hovered = true;
-                                dock_interaction_expiry = now + Duration::from_millis(500);
-                            }
-
-                            let final_dock_hover = is_hovered || now < dock_interaction_expiry;
-                            if last_edge_hover != Some(final_dock_hover) {
-                                let _ = app_handle.emit("dock-edge-hover", final_dock_hover);
-                                last_edge_hover = Some(final_dock_hover);
-                            }
-
-                            let should_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
-                            if last_dock_ignore != Some(should_ignore) {
-                                if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
-                                let _ = dock_win.set_ignore_cursor_events(should_ignore);
-                                last_dock_ignore = Some(should_ignore);
-                            }
-                        }
-                    }
-
-                    // --- Main (TopBar) Interaction ---
-                    // Skip all edge detection when a fullscreen app is in the foreground —
-                    // the main window is CSS-hidden but still OS-level visible, so calling
-                    // set_ignore_cursor_events / re_assert_topmost steals focus from the game.
-                    let fg_fs = CURRENT_FOREGROUND_FULLSCREEN.load(Ordering::Relaxed);
-                    if !fg_fs {
-                        if let Some(main_win) = app_handle.get_webview_window("main") {
-                            if main_win.is_visible().unwrap_or(false) {
-                                // 3. Hot-edge detection (Top edge)
-                                let in_notch_hover = NOTCH_IS_HOVERED.load(Ordering::Relaxed);
-                                let mut is_notch_hovered = false;
-                                let scale = main_win.scale_factor().unwrap_or(1.0);
-                                let at_top_edge = pt.y <= (cached_monitor_pos.y + (8.0 * scale) as i32) &&
-                                                  pt.x >= cached_monitor_pos.x && pt.x <= (cached_monitor_pos.x + cached_monitor_size.width as i32);
-
-                                if at_top_edge || in_notch_hover {
-                                    is_notch_hovered = true;
-                                    topbar_interaction_expiry = now + Duration::from_millis(500);
-                                }
-
-                                let mut is_click_interactive = false;
-                                let main_rect_val = if let Ok(lock) = MAIN_WINDOW_RECT.lock() {
-                                    *lock
-                                } else {
-                                    None
-                                };
-
-                                if let Some((win_pos, _)) = main_rect_val {
-                                    if let Ok(region) = NOTCH_RECT.try_lock() {
-                                        if let Some(r) = *region {
-                                            let scale = main_win.scale_factor().unwrap_or(1.0);
-                                            let pad_x = (20.0 * scale) as i32;
-                                            let pad_y_bottom = (5.0 * scale) as i32;
-                                            let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x;
-                                            let rw = (r.width as f64 * scale) as i32 + (pad_x * 2);
-
-                                            let ry_top = win_pos.y;
-                                            let ry_bottom = win_pos.y + (r.height as f64 * scale) as i32 + pad_y_bottom;
-
-                                            if pt.x >= rx && pt.x <= (rx + rw) && pt.y >= ry_top && pt.y <= ry_bottom {
-                                                is_click_interactive = true;
-                                            }
+                            if !is_click_interactive && MENU_IS_OPEN.load(Ordering::Relaxed) {
+                                if let Ok(rect) = MENU_RECT.try_lock() {
+                                    if let Some(r) = *rect {
+                                        let scale = dock_win.scale_factor().unwrap_or(1.0);
+                                        let rx = win_pos.x + (r.x as f64 * scale) as i32 - (5.0 * scale) as i32;
+                                        let ry = win_pos.y + (r.y as f64 * scale) as i32 - (5.0 * scale) as i32;
+                                        let rw = (r.width as f64 * scale) as i32 + (10.0 * scale) as i32;
+                                        let rh = (r.height as f64 * scale) as i32 + (10.0 * scale) as i32;
+                                        if cursor.x >= rx && cursor.x <= (rx + rw) && cursor.y >= ry && cursor.y <= (ry + rh) {
+                                            is_click_interactive = true;
                                         }
                                     }
                                 }
-
-                                let final_notch_hover = is_notch_hovered || now < topbar_interaction_expiry;
-                                if last_top_edge_hover != Some(final_notch_hover) {
-                                    let _ = app_handle.emit("notch-edge-hover", final_notch_hover);
-                                    last_top_edge_hover = Some(final_notch_hover);
-                                }
-
-                                let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
-                                if last_main_ignore != Some(final_ignore) {
-                                    if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
-                                    let _ = main_win.set_ignore_cursor_events(final_ignore);
-                                    last_main_ignore = Some(final_ignore);
-                                }
                             }
-                        }
-                    } else {
-                        // Fullscreen app in foreground — ensure main window stays click-through
-                        // and clear any stale edge-hover state
-                        if let Some(main_win) = app_handle.get_webview_window("main") {
-                            if last_main_ignore != Some(true) {
-                                // re_assert_topmost first (may strip WS_EX_TRANSPARENT on
-                                // some Windows builds via SetWindowPos(HWND_TOPMOST)), then
-                                // set ignore_cursor_events last so WS_EX_TRANSPARENT sticks.
-                                if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
-                                let _ = main_win.set_ignore_cursor_events(true);
-                                last_main_ignore = Some(true);
-                            }
-                        }
-                        if last_top_edge_hover != Some(false) {
-                            let _ = app_handle.emit("notch-edge-hover", false);
-                            last_top_edge_hover = Some(false);
                         }
                     }
 
-                    // --- Left Edge (Volume) ---
-                    // Suppress edge hover events while a fullscreen app is in the
-                    // foreground — the overlay would cover the game and, once the
-                    // cursor lands on the notch area, set_ignore_cursor_events(false)
-                    // steals focus from the game.
-                    if !fg_fs {
-                        let at_left_edge = pt.x <= (cached_monitor_pos.x + 8) &&
-                                            pt.y >= cached_monitor_pos.y &&
-                                            pt.y <= (cached_monitor_pos.y + cached_monitor_size.height as i32);
+                    // Hot-edge detection (Bottom edge)
+                    let in_dock_hover = DOCK_IS_HOVERED.load(Ordering::Relaxed);
+                    let scale = dock_win.scale_factor().unwrap_or(1.0);
+                    let at_bottom_edge = cursor.y >= (mon_y + mon_h - (8.0 * scale) as i32) &&
+                                         cursor.x >= mon_x && cursor.x <= (mon_x + mon_w);
 
-                        if at_left_edge {
-                            left_edge_expiry = now + Duration::from_millis(500);
-                        }
-
-                        let final_left_hover = now < left_edge_expiry;
-                        if last_left_edge_hover != Some(final_left_hover) {
-                            let _ = app_handle.emit("volume-edge-hover", final_left_hover);
-                            last_left_edge_hover = Some(final_left_hover);
-                        }
-                    } else if last_left_edge_hover != Some(false) {
-                        let _ = app_handle.emit("volume-edge-hover", false);
-                        last_left_edge_hover = Some(false);
+                    if at_bottom_edge || in_dock_hover {
+                        is_hovered = true;
+                        MH_DOCK_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
                     }
 
-                    // --- Right Edge (Brightness) ---
-                    if !fg_fs {
-                        let at_right_edge = pt.x >= (cached_monitor_pos.x + cached_monitor_size.width as i32 - 8) &&
-                                             pt.y >= cached_monitor_pos.y &&
-                                             pt.y <= (cached_monitor_pos.y + cached_monitor_size.height as i32);
-
-                        if at_right_edge {
-                            right_edge_expiry = now + Duration::from_millis(500);
-                        }
-
-                        let final_right_hover = now < right_edge_expiry;
-                        if last_right_edge_hover != Some(final_right_hover) {
-                            let _ = app_handle.emit("brightness-edge-hover", final_right_hover);
-                            last_right_edge_hover = Some(final_right_hover);
-                        }
-                    } else if last_right_edge_hover != Some(false) {
-                        let _ = app_handle.emit("brightness-edge-hover", false);
-                        last_right_edge_hover = Some(false);
+                    // When approaching from the bottom edge, keep the dock interactive
+                    // to prevent set_ignore_cursor_events toggling at the boundary.
+                    if at_bottom_edge {
+                        is_click_interactive = true;
                     }
 
-                    // --- Overlay cursor passthrough ---
-                    // During fullscreen, always keep the overlay click-through to
-                    // prevent focus theft from the game.  The overlay still shows
-                    // for volume/brightness key presses (visual feedback), but it
-                    // must never become interactive while a fullscreen app owns
-                    // the foreground.
-                    if let Some(ov_win) = app_handle.get_webview_window("overlay") {
-                        if fg_fs {
-                            if last_ov_ignore != Some(true) {
-                                if let Ok(hwnd) = ov_win.hwnd() { re_assert_topmost(hwnd); }
-                                let _ = ov_win.set_ignore_cursor_events(true);
-                                last_ov_ignore = Some(true);
-                            }
-                        } else {
-                            // Check if cursor is over the notch at the left edge (volume)
-                            let over_left = if let Ok(Some(m)) = ov_win.primary_monitor() {
-                                let ms = m.size();
-                                let mp = m.position();
-                                let sc = m.scale_factor();
-                                let nw = (42.0 * sc) as i32;
-                                let nh = (196.0 * sc) as i32;
-                                let nx = mp.x;
-                                let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
-                                pt.x >= nx && pt.x <= nx + nw && pt.y >= ny && pt.y <= ny + nh
-                            } else { false };
+                    let final_dock_hover = is_hovered || now < MH_DOCK_EXPIRY_MS.load(Ordering::Relaxed);
+                    let prev = MH_LAST_EDGE_HOVER.load(Ordering::Relaxed);
+                    let new_val = if final_dock_hover { 1 } else { 0 };
+                    if prev != new_val {
+                        let _ = app_handle.emit("dock-edge-hover", final_dock_hover);
+                        MH_LAST_EDGE_HOVER.store(new_val, Ordering::Relaxed);
+                    }
 
-                            // Check if cursor is over the notch at the right edge (brightness)
-                            let over_right = if let Ok(Some(m)) = ov_win.primary_monitor() {
-                                let ms = m.size();
-                                let mp = m.position();
-                                let sc = m.scale_factor();
-                                let nw = (42.0 * sc) as i32;
-                                let nh = (196.0 * sc) as i32;
-                                let nx = mp.x + ms.width as i32 - nw;
-                                let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
-                                pt.x >= nx && pt.x <= nx + nw && pt.y >= ny && pt.y <= ny + nh
-                            } else { false };
-
-                            let should_ignore = !(over_left || over_right);
-                            if last_ov_ignore != Some(should_ignore) {
-                                if let Ok(hwnd) = ov_win.hwnd() { re_assert_topmost(hwnd); }
-                                let _ = ov_win.set_ignore_cursor_events(should_ignore);
-                                last_ov_ignore = Some(should_ignore);
-                            }
-                        }
+                    let should_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
+                    let prev_ignore = MH_LAST_DOCK_IGNORE.load(Ordering::Relaxed);
+                    let new_ignore = if should_ignore { 1 } else { 0 };
+                    if prev_ignore != new_ignore {
+                        if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
+                        let _ = dock_win.set_ignore_cursor_events(should_ignore);
+                        MH_LAST_DOCK_IGNORE.store(new_ignore, Ordering::Relaxed);
                     }
                 }
             }
-            std::thread::sleep(Duration::from_millis(32));
+
+            // --- Main (TopBar) Interaction ---
+            let fg_fs = CURRENT_FOREGROUND_FULLSCREEN.load(Ordering::Relaxed);
+            if !fg_fs {
+                if let Some(main_win) = app_handle.get_webview_window("main") {
+                    if main_win.is_visible().unwrap_or(false) {
+                        let in_notch_hover = NOTCH_IS_HOVERED.load(Ordering::Relaxed);
+                        let mut is_notch_hovered = false;
+                        let scale = main_win.scale_factor().unwrap_or(1.0);
+                        let at_top_edge = cursor.y <= (mon_y + (8.0 * scale) as i32) &&
+                                          cursor.x >= mon_x && cursor.x <= (mon_x + mon_w);
+
+                        if at_top_edge || in_notch_hover {
+                            is_notch_hovered = true;
+                            MH_TOPBAR_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
+                        }
+
+                        let mut is_click_interactive = false;
+                        let main_rect_val = MAIN_WINDOW_RECT.lock().ok().and_then(|g| *g);
+
+                        if let Some((win_pos, _)) = main_rect_val {
+                            if let Ok(region) = NOTCH_RECT.try_lock() {
+                                if let Some(r) = *region {
+                                    let scale = main_win.scale_factor().unwrap_or(1.0);
+                                    let pad_x = (20.0 * scale) as i32;
+                                    let pad_y_bottom = (5.0 * scale) as i32;
+                                    let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x;
+                                    let rw = (r.width as f64 * scale) as i32 + (pad_x * 2);
+                                    let ry_top = win_pos.y;
+                                    let ry_bottom = win_pos.y + (r.height as f64 * scale) as i32 + pad_y_bottom;
+
+                                    if cursor.x >= rx && cursor.x <= (rx + rw) && cursor.y >= ry_top && cursor.y <= ry_bottom {
+                                        is_click_interactive = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        // When approaching from the top edge, keep the notch interactive
+                        // to prevent the expand/contract flicker caused by
+                        // set_ignore_cursor_events toggling at the boundary.
+                        if at_top_edge {
+                            is_click_interactive = true;
+                        }
+
+                        let final_notch_hover = is_notch_hovered || now < MH_TOPBAR_EXPIRY_MS.load(Ordering::Relaxed);
+                        let prev = MH_LAST_TOP_EDGE_HOVER.load(Ordering::Relaxed);
+                        let new_val = if final_notch_hover { 1 } else { 0 };
+                        if prev != new_val {
+                            let _ = app_handle.emit("notch-edge-hover", final_notch_hover);
+                            MH_LAST_TOP_EDGE_HOVER.store(new_val, Ordering::Relaxed);
+                        }
+
+                        let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
+                        let prev_ignore = MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed);
+                        let new_ignore = if final_ignore { 1 } else { 0 };
+                        if prev_ignore != new_ignore {
+                            if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
+                            let _ = main_win.set_ignore_cursor_events(final_ignore);
+                            MH_LAST_MAIN_IGNORE.store(new_ignore, Ordering::Relaxed);
+                        }
+                    }
+                }
+            } else {
+                if let Some(main_win) = app_handle.get_webview_window("main") {
+                    let prev = MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed);
+                    if prev != 1 {
+                        if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
+                        let _ = main_win.set_ignore_cursor_events(true);
+                        MH_LAST_MAIN_IGNORE.store(1, Ordering::Relaxed);
+                    }
+                }
+                let prev = MH_LAST_TOP_EDGE_HOVER.load(Ordering::Relaxed);
+                if prev != 0 {
+                    let _ = app_handle.emit("notch-edge-hover", false);
+                    MH_LAST_TOP_EDGE_HOVER.store(0, Ordering::Relaxed);
+                }
+            }
+
+            // --- Left Edge (Volume) ---
+            if !fg_fs {
+                let at_left_edge = cursor.x <= (mon_x + 8) &&
+                                   cursor.y >= mon_y &&
+                                   cursor.y <= (mon_y + mon_h);
+
+                if at_left_edge {
+                    MH_LEFT_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
+                }
+
+                let final_left_hover = now < MH_LEFT_EXPIRY_MS.load(Ordering::Relaxed);
+                let prev = MH_LAST_LEFT_EDGE_HOVER.load(Ordering::Relaxed);
+                let new_val = if final_left_hover { 1 } else { 0 };
+                if prev != new_val {
+                    let _ = app_handle.emit("volume-edge-hover", final_left_hover);
+                    MH_LAST_LEFT_EDGE_HOVER.store(new_val, Ordering::Relaxed);
+                }
+            } else {
+                let prev = MH_LAST_LEFT_EDGE_HOVER.load(Ordering::Relaxed);
+                if prev != 0 {
+                    let _ = app_handle.emit("volume-edge-hover", false);
+                    MH_LAST_LEFT_EDGE_HOVER.store(0, Ordering::Relaxed);
+                }
+            }
+
+            // --- Right Edge (Brightness) ---
+            if !fg_fs {
+                let at_right_edge = cursor.x >= (mon_x + mon_w - 8) &&
+                                    cursor.y >= mon_y &&
+                                    cursor.y <= (mon_y + mon_h);
+
+                if at_right_edge {
+                    MH_RIGHT_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
+                }
+
+                let final_right_hover = now < MH_RIGHT_EXPIRY_MS.load(Ordering::Relaxed);
+                let prev = MH_LAST_RIGHT_EDGE_HOVER.load(Ordering::Relaxed);
+                let new_val = if final_right_hover { 1 } else { 0 };
+                if prev != new_val {
+                    let _ = app_handle.emit("brightness-edge-hover", final_right_hover);
+                    MH_LAST_RIGHT_EDGE_HOVER.store(new_val, Ordering::Relaxed);
+                }
+            } else {
+                let prev = MH_LAST_RIGHT_EDGE_HOVER.load(Ordering::Relaxed);
+                if prev != 0 {
+                    let _ = app_handle.emit("brightness-edge-hover", false);
+                    MH_LAST_RIGHT_EDGE_HOVER.store(0, Ordering::Relaxed);
+                }
+            }
+
+            // --- Overlay cursor passthrough ---
+            if let Some(ov_win) = app_handle.get_webview_window("overlay") {
+                if fg_fs {
+                    let prev = MH_LAST_OV_IGNORE.load(Ordering::Relaxed);
+                    if prev != 1 {
+                        if let Ok(hwnd) = ov_win.hwnd() { re_assert_topmost(hwnd); }
+                        let _ = ov_win.set_ignore_cursor_events(true);
+                        MH_LAST_OV_IGNORE.store(1, Ordering::Relaxed);
+                    }
+                } else {
+                    let over_left = if let Ok(Some(m)) = ov_win.primary_monitor() {
+                        let ms = m.size();
+                        let mp = m.position();
+                        let sc = m.scale_factor();
+                        let nw = (42.0 * sc) as i32;
+                        let nh = (196.0 * sc) as i32;
+                        let nx = mp.x;
+                        let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
+                        cursor.x >= nx && cursor.x <= nx + nw && cursor.y >= ny && cursor.y <= ny + nh
+                    } else { false };
+
+                    let over_right = if let Ok(Some(m)) = ov_win.primary_monitor() {
+                        let ms = m.size();
+                        let mp = m.position();
+                        let sc = m.scale_factor();
+                        let nw = (42.0 * sc) as i32;
+                        let nh = (196.0 * sc) as i32;
+                        let nx = mp.x + ms.width as i32 - nw;
+                        let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
+                        cursor.x >= nx && cursor.x <= nx + nw && cursor.y >= ny && cursor.y <= ny + nh
+                    } else { false };
+
+                    let should_ignore = !(over_left || over_right);
+                    let prev = MH_LAST_OV_IGNORE.load(Ordering::Relaxed);
+                    let new_val = if should_ignore { 1 } else { 0 };
+                    if prev != new_val {
+                        if let Ok(hwnd) = ov_win.hwnd() { re_assert_topmost(hwnd); }
+                        let _ = ov_win.set_ignore_cursor_events(should_ignore);
+                        MH_LAST_OV_IGNORE.store(new_val, Ordering::Relaxed);
+                    }
+                }
+            }
         }
-    });
+    }
+    CallNextHookEx(None, code, wparam, lparam)
 }
 
 pub fn trigger_app_scan() {
