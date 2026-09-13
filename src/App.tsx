@@ -230,6 +230,7 @@ function App() {
   const [isHovered, setIsHovered] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [scale, setScale] = useState(() => parseFloat(localStorage.getItem("bloom-scale") || "1.0"));
+  const [timeFormat24h, setTimeFormat24h] = useState(() => localStorage.getItem("bloom-time-format-24h") === "true");
 
 
   const [batteryLevel, setBatteryLevel] = useState(100);
@@ -540,6 +541,7 @@ function App() {
       setSettingsAmbienceEnabled(getVal("bloom-media-ambience-enabled", "true") !== "false");
       setSettingsCompactGlowEnabled(getVal("bloom-media-compact-glow-enabled", "true") !== "false");
       setSettingsCornersEnabled(getVal("bloom-corners-enabled", "false") === "true");
+      setTimeFormat24h(getVal("bloom-time-format-24h") === "true");
 
       const thresholdStr = getVal("bloom-low-battery-threshold", "20");
       if (thresholdStr) setLowBatteryThreshold(parseInt(thresholdStr as string));
@@ -685,6 +687,7 @@ function App() {
         } catch {}
       },
       "bloom-show-update-indicator": (value) => setShowUpdateIndicator(String(value) === "true"),
+      "bloom-time-format-24h": setTimeFormat24h,
     },
     [windowLabel]
   );
@@ -886,6 +889,7 @@ function App() {
         now.toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
+          hour12: !timeFormat24h,
         })
       );
     };
@@ -907,7 +911,7 @@ function App() {
       clearInterval(interval);
       if (timerToggleInterval) clearInterval(timerToggleInterval);
     };
-  }, [isTimerRunning, bloomMode]);
+  }, [isTimerRunning, bloomMode, timeFormat24h]);
 
   // Battery API
   useEffect(() => {

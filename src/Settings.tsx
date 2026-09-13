@@ -42,6 +42,7 @@ import {
   X,
   Upload,
   FileDown,
+  Clock,
 } from "lucide-react";
 import "./Settings.css";
 import { initTheme, hexToHsl } from "./theme";
@@ -68,6 +69,7 @@ function SettingsApp() {
   const [mediaLayout, setMediaLayout] = useState<'classic' | 'compact'>(() => (localStorage.getItem("bloom-media-layout") as 'classic' | 'compact') || 'classic');
   const [cornersEnabled, setCornersEnabled] = useState(() => localStorage.getItem("bloom-corners-enabled") === "true");
   const [showUpdateIndicator, setShowUpdateIndicator] = useState(() => localStorage.getItem("bloom-show-update-indicator") !== "false");
+  const [timeFormat24h, setTimeFormat24h] = useState(() => localStorage.getItem("bloom-time-format-24h") === "true");
   const [tempUnitFahrenheit, setTempUnitFahrenheit] = useState(false);
   const [cityName, setCityName] = useState("");
   const [citySearchResults, setCitySearchResults] = useState<Array<{ name: string; country: string; latitude: number; longitude: number }>>([]);
@@ -175,6 +177,9 @@ function SettingsApp() {
 
       const corners = getVal("bloom-corners-enabled");
       if (corners !== null) setCornersEnabled(corners === "true");
+
+      const time24h = getVal("bloom-time-format-24h");
+      if (time24h !== null) setTimeFormat24h(time24h === "true");
 
       const tempUnit = getVal("bloom-temp-unit");
       if (tempUnit !== null) setTempUnitFahrenheit(tempUnit === "fahrenheit");
@@ -286,6 +291,7 @@ function SettingsApp() {
       "bloom-media-layout": setMediaLayout,
       "bloom-corners-enabled": setCornersEnabled,
       "bloom-show-update-indicator": setShowUpdateIndicator,
+      "bloom-time-format-24h": setTimeFormat24h,
       "bloom-low-battery-threshold": setLowBatteryThreshold,
       "bloom-scale": setScale,
       "bloom-temp-unit": (v) => setTempUnitFahrenheit(v === "fahrenheit"),
@@ -609,6 +615,12 @@ function SettingsApp() {
     saveAndLocal("bloom-show-update-indicator", String(newVal));
   };
 
+  const toggleTimeFormat24h = () => {
+    const newVal = !timeFormat24h;
+    setTimeFormat24h(newVal);
+    saveAndLocal("bloom-time-format-24h", String(newVal));
+  };
+
   const toggleTempUnit = () => {
     const newVal = !tempUnitFahrenheit;
     setTempUnitFahrenheit(newVal);
@@ -765,6 +777,22 @@ function SettingsApp() {
           </div>
           <label className="toggle-switch">
             <input type="checkbox" checked={showUpdateIndicator} onChange={toggleUpdateIndicator} />
+            <span className="slider"></span>
+          </label>
+        </div>
+
+        <div className="setting-divider" />
+
+        <div className="setting-item">
+          <div className="setting-icon-bg">
+            <Clock size={14} strokeWidth={1.5} />
+          </div>
+          <div className="setting-info">
+            <span className="setting-label">24-Hour Time</span>
+            <span className="setting-desc">Use 24-hour clock format</span>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={timeFormat24h} onChange={toggleTimeFormat24h} />
             <span className="slider"></span>
           </label>
         </div>
