@@ -2,13 +2,14 @@
   "name": "bloom",
   "private": true,
   "license": "GPL-3.0-only",
-  "version": "3.1.2",
+  "version": "3.8.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "bump": "bun scripts/bump-version.mjs"
   },
   "dependencies": {
     "@crabnebula/tauri-plugin-drag": "^2.1.0",

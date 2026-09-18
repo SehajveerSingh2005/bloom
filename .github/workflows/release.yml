@@ -39,21 +39,29 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Update version from tag
+      - name: Verify version matches tag
         shell: bash
         run: |
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "::error::This workflow must run on a version tag (e.g. v3.8.7)."
+            exit 1
+          fi
+
           VERSION="${GITHUB_REF_NAME#v}"
           if [[ $VERSION =~ ^[0-9]+\.[0-9]+$ ]]; then
             VERSION="$VERSION.0"
           fi
-          echo "Syncing files to version $VERSION"
-          
-          # Update package.json and tauri.conf.json using bun for safety
-          bun -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.version = '$VERSION'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
-          bun -e "const fs = require('fs'); const conf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8')); conf.version = '$VERSION'; fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(conf, null, 2));"
-          
-          # Update Cargo.toml
-          sed -i "0,/^version = \".*\"/{s/^version = \".*\"/version = \"$VERSION\"/}" src-tauri/Cargo.toml
+
+          PKG_VERSION=$(bun -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).version)")
+          CONF_VERSION=$(bun -e "console.log(JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json','utf8')).version)")
+          CARGO_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)
+
+          echo "Tag: $VERSION | package.json: $PKG_VERSION | tauri.conf.json: $CONF_VERSION | Cargo.toml: $CARGO_VERSION"
+
+          if [ "$PKG_VERSION" != "$VERSION" ] || [ "$CONF_VERSION" != "$VERSION" ] || [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "::error::Version files do not match tag $VERSION. Run 'bun run bump $VERSION' and commit before tagging."
+            exit 1
+          fi
 
       - name: Generate release notes
         id: notes

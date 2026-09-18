@@ -410,7 +410,7 @@ dependencies = [
 
 [[package]]
 name = "bloom"
-version = "3.1.2"
+version = "3.8.6"
 dependencies = [
  "base64 0.22.1",
  "image",
