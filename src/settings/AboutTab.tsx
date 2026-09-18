@@ -38,6 +38,8 @@ export function AboutTab({
         return "Bloom is up to date";
       case "downloading":
         return "Downloading Update...";
+      case "installing":
+        return "Installing...";
       case "error":
         return "No updates found";
       default:

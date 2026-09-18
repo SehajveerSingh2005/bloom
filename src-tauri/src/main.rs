@@ -5,10 +5,9 @@ mod state;
 mod utils;
 mod services;
 mod commands;
+mod updater;
 
 use tauri::Manager;
-use tauri::Emitter;
-use tauri_plugin_updater::UpdaterExt;
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
 use windows::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
 use windows::core::BOOL;
@@ -135,7 +134,10 @@ fn main() {
             export_settings,
             import_settings,
             read_settings_from_path,
-            write_settings_to_path
+            write_settings_to_path,
+            updater::check_for_updates,
+            updater::install_update,
+            updater::get_update_state
         ])
         .setup(|app| {
             init_taskbar_marker(app.handle());
@@ -147,51 +149,13 @@ fn main() {
                 NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
             }
 
-            // Auto-update check on startup (non-blocking)
+            // Update check on startup (non-blocking). Always runs so the UI can
+            // show an update badge; auto-install only happens when the user
+            // enabled it and the release has aged past the rollout gate.
             {
                 let app_handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    if let Some(auto_update) = get_setting_str(&app_handle, "bloom-auto-update") {
-                        if auto_update == "true" {
-                            let rt = tokio::runtime::Runtime::new().unwrap();
-                            rt.block_on(async {
-                                let _ = app_handle.emit("auto-update-status", serde_json::json!({ "status": "checking" }));
-
-                                if let Ok(updater) = app_handle.updater() {
-                                    match tokio::time::timeout(
-                                        std::time::Duration::from_secs(10),
-                                        updater.check()
-                                    ).await {
-                                        Ok(Ok(Some(update))) => {
-                                            let _ = app_handle.emit("auto-update-status", serde_json::json!({ "status": "downloading", "progress": 0 }));
-
-                                            let handle = app_handle.clone();
-                                            let downloaded = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-                                            let downloaded_clone = downloaded.clone();
-                                            let _ = update.download_and_install(
-                                                move |chunk_len, total| {
-                                                    let prev = downloaded_clone.fetch_add(chunk_len as u64, std::sync::atomic::Ordering::Relaxed);
-                                                    if let Some(total) = total {
-                                                        let progress = if total > 0 { ((prev + chunk_len as u64) * 100 / total) as u32 } else { 0 };
-                                                        let _ = handle.emit("auto-update-status", serde_json::json!({ "status": "downloading", "progress": progress }));
-                                                    }
-                                                },
-                                                || {}
-                                            ).await;
-
-                                            let _ = app_handle.emit("auto-update-status", serde_json::json!({ "status": "installing" }));
-                                            app_handle.restart();
-                                        }
-                                        _ => {
-                                            let _ = app_handle.emit("auto-update-status", serde_json::json!({ "status": "done" }));
-                                        }
-                                    }
-                                } else {
-                                    let _ = app_handle.emit("auto-update-status", serde_json::json!({ "status": "done" }));
-                                }
-                            });
-                        }
-                    }
+                tauri::async_runtime::spawn(async move {
+                    updater::run_startup_check(app_handle).await;
                 });
             }
 

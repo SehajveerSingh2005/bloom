@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
-import { check } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
+import type { UpdateCheckResult } from "../updater";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import { hexToHsl } from "../theme";
 import type { WidgetConfig } from "./types";
@@ -69,7 +69,7 @@ export function useSettings() {
   const [notchMode, setNotchMode] = useState("fixed");
   const [lowBatteryThreshold, setLowBatteryThreshold] = useState(20);
   const [updateStatus, setUpdateStatus] = useState<
-    "idle" | "checking" | "available" | "uptodate" | "error" | "downloading"
+    "idle" | "checking" | "available" | "uptodate" | "error" | "downloading" | "installing"
   >("idle");
   const [updateVersion, setUpdateVersion] = useState("");
   const [appVersion, setAppVersion] = useState("");
@@ -265,13 +265,13 @@ export function useSettings() {
   }, [cityName]);
 
   // ── Update checker ──
-  const checkForUpdates = async (_manual = true) => {
+  const checkForUpdates = async (manual = true) => {
     setUpdateStatus("checking");
     try {
-      const update = await check();
-      if (update) {
+      const result = await invoke<UpdateCheckResult>("check_for_updates", { force: manual });
+      if (result.available) {
         setUpdateStatus("available");
-        setUpdateVersion(update.version);
+        setUpdateVersion(result.version ?? "");
       } else {
         setUpdateStatus("uptodate");
       }
@@ -283,17 +283,34 @@ export function useSettings() {
 
   const installUpdate = async () => {
     try {
-      const update = await check();
-      if (update) {
-        setUpdateStatus("downloading");
-        await update.downloadAndInstall();
-        await invoke("restart_bloom");
-      }
+      setUpdateStatus("downloading");
+      await invoke("install_update");
+      setUpdateStatus("idle");
     } catch (e) {
       console.error(e);
       setUpdateStatus("error");
     }
   };
+
+  // Reflect install progress triggered from any window (including auto-update).
+  useEffect(() => {
+    const unlisten = listen<{ status: string; progress?: number }>("auto-update-status", (event) => {
+      switch (event.payload.status) {
+        case "downloading":
+          setUpdateStatus("downloading");
+          break;
+        case "installing":
+          setUpdateStatus("installing");
+          break;
+        case "done":
+          setUpdateStatus((prev) => (prev === "downloading" || prev === "installing" ? "idle" : prev));
+          break;
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   // ── Autostart ──
   const toggleAutostart = async () => {

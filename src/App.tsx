@@ -3,8 +3,8 @@ import { useEffect, useState, useCallback, useRef, memo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { check } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
+import type { UpdateCheckResult } from "./updater";
 import "./App.css";
 import { initTheme } from "./theme";
 import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, VolumeLowIcon, VolumeHighIcon, MusicNoteIcon, HeadphonesIcon } from "./icons";
@@ -244,6 +244,7 @@ function App() {
 
   const [eventPeek, setEventPeek] = useState(false);
   const eventPeekTimeoutRef = useRef<any>(null);
+  const updatePulseTimerRef = useRef<any>(null);
   const triggerEventPeek = useCallback((duration = 3000) => {
     setEventPeek(true);
     if (eventPeekTimeoutRef.current) clearTimeout(eventPeekTimeoutRef.current);
@@ -323,24 +324,34 @@ function App() {
   useEffect(() => {
     if (windowLabel !== 'main') return;
 
-    const checkForUpdates = async () => {
-      try {
-        const update = await check();
-        if (update?.available) {
-          setUpdateAvailable(true);
-          setShowUpdatePulse(true);
-          if (notchMode === 'peek') triggerEventPeek(6000);
-          const timer = setTimeout(() => {
-            setShowUpdatePulse(false);
-          }, 6000);
-          return () => clearTimeout(timer);
-        }
-      } catch (e) {
-        console.error("Failed to check for updates:", e);
-      }
-    };
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
 
-    checkForUpdates();
+    listen<UpdateCheckResult>("update-available", (event) => {
+      if (!event.payload.available) return;
+      setUpdateAvailable(true);
+      setShowUpdatePulse(true);
+      if (notchMode === 'peek') triggerEventPeek(6000);
+      if (updatePulseTimerRef.current) clearTimeout(updatePulseTimerRef.current);
+      updatePulseTimerRef.current = setTimeout(() => {
+        setShowUpdatePulse(false);
+      }, 6000);
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+
+    invoke<UpdateCheckResult>("get_update_state")
+      .then((state) => {
+        if (state.available) setUpdateAvailable(true);
+      })
+      .catch((e) => console.error("Failed to read update state:", e));
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+      if (updatePulseTimerRef.current) clearTimeout(updatePulseTimerRef.current);
+    };
   }, [windowLabel, notchMode, triggerEventPeek]);
 
   const [isVisible, setIsVisible] = useState(true);
