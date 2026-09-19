@@ -1,0 +1,53 @@
+version: 2
+updates:
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    rebase-strategy: auto
+    groups:
+      root-version-updates:
+        patterns: ['*']
+        update-types: [minor, patch]
+      root-security-updates:
+        applies-to: security-updates
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    rebase-strategy: auto
+    groups:
+      website-version-updates:
+        patterns: ['*']
+        update-types: [minor, patch]
+      website-security-updates:
+        applies-to: security-updates
+        patterns: ['*']
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    rebase-strategy: auto
+    groups:
+      cargo-version-updates:
+        patterns: ['*']
+        update-types: [minor, patch]
+      cargo-security-updates:
+        applies-to: security-updates
+        patterns: ['*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    rebase-strategy: auto
+    groups:
+      actions-updates:
+        patterns: ['*']
