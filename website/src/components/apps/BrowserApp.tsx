@@ -17,6 +17,16 @@ function toEmbedUrl(url: string): string {
   return url;
 }
 
+function sanitizeUrl(raw: string): string {
+  try {
+    const parsed = new URL(raw.includes('://') ? raw : `https://${raw}`);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
 function extractTitle(url: string): string {
   try {
     const host = new URL(url).hostname.replace('www.', '');
@@ -45,10 +55,8 @@ export default function BrowserApp() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const navigate = (targetUrl: string) => {
-    let finalUrl = targetUrl;
-    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
-      finalUrl = 'https://' + finalUrl;
-    }
+    const finalUrl = sanitizeUrl(targetUrl);
+    if (!finalUrl) return;
     const embedUrl = toEmbedUrl(finalUrl);
     setInputValue(finalUrl);
     setIsLoading(true);
@@ -91,7 +99,7 @@ export default function BrowserApp() {
     }
   };
 
-  const currentUrl = tabs.find((t) => t.id === activeTab)?.url || '';
+  const currentUrl = sanitizeUrl(tabs.find((t) => t.id === activeTab)?.url || '');
 
   return (
     <div className="h-full w-full flex bg-black/20 select-none font-sans overflow-hidden">
