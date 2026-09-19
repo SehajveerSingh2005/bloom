@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   analyze:
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
