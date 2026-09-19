@@ -9,7 +9,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "bump": "bun scripts/bump-version.mjs"
+    "bump": "bun scripts/bump-version.mjs",
+    "release": "bun scripts/release.mjs"
   },
   "dependencies": {
     "@crabnebula/tauri-plugin-drag": "^2.1.0",

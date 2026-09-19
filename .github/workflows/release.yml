@@ -87,6 +87,8 @@ jobs:
               FEATURES+=$(printf "\n- %s" "${line#*: }")
             elif [[ "$line" =~ ^fix[\(:] ]]; then
               FIXES+=$(printf "\n- %s" "${line#*: }")
+            elif [[ "$line" =~ ^chore\(release\) ]]; then
+              continue
             else
               OTHER+=$(printf "\n- %s" "$line")
             fi
