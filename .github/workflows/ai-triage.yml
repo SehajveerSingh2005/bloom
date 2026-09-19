@@ -1,0 +1,37 @@
+name: AI triage
+
+on:
+  issues:
+    types: [opened, reopened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to triage (for testing)
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ai-triage-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    if: github.event.issue.user.login != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Triage issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}
+          AUTHOR_ASSOCIATION: ${{ github.event.issue.author_association || 'CONTRIBUTOR' }}
+        run: node scripts/ai-issues.mjs triage
