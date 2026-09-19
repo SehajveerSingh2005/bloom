@@ -17,6 +17,27 @@ interface AppInfo {
   all_hwnds?: [number, string][];
 }
 
+// Stable identity for a dock item. Host processes (Edge/Chrome/ApplicationFrameHost)
+// run every PWA, so their window title must be part of the identity — otherwise two
+// PWAs running under the same browser collapse into a single dock item.
+export function appIdentity(p: string, executable?: string, name?: string) {
+  if (!p) return "";
+  const normalized = p.toLowerCase().replace(/\\/g, '/');
+  // Shell application ids (AUMIDs) and bare names are unique on their own.
+  if (!normalized.includes('/')) return normalized;
+  if (name && (normalized.includes('msedge.exe') || normalized.includes('chrome.exe') || normalized.includes('applicationframehost.exe'))) {
+    return `${normalized}:${name.toLowerCase()}`;
+  }
+  if (executable) return `${normalized}:${executable.toLowerCase()}`;
+  return normalized;
+}
+
+const itemKey = (app: AppInfo) => appIdentity(app.path, app.executable, app.name);
+
+// Shell application ids (AUMIDs) identify one specific app; two different PWAs
+// running in the same browser must never be matched by their shared exe name.
+const isIdentifier = (p: string) => !p.includes('/') && !p.includes('\\');
+
 // Stable module-level constants so object references never change between renders,
 // preventing Framer Motion from re-triggering animations on every re-render.
 const ITEM_ENTRY_TRANSITION = {
@@ -43,7 +64,7 @@ const Dock = memo(function Dock() {
   });
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(() => localStorage.getItem("bloom-dock-preview-enabled") !== "false");
   const [dockIconOnly, setDockIconOnly] = useState(() => localStorage.getItem("bloom-dock-icon-only") === "true");
-  const [previewData, setPreviewData] = useState<{ path: string, previews: { hwnd: number, title: string, image: string }[] } | null>(null);
+  const [previewData, setPreviewData] = useState<{ id: string, previews: { hwnd: number, title: string, image: string }[] } | null>(null);
   const [isDockHovered, setIsDockHovered] = useState(false);
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
   const [isOverlapped, setIsOverlapped] = useState(false);
@@ -226,7 +247,7 @@ const Dock = memo(function Dock() {
       setActiveApps(running);
 
       setActiveOrder(prev => {
-        const newPaths = running.map(r => r.path);
+        const newPaths = running.map(r => appIdentity(r.path, r.executable, r.name));
         const existingPaths = prev.filter(p => newPaths.includes(p));
         const addedPaths = newPaths.filter(p => !prev.includes(p));
         return [...existingPaths, ...addedPaths];
@@ -422,44 +443,37 @@ const Dock = memo(function Dock() {
   }, [contextMenu, showAddPopup, pinnedApps, activeApps, activeSubmenu, scale]);
 
   const dockItems = useMemo(() => {
-    const getAppId = (p: string, executable?: string) => {
-      if (!p) return "";
-      const normalized = p.toLowerCase().replace(/\\/g, '/');
-      if (executable) return `${normalized}:${executable.toLowerCase()}`;
-      return normalized;
-    };
-
     const runningMap = new Map();
     activeApps.forEach(a => {
-      const id = getAppId(a.path, a.executable);
+      const id = appIdentity(a.path, a.executable, a.name);
       if (!runningMap.has(id)) runningMap.set(id, a);
     });
     
     const matchedRunningKeys = new Set<string>();
 
     const findRunningApp = (p: AppInfo) => {
-      // 1. Try exact match by getAppId
-      const id = getAppId(p.path, p.executable);
+      // 1. Try exact match by identity
+      const id = appIdentity(p.path, p.executable, p.name);
       let running = runningMap.get(id);
       if (running) {
-        matchedRunningKeys.add(getAppId(running.path, running.executable));
+        matchedRunningKeys.add(appIdentity(running.path, running.executable, running.name));
         return running;
       }
 
       // 2. Try match by path (without executable)
-      const pathId = getAppId(p.path);
+      const pathId = appIdentity(p.path);
       running = runningMap.get(pathId);
       if (running) {
-        matchedRunningKeys.add(getAppId(running.path, running.executable));
+        matchedRunningKeys.add(appIdentity(running.path, running.executable, running.name));
         return running;
       }
 
       // 3. Try fallback match by executable name if defined
       if (p.executable) {
         const targetExe = p.executable.toLowerCase();
-        const found = activeApps.find(a => a.executable?.toLowerCase() === targetExe);
+        const found = activeApps.find(a => !isIdentifier(a.path) && a.executable?.toLowerCase() === targetExe);
         if (found) {
-          matchedRunningKeys.add(getAppId(found.path, found.executable));
+          matchedRunningKeys.add(appIdentity(found.path, found.executable, found.name));
           return found;
         }
       }
@@ -468,11 +482,12 @@ const Dock = memo(function Dock() {
       const pinFilename = p.path.split('/').pop()?.split('\\').pop()?.toLowerCase() || "";
       if (pinFilename) {
         const found = activeApps.find(a => {
+          if (isIdentifier(a.path)) return false;
           const runExe = a.executable?.toLowerCase() || a.path.split('/').pop()?.split('\\').pop()?.toLowerCase() || "";
           return runExe === pinFilename || runExe === `${pinFilename}.exe` || `${runExe}.exe` === pinFilename;
         });
         if (found) {
-          matchedRunningKeys.add(getAppId(found.path, found.executable));
+          matchedRunningKeys.add(appIdentity(found.path, found.executable, found.name));
           return found;
         }
       }
@@ -489,8 +504,8 @@ const Dock = memo(function Dock() {
     ];
 
     const unpinned = activeOrder
-      .map(path => activeApps.find(a => a.path.toLowerCase().replace(/\\/g, '/') === path.toLowerCase().replace(/\\/g, '/')))
-      .filter((a): a is AppInfo => !!a && !matchedRunningKeys.has(getAppId(a.path, a.executable)));
+      .map(id => activeApps.find(a => appIdentity(a.path, a.executable, a.name) === id))
+      .filter((a): a is AppInfo => !!a && !matchedRunningKeys.has(appIdentity(a.path, a.executable, a.name)));
 
     return [...pinned, ...unpinned];
   }, [pinnedApps, activeApps, activeOrder]);
@@ -541,7 +556,7 @@ const Dock = memo(function Dock() {
     }
 
     if (hoveredApp && !isDragging) {
-      const app = dockItems.find(a => a.path === hoveredApp);
+      const app = dockItems.find(a => itemKey(a) === hoveredApp);
       if (app && app.is_running) {
         const hwndsToCapture = app.all_hwnds || (app.hwnd ? [[app.hwnd, app.name]] : []);
 
@@ -566,9 +581,9 @@ const Dock = memo(function Dock() {
               .map(({ hwnd, title, image }) => ({ hwnd, title, image }));
 
             const currentHovered = hoveredAppRef.current;
-            if (captured.length > 0 && currentHovered === app.path) {
-              setPreviewData({ path: app.path, previews: captured });
-            } else if (currentHovered === app.path) {
+            if (captured.length > 0 && currentHovered === itemKey(app)) {
+              setPreviewData({ id: itemKey(app), previews: captured });
+            } else if (currentHovered === itemKey(app)) {
               setPreviewData(null);
             }
           } catch (e) {
@@ -646,17 +661,17 @@ const Dock = memo(function Dock() {
                   transition={{ opacity: { duration: 0.15, delay: 0.15 }, scale: { type: "spring", stiffness: 400, damping: 25, delay: 0.15 } }}
                   className="dock-icon-wrapper"
                   onContextMenu={(e) => handleContextMenu(e, startItem)}
-                  onMouseEnter={() => setHoveredApp(startItem.path)}
+                  onMouseEnter={() => setHoveredApp(itemKey(startItem))}
                   onMouseLeave={() => { setHoveredApp(null); setPressedApp(null); }}
                 >
-                  {(!dockPreviewEnabled || (dockPreviewEnabled && hoveredApp === startItem.path)) && (
+                  {(!dockPreviewEnabled || (dockPreviewEnabled && hoveredApp === itemKey(startItem))) && (
                     <div className="tooltip">{startItem.name}</div>
                   )}
                   <motion.div 
                     className="dock-icon"
                     variants={iconVariants}
-                    animate={pressedApp === startItem.path ? "tap" : (hoveredApp === startItem.path ? "hover" : "idle")}
-                    onPointerDown={() => setPressedApp(startItem.path)}
+                    animate={pressedApp === itemKey(startItem) ? "tap" : (hoveredApp === itemKey(startItem) ? "hover" : "idle")}
+                    onPointerDown={() => setPressedApp(itemKey(startItem))}
                     onPointerUp={() => setPressedApp(null)}
                     onPointerCancel={() => setPressedApp(null)}
                     onClick={(e) => {
@@ -696,11 +711,11 @@ const Dock = memo(function Dock() {
                       animate={ITEM_ANIMATE}
                       exit={ITEM_EXIT}
                       transition={ITEM_ENTRY_TRANSITION}
-                      onMouseEnter={() => setHoveredApp(app.path)}
+                      onMouseEnter={() => setHoveredApp(itemKey(app))}
                       onMouseLeave={() => { if (!isPreviewHoveredRef.current) { setHoveredApp(null); setPressedApp(null); } }}
                     >
                 <AnimatePresence>
-                  {dockPreviewEnabled && previewData && previewData.path === app.path && hoveredApp === app.path && (
+                  {dockPreviewEnabled && previewData && previewData.id === itemKey(app) && hoveredApp === itemKey(app) && (
                     <motion.div 
                       className={`preview-tooltip ${previewData.previews.length > 1 ? 'multi' : ''}`} 
                       initial={{opacity: 0, y: 10, scale: 0.95}} 
@@ -733,15 +748,15 @@ const Dock = memo(function Dock() {
                 </AnimatePresence>
                 
                 {/* Fallback to text tooltip if previews are disabled, app isn't running, or preview failed to load */}
-                {(!dockPreviewEnabled || (dockPreviewEnabled && hoveredApp === app.path && !previewData)) && (
+                {(!dockPreviewEnabled || (dockPreviewEnabled && hoveredApp === itemKey(app) && !previewData)) && (
                   <div className="tooltip">{app.name}</div>
                 )}
                 <motion.div 
                   className="dock-icon"
                   variants={iconVariants}
-                  animate={pressedApp === app.path ? "tap" : (isDragging && !app.is_pinned ? "idle" : (hoveredApp === app.path && !isDragging ? "hover" : "idle"))}
+                  animate={pressedApp === itemKey(app) ? "tap" : (isDragging && !app.is_pinned ? "idle" : (hoveredApp === itemKey(app) && !isDragging ? "hover" : "idle"))}
                   whileDrag="drag"
-                  onPointerDown={() => setPressedApp(app.path)}
+                  onPointerDown={() => setPressedApp(itemKey(app))}
                   onPointerUp={() => setPressedApp(null)}
                   onPointerCancel={() => setPressedApp(null)}
                 >
@@ -785,7 +800,7 @@ const Dock = memo(function Dock() {
                   exit={{ opacity: 0, scale: 0, transition: { duration: 0.12 } }}
                   className="dock-icon-wrapper"
                   onContextMenu={(e) => handleContextMenu(e, app)}
-                  onMouseEnter={() => setHoveredApp(app.path)}
+                  onMouseEnter={() => setHoveredApp(itemKey(app))}
                   onMouseLeave={() => { if (!isPreviewHoveredRef.current) { setHoveredApp(null); setPressedApp(null); } }}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -793,7 +808,7 @@ const Dock = memo(function Dock() {
                   }}
                 >
                   <AnimatePresence>
-                    {dockPreviewEnabled && previewData && previewData.path === app.path && hoveredApp === app.path && (
+                    {dockPreviewEnabled && previewData && previewData.id === itemKey(app) && hoveredApp === itemKey(app) && (
                       <motion.div
                         className={`preview-tooltip ${previewData.previews.length > 1 ? 'multi' : ''}`}
                         initial={{opacity: 0, y: 10, scale: 0.95}}
@@ -824,14 +839,14 @@ const Dock = memo(function Dock() {
                       </motion.div>
                     )}
                   </AnimatePresence>
-                  {(!dockPreviewEnabled || (dockPreviewEnabled && hoveredApp === app.path && !previewData)) && (
+                  {(!dockPreviewEnabled || (dockPreviewEnabled && hoveredApp === itemKey(app) && !previewData)) && (
                     <div className="tooltip">{app.name}</div>
                   )}
                   <motion.div
                     className="dock-icon"
                     variants={iconVariants}
-                    animate={pressedApp === app.path ? "tap" : (hoveredApp === app.path && !isDragging ? "hover" : "idle")}
-                    onPointerDown={() => setPressedApp(app.path)}
+                    animate={pressedApp === itemKey(app) ? "tap" : (hoveredApp === itemKey(app) && !isDragging ? "hover" : "idle")}
+                    onPointerDown={() => setPressedApp(itemKey(app))}
                     onPointerUp={() => setPressedApp(null)}
                     onPointerCancel={() => setPressedApp(null)}
                   >
