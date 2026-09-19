@@ -2076,6 +2076,23 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
     let apps = &mut *(lparam.0 as *mut Vec<AppInfo>);
 
     if IsWindowVisible(hwnd).as_bool() {
+        // DWM-cloaked windows are not actually on screen: closed/suspended UWP
+        // apps keep a cloaked frame alive, and windows on other virtual desktops
+        // are shell-cloaked. Neither belongs in the dock. IsWindowVisible stays
+        // true for them, so this needs the DWM check.
+        {
+            let mut cloaked = 0u32;
+            let size = std::mem::size_of::<u32>() as u32;
+            if windows::Win32::Graphics::Dwm::DwmGetWindowAttribute(
+                hwnd,
+                windows::Win32::Graphics::Dwm::DWMWA_CLOAKED,
+                &mut cloaked as *mut _ as *mut _,
+                size,
+            ).is_ok() && cloaked != 0 {
+                return true.into();
+            }
+        }
+
         let mut text = [0u16; 512];
         let len = windows::Win32::UI::WindowsAndMessaging::GetWindowTextW(hwnd, &mut text);
         if len > 0 {
