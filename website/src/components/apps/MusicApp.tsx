@@ -1,537 +1,980 @@
-import { useRef, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Home,
-  Compass,
-  Radio,
-  Volume1,
-  Volume2,
-  Play,
-  Pause,
-  SkipForward,
-  SkipBack,
+  Check,
+  ChevronRight,
+  Clock,
+  Disc,
+  Ellipsis,
+  ExternalLink,
+  House,
   ListMusic,
-  Share2,
-  Music
+  Mic,
+  Music,
+  Plus,
+  Repeat,
+  Repeat1,
+  Search,
+  Shuffle,
+  Sparkles,
+  Star,
+  Volume2,
+  VolumeX,
+  X,
 } from 'lucide-react';
-import godsPlanMp3 from '../../assets/gods-plan.mp3';
-import godsPlanJpg from '../../assets/gods-plan.jpg';
+import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon } from '../../icons';
+import { loadYouTubeApi } from '../../lib/youtube';
+import type { YouTubePlayer } from '../../lib/youtube';
+import albumArt from '../../assets/keychain-laalu.jpg';
+
+interface PlaybackState {
+  isPlaying: boolean;
+  trackTitle: string;
+  trackArtist: string;
+  currentTime: number;
+  duration: number;
+  volume: number;
+  trackIndex?: number;
+  trackCover?: string;
+  tracksCount?: number;
+}
 
 interface MusicAppProps {
-  playback: {
-    isPlaying: boolean;
-    trackTitle: string;
-    trackArtist: string;
-    currentTime: number;
-    duration: number;
-    volume: number;
-    trackIndex?: number;
-    trackCover?: string;
-    tracksCount?: number;
-  };
-  setPlaybackState: (state: Partial<MusicAppProps['playback']>) => void;
+  playback: PlaybackState;
+  setPlaybackState: (state: Partial<PlaybackState>) => void;
   setVisualizerData: (frequencies: number[]) => void;
 }
 
-// Inline 5-bar visualizer matching Bloom's design style
-const Visualizer = ({ isPlaying, frequencies }: { isPlaying: boolean; frequencies: number[] }) => {
+interface AlbumTrack {
+  title: string;
+  artists: string;
+  durationMs: number;
+  videoId: string;
+}
+
+interface TrackEntry {
+  track: AlbumTrack;
+  index: number;
+}
+
+type View = 'home' | 'songs' | 'albums' | 'artists' | 'recent' | 'new' | 'favourites' | 'search';
+
+const APPLE_RED = '#fa2d48';
+const IDLE_LEVELS = [0.15, 0.15, 0.15, 0.15, 0.15];
+
+const ALBUM = {
+  title: 'Keychain Laalu',
+  artist: 'Arpit Bala',
+  genre: 'Indian Pop',
+  year: 2025,
+  artwork: albumArt,
+  playlistUrl: 'https://www.youtube.com/playlist?list=OLAK5uy_kyYXVI95Zk22k5CywnOtE19TS3hP4RTJg',
+  tracks: [
+    { title: 'Pyari Amaanat', artists: 'Arpit Bala, A.O.D. & Angad Virk', durationMs: 188571, videoId: 'pn7-ZM81hQM' },
+    { title: 'Chuppi', artists: 'Arpit Bala, sufr, Adil, A.O.D. & Angad Virk', durationMs: 253441, videoId: 'UJukT1qKH3s' },
+    { title: 'Champakali', artists: 'Arpit Bala, Natiq, toorjo dey & Angad Virk', durationMs: 135273, videoId: 'hI0F69b7BYk' },
+    { title: 'Taaron Se', artists: 'Arpit Bala, A.O.D., Angad Virk & Karan Kanchan', durationMs: 267142, videoId: 'WrczwHORF60' },
+    { title: 'Daraaz Mein', artists: 'Arpit Bala, A.O.D. & Angad Virk', durationMs: 219375, videoId: 'qXNcrFshDNE' },
+    { title: 'Kaise Manaye', artists: 'Arpit Bala, Adil, Karan Kanchan & A.O.D.', durationMs: 206893, videoId: 'GFAE0q_5Aig' },
+    { title: 'Best Friend', artists: 'Arpit Bala, pho, Adil & NEVERSOBER', durationMs: 221500, videoId: 'dfWBmrc3ZQQ' },
+    { title: 'Rakhlo Tum Chupaake', artists: 'Arpit Bala & Adil', durationMs: 205800, videoId: 'slN2QlYr_-c' },
+    { title: 'RTC Bonus', artists: 'Arpit Bala & Adil', durationMs: 109947, videoId: 'pW959vzEFM0' },
+  ] as AlbumTrack[],
+};
+
+const TRACK_ENTRIES: TrackEntry[] = ALBUM.tracks.map((track, index) => ({ track, index }));
+
+const ARTIST_NAMES = Array.from(
+  new Set(ALBUM.tracks.flatMap((track) => track.artists.split(/,|&/).map((name) => name.trim())))
+)
+  .filter(Boolean)
+  .sort((a, b) => a.localeCompare(b));
+
+function formatDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '--:--';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function pickDifferentIndex(count: number, exclude: number) {
+  if (count <= 1) return exclude;
+  let next = exclude;
+  while (next === exclude) next = Math.floor(Math.random() * count);
+  return next;
+}
+
+function EqBars({ playing, compact = false }: { playing: boolean; compact?: boolean }) {
   return (
-    <div className="flex items-center justify-center gap-[2px] h-[12px] w-[20px] shrink-0">
-      {frequencies.map((value, i) => (
-        <div
+    <div className={`flex items-end justify-center gap-[2px] ${compact ? 'h-3 w-3.5' : 'h-3.5 w-4'}`} aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <span
           key={i}
-          className="w-[2.5px] bg-[#fa243c] rounded-[1px] transition-all duration-150 origin-center"
+          className="am-eq-bar w-[2.5px] rounded-full"
           style={{
-            height: isPlaying ? `${Math.max(20, value * 100)}%` : '20%',
-            opacity: isPlaying ? 0.95 : 0.4,
+            backgroundColor: APPLE_RED,
+            animationDelay: `${i * 0.18}s`,
+            animationPlayState: playing ? 'running' : 'paused',
           }}
         />
       ))}
     </div>
   );
-};
+}
 
-export default function MusicApp({
-  playback,
-  setPlaybackState,
-  setVisualizerData,
-}: MusicAppProps) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
+function NavItem({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7.5px] text-left text-[13.5px] transition-colors ${
+        active ? 'bg-white/[0.1] text-white' : 'text-white/70 hover:bg-white/[0.05] hover:text-white'
+      }`}
+    >
+      <span className="flex w-[18px] shrink-0 items-center justify-center">{icon}</span>
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
 
-  const [localVisualizerData, setLocalVisualizerData] = useState<number[]>([0.18, 0.18, 0.18, 0.18, 0.18]);
+function TrackList({
+  entries,
+  currentIndex,
+  isPlaying,
+  knownDurations,
+  onSelect,
+  showArtwork = false,
+}: {
+  entries: TrackEntry[];
+  currentIndex: number;
+  isPlaying: boolean;
+  knownDurations: Record<number, number>;
+  onSelect: (index: number) => void;
+  showArtwork?: boolean;
+}) {
+  const [menuIndex, setMenuIndex] = useState<number | null>(null);
 
-  // Single tracks list
-  const [tracks] = useState([
-    {
-      title: "God's Plan",
-      artist: "Drake",
-      album: "Scorpion",
-      url: godsPlanMp3,
-      cover: godsPlanJpg,
-      explicit: true,
-      durationStr: "3:18"
-    },
-    {
-      title: "Golden Hour Bloom",
-      artist: "Aesthetic Lo-Fi",
-      album: "Chill Overlays Vol. 1",
-      url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-      cover: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=300&auto=format&fit=crop&q=60",
-      explicit: false,
-      durationStr: "6:12"
-    },
-    {
-      title: "Rust & Compile",
-      artist: "Tauri Beats",
-      album: "Zero Footprint",
-      url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-      cover: "https://images.unsplash.com/photo-1614680376593-902f74fa0d41?w=300&auto=format&fit=crop&q=60",
-      explicit: true,
-      durationStr: "7:05"
-    }
-  ]);
-
-  const [currentTrackIndex, setCurrentTrackIndex] = useState(0); // Default to God's Plan
-  const track = tracks[currentTrackIndex];
-
-  // Sync current track index from parent state (Notch controls)
   useEffect(() => {
-    if (playback.trackIndex !== undefined && playback.trackIndex !== currentTrackIndex && playback.trackIndex < tracks.length) {
-      setCurrentTrackIndex(playback.trackIndex);
-    }
-  }, [playback.trackIndex, tracks.length]);
+    if (menuIndex === null) return;
+    const close = () => setMenuIndex(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [menuIndex]);
 
-  // Sync track details to parent state on change
+  if (entries.length === 0) {
+    return <p className="px-3 py-4 text-[13px] text-white/35">No matches.</p>;
+  }
+
+  return (
+    <div>
+      {entries.map(({ track, index }) => {
+        const active = index === currentIndex;
+        const seconds = knownDurations[index] ?? track.durationMs / 1000;
+        return (
+          <div
+            key={track.videoId}
+            onClick={() => onSelect(index)}
+            className="group grid cursor-pointer grid-cols-[30px_minmax(0,1fr)_auto_30px] items-center gap-3.5 rounded-md px-3.5 py-[9px] transition-colors hover:bg-white/[0.05]"
+          >
+            <div className="relative flex h-4 items-center justify-center">
+              {active ? (
+                <EqBars playing={isPlaying} />
+              ) : (
+                <>
+                  <span className="text-[13px] tabular-nums text-white/35 group-hover:hidden">{index + 1}</span>
+                  <PlayIcon size={10} className="hidden text-white group-hover:block" />
+                </>
+              )}
+            </div>
+
+            <div className="flex min-w-0 items-center gap-3">
+              {showArtwork && (
+                <img src={ALBUM.artwork} alt="" className="h-9 w-9 shrink-0 rounded object-cover" />
+              )}
+              <div className="min-w-0">
+                <div
+                  className={`truncate text-[13.5px] font-medium ${active ? '' : 'text-white/90'}`}
+                  style={active ? { color: APPLE_RED } : undefined}
+                >
+                  {track.title}
+                </div>
+                <div className="truncate text-[12px] text-white/40">{track.artists}</div>
+              </div>
+            </div>
+
+            <span className="text-[12px] tabular-nums text-white/35">{formatDuration(seconds)}</span>
+
+            <div className="relative flex justify-end">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuIndex(menuIndex === index ? null : index);
+                }}
+                aria-label={`More options for ${track.title}`}
+                className={`flex h-7 w-7 items-center justify-center rounded-md text-white/60 transition hover:bg-white/10 hover:text-white ${
+                  menuIndex === index ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+              >
+                <Ellipsis size={15} />
+              </button>
+              {menuIndex === index && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute right-0 top-8 z-30 w-48 overflow-hidden rounded-xl border border-white/10 bg-[#232326]/95 py-1 shadow-2xl backdrop-blur-xl"
+                >
+                  <button
+                    onClick={() => {
+                      onSelect(index);
+                      setMenuIndex(null);
+                    }}
+                    className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[12.5px] text-white/85 hover:bg-white/[0.07]"
+                  >
+                    <PlayIcon size={10} /> Play
+                  </button>
+                  <a
+                    href={`https://www.youtube.com/watch?v=${track.videoId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex w-full items-center gap-2.5 px-3.5 py-2 text-[12.5px] text-white/85 hover:bg-white/[0.07]"
+                  >
+                    <ExternalLink size={13} /> Open on YouTube
+                  </a>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function MusicApp({ playback, setPlaybackState, setVisualizerData }: MusicAppProps) {
+  const playerHostRef = useRef<HTMLDivElement | null>(null);
+  const playerRef = useRef<YouTubePlayer | null>(null);
+  const playerReadyRef = useRef(false);
+  const loadedIndexRef = useRef(0);
+  const errorCountRef = useRef(0);
+  const volumeRef = useRef(playback.volume);
+
+  const [playerReady, setPlayerReady] = useState(false);
+  const [view, setView] = useState<View>('home');
+  const [query, setQuery] = useState('');
+  const [shuffle, setShuffle] = useState(false);
+  const [repeat, setRepeat] = useState<'off' | 'all' | 'one'>('off');
+  const [muted, setMuted] = useState(false);
+  const [libraryAdded, setLibraryAdded] = useState(false);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [knownDurations, setKnownDurations] = useState<Record<number, number>>({});
+
+  const currentTrackIndex =
+    playback.trackIndex !== undefined && playback.trackIndex < ALBUM.tracks.length ? playback.trackIndex : 0;
+  const track = ALBUM.tracks[currentTrackIndex];
+  const progress = playback.duration > 0 ? Math.min(1, playback.currentTime / playback.duration) : 0;
+
+  const currentIndexRef = useRef(currentTrackIndex);
+  const playingRef = useRef(playback.isPlaying);
+  const shuffleRef = useRef(shuffle);
+  const repeatRef = useRef(repeat);
+  const advanceRef = useRef<(manual: boolean) => void>(() => {});
+
+  useEffect(() => {
+    currentIndexRef.current = currentTrackIndex;
+    playingRef.current = playback.isPlaying;
+    shuffleRef.current = shuffle;
+    repeatRef.current = repeat;
+    volumeRef.current = playback.volume;
+  });
+
+  const callPlayer = useCallback((action: (player: YouTubePlayer) => void) => {
+    const player = playerRef.current;
+    if (!player || !playerReadyRef.current) return;
+    try {
+      action(player);
+    } catch {
+      /* player not ready for this call yet */
+    }
+  }, []);
+
+  const advance = useCallback(
+    (manual: boolean) => {
+      const count = ALBUM.tracks.length;
+      const index = currentIndexRef.current;
+
+      if (!manual && repeatRef.current === 'one') {
+        callPlayer((player) => {
+          player.seekTo(0, true);
+          player.playVideo();
+        });
+        setPlaybackState({ currentTime: 0, isPlaying: true });
+        return;
+      }
+
+      let nextIndex: number;
+      if (shuffleRef.current && count > 1) {
+        nextIndex = pickDifferentIndex(count, index);
+      } else {
+        nextIndex = (index + 1) % count;
+      }
+
+      setPlaybackState({ trackIndex: nextIndex, isPlaying: true, currentTime: 0, duration: 0 });
+    },
+    [callPlayer, setPlaybackState]
+  );
+
+  useEffect(() => {
+    advanceRef.current = advance;
+  }, [advance]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    loadYouTubeApi().then((YT) => {
+      if (disposed || !playerHostRef.current || playerRef.current) return;
+      playerRef.current = new YT.Player(playerHostRef.current, {
+        videoId: ALBUM.tracks[0].videoId,
+        playerVars: {
+          controls: 0,
+          disablekb: 1,
+          modestbranding: 1,
+          rel: 0,
+          playsinline: 1,
+          iv_load_policy: 3,
+          fs: 0,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: (event) => {
+            playerReadyRef.current = true;
+            setPlayerReady(true);
+            try {
+              event.target.setVolume(Math.round(volumeRef.current * 100));
+              const startIndex = currentIndexRef.current;
+              if (startIndex !== 0) {
+                loadedIndexRef.current = startIndex;
+                if (playingRef.current) {
+                  event.target.loadVideoById({ videoId: ALBUM.tracks[startIndex].videoId });
+                } else {
+                  event.target.cueVideoById({ videoId: ALBUM.tracks[startIndex].videoId });
+                }
+              } else if (playingRef.current) {
+                event.target.playVideo();
+              }
+            } catch {
+              /* ignore */
+            }
+          },
+          onStateChange: (event) => {
+            if (event.data === YT.PlayerState.PLAYING) {
+              errorCountRef.current = 0;
+              if (!playingRef.current) setPlaybackState({ isPlaying: true });
+            } else if (event.data === YT.PlayerState.PAUSED) {
+              if (playingRef.current) setPlaybackState({ isPlaying: false });
+            } else if (event.data === YT.PlayerState.ENDED) {
+              advanceRef.current(false);
+            }
+          },
+          onError: () => {
+            errorCountRef.current += 1;
+            if (errorCountRef.current > ALBUM.tracks.length) {
+              setPlaybackState({ isPlaying: false });
+              return;
+            }
+            advanceRef.current(true);
+          },
+        },
+      });
+    });
+
+    return () => {
+      disposed = true;
+      playerReadyRef.current = false;
+      try {
+        playerRef.current?.destroy();
+      } catch {
+        /* ignore */
+      }
+      playerRef.current = null;
+    };
+  }, [setPlaybackState]);
+
+  useEffect(() => {
+    if (!playerReady || loadedIndexRef.current === currentTrackIndex) return;
+    loadedIndexRef.current = currentTrackIndex;
+    const videoId = track.videoId;
+    callPlayer((player) => {
+      if (playingRef.current) player.loadVideoById({ videoId });
+      else player.cueVideoById({ videoId });
+    });
+  }, [currentTrackIndex, playerReady, track.videoId, callPlayer]);
+
+  useEffect(() => {
+    if (!playerReady) return;
+    callPlayer((player) => {
+      if (playback.isPlaying) player.playVideo();
+      else player.pauseVideo();
+    });
+  }, [playback.isPlaying, playerReady, callPlayer]);
+
+  useEffect(() => {
+    callPlayer((player) => player.setVolume(Math.round(playback.volume * 100)));
+  }, [playback.volume, playerReady, callPlayer]);
+
+  useEffect(() => {
+    callPlayer((player) => {
+      if (muted) player.mute();
+      else player.unMute();
+    });
+  }, [muted, playerReady, callPlayer]);
+
+  useEffect(() => {
+    if (!playback.isPlaying || !playerReady) return;
+    const id = window.setInterval(() => {
+      const player = playerRef.current;
+      if (!player) return;
+      try {
+        const time = player.getCurrentTime();
+        if (!Number.isFinite(time)) return;
+        const duration = player.getDuration();
+        if (duration > 0) {
+          const rounded = Math.round(duration);
+          setKnownDurations((prev) =>
+            prev[currentIndexRef.current] === rounded ? prev : { ...prev, [currentIndexRef.current]: rounded }
+          );
+          setPlaybackState({ currentTime: time, duration });
+        } else {
+          setPlaybackState({ currentTime: time });
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [playback.isPlaying, playerReady, setPlaybackState]);
+
+  useEffect(() => {
+    if (!playback.isPlaying) {
+      setVisualizerData(IDLE_LEVELS);
+      return;
+    }
+    let bands = [0.35, 0.45, 0.4, 0.45, 0.35];
+    const id = window.setInterval(() => {
+      bands = bands.map((value, i) => {
+        const target = 0.2 + Math.random() * 0.7 * (1 - Math.abs(i - 2) * 0.08);
+        return Math.round((value + (target - value) * 0.45) * 100) / 100;
+      });
+      setVisualizerData([...bands]);
+    }, 110);
+    return () => window.clearInterval(id);
+  }, [playback.isPlaying, setVisualizerData]);
+
   useEffect(() => {
     setPlaybackState({
       trackTitle: track.title,
-      trackArtist: track.artist,
-      trackCover: track.cover,
+      trackArtist: ALBUM.artist,
+      trackCover: ALBUM.artwork,
       trackIndex: currentTrackIndex,
-      tracksCount: tracks.length,
+      tracksCount: ALBUM.tracks.length,
     });
-  }, [currentTrackIndex, tracks.length]);
+  }, [currentTrackIndex, track, setPlaybackState]);
 
-  // Initialize audio element ONCE
   useEffect(() => {
-    const audio = new Audio();
-    audioRef.current = audio;
-    audio.volume = playback.volume;
-
-    const handleLoadedMetadata = () => {
-      setPlaybackState({ duration: audio.duration });
-    };
-
-    const handleTimeUpdate = () => {
-      setPlaybackState({ currentTime: audio.currentTime });
-    };
-
-    const handleEnded = () => {
-      handleNext();
-    };
-
-    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-    audio.addEventListener('timeupdate', handleTimeUpdate);
-    audio.addEventListener('ended', handleEnded);
-
-    return () => {
-      audio.pause();
-      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      audio.removeEventListener('timeupdate', handleTimeUpdate);
-      audio.removeEventListener('ended', handleEnded);
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => { });
-      }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, []);
-
-  // Update track source when index changes
-  useEffect(() => {
-    if (!audioRef.current) return;
-
-    audioRef.current.pause();
-    audioRef.current.src = track.url;
-    audioRef.current.load();
-
-    if (playback.isPlaying) {
-      audioRef.current.play().then(() => {
-        startVisualizerLoop();
-      }).catch(e => {
-        console.warn("Play failed on track change:", e);
-      });
-    }
-  }, [currentTrackIndex]);
-
-  // Synchronize audio play/pause state with parent
-  useEffect(() => {
-    if (!audioRef.current) return;
-
-    if (playback.isPlaying) {
-      if (!audioContextRef.current) {
-        setupWebAudio();
-      }
-
-      audioRef.current.play().then(() => {
-        startVisualizerLoop();
-      }).catch(e => {
-        console.warn("Autoplay blocked or failed:", e);
-        setPlaybackState({ isPlaying: false });
-      });
-    } else {
-      audioRef.current.pause();
-    }
-  }, [playback.isPlaying]);
-
-  // Sync volume changes from parent state
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = playback.volume;
-    }
-  }, [playback.volume]);
-
-  // Clear visualizer data when paused
-  useEffect(() => {
-    if (!playback.isPlaying) {
-      setVisualizerData([0.18, 0.18, 0.18, 0.18, 0.18]);
-      setLocalVisualizerData([0.18, 0.18, 0.18, 0.18, 0.18]);
-    }
-  }, [playback.isPlaying]);
-
-  // Setup Web Audio Analyser
-  const setupWebAudio = () => {
-    if (!audioRef.current) return;
-    try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AudioContextClass();
-      audioContextRef.current = ctx;
-
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 64;
-      analyserRef.current = analyser;
-
-      const source = ctx.createMediaElementSource(audioRef.current);
-      sourceNodeRef.current = source;
-
-      source.connect(analyser);
-      analyser.connect(ctx.destination);
-    } catch (err) {
-      console.warn("Failed to create Web Audio graph:", err);
-    }
-  };
-
-  // Visualizer tick loop
-  const startVisualizerLoop = () => {
-    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-
-    const tick = () => {
-      if (playback.isPlaying && analyserRef.current) {
-        const bufferLength = analyserRef.current.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
-        analyserRef.current.getByteFrequencyData(dataArray);
-
-        const normalized = Array.from(dataArray)
-          .slice(0, 5)
-          .map((v) => Math.max(0.18, v / 255));
-        setVisualizerData(normalized);
-        setLocalVisualizerData(normalized);
-      } else if (playback.isPlaying) {
-        const mockFrequencies = Array.from({ length: 5 }, () =>
-          0.2 + Math.random() * 0.7
-        );
-        setVisualizerData(mockFrequencies);
-        setLocalVisualizerData(mockFrequencies);
-      }
-
-      animationFrameRef.current = requestAnimationFrame(tick);
-    };
-
-    tick();
-  };
-
-  const handleNext = () => {
-    const nextIdx = (currentTrackIndex + 1) % tracks.length;
-    setPlaybackState({ trackIndex: nextIdx, isPlaying: true, currentTime: 0 });
-    setCurrentTrackIndex(nextIdx);
-  };
-
-  const handlePrev = () => {
-    const prevIdx = (currentTrackIndex - 1 + tracks.length) % tracks.length;
-    setPlaybackState({ trackIndex: prevIdx, isPlaying: true, currentTime: 0 });
-    setCurrentTrackIndex(prevIdx);
-  };
+    if (!queueOpen) return;
+    const close = () => setQueueOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [queueOpen]);
 
   const togglePlay = () => {
-    setPlaybackState({ isPlaying: !playback.isPlaying });
-  };
-
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(e.target.value);
-    if (audioRef.current) {
-      audioRef.current.currentTime = time;
-      setPlaybackState({ currentTime: time });
-    }
-  };
-
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const vol = parseFloat(e.target.value);
-    if (audioRef.current) {
-      audioRef.current.volume = vol;
-    }
-    setPlaybackState({ volume: vol });
+    const next = !playback.isPlaying;
+    callPlayer((player) => {
+      if (next) player.playVideo();
+      else player.pauseVideo();
+    });
+    setPlaybackState({ isPlaying: next });
   };
 
   const selectTrack = (index: number) => {
-    setPlaybackState({ trackIndex: index, isPlaying: true, currentTime: 0 });
-    setCurrentTrackIndex(index);
+    if (index === currentIndexRef.current) {
+      callPlayer((player) => {
+        player.seekTo(0, true);
+        player.playVideo();
+      });
+      setPlaybackState({ currentTime: 0, isPlaying: true });
+      return;
+    }
+    loadedIndexRef.current = index;
+    callPlayer((player) => player.loadVideoById({ videoId: ALBUM.tracks[index].videoId }));
+    setPlaybackState({ trackIndex: index, isPlaying: true, currentTime: 0, duration: 0 });
   };
 
-  const formatTime = (secs: number) => {
-    if (isNaN(secs)) return "0:00";
-    const minutes = Math.floor(secs / 60);
-    const seconds = Math.floor(secs % 60);
-    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+  const previous = () => {
+    const player = playerRef.current;
+    let time = playback.currentTime;
+    try {
+      time = player ? player.getCurrentTime() : time;
+    } catch {
+      /* ignore */
+    }
+    if (time > 3) {
+      callPlayer((p) => p.seekTo(0, true));
+      setPlaybackState({ currentTime: 0 });
+      return;
+    }
+    const prevIndex = (currentIndexRef.current - 1 + ALBUM.tracks.length) % ALBUM.tracks.length;
+    setPlaybackState({ trackIndex: prevIndex, isPlaying: true, currentTime: 0, duration: 0 });
   };
+
+  const seek = (value: number) => {
+    callPlayer((player) => player.seekTo(value, true));
+    setPlaybackState({ currentTime: value });
+  };
+
+  const changeVolume = (value: number) => {
+    if (value > 0) setMuted(false);
+    setPlaybackState({ volume: value });
+  };
+
+  const toggleMute = () => setMuted((prev) => !prev);
+
+  const cycleRepeat = () => {
+    setRepeat((prev) => (prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off'));
+  };
+
+  const shufflePlay = () => {
+    setShuffle(true);
+    const count = ALBUM.tracks.length;
+    const nextIndex = pickDifferentIndex(count, currentIndexRef.current);
+    if (nextIndex !== currentIndexRef.current) {
+      selectTrack(nextIndex);
+    } else {
+      setPlaybackState({ isPlaying: true });
+    }
+  };
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const searchResults = normalizedQuery
+    ? TRACK_ENTRIES.filter(
+        ({ track: item }) =>
+          item.title.toLowerCase().includes(normalizedQuery) ||
+          item.artists.toLowerCase().includes(normalizedQuery)
+      )
+    : [];
+
+  const listProps = {
+    currentIndex: currentTrackIndex,
+    isPlaying: playback.isPlaying,
+    knownDurations,
+    onSelect: selectTrack,
+  };
+
+  const renderContent = () => {
+    if (view === 'search') {
+      return (
+        <div className="px-6 pb-28 pt-5">
+          <div className="flex items-center gap-2.5 rounded-lg bg-white/[0.07] px-3.5 py-2.5">
+            <Search size={15} className="shrink-0 text-white/40" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Artists, Songs, Albums"
+              className="w-full bg-transparent text-[14px] text-white outline-none placeholder:text-white/30"
+            />
+            {query && (
+              <button onClick={() => setQuery('')} aria-label="Clear search">
+                <X size={14} className="text-white/40 hover:text-white" />
+              </button>
+            )}
+          </div>
+          <div className="mt-3">
+            {normalizedQuery ? (
+              <TrackList entries={searchResults} showArtwork {...listProps} />
+            ) : (
+              <p className="px-3 py-4 text-[13px] text-white/35">Search for songs, artists, or albums.</p>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (view === 'albums' || view === 'recent' || view === 'new') {
+      const heading = view === 'new' ? 'New Releases' : view === 'recent' ? 'Recently Added' : 'Albums';
+      return (
+        <div className="px-6 pb-28 pt-6">
+          <h2 className="mb-4 text-[21px] font-bold tracking-tight">{heading}</h2>
+          <button onClick={() => setView('home')} className="group w-[164px] text-left">
+            <img
+              src={ALBUM.artwork}
+              alt={`${ALBUM.title} cover`}
+              className="h-[164px] w-[164px] rounded-lg object-cover shadow-[0_18px_44px_-14px_rgba(0,0,0,0.9)] transition group-hover:brightness-110"
+            />
+            <div className="mt-2 truncate text-[14px] font-semibold">{ALBUM.title}</div>
+            <div className="truncate text-[13px] text-white/45">{ALBUM.artist}</div>
+          </button>
+        </div>
+      );
+    }
+
+    if (view === 'artists') {
+      return (
+        <div className="px-6 pb-28 pt-6">
+          <h2 className="mb-2 text-[21px] font-bold tracking-tight">Artists</h2>
+          <div>
+            {ARTIST_NAMES.map((name) => (
+              <button
+                key={name}
+                onClick={() => {
+                  setQuery(name);
+                  setView('search');
+                }}
+                className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left transition-colors hover:bg-white/[0.04]"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-[14px] font-semibold text-white/70">
+                  {name.charAt(0)}
+                </span>
+                <span className="text-[14px] text-white/85">{name}</span>
+                <ChevronRight size={15} className="ml-auto text-white/25" />
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (view === 'songs' || view === 'favourites') {
+      const heading = view === 'favourites' ? 'Favourite Songs' : 'Songs';
+      return (
+        <div className="px-6 pb-28 pt-6">
+          <h2 className="mb-3 text-[21px] font-bold tracking-tight">{heading}</h2>
+          <TrackList entries={TRACK_ENTRIES} showArtwork {...listProps} />
+        </div>
+      );
+    }
+
+    return (
+      <div className="pb-28">
+        <div className="relative px-6 pt-6">
+          <div
+            className="pointer-events-none absolute -left-10 -top-24 h-64 w-64 rounded-full opacity-[0.18] blur-[110px]"
+            style={{ backgroundColor: APPLE_RED }}
+          />
+          <div className="relative">
+            <a
+              href={ALBUM.playlistUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open playlist on YouTube"
+              className="absolute right-0 top-0 flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/60 transition hover:bg-white/[0.09] hover:text-white"
+            >
+              <Ellipsis size={16} />
+            </a>
+            <div className="flex items-end gap-6">
+              <img
+                src={ALBUM.artwork}
+                alt={`${ALBUM.title} cover`}
+                className="h-[156px] w-[156px] shrink-0 rounded-lg object-cover shadow-[0_22px_54px_-14px_rgba(0,0,0,0.9)]"
+              />
+              <div className="min-w-0 pb-0.5">
+                <h1 className="truncate text-[30px] font-bold leading-tight tracking-tight">{ALBUM.title}</h1>
+                <button
+                  onClick={() => {
+                    setQuery(ALBUM.artist);
+                    setView('search');
+                  }}
+                  className="mt-0.5 block text-[18px] font-medium transition hover:underline"
+                  style={{ color: APPLE_RED }}
+                >
+                  {ALBUM.artist}
+                </button>
+                <p className="mt-0.5 text-[11.5px] text-white/40">
+                  {ALBUM.genre} · {ALBUM.year}
+                </p>
+                <div className="mt-4 flex items-center gap-3">
+                  <button
+                    onClick={shufflePlay}
+                    title="Shuffle"
+                    aria-label="Shuffle"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-white/[0.08] text-white/75 transition hover:bg-white/[0.14] hover:text-white active:scale-95"
+                  >
+                    <Shuffle size={15} />
+                  </button>
+                  <button
+                    onClick={togglePlay}
+                    className="flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-[13.5px] font-semibold text-black transition hover:bg-white/90 active:scale-[0.97]"
+                  >
+                    {playback.isPlaying ? <PauseIcon size={12} /> : <PlayIcon size={13} />}
+                    {playback.isPlaying ? 'Pause' : 'Play'}
+                  </button>
+                  <button
+                    onClick={() => setLibraryAdded((prev) => !prev)}
+                    aria-pressed={libraryAdded}
+                    aria-label={libraryAdded ? 'Remove from library' : 'Add to library'}
+                    title={libraryAdded ? 'Added to library' : 'Add to library'}
+                    className={`flex h-9 w-9 items-center justify-center rounded-full border transition active:scale-95 ${
+                      libraryAdded
+                        ? 'border-transparent bg-white/90 text-black'
+                        : 'border-white/10 bg-white/[0.04] text-white/70 hover:bg-white/[0.09] hover:text-white'
+                    }`}
+                  >
+                    {libraryAdded ? <Check size={15} /> : <Plus size={15} />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="px-6 pt-2">
+          <TrackList entries={TRACK_ENTRIES} {...listProps} />
+        </div>
+      </div>
+    );
+  };
+
+  const queueRows = ALBUM.tracks.map((item, index) => ({ item, index }));
+  const currentSeconds = knownDurations[currentTrackIndex] ?? track.durationMs / 1000;
+  const seekMax = Math.max(1, playback.duration || currentSeconds);
 
   return (
-    <div className="flex flex-col h-full w-full bg-transparent text-white font-sans overflow-hidden select-none relative">
-      {/* Blurred Album Art Aura Bleed */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden z-0 transition-all duration-700 ease-in-out">
-        <div
-          className="absolute inset-[-40px] bg-cover bg-center filter blur-[60px] opacity-[0.12]"
-          style={{ backgroundImage: `url(${track.cover})` }}
-        />
-      </div>
+    <div className="relative flex h-full w-full overflow-hidden bg-transparent font-sans text-white select-none">
+      <style>{`
+        @keyframes amEq {
+          0%, 100% { height: 25%; }
+          50% { height: 100%; }
+        }
+        .am-eq-bar { height: 25%; animation: amEq 0.9s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .am-eq-bar { animation: none; height: 60%; }
+        }
+      `}</style>
 
-      {/* 1. TOP PLAYER BAR (Authentic Apple Music Desktop Style) */}
-      <div className="h-[52px] bg-black/20 border-b border-white/[0.06] flex items-center justify-between px-4 z-10 shrink-0 select-none">
-
-        {/* Left Side: Playback Controls + Volume Slider */}
-        <div className="flex items-center gap-4">
-          {/* Controls Group */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handlePrev}
-              className="text-white/75 hover:text-white transition-colors active:scale-95 cursor-pointer"
-              title="Previous"
-            >
-              <SkipBack size={15} fill="currentColor" stroke="none" />
-            </button>
-            <button
-              onClick={togglePlay}
-              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/15 text-white flex items-center justify-center active:scale-90 transition-all cursor-pointer"
-              title={playback.isPlaying ? "Pause" : "Play"}
-            >
-              {playback.isPlaying ? (
-                <Pause size={12} fill="currentColor" stroke="none" />
-              ) : (
-                <Play size={12} fill="currentColor" stroke="none" className="translate-x-[0.5px]" />
-              )}
-            </button>
-            <button
-              onClick={handleNext}
-              className="text-white/75 hover:text-white transition-colors active:scale-95 cursor-pointer"
-              title="Next"
-            >
-              <SkipForward size={15} fill="currentColor" stroke="none" />
-            </button>
-          </div>
-
-          {/* Volume Control */}
-          <div className="flex items-center gap-1.5 w-[90px]">
-            <span className="text-white/40">
-              <Volume1 size={11} />
-            </span>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={playback.volume}
-              onChange={handleVolumeChange}
-              className="w-full h-[2.5px] bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#fa243c]"
-              style={{
-                background: `linear-gradient(to right, #fa243c 0%, #fa243c ${playback.volume * 100
-                  }%, rgba(255,255,255,0.1) ${playback.volume * 100}%, rgba(255,255,255,0.1) 100%)`
-              }}
-            />
-            <span className="text-white/40">
-              <Volume2 size={11} />
-            </span>
-          </div>
+      {/* Sidebar */}
+      <aside className="relative z-20 flex w-[192px] shrink-0 flex-col border-r border-white/[0.06] bg-black/30 px-2.5 pb-2 pt-4">
+        <div className="mb-3 px-2.5">
+          <span className="text-[16px] font-semibold tracking-tight text-white">Music</span>
         </div>
+        <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+          <NavItem icon={<Search size={15} />} label="Search" active={view === 'search'} onClick={() => setView('search')} />
+          <NavItem icon={<House size={15} />} label="Home" active={view === 'home'} onClick={() => setView('home')} />
+          <NavItem icon={<Sparkles size={15} />} label="New" active={view === 'new'} onClick={() => setView('new')} />
 
-        {/* Center: LCD Now Playing Display Capsule */}
-        <div className="relative w-[300px] h-[36px] bg-black/40 border border-white/[0.06] rounded-md px-2.5 flex items-center justify-between overflow-hidden group">
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <img src={track.cover} alt="Cover art" className="w-[22px] h-[22px] rounded-[3px] object-cover shrink-0" />
-            <div className="flex flex-col min-w-0 leading-tight">
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] font-semibold text-white/90 truncate">{track.title}</span>
-                {track.explicit && (
-                  <span className="bg-white/15 text-white/60 text-[7px] font-bold px-0.75 py-0.25 rounded shrink-0">E</span>
-                )}
-              </div>
-              <span className="text-[8.5px] text-white/40 truncate">{track.artist}</span>
-            </div>
+          <div className="px-2.5 pb-1 pt-4 text-[10.5px] font-semibold uppercase tracking-wider text-white/35">Library</div>
+          <div className="flex items-center gap-1 px-2.5 py-1 text-[12px] font-medium text-white/45">
+            <ChevronRight size={13} className="rotate-90" />
+            <span>Pins</span>
           </div>
-
-          {/* Inline visualizer & Remaining Time display inside LCD */}
-          <div className="flex items-center gap-2.5 ml-2">
-            <Visualizer isPlaying={playback.isPlaying} frequencies={localVisualizerData} />
-            <span className="text-[8.5px] text-white/35 font-mono select-none">
-              -{formatTime(playback.duration - playback.currentTime)}
-            </span>
-          </div>
-
-          {/* Integrated thin Progress Scrubber along the bottom */}
-          <input
-            type="range"
-            min="0"
-            max={playback.duration || 100}
-            value={playback.currentTime}
-            onChange={handleSeek}
-            className="absolute bottom-0 left-0 right-0 w-full h-[1.5px] bg-transparent appearance-none cursor-pointer accent-[#fa243c]"
-            style={{
-              background: `linear-gradient(to right, #fa243c 0%, #fa243c ${playback.duration ? (playback.currentTime / playback.duration) * 100 : 0
-                }%, rgba(255,255,255,0.06) ${playback.duration ? (playback.currentTime / playback.duration) * 100 : 0
-                }%, rgba(255,255,255,0.06) 100%)`
-            }}
+          <NavItem
+            icon={<Star size={15} className="fill-current" style={{ color: APPLE_RED }} />}
+            label="Favourite Songs"
+            active={view === 'favourites'}
+            onClick={() => setView('favourites')}
           />
-        </div>
-
-        {/* Right Side: Airplay/Lyrics & List toggles */}
-        <div className="flex items-center gap-3 text-white/50">
-          <button className="hover:text-white transition-colors cursor-pointer">
-            <Share2 size={13} />
-          </button>
-          <button className="hover:text-white transition-colors cursor-pointer">
-            <ListMusic size={13} />
-          </button>
-        </div>
-
-      </div>
-
-      {/* 2. MAIN LAYOUT */}
-      <div className="flex flex-row flex-1 overflow-hidden z-10 bg-transparent">
-
-        {/* Left Sidebar */}
-        <div className="w-[145px] bg-black/15 border-r border-white/[0.04] p-3 flex flex-col justify-between text-[11px] shrink-0">
-          <div>
-            <div className="flex items-center gap-1.5 px-2 mb-4 text-[#fa243c] select-none font-bold">
-              <Music size={13} className="fill-current" />
-              <span>Library</span>
-            </div>
-
-            {/* Nav Links */}
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-2 px-2 py-1.5 rounded bg-[#fa243c]/15 text-[#fa243c] font-semibold cursor-pointer">
-                <Home size={12} strokeWidth={2.2} /> Listen Now
-              </div>
-              <div className="flex items-center gap-2 px-2 py-1.5 rounded text-white/70 hover:bg-white/[0.04] hover:text-white cursor-pointer transition-all">
-                <Compass size={12} strokeWidth={2.2} /> Browse
-              </div>
-              <div className="flex items-center gap-2 px-2 py-1.5 rounded text-white/70 hover:bg-white/[0.04] hover:text-white cursor-pointer transition-all">
-                <Radio size={12} strokeWidth={2.2} /> Radio
-              </div>
-            </div>
-
-            {/* Playlist Labels */}
-            <div className="mt-4">
-              <div className="px-2 text-[8px] font-bold text-white/35 uppercase tracking-widest mb-1.5">My Music</div>
-              <div className="space-y-0.5">
-                <div className="px-2 py-1.5 rounded text-white/70 hover:bg-white/[0.04] hover:text-white cursor-pointer transition-all truncate">Recently Played</div>
-                <div className="px-2 py-1.5 rounded text-white/70 hover:bg-white/[0.04] hover:text-white cursor-pointer transition-all truncate">Albums</div>
-                <div className="px-2 py-1.5 rounded text-white/70 hover:bg-white/[0.04] hover:text-white cursor-pointer transition-all truncate">Songs</div>
-              </div>
-            </div>
+          <NavItem
+            icon={<img src={ALBUM.artwork} alt="" className="h-[18px] w-[18px] rounded-[3px] object-cover" />}
+            label={ALBUM.title}
+            active={view === 'home'}
+            onClick={() => setView('home')}
+          />
+          <NavItem icon={<Clock size={15} />} label="Recently Added" active={view === 'recent'} onClick={() => setView('recent')} />
+          <NavItem icon={<Mic size={15} />} label="Artists" active={view === 'artists'} onClick={() => setView('artists')} />
+          <NavItem icon={<Disc size={15} />} label="Albums" active={view === 'albums'} onClick={() => setView('albums')} />
+          <NavItem icon={<Music size={15} />} label="Songs" active={view === 'songs'} onClick={() => setView('songs')} />
+          <a
+            href={ALBUM.playlistUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2.5 rounded-md px-2.5 py-[7.5px] text-[13.5px] text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white"
+          >
+            <span className="flex w-[18px] shrink-0 items-center justify-center">
+              <ExternalLink size={15} />
+            </span>
+            <span className="truncate">Open in YouTube</span>
+          </a>
+        </nav>
+        <div className="mt-2 flex items-center gap-2.5 border-t border-white/[0.05] px-2 pt-2.5">
+          <div
+            className="flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-bold text-black"
+            style={{ backgroundColor: APPLE_RED }}
+          >
+            ZS
           </div>
-
-          <div className="flex items-center gap-2 px-1 border-t border-white/[0.05] pt-2">
-            <div className="w-4.5 h-4.5 rounded-full bg-[#fa243c] flex items-center justify-center font-bold text-[8px] text-white">
-              ZS
-            </div>
-            <span className="font-semibold text-white/80 text-[9px] truncate">zesty singh</span>
-          </div>
+          <span className="truncate text-[12.5px] font-medium text-white/80">zesty singh</span>
         </div>
+      </aside>
 
-        {/* Right Main Details Panel */}
-        <div className="flex-1 overflow-y-auto p-5 select-none bg-gradient-to-b from-[#fa243c]/5 to-transparent">
+      {/* Main */}
+      <main className="relative z-10 flex min-w-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto">{renderContent()}</div>
 
-          {/* Header Album Banner Info */}
-          <div className="flex gap-4 mb-6">
-            <div className="w-[85px] h-[85px] rounded-md overflow-hidden border border-white/10 shrink-0 shadow-lg">
-              <img src={track.cover} alt="album art" className="w-full h-full object-cover" />
+        {/* Player pill */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-30 flex justify-center">
+          <div className="pointer-events-auto relative w-[480px] max-w-[calc(100%-20px)]">
+            <div className="relative flex items-center justify-between rounded-full border border-white/10 bg-[#1b1b1d]/90 px-6 py-3 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.9)] backdrop-blur-2xl">
+              <input
+                type="range"
+                min={0}
+                max={seekMax}
+                step={0.1}
+                value={Math.min(playback.currentTime, seekMax)}
+                onChange={(e) => seek(parseFloat(e.target.value))}
+                aria-label="Seek"
+                className="absolute left-3 right-3 top-[-2px] h-4 w-[calc(100%-24px)] cursor-pointer opacity-0"
+              />
+              <div className="pointer-events-none absolute left-3 right-3 top-0 h-[2.5px] overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full" style={{ width: `${progress * 100}%`, backgroundColor: APPLE_RED }} />
+              </div>
+
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => setShuffle((prev) => !prev)}
+                  title="Shuffle"
+                  aria-label="Shuffle"
+                  aria-pressed={shuffle}
+                  className="transition hover:scale-105 active:scale-95"
+                  style={{ color: shuffle ? APPLE_RED : 'rgba(255,255,255,0.65)' }}
+                >
+                  <Shuffle size={16} />
+                </button>
+                <button
+                  onClick={previous}
+                  title="Previous"
+                  aria-label="Previous track"
+                  className="text-white/70 transition hover:text-white active:scale-90"
+                >
+                  <SkipBackIcon size={17} />
+                </button>
+                <button
+                  onClick={togglePlay}
+                  title={playback.isPlaying ? 'Pause' : 'Play'}
+                  aria-label={playback.isPlaying ? 'Pause' : 'Play'}
+                  className="text-white transition hover:scale-105 active:scale-90"
+                >
+                  {playback.isPlaying ? <PauseIcon size={15} /> : <PlayIcon size={16} />}
+                </button>
+                <button
+                  onClick={() => advance(true)}
+                  title="Next"
+                  aria-label="Next track"
+                  className="text-white/70 transition hover:text-white active:scale-90"
+                >
+                  <SkipForwardIcon size={17} />
+                </button>
+                <button
+                  onClick={cycleRepeat}
+                  title={repeat === 'one' ? 'Repeat one' : repeat === 'all' ? 'Repeat all' : 'Repeat off'}
+                  aria-label={`Repeat ${repeat}`}
+                  aria-pressed={repeat !== 'off'}
+                  className="transition hover:scale-105 active:scale-95"
+                  style={{ color: repeat !== 'off' ? APPLE_RED : 'rgba(255,255,255,0.65)' }}
+                >
+                  {repeat === 'one' ? <Repeat1 size={16} /> : <Repeat size={16} />}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setQueueOpen((prev) => !prev);
+                  }}
+                  title="Up Next"
+                  aria-label="Up Next"
+                  aria-pressed={queueOpen}
+                  className="transition hover:text-white active:scale-95"
+                  style={{ color: queueOpen ? APPLE_RED : 'rgba(255,255,255,0.65)' }}
+                >
+                  <ListMusic size={16} />
+                </button>
+                <button
+                  onClick={toggleMute}
+                  title={muted ? 'Unmute' : 'Mute'}
+                  aria-label={muted ? 'Unmute' : 'Mute'}
+                  className="text-white/60 transition hover:text-white"
+                >
+                  {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={playback.volume}
+                  onChange={(e) => changeVolume(parseFloat(e.target.value))}
+                  aria-label="Volume"
+                  className="h-[3px] w-[76px] cursor-pointer appearance-none rounded-full [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-transparent"
+                  style={{
+                    background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.9) ${
+                      playback.volume * 100
+                    }%, rgba(255,255,255,0.15) ${playback.volume * 100}%, rgba(255,255,255,0.15) 100%)`,
+                  }}
+                />
+              </div>
             </div>
-            <div className="flex flex-col justify-end">
-              <span className="text-[9px] font-bold tracking-widest text-[#fa243c] uppercase">ACTIVE ALBUM</span>
-              <h1 className="text-lg font-bold tracking-tight text-white/95 leading-tight mt-0.5">{track.album}</h1>
-              <p className="text-[11px] text-white/45 mt-0.5">{track.artist} • Lo-Fi Chill</p>
-            </div>
-          </div>
 
-          {/* Interactive Track List Table */}
-          <div>
-            <div className="text-[9px] font-bold text-white/35 uppercase tracking-widest mb-2 border-b border-white/[0.05] pb-1">
-              Tracks
-            </div>
-
-            <div className="space-y-0.5">
-              {tracks.map((t, idx) => {
-                const isActive = idx === currentTrackIndex;
-                return (
-                  <div
-                    key={idx}
-                    onClick={() => selectTrack(idx)}
-                    className={`flex items-center justify-between p-2.5 rounded-lg transition-all cursor-pointer group ${isActive
-                        ? 'bg-white/[0.06] border border-white/[0.08]'
-                        : 'hover:bg-white/[0.03] border border-transparent'
-                      }`}
-                  >
-                    {/* Index, Cover & Title */}
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-4 flex items-center justify-center">
-                        {isActive && playback.isPlaying ? (
-                          <div className="w-1.5 h-1.5 rounded-full bg-[#fa243c]" />
-                        ) : (
-                          <span className="text-[10px] text-white/30 group-hover:hidden">{idx + 1}</span>
-                        )}
-                        <Play size={10} fill="currentColor" stroke="none" className="hidden group-hover:block text-white" />
-                      </div>
-
-                      <img src={t.cover} alt="track art" className="w-6 h-6 rounded-[2.5px] object-cover shrink-0" />
-
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className={`text-[11px] truncate font-medium ${isActive ? 'text-[#fa243c]' : 'text-white/85'}`}>
-                          {t.title}
-                        </span>
-                        {t.explicit && (
-                          <span className="bg-white/10 text-white/40 text-[7px] font-bold px-0.75 py-0.25 rounded shrink-0">E</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Artist & Duration */}
-                    <div className="flex items-center gap-4 text-[10px]">
-                      <span className="text-white/40 group-hover:text-white/60 transition-colors">{t.artist}</span>
-                      <span className="text-white/30 font-mono text-[9px] w-8 text-right">{t.durationStr}</span>
-                    </div>
-
+            <AnimatePresence>
+              {queueOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.98 }}
+                  transition={{ duration: 0.16, ease: 'easeOut' }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute bottom-full right-0 mb-3 max-h-[320px] w-[300px] overflow-y-auto rounded-2xl border border-white/10 bg-[#1b1b1d]/95 p-2 shadow-2xl backdrop-blur-2xl"
+                >
+                  <div className="px-2.5 pb-1 pt-1.5 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-white/40">
+                    Up Next
                   </div>
-                );
-              })}
-            </div>
+                  {queueRows.map(({ item, index }) => {
+                    const active = index === currentTrackIndex;
+                    return (
+                      <button
+                        key={item.videoId}
+                        onClick={() => selectTrack(index)}
+                        className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors ${
+                          active ? 'bg-white/[0.08]' : 'hover:bg-white/[0.05]'
+                        }`}
+                      >
+                        <img src={ALBUM.artwork} alt="" className="h-9 w-9 shrink-0 rounded-md object-cover" />
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className="block truncate text-[12.5px] font-medium"
+                            style={active ? { color: APPLE_RED } : { color: 'rgba(255,255,255,0.85)' }}
+                          >
+                            {item.title}
+                          </span>
+                          <span className="block truncate text-[11px] text-white/40">{item.artists}</span>
+                        </span>
+                        {active ? (
+                          <EqBars playing={playback.isPlaying} compact />
+                        ) : (
+                          <span className="shrink-0 text-[11px] tabular-nums text-white/30">
+                            {formatDuration(knownDurations[index] ?? item.durationMs / 1000)}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-
         </div>
+      </main>
 
+      {/* Hidden YouTube player host */}
+      <div className="pointer-events-none absolute -left-[9999px] top-0 h-[240px] w-[320px] opacity-0">
+        <div ref={playerHostRef} />
       </div>
-
     </div>
   );
 }

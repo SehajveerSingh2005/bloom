@@ -26,19 +26,33 @@ const wallpapersList = [
   wallpaper4,
 ];
 
+interface BloomSettings {
+  wallpaper: number;
+  dockMode: 'fixed' | 'auto-hide';
+  notchMode: 'fixed' | 'auto-hide';
+  accentColor: string;
+  isDockEnabled: boolean;
+}
+
+const defaultSettings: BloomSettings = {
+  wallpaper: 2,
+  dockMode: 'fixed',
+  notchMode: 'fixed',
+  accentColor: '#e8c5e5',
+  isDockEnabled: true,
+};
+
 export default function App() {
-  const [settings, setSettings] = useState(() => {
+  const [settings, setSettings] = useState<BloomSettings>(() => {
     const saved = localStorage.getItem('bloom-settings');
     if (saved) {
-      try { return JSON.parse(saved); } catch {}
+      try {
+        return { ...defaultSettings, ...(JSON.parse(saved) as Partial<BloomSettings>) };
+      } catch {
+        return defaultSettings;
+      }
     }
-    return {
-      wallpaper: 2,
-      dockMode: 'fixed' as 'fixed' | 'auto-hide',
-      notchMode: 'fixed' as 'fixed' | 'auto-hide',
-      accentColor: '#e8c5e5',
-      isDockEnabled: true,
-    };
+    return defaultSettings;
   });
 
   const [openApps, setOpenApps] = useState<string[]>(['about', 'music', 'terminal']);
@@ -46,16 +60,16 @@ export default function App() {
   const [focusedApp, setFocusedApp] = useState<string>('about');
   const [loaded, setLoaded] = useState(false);
 
-  const [positions, setPositions] = useState({
+  const [positions, setPositions] = useState(() => ({
     about: { x: 98, y: 117 },
-    music: { x: 716, y: 42 },
+    music: { x: Math.max(16, window.innerWidth - 800 - 20), y: 42 },
     terminal: { x: 527, y: 335 },
     settings: { x: 140, y: 130 },
     changelog: { x: 300, y: 80 },
     performance: { x: 850, y: 250 },
     features: { x: 200, y: 60 },
     browser: { x: 400, y: 80 },
-  });
+  }));
 
   const [viewport, setViewport] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
@@ -73,7 +87,7 @@ export default function App() {
       });
       return {
         about: clamp(prev.about.x, prev.about.y, 500, 460),
-        music: clamp(prev.music.x, prev.music.y, 680, 400),
+        music: clamp(prev.music.x, prev.music.y, 800, 520),
         terminal: clamp(prev.terminal.x, prev.terminal.y, 500, 320),
         settings: clamp(prev.settings.x, prev.settings.y, 520, 480),
         changelog: clamp(prev.changelog.x, prev.changelog.y, 480, 560),
@@ -179,7 +193,7 @@ export default function App() {
         <div className="relative w-full h-full pointer-events-auto">
           <Window
             id="about"
-            title="About Bloom"
+            title="the hell is bloom?!"
             isOpen={openApps.includes('about')}
             isFocused={focusedApp === 'about'}
             isMinimized={minimizedApps.includes('about')}
@@ -201,15 +215,15 @@ export default function App() {
 
           <Window
             id="music"
-            title="Music Player"
+            title="moooosic"
             isOpen={openApps.includes('music')}
             isFocused={focusedApp === 'music'}
             isMinimized={minimizedApps.includes('music')}
             onClose={() => handleCloseApp('music')}
             onMinimize={() => handleMinimizeApp('music')}
             onFocus={() => setFocusedApp('music')}
-            width={680}
-            height={400}
+            width={800}
+            height={520}
             defaultPosition={positions.music}
             viewport={viewport}
           >
@@ -222,7 +236,7 @@ export default function App() {
 
           <Window
             id="settings"
-            title="Settings"
+            title="bloom brain surgery"
             isOpen={openApps.includes('settings')}
             isFocused={focusedApp === 'settings'}
             isMinimized={minimizedApps.includes('settings')}
@@ -243,7 +257,7 @@ export default function App() {
 
           <Window
             id="terminal"
-            title="bloom-system-daemon"
+            title="some crappy hacker window"
             isOpen={openApps.includes('terminal')}
             isFocused={focusedApp === 'terminal'}
             isMinimized={minimizedApps.includes('terminal')}
@@ -260,7 +274,7 @@ export default function App() {
 
           <Window
             id="changelog"
-            title="Changelog"
+            title="what did we break"
             isOpen={openApps.includes('changelog')}
             isFocused={focusedApp === 'changelog'}
             isMinimized={minimizedApps.includes('changelog')}
@@ -277,7 +291,7 @@ export default function App() {
 
           <Window
             id="performance"
-            title="Performance Monitor"
+            title="cpu go brrr"
             isOpen={openApps.includes('performance')}
             isFocused={focusedApp === 'performance'}
             isMinimized={minimizedApps.includes('performance')}
@@ -294,7 +308,7 @@ export default function App() {
 
           <Window
             id="features"
-            title="Features"
+            title="bloom propaganda"
             isOpen={openApps.includes('features')}
             isFocused={focusedApp === 'features'}
             isMinimized={minimizedApps.includes('features')}
@@ -311,7 +325,7 @@ export default function App() {
 
           <Window
             id="browser"
-            title="Browser"
+            title="the internet, probably"
             isOpen={openApps.includes('browser')}
             isFocused={focusedApp === 'browser'}
             isMinimized={minimizedApps.includes('browser')}

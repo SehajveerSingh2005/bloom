@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Cpu, HardDrive, Activity, Layers } from 'lucide-react';
 
 function useSimulatedValue(base: number, variance: number, interval = 1500) {

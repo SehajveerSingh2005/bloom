@@ -927,41 +927,7 @@ body {
   background: rgba(255, 255, 255, 0.15);
 }
 
-/* Ambient Glow Behind Notch content */
-.notch-ambient-glow {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 0;
-  border-radius: 0 0 18px 18px;
-}
-
-.notch-ambient-glow img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  filter: blur(52px) saturate(3.5) contrast(1.1) brightness(1.4);
-  transform: scale(1.8);
-  opacity: 0.85;
-  transition: opacity 0.6s ease, filter 0.8s ease;
-}
-
-/* Gradient overlay to smoothly fade the image to the notch's background color */
-.notch-ambient-glow::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: radial-gradient(ellipse at center, transparent 20%, rgba(0, 0, 0, 0.25) 50%, var(--notch-bg) 85%);
-  pointer-events: none;
-  z-index: 1;
-}
+/* Ambient Glow Behind Notch content (disabled — kept off per design) */
 
 .main-row,
 .expanded-music-container {
@@ -972,4 +938,465 @@ body {
 .bloom.calendar-mode {
   padding-top: 4px;
   border-radius: 0 0 28px 28px !important;
+}
+
+/* ==========================================================================
+   Native Bloom notch parity (ported from the desktop app's App.css)
+   ========================================================================== */
+
+/* Flat pill like the app — no border */
+.bloom {
+  --notch-bg: rgba(0, 0, 0, 0.8);
+  border: none;
+}
+
+.bloom.expanded {
+  --notch-bg: rgba(0, 0, 0, 0.92);
+}
+
+.bloom.is-impacted::before,
+.bloom.is-impacted::after {
+  opacity: 1;
+  animation: none;
+}
+
+/* Center column */
+.time-center {
+  position: relative;
+}
+
+.time {
+  backface-visibility: hidden;
+}
+
+.passive-feature .label {
+  margin-bottom: -0.5px;
+}
+
+/* Compact album art states */
+.album-art {
+  perspective: 200px;
+}
+
+.album-art.paused {
+  width: 20px;
+  height: 20px;
+}
+
+.album-art.album-art-large {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+.album-art.album-art-large.paused {
+  width: 28px;
+  height: 28px;
+}
+
+.album-art img,
+.album-art .album-art-placeholder {
+  backface-visibility: hidden;
+}
+
+.album-art-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 100%);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.music-placeholder-svg-small {
+  width: 55%;
+  height: 55%;
+  display: block;
+}
+
+.album-art-glow-wrapper:hover .album-art-glow-bg {
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  filter: blur(8px) saturate(3) brightness(0.9);
+  opacity: 0.7;
+}
+
+/* Expanded music layout */
+.expanded-music-container {
+  align-items: stretch;
+}
+
+.art-placeholder-mini {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  color: rgba(255, 255, 255, 0.65);
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+.premium-album-art:hover .art-placeholder-mini {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 100%);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.music-placeholder-svg {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
+}
+
+/* Marquee title */
+.premium-title-wrap {
+  width: 100%;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 8px), transparent 100%);
+  mask-image: linear-gradient(to right, black calc(100% - 8px), transparent 100%);
+}
+
+.premium-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: white;
+  white-space: nowrap;
+  letter-spacing: -0.15px;
+  display: inline-block;
+  width: auto;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.premium-title.marquee {
+  animation: marquee-scroll var(--scroll-duration, 8s) cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+}
+
+@keyframes marquee-scroll {
+  0%, 12% { transform: translateX(0); }
+  42%, 55% { transform: translateX(var(--scroll-distance, -100%)); }
+  80%, 100% { transform: translateX(0); }
+}
+
+/* Visualizer / audio output swap */
+.header-visualizer-wrap {
+  position: relative;
+  padding-top: 4px;
+}
+
+.header-visualizer {
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
+}
+
+.classic-audio-output-btn {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  outline: none;
+  flex-shrink: 0;
+  transition: opacity 0.2s ease;
+}
+
+.header-visualizer-wrap:hover .header-visualizer {
+  opacity: 0;
+}
+
+.header-visualizer-wrap:hover .classic-audio-output-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Premium volume slider — thumbless like the app */
+.slider-track-premium:hover {
+  background: rgba(255, 255, 255, 0.2);
+  height: 6px;
+}
+
+.slider-progress-fill {
+  transition: width 0.1s ease-out;
+}
+
+.premium-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  cursor: pointer;
+  z-index: 2;
+  position: relative;
+  margin: 0;
+}
+
+.premium-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+  border: none;
+}
+
+.premium-slider::-moz-range-thumb {
+  width: 0;
+  height: 0;
+  background: transparent;
+  border: none;
+}
+
+/* Calendar split view matches the app */
+.calendar-timer-content.split-view {
+  background: transparent;
+  margin-top: 1px;
+  border-radius: 0 0 28px 28px;
+}
+
+/* ==========================================================================
+   Command Center — native app styles
+   ========================================================================== */
+
+.command-center-content-minimal {
+  position: absolute;
+  top: 36px;
+  left: 0;
+  width: 100%;
+  height: calc(100% - 36px);
+  box-sizing: border-box;
+  z-index: 2;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  color: white;
+  border-radius: 0 0 18px 18px;
+  overflow: hidden;
+}
+
+.cc-pills-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
+  height: 78px;
+}
+
+.cc-pill-tile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+  height: 34px;
+  box-sizing: border-box;
+}
+
+.cc-pill-tile:hover {
+  background: rgba(255, 255, 255, 0.08);
+  transform: translateY(-0.5px);
+}
+
+.cc-pill-tile:active {
+  transform: scale(0.98);
+}
+
+.cc-pill-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+  transition: all 0.15s ease;
+}
+
+.cc-pill-icon-wrapper svg {
+  width: 12px;
+  height: 12px;
+}
+
+.cc-pill-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.cc-pill-title {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.cc-pill-status {
+  font-size: 7.5px;
+  color: rgba(255, 255, 255, 0.4);
+  font-weight: 500;
+}
+
+.cc-pill-tile.active {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(255, 255, 255, 0.95);
+}
+
+.cc-pill-tile.active .cc-pill-title {
+  color: rgba(0, 0, 0, 0.9);
+}
+
+.cc-pill-tile.active .cc-pill-status {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.cc-pill-tile.active .cc-pill-icon-wrapper {
+  background: rgba(0, 0, 0, 0.08);
+  color: black;
+}
+
+.cc-circular-actions-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 0 4px;
+}
+
+.cc-circular-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.02);
+  color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cc-circular-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.cc-circular-btn:active {
+  transform: scale(0.95) translateY(0);
+}
+
+.cc-circular-btn.active {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
+}
+
+.cc-circular-btn.active:hover {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.cc-classic-sliders-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.cc-classic-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 18px;
+  position: relative;
+}
+
+.cc-classic-slider-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 75px;
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.cc-classic-slider-label svg {
+  opacity: 0.7;
+  width: 12px;
+  height: 12px;
+}
+
+.cc-classic-slider-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  position: relative;
+  display: flex;
+  align-items: center;
+  transition: background 0.15s ease;
+}
+
+.cc-classic-slider-row:hover .cc-classic-slider-track {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.cc-classic-fill {
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 3px;
+  height: 100%;
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  transition: width 0.05s linear, background 0.15s ease;
+}
+
+.cc-classic-slider-row:hover .cc-classic-fill {
+  background: #ffffff;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.15);
+}
+
+.cc-classic-percentage {
+  width: 28px;
+  text-align: right;
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-classic-slider-row:hover .cc-classic-percentage {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.cc-classic-input {
+  position: absolute;
+  top: -6px;
+  left: 0;
+  width: 100%;
+  height: 18px;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 4;
+  margin: 0;
 }

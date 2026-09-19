@@ -53,14 +53,14 @@ const Dock = memo(function Dock({
   onCloseApp,
 }: DockProps) {
   const [dockItems, setDockItems] = useState<DockItem[]>([
-    { id: 'about', name: 'About Bloom', accent: '#e8c5e5' },
-    { id: 'music', name: 'Music Player', accent: '#ff2d55' },
-    { id: 'settings', name: 'Settings Panel', accent: '#8e8e93' },
-    { id: 'terminal', name: 'Developer Logs', accent: '#34c759' },
-    { id: 'changelog', name: 'Changelog', accent: '#5e9eff' },
-    { id: 'performance', name: 'Performance', accent: '#34d399' },
-    { id: 'features', name: 'Features', accent: '#a78bfa' },
-    { id: 'browser', name: 'Browser', accent: '#38bdf8' },
+    { id: 'about', name: 'the hell is bloom?!', accent: '#e8c5e5' },
+    { id: 'music', name: 'moooosic', accent: '#ff2d55' },
+    { id: 'settings', name: 'bloom brain surgery', accent: '#8e8e93' },
+    { id: 'terminal', name: 'some crappy hacker window', accent: '#34c759' },
+    { id: 'changelog', name: 'what did we break', accent: '#5e9eff' },
+    { id: 'performance', name: 'cpu go brrr', accent: '#34d399' },
+    { id: 'features', name: 'bloom propaganda', accent: '#a78bfa' },
+    { id: 'browser', name: 'the internet, probably', accent: '#38bdf8' },
   ]);
 
   const [hoveredApp, setHoveredApp] = useState<string | null>(null);
@@ -108,21 +108,21 @@ const Dock = memo(function Dock({
   const getAppPreviewContent = (id: string) => {
     switch (id) {
       case 'about':
-        return 'Bloom Info Card';
+        return 'bloom lore';
       case 'music':
-        return 'Now Playing stream';
+        return 'now playing, probably';
       case 'settings':
-        return 'OS Configurations';
+        return 'knobs & switches';
       case 'terminal':
-        return 'System terminal logs';
+        return 'hacker noises';
       case 'changelog':
-        return 'Release history';
+        return 'bug confessions';
       case 'performance':
-        return 'System metrics';
+        return 'fan go spinny';
       case 'features':
-        return 'Feature showcase';
+        return 'reasons to care';
       case 'browser':
-        return 'Web browser';
+        return 'the web or whatever';
       default:
         return 'Running instance';
     }
