@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { preferredEdgeReveal } from "./platform";
 import "./Overlay.css";
 import { initTheme } from "./theme";
 
@@ -67,10 +68,12 @@ function VolumeNotch({
           transition={{ delay: 0.05, duration: 0.2, ease: "easeOut" }}
         >
           <div ref={barRef} className="volume-notch-bar" onMouseDown={handleMouseDown} onTouchStart={handleBarInteraction} style={{ cursor: 'pointer' }}>
+            {/* The bar stops at full while the figure below shows the sink's real
+                level, which Linux allows to exceed 100%. */}
             <motion.div
               className="volume-notch-fill"
               initial={false}
-              animate={{ height: isMuted ? "0%" : `${percentage}%` }}
+              animate={{ height: isMuted ? "0%" : `${Math.min(100, percentage)}%` }}
               transition={{ type: "spring", stiffness: 300, damping: 35 }}
             />
           </div>
@@ -183,12 +186,12 @@ function OverlayApp() {
   const [volume, setVolume] = useState(0.5);
   const [isMuted, setIsMuted] = useState(false);
   const [volumeOverlayEnabled, setVolumeOverlayEnabled] = useState(() => localStorage.getItem("bloom-volume-overlay-enabled") !== "false");
-  const [volumeEdgeEnabled, setVolumeEdgeEnabled] = useState(() => localStorage.getItem("bloom-volume-edge-enabled") !== "false");
+  const [volumeEdgeEnabled, setVolumeEdgeEnabled] = useState(() => preferredEdgeReveal("bloom-volume-edge-enabled"));
 
   // Brightness state
   const [brightness, setBrightness] = useState(50);
   const [brightnessOverlayEnabled, setBrightnessOverlayEnabled] = useState(() => localStorage.getItem("bloom-brightness-overlay-enabled") !== "false");
-  const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(() => localStorage.getItem("bloom-brightness-edge-enabled") !== "false");
+  const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(() => preferredEdgeReveal("bloom-brightness-edge-enabled"));
 
   // Shared state
   const [scale, setScale] = useState(() => parseFloat(localStorage.getItem("bloom-scale") || "1.0"));

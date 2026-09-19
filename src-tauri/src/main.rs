@@ -2,22 +2,44 @@
 
 mod types;
 mod state;
+#[cfg(target_os = "windows")]
 mod utils;
+#[cfg(target_os = "linux")]
+#[path = "utils_linux.rs"]
+mod utils;
+#[cfg(target_os = "windows")]
 mod services;
+#[cfg(target_os = "windows")]
 mod commands;
+#[cfg(target_os = "linux")]
+mod platform;
+#[cfg(target_os = "linux")]
+mod commands_linux;
+#[cfg(target_os = "linux")]
+mod services_linux;
 mod updater;
 
+#[cfg(target_os = "windows")]
 use tauri::Manager;
+#[cfg(target_os = "windows")]
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
+#[cfg(target_os = "windows")]
 use windows::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
+#[cfg(target_os = "windows")]
 use windows::core::BOOL;
+#[cfg(target_os = "windows")]
 use std::sync::atomic::Ordering;
 
+#[cfg(target_os = "windows")]
 use crate::state::*;
+#[cfg(target_os = "windows")]
 use crate::utils::*;
+#[cfg(target_os = "windows")]
 use crate::services::*;
+#[cfg(target_os = "windows")]
 use crate::commands::*;
 
+#[cfg(target_os = "windows")]
 unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     if ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT {
         set_taskbar_visibility(true, true);
@@ -27,6 +49,7 @@ unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     BOOL(0)
 }
 
+#[cfg(target_os = "windows")]
 fn main() {
     unsafe {
         let _ = SetConsoleCtrlHandler(Some(ctrl_handler), true);
@@ -70,6 +93,7 @@ fn main() {
         ))
         .invoke_handler(tauri::generate_handler![
             hide_native_osd,
+            get_platform,
             open_settings_window,
             open_wifi_settings,
             open_sound_settings,
@@ -242,6 +266,16 @@ fn main() {
 
             sync_overlays(app.handle());
 
+            // Keep Bloom's shell windows visible after creation so the first
+            // render stack does not sit in a hidden state on Linux when the
+            // visibility signal is delayed or the window was initialized with
+            // visible: false.
+            for label in ["main", "dock"] {
+                if let Some(win) = app.get_webview_window(label) {
+                    let _ = win.show();
+                }
+            }
+
             // Initialize the overlay window — on Windows, set_position doesn't
             // take effect on a window that has never been shown. Show it once
             // to register it with the compositor, then hide immediately.
@@ -374,4 +408,52 @@ fn main() {
 
         }
     });
+}
+
+/// Linux baseline: launch the existing React UI and preserve its Tauri IPC
+/// names while native integrations are introduced behind `platform::linux`.
+#[cfg(target_os = "linux")]
+fn main() {
+    use crate::commands_linux::*;
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![])))
+        .invoke_handler(tauri::generate_handler![
+            hide_native_osd, get_platform, open_settings_window, open_wifi_settings, open_sound_settings,
+            open_notification_center, open_system_tray, set_ignore_cursor_events,
+            set_window_height, resize_settings_window, hide_overlay, set_splash_fullscreen,
+            sync_overlay_position, media_play_pause, media_next, media_previous, media_seek,
+            open_media_source_app, init_dock, toggle_dock, change_dock_mode, change_notch_mode,
+            sync_appbar, open_app, update_dock_rect, update_notch_rect, set_dock_hovered,
+            set_notch_hovered, get_active_windows, get_app_icon, get_installed_apps,
+            save_pinned_apps, load_pinned_apps, clear_icon_cache, set_custom_icon,
+            remove_custom_icon, get_custom_icons, set_menu_open, focus_window, close_window,
+            quit_bloom, restart_bloom, get_volume, get_brightness, set_volume, save_setting,
+            load_settings, capture_window_thumbnail, get_wifi_state, set_wifi_state,
+            get_bluetooth_state, set_bluetooth_state, open_bluetooth_settings,
+            open_airplane_mode_settings, set_brightness, get_battery_saver_state,
+            get_battery_state,
+            open_battery_saver_settings, get_system_accent_color, get_cpu_usage, get_ram_usage,
+            get_disk_space, get_network_speed, export_settings, import_settings,
+            read_settings_from_path, write_settings_to_path, updater::check_for_updates,
+            updater::install_update, updater::get_update_state
+        ])
+        .setup(|app| {
+            use crate::platform::linux::{audio, media, power, system, visibility, windows_manager};
+            let handle = app.handle().clone();
+            crate::services_linux::setup_pointer(handle.clone());
+            windows_manager::start_watcher(handle.clone());
+            visibility::start_watcher(handle.clone());
+            audio::start_volume_watcher(handle.clone());
+            system::start_brightness_watcher(handle.clone());
+            audio::start_visualizer(handle.clone());
+            media::start(handle.clone());
+            power::start_watcher(handle);
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running Bloom");
 }

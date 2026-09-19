@@ -11,6 +11,7 @@ import { PlayIcon, PauseIcon, SkipBackIcon, SkipForwardIcon, VolumeLowIcon, Volu
 import { CompactMediaPlayer } from "./CompactMediaPlayer";
 import { useWeather } from "./hooks/useWeather";
 import { useSettingsSync } from "./hooks/useSettingsSync";
+import { getPlatform, preferredMode } from "./platform";
 import type { WidgetConfig } from "./components/StatusWidgetConfig";
 import {
   Cpu,
@@ -251,11 +252,7 @@ function App() {
     eventPeekTimeoutRef.current = setTimeout(() => setEventPeek(false), duration);
   }, []);
 
-  const [notchMode, setNotchMode] = useState(() => {
-    const raw = localStorage.getItem("bloom-notch-mode") || "fixed";
-    if (raw === "auto-hide") return "smart";
-    return raw;
-  });
+  const [notchMode, setNotchMode] = useState(() => preferredMode("bloom-notch-mode"));
 
 
   useEffect(() => {
@@ -309,7 +306,33 @@ function App() {
   const [diskSpace, setDiskSpace] = useState(0);
   const [netUpSpeed, setNetUpSpeed] = useState(0);
   const [netDownSpeed, setNetDownSpeed] = useState(0);
-  const [statusWidgets, setStatusWidgets] = useState<WidgetConfig>({ left: ["weather"], right: ["battery"] });
+  const DEFAULT_STATUS_WIDGETS: WidgetConfig = {
+    left: ["weather"],
+    right: ["battery"],
+  };
+
+  const VALID_STATUS_WIDGET_IDS = new Set([
+    "weather",
+    "battery",
+    "cpu",
+    "ram",
+    "disk",
+    "net",
+  ]);
+
+  const normalizeStatusWidgets = (config?: Partial<WidgetConfig>): WidgetConfig => {
+    const left = [...new Set([...(config?.left ?? DEFAULT_STATUS_WIDGETS.left)])]
+      .filter((id): id is string => VALID_STATUS_WIDGET_IDS.has(id));
+    const right = [...new Set([...(config?.right ?? DEFAULT_STATUS_WIDGETS.right)])]
+      .filter((id): id is string => VALID_STATUS_WIDGET_IDS.has(id));
+
+    return {
+      left: left.length ? left : [...DEFAULT_STATUS_WIDGETS.left],
+      right: right.length ? right : [...DEFAULT_STATUS_WIDGETS.right],
+    };
+  };
+
+  const [statusWidgets, setStatusWidgets] = useState<WidgetConfig>(DEFAULT_STATUS_WIDGETS);
 
   const [windowLabel, setWindowLabel] = useState<string>("");
   useEffect(() => {
@@ -359,11 +382,7 @@ function App() {
   const [isExpanded, setIsExpanded] = useState(false);
   const [startupAnimating, setStartupAnimating] = useState(false);
 
-  const [dockMode, setDockMode] = useState(() => {
-    const raw = localStorage.getItem("bloom-dock-mode") || "fixed";
-    if (raw === "auto-hide") return "smart";
-    return raw;
-  });
+  const [dockMode, setDockMode] = useState(() => preferredMode("bloom-dock-mode"));
   const [dndActive, setDndActive] = useState(false);
   const [dockEnabled, setDockEnabled] = useState(() => localStorage.getItem("bloom-dock-enabled") !== "false");
   const [isNotchHovered, setIsNotchHovered] = useState(false);
@@ -436,30 +455,46 @@ function App() {
     }
 
     const proceedWithStartup = () => {
+      const markReady = () => {
+        setStartupAnimating(true);
+        setIsReady(true);
+        setTimeout(() => {
+          setIsImpacted(true);
+          setIsExpanded(true);
+        }, 240);
+        setTimeout(() => setStartupAnimating(false), 1500);
+      };
+
       const checkVisibility = async () => {
         try {
           const win = getCurrentWebviewWindow();
           const visible = await win.isVisible();
           if (visible) {
-            setStartupAnimating(true);
-            setIsReady(true);
-            setTimeout(() => {
-              setIsImpacted(true);
-              setIsExpanded(true);
-            }, 240);
-            setTimeout(() => setStartupAnimating(false), 1500);
+            markReady();
             return true;
           }
         } catch (e) { }
         return false;
       };
 
-      const interval = setInterval(async () => {
-        if (await checkVisibility()) clearInterval(interval);
+      const fallbackTimer = setTimeout(() => {
+        markReady();
+      }, 2000);
+
+      let interval: ReturnType<typeof setInterval> | undefined;
+      const cleanup = () => {
+        if (interval) clearInterval(interval);
+        clearTimeout(fallbackTimer);
+      };
+
+      interval = setInterval(async () => {
+        if (await checkVisibility()) {
+          cleanup();
+        }
       }, 100);
 
       checkVisibility();
-      return interval;
+      return cleanup;
     };
 
     // Mirror Overlay.tsx's splash decision so we only wait when a splash will actually fire.
@@ -472,22 +507,22 @@ function App() {
     const waitForSplash = () => {
       // Splash is definitely coming — register listener now (2800ms animation gives us plenty of time)
       let started = false;
-      let interval: any;
+      let cleanup: (() => void) | undefined;
       const unlistenSplash = listen("splash-done", () => {
         if (started) return;
         started = true;
-        interval = proceedWithStartup();
+        cleanup = proceedWithStartup();
         unlistenSplash.then(fn => fn());
       });
       const safetyTimer = setTimeout(() => {
         if (started) return;
         started = true;
-        interval = proceedWithStartup();
+        cleanup = proceedWithStartup();
         unlistenSplash.then(fn => fn());
       }, 6000);
       return () => {
         clearTimeout(safetyTimer);
-        if (interval) clearInterval(interval);
+        cleanup?.();
         unlistenSplash.then(fn => fn());
       };
     };
@@ -498,7 +533,7 @@ function App() {
     }
 
     // Has a version key — need async check to know if version changed
-    let interval: any;
+    let cleanup: (() => void) | undefined;
     getVersion().then(currentVersion => {
       if (storedVersion !== currentVersion) {
         // Version changed — splash is coming, wait for it
@@ -506,12 +541,12 @@ function App() {
         waitForSplash();
       } else {
         // Same version — no splash, start immediately
-        interval = proceedWithStartup();
+        cleanup = proceedWithStartup();
       }
     }).catch(() => {
-      interval = proceedWithStartup();
+      cleanup = proceedWithStartup();
     });
-    return () => { if (interval) clearInterval(interval); };
+    return () => { cleanup?.(); };
   }, [windowLabel]);
 
   // Settings state
@@ -533,7 +568,7 @@ function App() {
   useEffect(() => {
     if (!windowLabel) return;
 
-    invoke("load_settings").then((settings: any) => {
+    invoke("load_settings").then(async (settings: any) => {
       const getVal = (key: string, fallback: string | null = null) => {
         const val = settings[key];
         if (val !== undefined && val !== null) return String(val);
@@ -557,7 +592,8 @@ function App() {
       const thresholdStr = getVal("bloom-low-battery-threshold", "20");
       if (thresholdStr) setLowBatteryThreshold(parseInt(thresholdStr as string));
 
-      const nMode = getVal("bloom-notch-mode", "fixed");
+      const modeDefault = (await getPlatform()) === "linux" ? "smart" : "fixed";
+      const nMode = getVal("bloom-notch-mode", modeDefault);
       if (nMode) {
         const mapped = nMode === "auto-hide" ? "smart" : nMode;
         setNotchMode(mapped);
@@ -573,7 +609,7 @@ function App() {
           });
           localStorage.setItem("bloom-first-run", "done");
         }
-        const rawDockMode = getVal("bloom-dock-mode", "fixed") as string;
+        const rawDockMode = getVal("bloom-dock-mode", modeDefault) as string;
         const dockMode = rawDockMode === "auto-hide" ? "smart" : rawDockMode;
         const syncWindows = async () => {
           const dockEnabled = getVal("bloom-dock-enabled", "true") === "true";
@@ -638,7 +674,7 @@ function App() {
         try {
           const parsed = JSON.parse(widgetsVal);
           if (parsed && Array.isArray(parsed.left) && Array.isArray(parsed.right)) {
-            setStatusWidgets(parsed);
+            setStatusWidgets(normalizeStatusWidgets(parsed));
           }
         } catch {}
       }
@@ -693,7 +729,7 @@ function App() {
         try {
           const parsed = JSON.parse(value);
           if (parsed && Array.isArray(parsed.left) && Array.isArray(parsed.right)) {
-            setStatusWidgets(parsed);
+            setStatusWidgets(normalizeStatusWidgets(parsed));
           }
         } catch {}
       },
@@ -708,7 +744,7 @@ function App() {
     if (windowLabel !== 'main') return;
     if (dockEnabledInitial.current) { dockEnabledInitial.current = false; return; }
     if (dockEnabled) {
-      invoke("init_dock", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
+      invoke("init_dock", { mode: preferredMode("bloom-dock-mode") });
     } else {
       invoke("toggle_dock", { enable: false });
     }
@@ -729,6 +765,7 @@ function App() {
     if (notchModeInitial.current) { notchModeInitial.current = false; return; }
     invoke("change_notch_mode", { mode: notchMode });
   }, [notchMode, windowLabel]);
+
 
   // Bloom mode state: 'music', 'calendar', 'command-center', or 'status'
   const [bloomMode, setBloomMode] = useState<'music' | 'calendar' | 'command-center' | 'status'>('status');
@@ -927,9 +964,33 @@ function App() {
   // Battery API
   useEffect(() => {
     let battery: any = null;
+    let cancelled = false;
+    let stopListening: (() => void) | undefined;
+
+    type BackendBattery = { level: number; charging: boolean };
 
     const initBattery = async () => {
       try {
+        // WebKitGTK does not implement the Battery Status API, so on Linux the
+        // state comes from UPower through the backend and arrives as an event.
+        const platform = await invoke<string>("get_platform");
+        if (platform === "linux") {
+          const apply = (state: BackendBattery) => {
+            setBatteryLevel(state.level);
+            setIsCharging(state.charging);
+          };
+          const unlisten = await listen<BackendBattery>("battery-change", (event) =>
+            apply(event.payload)
+          );
+          if (cancelled) {
+            unlisten();
+            return;
+          }
+          stopListening = unlisten;
+          apply(await invoke<BackendBattery>("get_battery_state"));
+          return;
+        }
+
         battery = await (navigator as any).getBattery();
 
         const updateBattery = () => {
@@ -942,16 +1003,21 @@ function App() {
         battery.addEventListener("levelchange", updateBattery);
         battery.addEventListener("chargingchange", updateBattery);
 
-        return () => {
+        stopListening = () => {
           battery.removeEventListener("levelchange", updateBattery);
           battery.removeEventListener("chargingchange", updateBattery);
         };
       } catch (e) {
-        // Battery API not supported
+        // Battery reporting is unavailable on this system.
       }
     };
 
     initBattery();
+
+    return () => {
+      cancelled = true;
+      stopListening?.();
+    };
   }, []);
 
   // Listen for Volume Changes
@@ -1240,6 +1306,11 @@ function App() {
       }
       return 'calendar';
     });
+  };
+
+  const toggleCommandCenter = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setBloomMode(prev => prev === 'command-center' ? 'status' : 'command-center');
   };
 
   // Render a status widget by ID
@@ -1634,7 +1705,8 @@ function App() {
                               onClick={(e) => e.stopPropagation()}
                               className="premium-slider"
                             />
-                            <div className="slider-progress-fill" style={{ width: `${volume * 100}%` }} />
+                            {/* The bar is capped at full, but the figure beside it is not: Linux sinks can be amplified above 100%. */}
+                            <div className="slider-progress-fill" style={{ width: `${Math.min(100, volume * 100)}%` }} />
                           </div>
                           <VolumeHighIcon size={14} style={{ opacity: 0.5 }} />
                         </div>
@@ -1722,7 +1794,24 @@ function App() {
 
                             {/* Center - Time (always visible) */}
                             <div className="time-center">
-                              <div className="time-flip-container" onClick={toggleCalendarMode}>
+                              <div
+                                className="time-flip-container"
+                                onClick={(e) => {
+                                  if (e.shiftKey || e.altKey || e.metaKey) {
+                                    toggleCalendarMode(e);
+                                    return;
+                                  }
+                                  if (bloomMode === 'command-center') {
+                                    toggleCommandCenter(e);
+                                    return;
+                                  }
+                                  toggleCommandCenter(e);
+                                }}
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleCalendarMode(e);
+                                }}
+                              >
                                 <AnimatePresence initial={false}>
                                   {isCompactTimerVisible || isTimerFinished ? (
                                     <motion.span
@@ -1987,7 +2076,7 @@ function App() {
                             onClick={(e) => e.stopPropagation()}
                             className="cc-classic-input"
                           />
-                          <div className="cc-classic-fill" style={{ width: `${volume * 100}%` }} />
+                          <div className="cc-classic-fill" style={{ width: `${Math.min(100, volume * 100)}%` }} />
                         </div>
                         <span className="cc-classic-percentage">{Math.round(volume * 100)}%</span>
                       </div>

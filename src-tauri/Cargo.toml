@@ -23,6 +23,25 @@ tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-updater = "2"
+window-vibrancy = "0.7.1"
+tokio = { version = "1", features = ["time", "sync"] }
+image = "0.25"
+tauri-plugin-drag = "2.1.1"
+tauri-plugin-dialog = "2"
+rustfft = "6"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+sysinfo = "0.39"
+x11rb = "0.13"
+# Session/system D-Bus for MPRIS media control, UPower battery state and
+# PowerProfiles. `zbus` is already in the tree via Tauri, so this adds no new
+# transitive dependencies.
+zbus = "5"
+
+[target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
@@ -57,14 +76,4 @@ windows = { version = "0.61", features = [
   "Win32_NetworkManagement_IpHelper",
   "Win32_NetworkManagement_Ndis"
 ] }
-base64 = "0.22"
-tauri-plugin-autostart = "2.5.1"
-tauri-plugin-updater = "2"
-window-vibrancy = "0.7.1"
 wmi = "0.14"
-tokio = { version = "1", features = ["time", "sync"] }
-image = "0.25"
-tauri-plugin-drag = "2.1.1"
-tauri-plugin-dialog = "2"
-rustfft = "6"
-

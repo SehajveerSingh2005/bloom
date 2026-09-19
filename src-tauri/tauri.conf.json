@@ -103,6 +103,15 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": "all",
+    "category": "Utility",
+    "shortDescription": "A macOS-style notch and dock for your desktop.",
+    "longDescription": "Bloom puts a Dynamic Island style notch at the top of your screen and a dock at the bottom, showing your music, the apps you are running, system stats and quick controls, without replacing your desktop's own panel.",
+    "copyright": "Bloom contributors",
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/bloom.desktop.hbs"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

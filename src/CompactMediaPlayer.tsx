@@ -310,7 +310,7 @@ export function CompactMediaPlayer({
             <div className="cmp-volume-row">
               <VolumeLowIcon size={12} style={{ opacity: 0.5, flexShrink: 0 }} />
               <div className="cmp-volume-track">
-                <div className="cmp-volume-fill" style={{ width: `${volume * 100}%` }} />
+                <div className="cmp-volume-fill" style={{ width: `${Math.min(100, volume * 100)}%` }} />
                 <input
                   type="range"
                   className="cmp-volume-slider"
