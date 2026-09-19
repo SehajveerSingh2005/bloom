@@ -73,26 +73,54 @@ jobs:
           VERSION="${TAG#v}"
           PREV_TAG=$(git tag --sort=-version:refname | grep '^v' | sed -n '2p')
           if [ -n "$PREV_TAG" ]; then
-            COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s" --no-merges)
+            RANGE="${PREV_TAG}..HEAD"
           else
-            COMMITS=$(git log --pretty=format:"%s" --no-merges)
+            RANGE="HEAD"
           fi
 
           FEATURES=""
           FIXES=""
           OTHER=""
-          while IFS= read -r line; do
-            [ -z "$line" ] && continue
-            if [[ "$line" =~ ^feat[\(:] ]]; then
-              FEATURES+=$(printf "\n- %s" "${line#*: }")
-            elif [[ "$line" =~ ^fix[\(:] ]]; then
-              FIXES+=$(printf "\n- %s" "${line#*: }")
-            elif [[ "$line" =~ ^chore\(release\) ]]; then
-              continue
-            else
-              OTHER+=$(printf "\n- %s" "$line")
+          SUBJECT=""
+          FILES=""
+
+          emit() {
+            if [ -z "$SUBJECT" ]; then
+              return
             fi
-          done <<< "$COMMITS"
+            case "$SUBJECT" in
+              chore:*|chore\(*|ci:*|ci\(*|docs:*|docs\(*|build:*|build\(*|style:*|style\(*|test:*|test\(*|fix\(release\)*|fix\(ci\)*|fix\(deps\)*|feat\(release\)*|feat\(ci\)*|feat\(deps\)*|perf\(deps\)*)
+                SUBJECT=""
+                FILES=""
+                return
+                ;;
+            esac
+            APP=0
+            for FILE in $FILES; do
+              case "$FILE" in
+                website/*|.github/*|*.md) ;;
+                *) APP=1 ;;
+              esac
+            done
+            if [ "$APP" = "1" ]; then
+              case "$SUBJECT" in
+                feat:*|feat\(*) FEATURES+=$(printf "\n- %s" "${SUBJECT#*: }") ;;
+                fix:*|fix\(*) FIXES+=$(printf "\n- %s" "${SUBJECT#*: }") ;;
+                *) OTHER+=$(printf "\n- %s" "$SUBJECT") ;;
+              esac
+            fi
+            SUBJECT=""
+            FILES=""
+          }
+
+          while IFS= read -r LINE; do
+            case "$LINE" in
+              COMMIT\|*) emit; SUBJECT="${LINE#COMMIT|}" ;;
+              "") ;;
+              *) FILES="$FILES $LINE" ;;
+            esac
+          done <<< "$(git log "$RANGE" --no-merges --pretty=format:'COMMIT|%s' --name-only)"
+          emit
 
           NOTES=$(printf "## Bloom %s\n" "$VERSION")
           if [ -n "$FEATURES" ]; then
