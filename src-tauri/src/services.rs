@@ -1,4 +1,4 @@
-use std::sync::{atomic::{AtomicI64, AtomicI32, Ordering}, Mutex, OnceLock};
+use std::sync::{atomic::{AtomicBool, AtomicI64, AtomicI32, Ordering}, Mutex, OnceLock};
 use std::sync::mpsc::{channel, Sender};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
@@ -113,14 +113,25 @@ pub fn setup_window_change_hook(app_handle: AppHandle) {
 
 unsafe extern "system" fn window_change_event_proc(
     _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
-    _event: u32,
+    event: u32,
     hwnd: HWND,
-    _id_object: i32,
-    _id_child: i32,
+    id_object: i32,
+    id_child: i32,
     _event_thread: u32,
     _ms_event_time: u32,
 ) {
     if hwnd.0.is_null() { return; }
+
+    // A top-level window appeared/disappeared (or focus moved): capture UI
+    // state may have changed. Cheap flag; the worker thread does the scan.
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE, EVENT_OBJECT_DESTROY};
+        if id_object == 0 && id_child == 0
+            && (event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_HIDE || event == EVENT_OBJECT_DESTROY)
+        {
+            CAPTURE_RECHECK.store(true, Ordering::Relaxed);
+        }
+    }
 
     use windows::Win32::UI::WindowsAndMessaging::{
         IsWindow, GetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
@@ -189,6 +200,8 @@ unsafe extern "system" fn focus_event_proc(
     _ms_event_time: u32,
 ) {
     if hwnd.0.is_null() { return; }
+    // Foreground moved — e.g. Snipping Tool opened/closed or got minimised.
+    CAPTURE_RECHECK.store(true, Ordering::Relaxed);
     use windows::Win32::UI::WindowsAndMessaging::{IsWindow, GetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW};
 
     if !IsWindow(Some(hwnd)).as_bool() { return; }
@@ -964,6 +977,23 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     }
                 }
             }
+
+            // Capture UI state is event-driven: WinEvent callbacks set the
+            // recheck flag on top-level window show/hide/destroy and foreground
+            // changes, so the scan below only runs when something changed
+            // (throttled to coalesce bursts of window events).
+            let scan_now = now_ms();
+            if CAPTURE_RECHECK.load(Ordering::Relaxed)
+                && scan_now - CAPTURE_LAST_SCAN_MS.load(Ordering::Relaxed) >= 400
+            {
+                CAPTURE_RECHECK.store(false, Ordering::Relaxed);
+                CAPTURE_LAST_SCAN_MS.store(scan_now, Ordering::Relaxed);
+                let active = is_capture_ui_present();
+                if active != CAPTURE_UI_ACTIVE.load(Ordering::Relaxed) {
+                    CAPTURE_UI_ACTIVE.store(active, Ordering::Relaxed);
+                    apply_capture_ui_state(&handle_visibility, active);
+                }
+            }
             std::thread::sleep(std::time::Duration::from_millis(150));
         }
     });
@@ -1139,9 +1169,86 @@ static MH_LAST_MONITOR_UPDATE_MS: AtomicI64 = AtomicI64::new(0);
 static MH_CACHED_MON_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 static MH_CACHED_MON_SIZE: Mutex<Option<(u32, u32)>> = Mutex::new(None);
 static MH_LAST_PROCESS_MS: AtomicI64 = AtomicI64::new(0);
+static CAPTURE_UI_ACTIVE: AtomicBool = AtomicBool::new(false);
+static CAPTURE_RECHECK: AtomicBool = AtomicBool::new(true);
+static CAPTURE_LAST_SCAN_MS: AtomicI64 = AtomicI64::new(0);
 
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64
+}
+
+/// True while a screen-capture UI (Windows Snipping Tool) has a visible window.
+/// Bloom's notch sits exactly where that toolbar lives, so it must get out of
+/// the way even if the capture window isn't recognised as fullscreen.
+unsafe extern "system" fn capture_ui_enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    use windows::Win32::UI::WindowsAndMessaging::IsIconic;
+    let found = &mut *(lparam.0 as *mut bool);
+    if *found { return BOOL(0); }
+    if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() { return BOOL(1); }
+
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid != 0 && pid != std::process::id() {
+        if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            let mut buf = [0u16; 512];
+            let mut len = buf.len() as u32;
+            if QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok() {
+                let path = String::from_utf16_lossy(&buf[..len as usize]).to_lowercase();
+                let name = path.rsplit('\\').next().unwrap_or("");
+                if name == "snippingtool.exe" || name == "screenclippinghost.exe" || name == "screensketch.exe" {
+                    *found = true;
+                }
+            }
+            let _ = CloseHandle(handle);
+        }
+    }
+
+    if !*found {
+        use windows::Win32::UI::WindowsAndMessaging::GetClassNameA;
+        let mut class_buf = [0u8; 256];
+        let len = GetClassNameA(hwnd, &mut class_buf);
+        let class = std::str::from_utf8(&class_buf[..len as usize]).unwrap_or("").to_lowercase();
+        if class.contains("snipping") { *found = true; }
+    }
+
+    BOOL(1)
+}
+
+fn is_capture_ui_present() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
+    let mut found = false;
+    unsafe {
+        let _ = EnumWindows(Some(capture_ui_enum_proc), LPARAM(&mut found as *mut bool as isize));
+    }
+    found
+}
+
+fn apply_capture_ui_state(app: &AppHandle, active: bool) {
+    if let Some(main_win) = app.get_webview_window("main") {
+        if active {
+            let _ = main_win.set_ignore_cursor_events(true);
+            let _ = main_win.hide();
+        } else {
+            let _ = main_win.show();
+            if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                register_appbar(main_win.clone());
+            } else if let Ok(hwnd) = main_win.hwnd() {
+                re_assert_topmost(hwnd);
+            }
+        }
+    }
+    if active {
+        if let Some(dock_win) = app.get_webview_window("dock") {
+            let _ = dock_win.set_ignore_cursor_events(true);
+        }
+        if let Some(ov_win) = app.get_webview_window("overlay") {
+            let _ = ov_win.set_ignore_cursor_events(true);
+        }
+    }
+    // Force the mouse hook to re-evaluate hit-testing on the next move.
+    MH_LAST_MAIN_IGNORE.store(-1, Ordering::Relaxed);
+    MH_LAST_DOCK_IGNORE.store(-1, Ordering::Relaxed);
+    MH_LAST_OV_IGNORE.store(-1, Ordering::Relaxed);
 }
 
 pub fn setup_mouse_hook(app_handle: AppHandle) {
@@ -1168,6 +1275,30 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
             let pt = &*(lparam.0 as *const MSLLHOOKSTRUCT);
             let cursor = pt.pt;
 
+            // While a capture UI (Snipping Tool) is up, Bloom is fully
+            // click-through and skipped entirely so the tool owns the screen.
+            if CAPTURE_UI_ACTIVE.load(Ordering::Relaxed) {
+                if MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed) != 1 {
+                    if let Some(w) = app_handle.get_webview_window("main") { let _ = w.set_ignore_cursor_events(true); }
+                    MH_LAST_MAIN_IGNORE.store(1, Ordering::Relaxed);
+                }
+                if MH_LAST_DOCK_IGNORE.load(Ordering::Relaxed) != 1 {
+                    if let Some(w) = app_handle.get_webview_window("dock") { let _ = w.set_ignore_cursor_events(true); }
+                    MH_LAST_DOCK_IGNORE.store(1, Ordering::Relaxed);
+                }
+                if MH_LAST_OV_IGNORE.load(Ordering::Relaxed) != 1 {
+                    if let Some(w) = app_handle.get_webview_window("overlay") { let _ = w.set_ignore_cursor_events(true); }
+                    MH_LAST_OV_IGNORE.store(1, Ordering::Relaxed);
+                }
+                if MH_LAST_EDGE_HOVER.swap(0, Ordering::Relaxed) != 0 {
+                    let _ = app_handle.emit("dock-edge-hover", false);
+                }
+                if MH_LAST_TOP_EDGE_HOVER.swap(0, Ordering::Relaxed) != 0 {
+                    let _ = app_handle.emit("notch-edge-hover", false);
+                }
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
+
             // Refresh cached monitor info every 1s
             if now - MH_LAST_MONITOR_UPDATE_MS.load(Ordering::Relaxed) > 1000 {
                 if let Ok(Some(monitor)) = app_handle.primary_monitor() {
@@ -1186,11 +1317,27 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
             let mon_w = cached_size.0 as i32;
             let mon_h = cached_size.1 as i32;
 
+            let fg_fs = CURRENT_FOREGROUND_FULLSCREEN.load(Ordering::Relaxed);
+
             // --- Dock Interaction ---
-            if let Some(dock_win) = app_handle.get_webview_window("dock") {
+            if fg_fs {
+                // Fullscreen foreground app or capture overlay: the dock must not
+                // intercept input (e.g. a Snipping Tool selection ending at the
+                // bottom edge), so keep it click-through.
+                if MH_LAST_DOCK_IGNORE.load(Ordering::Relaxed) != 1 {
+                    if let Some(dock_win) = app_handle.get_webview_window("dock") {
+                        let _ = dock_win.set_ignore_cursor_events(true);
+                    }
+                    MH_LAST_DOCK_IGNORE.store(1, Ordering::Relaxed);
+                }
+                if MH_LAST_EDGE_HOVER.swap(0, Ordering::Relaxed) != 0 {
+                    let _ = app_handle.emit("dock-edge-hover", false);
+                }
+            } else if let Some(dock_win) = app_handle.get_webview_window("dock") {
                 if dock_win.is_visible().unwrap_or(false) {
                     let mut is_click_interactive = false;
                     let mut is_hovered = false;
+                    let mut dock_span: Option<(i32, i32)> = None;
 
                     let dock_rect_val = DOCK_WINDOW_RECT.lock().ok().and_then(|g| *g);
 
@@ -1205,13 +1352,18 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                                     let pad_x = (5.0 * scale) as i32;
                                     let pad_y_top = (8.0 * scale) as i32;
                                     let pad_y_bottom = (5.0 * scale) as i32;
-                                    let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x;
-                                    let ry = win_pos.y + (r.y as f64 * scale) as i32 - pad_y_top;
-                                    let rw = (r.width as f64 * scale) as i32 + (pad_x * 2);
-                                    let rh = (r.height as f64 * scale) as i32 + pad_y_top + pad_y_bottom;
+                                    // Hysteresis keeps the dock interactive a little past
+                                    // its bounds once grabbed, so removing the edge-forced
+                                    // interactivity doesn't reintroduce boundary flicker.
+                                    let hyst = if MH_LAST_DOCK_IGNORE.load(Ordering::Relaxed) == 0 { (10.0 * scale) as i32 } else { 0 };
+                                    let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x - hyst;
+                                    let ry = win_pos.y + (r.y as f64 * scale) as i32 - pad_y_top - hyst;
+                                    let rw = (r.width as f64 * scale) as i32 + (pad_x * 2) + (hyst * 2);
+                                    let rh = (r.height as f64 * scale) as i32 + pad_y_top + pad_y_bottom + (hyst * 2);
                                     if cursor.x >= rx && cursor.x <= (rx + rw) && cursor.y >= ry && cursor.y <= (ry + rh) {
                                         is_click_interactive = true;
                                     }
+                                    dock_span = Some((rx, rx + rw));
                                 }
                             }
 
@@ -1243,10 +1395,16 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                         MH_DOCK_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
                     }
 
-                    // When approaching from the bottom edge, keep the dock interactive
-                    // to prevent set_ignore_cursor_events toggling at the boundary.
+                    // Approaching along the bottom edge keeps the dock interactive
+                    // while near its horizontal span, so the reveal can't be clicked
+                    // through mid-animation. The corners stay click-through.
                     if at_bottom_edge {
-                        is_click_interactive = true;
+                        if let Some((span_left, span_right)) = dock_span {
+                            let edge_pad = (60.0 * scale) as i32;
+                            if cursor.x >= span_left - edge_pad && cursor.x <= span_right + edge_pad {
+                                is_click_interactive = true;
+                            }
+                        }
                     }
 
                     let final_dock_hover = is_hovered || now < MH_DOCK_EXPIRY_MS.load(Ordering::Relaxed);
@@ -1269,7 +1427,6 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
             }
 
             // --- Main (TopBar) Interaction ---
-            let fg_fs = CURRENT_FOREGROUND_FULLSCREEN.load(Ordering::Relaxed);
             if !fg_fs {
                 if let Some(main_win) = app_handle.get_webview_window("main") {
                     if main_win.is_visible().unwrap_or(false) {
@@ -1293,23 +1450,29 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                                     let scale = main_win.scale_factor().unwrap_or(1.0);
                                     let pad_x = (20.0 * scale) as i32;
                                     let pad_y_bottom = (5.0 * scale) as i32;
-                                    let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x;
-                                    let rw = (r.width as f64 * scale) as i32 + (pad_x * 2);
+                                    // Hysteresis keeps the notch interactive a little past
+                                    // its bounds once grabbed, so removing the edge-forced
+                                    // interactivity doesn't reintroduce boundary flicker.
+                                    let hyst = if MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed) == 0 { (10.0 * scale) as i32 } else { 0 };
+                                    let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x - hyst;
+                                    let rw = (r.width as f64 * scale) as i32 + (pad_x * 2) + (hyst * 2);
                                     let ry_top = win_pos.y;
-                                    let ry_bottom = win_pos.y + (r.height as f64 * scale) as i32 + pad_y_bottom;
+                                    let ry_bottom = win_pos.y + (r.height as f64 * scale) as i32 + pad_y_bottom + hyst;
 
                                     if cursor.x >= rx && cursor.x <= (rx + rw) && cursor.y >= ry_top && cursor.y <= ry_bottom {
                                         is_click_interactive = true;
                                     }
+
+                                    // Approaching along the top edge keeps the window
+                                    // interactive while near the notch's horizontal
+                                    // span, so peek/hover can't flicker at the
+                                    // boundary. The screen corners stay click-through.
+                                    let edge_pad = (60.0 * scale) as i32;
+                                    if at_top_edge && cursor.x >= rx - edge_pad && cursor.x <= rx + rw + edge_pad {
+                                        is_click_interactive = true;
+                                    }
                                 }
                             }
-                        }
-
-                        // When approaching from the top edge, keep the notch interactive
-                        // to prevent the expand/contract flicker caused by
-                        // set_ignore_cursor_events toggling at the boundary.
-                        if at_top_edge {
-                            is_click_interactive = true;
                         }
 
                         let final_notch_hover = is_notch_hovered || now < MH_TOPBAR_EXPIRY_MS.load(Ordering::Relaxed);
