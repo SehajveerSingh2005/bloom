@@ -150,14 +150,21 @@ unsafe extern "system" fn window_change_event_proc(
     GetWindowThreadProcessId(hwnd, Some(&mut pid));
     if pid == my_pid { return; }
 
-    // Throttle: emit at most once per 200ms to avoid flooding
+    // Debounce bursts: closing a window (especially a UWP app) emits several
+    // show/hide/destroy events within milliseconds. Every event stores its
+    // timestamp and schedules an emit; only the newest one actually fires, so
+    // the final state of a burst is always reported. Dropping the trailing
+    // events would leave closed apps visible in the dock.
     let now = crate::utils::get_now_ms();
-    let last = LAST_WINDOW_CHANGE_MS.load(Ordering::Relaxed);
-    if now - last < 200 { return; }
     LAST_WINDOW_CHANGE_MS.store(now, Ordering::Relaxed);
 
-    if let Some(app_handle) = WINDOW_CHANGE_APP_HANDLE.get() {
-        let _ = app_handle.emit("windows-changed", ());
+    if let Some(app_handle) = WINDOW_CHANGE_APP_HANDLE.get().cloned() {
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            if LAST_WINDOW_CHANGE_MS.load(Ordering::Relaxed) == now {
+                let _ = app_handle.emit("windows-changed", ());
+            }
+        });
     }
 }
 

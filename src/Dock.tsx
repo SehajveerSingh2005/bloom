@@ -241,9 +241,15 @@ const Dock = memo(function Dock() {
   );
 
   useEffect(() => {
+    let pollSeq = 0;
+
     const poll = async () => {
       if (isDragging) return;
+      const seq = ++pollSeq;
       const running = await invoke<AppInfo[]>('get_active_windows');
+      // Ignore responses that arrive out of order: an older poll must never
+      // overwrite a newer state, which would resurrect closed apps.
+      if (seq !== pollSeq) return;
       setActiveApps(running);
 
       setActiveOrder(prev => {
@@ -262,7 +268,11 @@ const Dock = memo(function Dock() {
       poll();
     });
 
+    // Safety net: even if a window event is missed, converge on the real state
+    const interval = setInterval(poll, 10000);
+
     return () => {
+      clearInterval(interval);
       unlistenWindowChange.then(f => f());
     };
   }, [isDragging]);
