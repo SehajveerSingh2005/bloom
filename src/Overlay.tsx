@@ -432,6 +432,7 @@ function OverlayApp() {
             <motion.img
               src="/bloom.png"
               className="splash-logo"
+              draggable={false}
               initial={{ scale: 0, opacity: 0, rotate: 0 }}
               animate={{
                 scale: [0, 1.1, 1, 1.2, 1, 1, 0.2],

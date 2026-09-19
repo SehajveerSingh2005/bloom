@@ -1445,6 +1445,7 @@ function App() {
                   key={albumArtUrl}
                   src={albumArtUrl}
                   alt=""
+                  draggable={false}
                   initial={{ opacity: 0, scale: 1.1 }}
                   animate={{ opacity: 1, scale: 1.8 }}
                   exit={{ opacity: 0 }}
@@ -1768,6 +1769,7 @@ function App() {
                                         src={albumArtUrl}
                                         alt=""
                                         className="album-art-glow-bg"
+                                        draggable={false}
                                       />
                                     )}
                                     <button
@@ -1793,6 +1795,7 @@ function App() {
                                               key={`compact-art-${albumArtKey}`}
                                               src={albumArtUrl}
                                               alt="Art"
+                                              draggable={false}
                                               initial={{ rotateY: 90, opacity: 0 }}
                                               animate={{ rotateY: 0, opacity: 1 }}
                                               exit={{ rotateY: -90, opacity: 0 }}

@@ -8,6 +8,13 @@ body {
     overflow: hidden;
 }
 
+/* Never start native image drags from the notch/player UI */
+img {
+    -webkit-user-drag: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
 .screen {
     width: 100vw;
     height: 100vh;

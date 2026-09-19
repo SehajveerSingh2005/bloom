@@ -185,6 +185,7 @@ export function CompactMediaPlayer({
                 key={`art-${albumArtKey}`}
                 src={albumArtUrl}
                 alt="Art"
+                draggable={false}
                 initial={{ rotateY: 90, opacity: 0 }}
                 animate={{ rotateY: 0, opacity: 1 }}
                 exit={{ rotateY: -90, opacity: 0 }}
