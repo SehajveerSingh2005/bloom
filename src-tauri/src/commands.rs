@@ -354,7 +354,7 @@ fn get_uwp_launch_cmd(exe_path: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub async fn open_app(app_name: String) {
+pub async fn open_app(app: AppHandle, app_name: String) {
     if app_name == "start" {
         tauri::async_runtime::spawn_blocking(move || unsafe {
             use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, KEYBDINPUT, VK_LWIN, KEYEVENTF_KEYUP};
@@ -388,19 +388,48 @@ pub async fn open_app(app_name: String) {
         });
         return;
     }
+
+    if app_name == "bloom-settings" {
+        open_settings_window(app);
+        return;
+    }
     
     let path = app_name;
     tauri::async_runtime::spawn_blocking(move || unsafe {
-        let (actual_path, _args) = if path.to_lowercase().ends_with(".lnk") {
-            resolve_shortcut(&path).unwrap_or((path.clone(), String::new()))
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let wide_open: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+
+        // Shortcuts and shell app ids must be launched through the shell itself so
+        // that arguments (Chrome/Edge PWAs) and package identities (Store apps) survive.
+        let shell_target = if path.to_lowercase().ends_with(".lnk") {
+            Some(path.clone())
+        } else if is_aumid_path(&path) {
+            let id = path.trim().trim_start_matches("shell:AppsFolder\\");
+            Some(format!("shell:AppsFolder\\{}", id))
         } else {
-            (path.clone(), String::new())
+            None
         };
 
+        if let Some(target) = shell_target {
+            let wide_target: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+            let res = ShellExecuteW(
+                None,
+                windows::core::PCWSTR(wide_open.as_ptr()),
+                windows::core::PCWSTR(wide_target.as_ptr()),
+                None,
+                None,
+                SW_SHOWNORMAL,
+            );
+            if res.0 as usize <= 32 {
+                eprintln!("Failed to open {}: error code {}", target, res.0 as usize);
+            }
+            return;
+        }
+
+        let actual_path = path.clone();
+
         if let Some(uwp_cmd) = crate::commands::get_uwp_launch_cmd(&actual_path) {
-            use windows::Win32::UI::Shell::ShellExecuteW;
-            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-            let wide_open: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
             let wide_cmd: Vec<u16> = uwp_cmd.encode_utf16().chain(std::iter::once(0)).collect();
             
             let res = ShellExecuteW(
@@ -449,9 +478,6 @@ pub async fn open_app(app_name: String) {
             }
         }
 
-        use windows::Win32::UI::Shell::ShellExecuteW;
-        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        
         let wide_path: Vec<u16> = final_path.encode_utf16().chain(std::iter::once(0)).collect();
         let wide_open: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
         
@@ -473,6 +499,11 @@ pub async fn open_app(app_name: String) {
 #[tauri::command]
 pub async fn get_active_windows() -> Vec<AppInfo> {
     tauri::async_runtime::spawn_blocking(move || {
+        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+        // COM is required while enumerating: each window's AppUserModelID is read
+        // through the shell property store.
+        let com_initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).is_ok() };
+
         let mut apps: Vec<AppInfo> = Vec::new();
         unsafe {
             let _ = EnumWindows(Some(enum_windows_proc), LPARAM(&mut apps as *mut Vec<AppInfo> as isize));
@@ -532,6 +563,10 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
                     ts_b.cmp(&ts_a)
                 });
             }
+        }
+
+        if com_initialized {
+            unsafe { CoUninitialize(); }
         }
 
         result_apps
@@ -609,6 +644,297 @@ fn sanitize_filename(key: &str) -> String {
     key.replace(|c: char| c == ':' || c == '\\' || c == '/' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|', "_")
 }
 
+/// Reads a `--flag=value` style argument from a command line, honoring quotes.
+fn extract_arg(args: &str, key: &str) -> Option<String> {
+    let idx = args.find(key)?;
+    let rest = &args[idx + key.len()..];
+    let value = if let Some(stripped) = rest.strip_prefix('"') {
+        stripped.split('"').next().unwrap_or("")
+    } else {
+        rest.split_whitespace().next().unwrap_or("")
+    };
+    let value = value.trim().trim_matches('"');
+    if value.is_empty() { None } else { Some(value.to_string()) }
+}
+
+/// True for shell application ids (`PackageFamily!App`, `Company.Product`, ...)
+/// that are not real file system paths.
+pub fn is_aumid_path(path: &str) -> bool {
+    let p = path.trim().trim_matches('"');
+    if p.is_empty() || p.len() < 3 { return false; }
+    if p.to_lowercase().starts_with("shell:appsfolder\\") { return true; }
+    if p.contains('\\') || p.contains('/') || p.contains(':') { return false; }
+    if p.to_lowercase().ends_with(".exe") { return false; }
+    if std::path::Path::new(p).exists() { return false; }
+    true
+}
+
+fn is_browser_host_process(path: &str) -> bool {
+    let p = path.to_lowercase();
+    p.contains("msedge.exe") || p.contains("chrome.exe") || p.contains("brave.exe") || p.contains("vivaldi.exe") || p.contains("firefox.exe")
+}
+
+/// Resolves the icon of a shell application id (Store/UWP/packaged PWA) through
+/// `shell:AppsFolder`. `SHGetFileInfoW` cannot handle these; `IShellItemImageFactory` can.
+fn icon_from_aumid(aumid: &str) -> Option<String> {
+    unsafe {
+        use windows::Win32::Foundation::SIZE;
+        use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY};
+
+        let id = aumid.trim().trim_start_matches("shell:AppsFolder\\");
+        if id.is_empty() { return None; }
+
+        let parsing_name = format!("shell:AppsFolder\\{}", id);
+        let wide: Vec<u16> = parsing_name.encode_utf16().chain(std::iter::once(0)).collect();
+        let factory: IShellItemImageFactory = SHCreateItemFromParsingName(windows::core::PCWSTR(wide.as_ptr()), None).ok()?;
+
+        let size = SIZE { cx: 256, cy: 256 };
+        let hbitmap = factory.GetImage(size, SIIGBF(SIIGBF_ICONONLY.0 | SIIGBF_BIGGERSIZEOK.0))
+            .or_else(|_| factory.GetImage(size, SIIGBF_BIGGERSIZEOK))
+            .ok()?;
+        if hbitmap.0.is_null() { return None; }
+
+        let result = crate::utils::hbitmap_to_base64(hbitmap);
+        let _ = windows::Win32::Graphics::Gdi::DeleteObject(hbitmap.into());
+        result
+    }
+}
+
+/// Derives the package family name (`Name_PublisherId`) from a WindowsApps exe path.
+/// Package folders look like `Name_Version_Architecture__PublisherId`.
+fn package_family_from_windows_apps_path(path: &str) -> Option<String> {
+    let lower = path.to_lowercase();
+    let idx = lower.find("\\windowsapps\\")?;
+    let rest = &path[idx + "\\windowsapps\\".len()..];
+    let folder = rest.split(['\\', '/']).next()?;
+    let (before_publisher, publisher) = folder.rsplit_once("__")?;
+    let name = before_publisher.split('_').next()?;
+    if name.is_empty() || publisher.is_empty() { return None; }
+    Some(format!("{}_{}", name, publisher))
+}
+
+/// Finds the exact AppUserModelID of an installed app from its package family name
+/// by enumerating `shell:AppsFolder` (the `!App` suffix is not guaranteed).
+fn find_aumid_by_family(family: &str) -> Option<String> {
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::{SHGetKnownFolderIDList, FOLDERID_AppsFolder, SHGetDesktopFolder, IShellFolder, IEnumIDList, SHGetNameFromIDList, ILCombine, ILFree, SIGDN_DESKTOPABSOLUTEPARSING, SHCONTF_FOLDERS, SHCONTF_NONFOLDERS};
+
+    unsafe {
+        let pidl_apps = SHGetKnownFolderIDList(&FOLDERID_AppsFolder, 0, None).ok()?;
+        let result = (|| -> Option<String> {
+            let desktop = SHGetDesktopFolder().ok()?;
+            let apps_folder: IShellFolder = desktop.BindToObject(pidl_apps, None).ok()?;
+            let mut enum_id: Option<IEnumIDList> = None;
+            if apps_folder.EnumObjects(HWND(std::ptr::null_mut()), (SHCONTF_FOLDERS.0 | SHCONTF_NONFOLDERS.0) as u32, &mut enum_id).is_err() { return None; }
+            let enum_id = enum_id?;
+
+            let prefix = format!("{}!", family);
+            let mut pidl_buf: [*mut windows::Win32::UI::Shell::Common::ITEMIDLIST; 1] = [std::ptr::null_mut()];
+            let mut fetched = 0;
+            while enum_id.Next(&mut pidl_buf, Some(&mut fetched)).is_ok() && fetched > 0 {
+                let pidl_item = pidl_buf[0];
+                pidl_buf[0] = std::ptr::null_mut();
+                if pidl_item.is_null() { continue; }
+
+                let absolute_pidl = ILCombine(Some(pidl_apps as *const _), Some(pidl_item as *const _));
+                if absolute_pidl.is_null() {
+                    CoTaskMemFree(Some(pidl_item as *const _));
+                    continue;
+                }
+
+                let mut found = None;
+                if let Ok(p_ptr) = SHGetNameFromIDList(absolute_pidl, SIGDN_DESKTOPABSOLUTEPARSING) {
+                    let s = String::from_utf16_lossy(windows::core::PCWSTR(p_ptr.0).as_wide());
+                    CoTaskMemFree(Some(p_ptr.0 as *const _));
+                    if s.starts_with(&prefix) { found = Some(s); }
+                }
+                ILFree(Some(absolute_pidl as *const _));
+                CoTaskMemFree(Some(pidl_item as *const _));
+                if found.is_some() { return found; }
+            }
+            None
+        })();
+        CoTaskMemFree(Some(pidl_apps as *const _));
+        result
+    }
+}
+
+/// Icon for executables that live inside an MSIX package (`\WindowsApps\...`).
+/// Those exes carry no app icon; the package manifest logo is the real icon.
+fn packaged_exe_icon(path: &str) -> Option<String> {
+    let family = package_family_from_windows_apps_path(path)?;
+    let aumid = find_aumid_by_family(&family)?;
+    icon_from_aumid(&aumid)
+}
+
+/// Command line of a process, via WMI. Used to identify PWAs hosted inside browser processes.
+fn process_command_line(pid: u32) -> Option<String> {
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Win32Process {
+        command_line: Option<String>,
+    }
+
+    let com = wmi::COMLibrary::new().ok()?;
+    let connection = wmi::WMIConnection::new(com).ok()?;
+    let results: Vec<Win32Process> = connection
+        .raw_query(format!("SELECT CommandLine FROM Win32_Process WHERE ProcessId = {}", pid))
+        .ok()?;
+    results.into_iter().next().and_then(|p| p.command_line)
+}
+
+fn pwa_icon_from_command_line(process_path: &str, command_line: &str) -> Option<String> {
+    // Store PWAs launched by Edge carry their package identity inline.
+    if let Some(aumid) = extract_arg(command_line, "--ip-aumid=") {
+        if let Some(icon) = icon_from_aumid(&aumid) { return Some(icon); }
+    }
+    // Chrome/Edge/Brave "installed app" windows carry the web app id.
+    if command_line.contains("--app-id=") {
+        if let Some(icon_path) = find_browser_pwa_icon(process_path, command_line) {
+            if let Some(icon) = crate::utils::image_file_to_base64(&icon_path) { return Some(icon); }
+        }
+    }
+    None
+}
+
+/// Browser web app ids are 32 characters from the range a-p.
+fn browser_web_app_id_from_aumid(id: &str) -> Option<String> {
+    let is_web_app_id = |s: &str| s.len() == 32 && s.bytes().all(|b| (b'a'..=b'p').contains(&b));
+    if let Some(segment) = id.rsplit('.').next() {
+        if is_web_app_id(segment) { return Some(segment.to_string()); }
+    }
+    if let Some(idx) = id.find("_crx_") {
+        if let Some(segment) = id[idx + 5..].split('.').next() {
+            if is_web_app_id(segment) { return Some(segment.to_string()); }
+        }
+    }
+    None
+}
+
+unsafe fn pwa_icon_for_window(hwnd: HWND, process_path: &str) -> Option<String> {
+    // The window's own AppUserModelID is the most reliable identity: it is always
+    // present, unlike the process command line (Edge reuses its browser process).
+    if let Some(id) = crate::utils::get_window_app_user_model_id(hwnd) {
+        if id.contains('!') {
+            if let Some(icon) = icon_from_aumid(&id) { return Some(icon); }
+        } else if let Some(app_id) = browser_web_app_id_from_aumid(&id) {
+            if let Some(icon_path) = find_browser_pwa_icon(process_path, &format!("--app-id={}", app_id)) {
+                if let Some(icon) = crate::utils::image_file_to_base64(&icon_path) { return Some(icon); }
+            }
+        }
+    }
+    // Fall back to the process command line for hosts that don't stamp the window.
+    let mut pid = 0u32;
+    windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid == 0 { return None; }
+    let command_line = process_command_line(pid)?;
+    pwa_icon_from_command_line(process_path, &command_line)
+}
+
+/// Finds the icon Chromium stores for an installed web app in the browser profile.
+///
+/// Current layout: `<profile>/Web Applications/Manifest Resources/<app-id>/Icons/*.png`.
+/// Older Chrome builds used `Web Applications/<app-id>` / `_crx_<app-id>` with an `icon_256.png`.
+fn find_browser_pwa_icon(executable_path: &str, args: &str) -> Option<String> {
+    let app_id = extract_arg(args, "--app-id=")?;
+    let local = std::env::var("LOCALAPPDATA").ok()?;
+
+    let chrome_base = format!("{}\\Google\\Chrome\\User Data", local);
+    let edge_base = format!("{}\\Microsoft\\Edge\\User Data", local);
+    let brave_base = format!("{}\\BraveSoftware\\Brave-Browser\\User Data", local);
+    let vivaldi_base = format!("{}\\Vivaldi\\User Data", local);
+    let browser_path = executable_path.to_lowercase();
+    let bases = if browser_path.contains("msedge") {
+        vec![edge_base, chrome_base]
+    } else if browser_path.contains("brave") {
+        vec![brave_base, chrome_base]
+    } else if browser_path.contains("vivaldi") {
+        vec![vivaldi_base, chrome_base]
+    } else {
+        vec![chrome_base, edge_base]
+    };
+
+    let profile = extract_arg(args, "--profile-directory=").unwrap_or_else(|| "Default".to_string());
+
+    for base in bases {
+        if !std::path::Path::new(&base).is_dir() { continue; }
+
+        let mut profiles = vec![profile.clone()];
+        if let Ok(entries) = std::fs::read_dir(&base) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if !profiles.iter().any(|p| p.eq_ignore_ascii_case(&name)) { profiles.push(name); }
+                }
+            }
+        }
+
+        for prof in profiles {
+            let web_apps = std::path::Path::new(&base).join(&prof).join("Web Applications");
+            if !web_apps.is_dir() { continue; }
+
+            let candidates = [
+                web_apps.join("Manifest Resources").join(&app_id),
+                web_apps.join(&app_id),
+                web_apps.join(format!("_crx_{}", app_id)),
+            ];
+            for dir in candidates {
+                if let Some(icon) = find_largest_image_in_dir(&dir) { return Some(icon); }
+            }
+        }
+    }
+    None
+}
+
+fn find_largest_image_in_dir(dir: &std::path::Path) -> Option<String> {
+    if !dir.is_dir() { return None; }
+    let mut best: Option<(u64, String)> = None;
+    collect_images(dir, 0, &mut best);
+    best.map(|(_, path)| path)
+}
+
+fn collect_images(dir: &std::path::Path, depth: u32, best: &mut Option<(u64, String)>) {
+    if depth > 3 { return; }
+    let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_images(&path, depth + 1, best);
+            continue;
+        }
+        let Some(ext) = path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()) else { continue; };
+        if !matches!(ext.as_str(), "png" | "ico" | "jpg" | "jpeg" | "bmp" | "webp") { continue; }
+        let score = image_size_score(&path);
+        let is_better = match best.as_ref() {
+            Some((best_score, _)) => score > *best_score,
+            None => true,
+        };
+        if is_better {
+            *best = Some((score, path.to_string_lossy().to_string()));
+        }
+    }
+}
+
+/// Scores an icon file by the pixel dimensions encoded in its name (e.g. `256.png`, `192x192.png`).
+fn image_size_score(path: &std::path::Path) -> u64 {
+    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    let mut score: u64 = 0;
+    for token in name.split(|c: char| !c.is_ascii_digit() && c != 'x') {
+        if token.is_empty() { continue; }
+        if let Some(idx) = token.find('x') {
+            let (w, h) = token.split_at(idx);
+            let h = &h[1..];
+            if let (Ok(w), Ok(h)) = (w.parse::<u64>(), h.parse::<u64>()) {
+                score = score.max(w * h);
+            }
+        } else if let Ok(n) = token.parse::<u64>() {
+            score = score.max(n * n);
+        }
+    }
+    score
+}
+
 static LAST_ICON_SAVE_REQUEST: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 pub fn schedule_icon_cache_save(app: AppHandle) {
@@ -672,13 +998,62 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
         }
     }
 
-    // Strategy 2: Extract icon from live window HWND
+    // Bare executable names (default pins such as "notepad.exe") are resolved first,
+    // so a Store-package resolution can use the package logo instead of a System32 stub.
+    let mut path = path;
+    if !path.contains('\\') && !path.contains('/') {
+        if let Some(resolved) = resolve_executable_path(&path) {
+            path = resolved;
+        }
+    }
+
+    // Strategy 2: Shell-resolved app icons (Store/UWP/PWA packages) and executables
+    // inside an MSIX package. Neither has a usable icon on disk; the shell resolves
+    // the package logo through `shell:AppsFolder`.
+    let aumid_opt = if is_aumid_path(&path) {
+        Some(path.trim().trim_start_matches("shell:AppsFolder\\").to_string())
+    } else {
+        None
+    };
+    let packaged_exe = path.to_lowercase().contains("\\windowsapps\\");
+    if aumid_opt.is_some() || packaged_exe {
+        let path_owned = path.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED) };
+            let icon = match aumid_opt {
+                Some(aumid) => icon_from_aumid(&aumid),
+                None => packaged_exe_icon(&path_owned),
+            };
+            unsafe { windows::Win32::System::Com::CoUninitialize(); }
+            icon
+        }).await.unwrap_or(None);
+
+        if let Some(base64) = result {
+            if let Ok(mut c) = cache.lock() { c.insert(cache_key.clone(), base64.clone()); }
+            schedule_icon_cache_save(app);
+            return Ok(Some(base64));
+        }
+    }
+
+    // Strategy 3: Extract icon from live window HWND
     if let Some(h) = hwnd {
+        let path_owned = path.clone();
         let result = tauri::async_runtime::spawn_blocking(move || unsafe {
             use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
             use windows::Win32::UI::WindowsAndMessaging::{GetClassLongPtrW, GCLP_HICON, WM_GETICON, ICON_BIG, SendMessageTimeoutW, SMTO_ABORTIFHUNG};
             
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+            // Browser-hosted PWAs (Store apps, installed web apps) only expose the
+            // browser icon on the window itself; resolve the app identity from the
+            // window's AppUserModelID (or the process command line as fallback).
+            if is_browser_host_process(&path_owned) {
+                if let Some(icon) = pwa_icon_for_window(HWND(h as *mut _), &path_owned) {
+                    CoUninitialize();
+                    return Some(icon);
+                }
+            }
+
             let h_hwnd = HWND(h as *mut _);
             
             let mut h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(GetClassLongPtrW(h_hwnd, GCLP_HICON) as *mut _);
@@ -707,7 +1082,7 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
         }
     }
 
-    // Strategy 3: Extract icon from file path
+    // Strategy 4: Extract icon from file path
     let path_clone = path.clone();
     let ck_clone = cache_key.clone();
     let file_icon = tauri::async_runtime::spawn_blocking(move || unsafe {
@@ -717,74 +1092,51 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
         
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let result = {
-            let ((mut actual_path, args), is_lnk) = if path_clone.to_lowercase().ends_with(".lnk") {
+            let ((actual_path, args), is_lnk) = if path_clone.to_lowercase().ends_with(".lnk") {
                 (resolve_shortcut(&path_clone).unwrap_or((path_clone.clone(), String::new())), true)
             } else {
                 ((path_clone.clone(), String::new()), false)
             };
 
-            if actual_path.to_lowercase().contains("chrome_proxy.exe") || actual_path.to_lowercase().contains("msedge_proxy.exe") || args.contains("--app-id=") {
-                if let Some(app_id_start) = args.find("--app-id=") {
-                    let app_id = &args[app_id_start + 9..].split_whitespace().next().unwrap_or("");
-                    if !app_id.is_empty() {
-                        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-                            let chrome_pwa = format!("{}\\Google\\Chrome\\User Data\\Default\\Web Applications\\_crx_{}\\icon_256.png", local, app_id);
-                            if std::path::Path::new(&chrome_pwa).exists() { actual_path = chrome_pwa; }
-                            else {
-                                let edge_pwa = format!("{}\\Microsoft\\Edge\\User Data\\Default\\Web Applications\\_crx_{}\\icon_256.png", local, app_id);
-                                if std::path::Path::new(&edge_pwa).exists() { actual_path = edge_pwa; }
-                            }
-                        }
-                    }
+            // A shortcut can carry its own icon file (Firefox web apps, user edits).
+            let mut icon_data = if is_lnk {
+                get_shortcut_icon_location(&path_clone).and_then(|p| image_file_to_base64(&p))
+            } else {
+                None
+            };
+
+            // Chrome/Edge/Brave installed web apps keep the site icon in the browser profile.
+            if icon_data.is_none() {
+                if let Some(pwa_icon_path) = find_browser_pwa_icon(&actual_path, &args) {
+                    icon_data = image_file_to_base64(&pwa_icon_path);
                 }
             }
 
-            // Robust path resolution for common apps
-            if !std::path::Path::new(&actual_path).is_absolute() {
-                let lower = actual_path.to_lowercase();
-                if lower == "code" || lower == "code.exe" {
-                    if let Ok(home) = std::env::var("USERPROFILE") {
-                        let p = format!("{}\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", home);
-                        if std::path::Path::new(&p).exists() { actual_path = p; }
-                    }
-                } else if lower == "msedge" || lower == "msedge.exe" {
-                    let candidates = [
-                        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-                    ];
-                    for c in &candidates {
-                        if std::path::Path::new(c).exists() { actual_path = c.to_string(); break; }
-                    }
-                } else if lower == "notepad" || lower == "notepad.exe" {
-                    let candidates = [
-                        r"C:\Windows\System32\notepad.exe",
-                        r"C:\Windows\notepad.exe",
-                    ];
-                    for c in &candidates {
-                        if std::path::Path::new(c).exists() { actual_path = c.to_string(); break; }
-                    }
-                } else if lower == "explorer" || lower == "explorer.exe" {
-                    let p = r"C:\Windows\explorer.exe";
-                    if std::path::Path::new(p).exists() { actual_path = p.to_string(); }
+            // UWP shortcuts launch `explorer.exe shell:AppsFolder\<AUMID>`.
+            if icon_data.is_none() {
+                if let Some(aumid) = extract_arg(&args, "shell:AppsFolder\\") {
+                    icon_data = icon_from_aumid(&aumid);
                 }
             }
 
-            let mut shfi: SHFILEINFOW = std::mem::zeroed();
-            let icon_path = if is_lnk { &actual_path } else { &path_clone };
-            let path_u16: Vec<u16> = icon_path.encode_utf16().chain(std::iter::once(0)).collect();
-            let res = SHGetFileInfoW(windows::core::PCWSTR(path_u16.as_ptr()), Default::default(), Some(&mut shfi), std::mem::size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
+            if icon_data.is_none() {
+                let mut shfi: SHFILEINFOW = std::mem::zeroed();
+                let path_u16: Vec<u16> = actual_path.encode_utf16().chain(std::iter::once(0)).collect();
+                let res = SHGetFileInfoW(windows::core::PCWSTR(path_u16.as_ptr()), Default::default(), Some(&mut shfi), std::mem::size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
 
-            if res != 0 && !shfi.hIcon.is_invalid() {
-                let base64_icon = icon_to_base64(shfi.hIcon);
-                let _ = DestroyIcon(shfi.hIcon);
-                if let Some(ref base64) = base64_icon {
-                    if let Ok(mut lock) = ICON_CACHE.get().unwrap().lock() { lock.insert(ck_clone, base64.clone()); }
+                if res != 0 && !shfi.hIcon.is_invalid() {
+                    icon_data = icon_to_base64(shfi.hIcon);
+                    let _ = DestroyIcon(shfi.hIcon);
                 }
-                Some(base64_icon)
-            } else { None }
+            }
+
+            if let Some(ref base64) = icon_data {
+                if let Ok(mut lock) = ICON_CACHE.get().unwrap().lock() { lock.insert(ck_clone, base64.clone()); }
+            }
+            icon_data
         };
         CoUninitialize();
-        result.flatten()
+        result
     }).await.map_err(|e| e.to_string())?;
 
     if file_icon.is_some() {
@@ -1375,7 +1727,7 @@ pub fn load_settings(app: AppHandle) -> Result<HashMap<String, serde_json::Value
 pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u32) -> Result<Option<(String, i64)>, String> {
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::{IsWindow, IsIconic, ShowWindow, SW_SHOWNOACTIVATE, SW_MINIMIZE};
+        use windows::Win32::UI::WindowsAndMessaging::{IsWindow, IsIconic};
 
         let hwnd = HWND(hwnd as *mut _);
         if !IsWindow(Some(hwnd)).as_bool() { return None; }
@@ -1383,36 +1735,27 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
         let hwnd_key = hwnd.0 as isize;
         let is_minimized = IsIconic(hwnd).as_bool();
 
+        let mut focus_time = 0i64;
+        if let Some(map) = crate::state::FOCUS_TIMESTAMPS.get() {
+            if let Ok(guard) = map.lock() {
+                focus_time = guard.get(&hwnd_key).copied().unwrap_or(0);
+            }
+        }
+
         if is_minimized {
+            // Never restore a minimized window to capture it: that briefly
+            // un-minimizes it on screen. Thumbnails are kept warm by the
+            // minimize/focus window hooks, so minimized windows normally have
+            // a cached image already; without one we simply show no preview.
             let cached_img = if let Some(cache) = crate::state::THUMBNAIL_CACHE.get() {
                 cache.lock().ok().and_then(|g| g.get(&hwnd_key).map(|(img, _)| img.clone()))
             } else {
                 None
             };
-
-            if let Some(cached) = cached_img {
-                let mut focus_time = 0i64;
-                if let Some(map) = crate::state::FOCUS_TIMESTAMPS.get() {
-                    if let Ok(f_guard) = map.lock() {
-                        focus_time = f_guard.get(&hwnd_key).copied().unwrap_or(0);
-                    }
-                }
-                return Some((cached, focus_time));
-            }
-        }
-
-        let mut did_restore = false;
-        if is_minimized {
-            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-            std::thread::sleep(std::time::Duration::from_millis(60));
-            did_restore = true;
+            return cached_img.map(|img| (img, focus_time));
         }
 
         let result = crate::utils::capture_hwnd_to_base64(hwnd, max_width, max_height);
-
-        if did_restore {
-            let _ = ShowWindow(hwnd, SW_MINIMIZE);
-        }
 
         if let Some(ref img) = result {
             if let Some(cache) = crate::state::THUMBNAIL_CACHE.get() {
@@ -1426,13 +1769,6 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
                         });
                     }
                 }
-            }
-        }
-
-        let mut focus_time = 0i64;
-        if let Some(map) = crate::state::FOCUS_TIMESTAMPS.get() {
-            if let Ok(guard) = map.lock() {
-                focus_time = guard.get(&hwnd_key).copied().unwrap_or(0);
             }
         }
 
@@ -1948,4 +2284,55 @@ pub fn setup_settings_watcher(app: AppHandle) {
             let _ = CloseHandle(dir_handle);
         }
     });
+}
+
+#[cfg(test)]
+mod pwa_icon_tests {
+    use super::*;
+
+    #[test]
+    fn aumid_detection() {
+        assert!(is_aumid_path("4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"));
+        assert!(is_aumid_path("Microsoft.VisualStudioCode"));
+        assert!(is_aumid_path("shell:AppsFolder\\4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"));
+        assert!(!is_aumid_path("C:\\Windows\\explorer.exe"));
+        assert!(!is_aumid_path("msedge.exe"));
+        assert!(!is_aumid_path(""));
+    }
+
+    #[test]
+    fn command_line_arg_parsing() {
+        let args = "--profile-directory=\"Profile 1\" --app-id=abcdef --ip-aumid=Package_Pub!App";
+        assert_eq!(extract_arg(args, "--app-id="), Some("abcdef".into()));
+        assert_eq!(extract_arg(args, "--profile-directory="), Some("Profile 1".into()));
+        assert_eq!(extract_arg(args, "--ip-aumid="), Some("Package_Pub!App".into()));
+        assert_eq!(extract_arg(args, "--missing="), None);
+        assert_eq!(extract_arg("shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", "shell:AppsFolder\\"), Some("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App".into()));
+    }
+
+    #[test]
+    fn package_family_from_paths() {
+        assert_eq!(
+            package_family_from_windows_apps_path("C:\\Program Files\\WindowsApps\\5319275A.WhatsAppDesktop_2.2634.101.0_x64__cv1g1gvanyjgm\\WhatsApp.Root.exe").as_deref(),
+            Some("5319275A.WhatsAppDesktop_cv1g1gvanyjgm")
+        );
+        assert_eq!(package_family_from_windows_apps_path("C:\\Windows\\explorer.exe"), None);
+        assert_eq!(package_family_from_windows_apps_path("C:\\Program Files\\App\\app.exe"), None);
+    }
+
+    #[test]
+    fn browser_web_app_ids_from_aumids() {
+        assert_eq!(browser_web_app_id_from_aumid("Chrome.edhbnieanoeijlkpgkminebadpibapgm").as_deref(), Some("edhbnieanoeijlkpgkminebadpibapgm"));
+        assert_eq!(browser_web_app_id_from_aumid("Chrome._crx_edhbnieanoeijlkpgkminebadpibapgm").as_deref(), Some("edhbnieanoeijlkpgkminebadpibapgm"));
+        assert_eq!(browser_web_app_id_from_aumid("4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"), None);
+        assert_eq!(browser_web_app_id_from_aumid("MSEdge"), None);
+    }
+
+    #[test]
+    fn image_size_scoring_prefers_larger_dimensions() {
+        use std::path::Path;
+        assert!(image_size_score(Path::new("C:\\x\\Icons\\256.png")) > image_size_score(Path::new("C:\\x\\Icons\\64.png")));
+        assert!(image_size_score(Path::new("C:\\x\\512x512.png")) > image_size_score(Path::new("C:\\x\\192x192.png")));
+        assert_eq!(image_size_score(Path::new("C:\\x\\icon.png")), 0);
+    }
 }

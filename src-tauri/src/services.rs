@@ -219,11 +219,61 @@ unsafe extern "system" fn focus_event_proc(
             guard.insert(hwnd_raw, crate::utils::get_now_ms());
         }
     }
+
+    // Keep the thumbnail cache warm for the focused window so that hovering a
+    // later-minimized window uses the cached image instead of restoring it.
+    std::thread::spawn(move || {
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowTextW, IsIconic, IsWindow};
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let hwnd = HWND(hwnd_raw as *mut _);
+        unsafe {
+            if !IsWindow(Some(hwnd)).as_bool() || IsIconic(hwnd).as_bool() { return; }
+        }
+
+        // Skip fullscreen windows (games, video players): capturing them can hitch.
+        if crate::utils::is_window_fullscreen(hwnd) { return; }
+
+        let mut text = [0u16; 2];
+        unsafe {
+            if GetWindowTextW(hwnd, &mut text) == 0 { return; }
+        }
+
+        // Refresh at most once per window every two seconds
+        if let Some(cache) = crate::state::THUMBNAIL_CACHE.get() {
+            if let Ok(guard) = cache.lock() {
+                if let Some((_, ts)) = guard.get(&hwnd_raw) {
+                    if crate::utils::get_now_ms() - ts < 2000 { return; }
+                }
+            }
+        }
+
+        if THUMB_CAPTURE_IN_FLIGHT.swap(true, Ordering::Relaxed) { return; }
+        let _guard = ThumbnailCaptureGuard;
+
+        if let Some(img) = crate::utils::capture_hwnd_to_base64(hwnd, 320, 200) {
+            if let Some(cache) = crate::state::THUMBNAIL_CACHE.get() {
+                if let Ok(mut guard) = cache.lock() {
+                    guard.insert(hwnd_raw, (img, crate::utils::get_now_ms()));
+                }
+            }
+        }
+    });
+}
+
+static THUMB_CAPTURE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+struct ThumbnailCaptureGuard;
+
+impl Drop for ThumbnailCaptureGuard {
+    fn drop(&mut self) {
+        THUMB_CAPTURE_IN_FLIGHT.store(false, Ordering::Relaxed);
+    }
 }
 
 unsafe extern "system" fn thumbnail_capture_proc(
     _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
-    _event: u32,
+    event: u32,
     hwnd: HWND,
     _id_object: i32,
     _id_child: i32,
@@ -231,6 +281,13 @@ unsafe extern "system" fn thumbnail_capture_proc(
     _ms_event_time: u32,
 ) {
     if hwnd.0.is_null() { return; }
+
+    // Only the restore event is useful here. On MINIMIZESTART the window is
+    // mid-animation and PrintWindow can capture a black frame, which would
+    // overwrite a good cached thumbnail; the focus hook keeps the cache warm
+    // before a window is minimized.
+    if event != windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_MINIMIZEEND { return; }
+
     use windows::Win32::UI::WindowsAndMessaging::{IsWindow, GetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW};
 
     if !IsWindow(Some(hwnd)).as_bool() { return; }
@@ -247,15 +304,11 @@ unsafe extern "system" fn thumbnail_capture_proc(
     if len == 0 { return; }
 
     let hwnd_raw = hwnd.0 as isize;
-    let event_type = _event;
 
     std::thread::spawn(move || {
-        use windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_MINIMIZEEND;
-        if event_type == EVENT_SYSTEM_MINIMIZEEND {
-            std::thread::sleep(std::time::Duration::from_millis(150));
-        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
 
-        // Throttle rapid minimize/restore events for the same window (< 300ms)
+        // Skip if another capture refreshed this window very recently
         if let Some(cache) = crate::state::THUMBNAIL_CACHE.get() {
             if let Ok(guard) = cache.lock() {
                 if let Some((_, ts)) = guard.get(&hwnd_raw) {
@@ -1612,7 +1665,7 @@ pub fn trigger_app_scan() {
     
     std::thread::spawn(|| {
         use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED, CoTaskMemFree};
-        use windows::Win32::UI::Shell::{SHGetKnownFolderIDList, FOLDERID_AppsFolder, SHGetDesktopFolder, IShellFolder, IEnumIDList, SHGetNameFromIDList, SIGDN_NORMALDISPLAY, SIGDN_FILESYSPATH, SIGDN_URL};
+        use windows::Win32::UI::Shell::{SHGetKnownFolderIDList, FOLDERID_AppsFolder, SHGetDesktopFolder, IShellFolder, IEnumIDList, SHGetNameFromIDList, ILCombine, ILFree, SIGDN_NORMALDISPLAY, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_FILESYSPATH, SIGDN_URL};
         let mut apps = Vec::new();
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -1626,39 +1679,69 @@ pub fn trigger_app_scan() {
                             
                             if res.is_ok() {
                                 if let Some(enum_id) = enum_id {
-                                    let mut pidl_item = std::ptr::null_mut();
+                                    // Must be a real array the enumerator can write into;
+                                    // `&mut [pidl_item]` would write into a temporary copy.
+                                    let mut pidl_buf: [*mut windows::Win32::UI::Shell::Common::ITEMIDLIST; 1] = [std::ptr::null_mut()];
                                     let mut fetched = 0;
-                                    while enum_id.Next(&mut [pidl_item], Some(&mut fetched)).is_ok() && fetched > 0 {
-                                        
-                                        let name = if let Ok(n_ptr) = SHGetNameFromIDList(pidl_item, SIGDN_NORMALDISPLAY) {
+                                    while enum_id.Next(&mut pidl_buf, Some(&mut fetched)).is_ok() && fetched > 0 {
+                                        let pidl_item = pidl_buf[0];
+                                        pidl_buf[0] = std::ptr::null_mut();
+                                        if pidl_item.is_null() { continue; }
+
+                                        // Child PIDLs from EnumObjects are relative; SHGetNameFromIDList
+                                        // needs an absolute PIDL, otherwise every call fails with E_INVALIDARG.
+                                        let absolute_pidl = ILCombine(Some(pidl_apps as *const _), Some(pidl_item as *const _));
+                                        if absolute_pidl.is_null() {
+                                            CoTaskMemFree(Some(pidl_item as *const _));
+                                            continue;
+                                        }
+
+                                        let name = if let Ok(n_ptr) = SHGetNameFromIDList(absolute_pidl, SIGDN_NORMALDISPLAY) {
                                             let s = String::from_utf16_lossy(windows::core::PCWSTR(n_ptr.0).as_wide());
                                             CoTaskMemFree(Some(n_ptr.0 as *const _));
                                             s
                                         } else { "Unknown".to_string() };
 
-                                        let path = if let Ok(p_ptr) = SHGetNameFromIDList(pidl_item, SIGDN_FILESYSPATH) {
+                                        // Parsing name: a full exe path for Win32 apps, an
+                                        // AppUserModelID for packaged apps (Store/UWP/PWAs).
+                                        let path = if let Ok(p_ptr) = SHGetNameFromIDList(absolute_pidl, SIGDN_DESKTOPABSOLUTEPARSING) {
                                             let s = String::from_utf16_lossy(windows::core::PCWSTR(p_ptr.0).as_wide());
                                             CoTaskMemFree(Some(p_ptr.0 as *const _));
                                             s
-                                        } else if let Ok(p_ptr) = SHGetNameFromIDList(pidl_item, SIGDN_URL) {
+                                        } else if let Ok(p_ptr) = SHGetNameFromIDList(absolute_pidl, SIGDN_FILESYSPATH) {
+                                            let s = String::from_utf16_lossy(windows::core::PCWSTR(p_ptr.0).as_wide());
+                                            CoTaskMemFree(Some(p_ptr.0 as *const _));
+                                            s
+                                        } else if let Ok(p_ptr) = SHGetNameFromIDList(absolute_pidl, SIGDN_URL) {
                                             let s = String::from_utf16_lossy(windows::core::PCWSTR(p_ptr.0).as_wide());
                                             CoTaskMemFree(Some(p_ptr.0 as *const _));
                                             s
                                         } else { name.clone() };
 
-                                        if !name.to_lowercase().contains("uninstall") && !name.is_empty() && name != "Unknown" {
+                                        if is_launchable_entry(&name, &path) {
+                                            // AUMIDs have no executable of their own; storing the
+                                            // whole id here would make exe-name matching think any
+                                            // browser window belongs to this app.
+                                            let executable = if path.contains('\\') || path.contains('/') {
+                                                std::path::Path::new(&path)
+                                                    .file_name()
+                                                    .and_then(|n| n.to_str())
+                                                    .map(|s| s.to_string())
+                                            } else {
+                                                None
+                                            };
                                             apps.push(AppInfo {
                                                 name,
                                                 path,
                                                 icon: None,
                                                 is_running: false,
                                                 hwnd: None,
-                                                executable: None,
+                                                executable,
                                                 all_hwnds: None,
                                             });
                                         }
+                                        ILFree(Some(absolute_pidl as *const _));
                                         CoTaskMemFree(Some(pidl_item as *const _));
-                                        pidl_item = std::ptr::null_mut();
                                     }
                                 }
                             }
@@ -1679,12 +1762,16 @@ pub fn trigger_app_scan() {
         if let Ok(appdata) = std::env::var("APPDATA") {
             start_menu_dirs.push(format!(r"{}\Microsoft\Windows\Start Menu\Programs", appdata));
         }
+
+        // Shortcut resolution uses IShellLinkW, which needs COM on this thread.
+        unsafe { let _ = CoInitializeEx(None, COINIT_MULTITHREADED); }
         for dir in &start_menu_dirs {
             let root = std::path::Path::new(dir);
             if root.exists() {
                 collect_shortcuts(root, &mut apps, 0);
             }
         }
+        unsafe { CoUninitialize(); }
 
         if let Some(c) = INSTALLED_APPS_CACHE.get() {
             if let Ok(mut lock) = c.lock() {
@@ -1693,6 +1780,20 @@ pub fn trigger_app_scan() {
         }
         IS_SCANNING.store(false, Ordering::Relaxed);
     });
+}
+
+/// Filters out shell entries that are not real launchable apps (web links,
+/// documents, protocol handlers) so the add-app list stays clean.
+fn is_launchable_entry(name: &str, path: &str) -> bool {
+    if name.is_empty() || name == "Unknown" || name.to_lowercase().contains("uninstall") { return false; }
+    let lower = path.to_lowercase();
+    if lower.is_empty() { return false; }
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("file:")
+        || lower.starts_with("steam:") || lower.starts_with("::{")
+        || (lower.starts_with("shell:") && !lower.starts_with("shell:appsfolder")) {
+        return false;
+    }
+    true
 }
 
 fn collect_shortcuts(dir: &std::path::Path, apps: &mut Vec<AppInfo>, depth: i32) {
@@ -1706,20 +1807,25 @@ fn collect_shortcuts(dir: &std::path::Path, apps: &mut Vec<AppInfo>, depth: i32)
                 let name = path.file_stem().unwrap().to_string_lossy().to_string();
                 if name.to_lowercase().contains("uninstall") || name.starts_with("Install") { continue; }
 
-                // Resolve .lnk to the actual target path
+                // Keep the .lnk itself: its args identify PWAs and arguments must be
+                // passed through when launching. The resolved target is stored as the
+                // executable name so pinned entries still match running windows.
                 let path_str = path.to_string_lossy().to_string();
-                let resolved = crate::utils::resolve_shortcut(&path_str)
-                    .map(|(target, _args)| target)
-                    .unwrap_or_else(|| path_str.clone());
+                let executable = crate::utils::resolve_shortcut(&path_str).and_then(|(target, _args)| {
+                    let file = std::path::Path::new(&target).file_name().and_then(|n| n.to_str())?.to_string();
+                    // UWP shortcuts launch explorer.exe with a shell:AppsFolder argument;
+                    // storing that would wrongly match File Explorer windows.
+                    if file.eq_ignore_ascii_case("explorer.exe") { None } else { Some(file) }
+                });
 
-                if !apps.iter().any(|a| a.path == resolved || a.name == name) {
+                if !apps.iter().any(|a| a.name == name || a.path == path_str) {
                     apps.push(AppInfo {
                         name,
-                        path: resolved,
+                        path: path_str,
                         icon: None,
                         is_running: false,
                         hwnd: None,
-                        executable: None,
+                        executable,
                         all_hwnds: None,
                     });
                 }
@@ -2012,6 +2118,20 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                     let already_exists = apps.iter().any(|a| a.hwnd == Some(hwnd.0 as isize));
 
                     if !already_exists {
+                        // Packaged apps (Store/UWP/PWAs) expose their package identity on the
+                        // window. Using it as the path makes pinned shell-app entries match
+                        // their running windows and gives the icon code an exact AUMID.
+                        let path = if lowercase_path.contains("\\windowsapps\\")
+                            || lowercase_path.contains("msedge.exe")
+                            || lowercase_path.contains("chrome.exe")
+                        {
+                            match crate::utils::get_window_app_user_model_id(hwnd) {
+                                Some(aumid) if aumid.contains('!') => aumid,
+                                _ => path,
+                            }
+                        } else {
+                            path
+                        };
                         apps.push(AppInfo {
                             name: final_name,
                             path,

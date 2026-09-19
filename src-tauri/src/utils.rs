@@ -150,10 +150,266 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
 }
 
 
+/// Extracts the icon a shortcut declares for itself (`IShellLinkW::GetIconLocation`).
+///
+/// This is how Firefox web apps and user-customized shortcuts store their icon.
+/// Returns only real image files (`.ico`, `.png`, ...). Icon references into
+/// executables/DLLs are ignored so the regular target-based extraction is used
+/// instead (it yields a better icon than the file's first resource).
+pub fn get_shortcut_icon_location(path: &str) -> Option<String> {
+    unsafe {
+        let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_ALL).ok()?;
+        let persist_file: IPersistFile = shell_link.cast().ok()?;
+        let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+        persist_file.Load(windows::core::PCWSTR(wide_path.as_ptr()), windows::Win32::System::Com::STGM(0)).ok()?;
+
+        let mut buffer = [0u16; 512];
+        let mut index = 0i32;
+        shell_link.GetIconLocation(&mut buffer, &mut index).ok()?;
+
+        let raw = String::from_utf16_lossy(&buffer).trim_matches(char::from(0)).trim().to_string();
+        if raw.is_empty() { return None; }
+
+        let location = expand_env_vars(&raw);
+        let ext = std::path::Path::new(&location).extension()?.to_str()?.to_lowercase();
+        if !matches!(ext.as_str(), "ico" | "png" | "jpg" | "jpeg" | "bmp" | "webp" | "gif") { return None; }
+        if !std::path::Path::new(&location).exists() { return None; }
+        Some(location)
+    }
+}
+
+/// Expands `%VAR%` references using the current process environment.
+fn expand_env_vars(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(start) = rest.find('%') {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        if let Some(end) = after.find('%') {
+            let name = &after[..end];
+            if !name.is_empty() && !name.contains(' ') {
+                match std::env::var(name) {
+                    Ok(value) => result.push_str(&value),
+                    Err(_) => {
+                        result.push('%');
+                        result.push_str(name);
+                        result.push('%');
+                    }
+                }
+            } else {
+                result.push('%');
+                result.push_str(name);
+                result.push('%');
+            }
+            rest = &after[end + 1..];
+        } else {
+            result.push_str(&rest[start..]);
+            rest = "";
+            break;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
+/// Reads an image file (PNG/ICO/etc.) and returns it as a base64 PNG data URI.
+pub fn image_file_to_base64(path: &str) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.len() > 8 * 1024 * 1024 { return None; }
+
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        use base64::Engine;
+        return Some(format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&bytes)));
+    }
+
+    let img = image::load_from_memory(&bytes).ok()?;
+    let mut png: Vec<u8> = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    use base64::Engine;
+    Some(format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&png)))
+}
+
+/// True when the window's client area covers its monitor and it is not a
+/// standard (captioned) maximized window — i.e. a real fullscreen window.
+pub fn is_window_fullscreen(hwnd: HWND) -> bool {
+    unsafe {
+        use windows::Win32::Foundation::{POINT, RECT};
+        use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoA, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+        use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowLongW, IsZoomed, GWL_STYLE, WS_CAPTION, WS_MAXIMIZE};
+
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if monitor.is_invalid() { return false; }
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoA(monitor, &mut info).as_bool() { return false; }
+        let screen = info.rcMonitor;
+
+        let mut client = RECT::default();
+        if GetClientRect(hwnd, &mut client).is_err() { return false; }
+        let mut top_left = POINT { x: client.left, y: client.top };
+        let mut bottom_right = POINT { x: client.right, y: client.bottom };
+        let _ = ClientToScreen(hwnd, &mut top_left);
+        let _ = ClientToScreen(hwnd, &mut bottom_right);
+
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let is_maximized_standard = (IsZoomed(hwnd).as_bool() || (style & WS_MAXIMIZE.0) != 0) && (style & WS_CAPTION.0) != 0;
+
+        let client_fullscreen = top_left.x <= screen.left && top_left.y <= screen.top
+            && bottom_right.x >= screen.right && bottom_right.y >= screen.bottom;
+        client_fullscreen && !is_maximized_standard
+    }
+}
+
+/// Resolves a bare executable name (e.g. `notepad.exe`, `msedge`, `wt.exe`) to a
+/// full path, using the same mechanisms Windows uses: the registry `App Paths`
+/// registration, then the standard executable search path, then a few well-known
+/// install locations for apps that register in neither.
+///
+/// This matters for default pins: on Windows 11 `notepad.exe` resolves through
+/// App Paths to the Store Notepad package, whose icon comes from the package
+/// manifest rather than the stale stub in System32.
+pub fn resolve_executable_path(name: &str) -> Option<String> {
+    let trimmed = name.trim().trim_matches('"');
+    if trimmed.is_empty() || trimmed.contains('\\') || trimmed.contains('/') { return None; }
+
+    let file = if trimmed.to_lowercase().ends_with(".exe") {
+        trimmed.to_string()
+    } else {
+        format!("{}.exe", trimmed)
+    };
+
+    if let Some(path) = app_paths_lookup(&file) {
+        if std::path::Path::new(&path).exists() { return Some(path); }
+    }
+    if let Some(path) = search_system_path(&file) {
+        return Some(path);
+    }
+    known_install_location(&file)
+}
+
+/// Reads `HKCU`/`HKLM\Software\Microsoft\Windows\CurrentVersion\App Paths\<file>`.
+fn app_paths_lookup(file: &str) -> Option<String> {
+    use windows::Win32::System::Registry::{HKEY, RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ};
+
+    unsafe {
+        let subkey: Vec<u16> = format!("Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{}", file)
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+
+        for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+            let mut key = HKEY::default();
+            if RegOpenKeyExW(root, windows::core::PCWSTR(subkey.as_ptr()), None, KEY_READ, &mut key).0 != 0 { continue; }
+
+            let mut buffer = [0u16; 1024];
+            let mut size = (buffer.len() * 2) as u32;
+            let status = RegQueryValueExW(
+                key,
+                windows::core::PCWSTR::null(),
+                None,
+                None,
+                Some(buffer.as_mut_ptr() as *mut u8),
+                Some(&mut size),
+            );
+            let _ = RegCloseKey(key);
+            if status.0 != 0 { continue; }
+
+            let value = String::from_utf16_lossy(&buffer[..(size as usize / 2).min(buffer.len())]);
+            let value = value.trim_matches(char::from(0)).trim().trim_matches('"').to_string();
+            if !value.is_empty() { return Some(value); }
+        }
+        None
+    }
+}
+
+/// Standard executable search (PATH, System32, Windows, ...).
+fn search_system_path(file: &str) -> Option<String> {
+    use windows::Win32::Storage::FileSystem::SearchPathW;
+
+    unsafe {
+        let wide: Vec<u16> = file.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut buffer = vec![0u16; 32768];
+        let len = SearchPathW(None, windows::core::PCWSTR(wide.as_ptr()), windows::core::PCWSTR::null(), Some(&mut buffer), None);
+        if len == 0 || len as usize >= buffer.len() { return None; }
+
+        let path = String::from_utf16_lossy(&buffer[..len as usize]);
+        if std::path::Path::new(&path).exists() { Some(path) } else { None }
+    }
+}
+
+/// Last resort for apps that are neither registered in App Paths nor on PATH.
+fn known_install_location(file: &str) -> Option<String> {
+    let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+
+    let candidates: Vec<String> = match file.to_lowercase().as_str() {
+        "code.exe" | "code-insiders.exe" => vec![
+            format!("{}\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", home),
+            format!("{}\\Programs\\Microsoft VS Code\\Code.exe", local),
+            "C:\\Program Files\\Microsoft VS Code\\Code.exe".into(),
+            "C:\\Program Files (x86)\\Microsoft VS Code\\Code.exe".into(),
+        ],
+        "msedge.exe" => vec![
+            "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe".into(),
+            "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe".into(),
+            format!("{}\\Microsoft\\Edge\\Application\\msedge.exe", local),
+        ],
+        "notepad.exe" => vec![
+            "C:\\Windows\\System32\\notepad.exe".into(),
+            "C:\\Windows\\notepad.exe".into(),
+        ],
+        "explorer.exe" => vec!["C:\\Windows\\explorer.exe".into()],
+        _ => Vec::new(),
+    };
+
+    candidates.into_iter().find(|c| std::path::Path::new(c).exists())
+}
+
+/// Reads the `System.AppUserModel.ID` shell property of a window.
+///
+/// This is the same identity the taskbar uses to group windows: for Store/UWP
+/// apps it is the package AppUserModelID, for installed browser web apps it is
+/// the browser's web app id. Unlike the process command line it is always
+/// available on the window itself.
+pub fn get_window_app_user_model_id(hwnd: HWND) -> Option<String> {
+    unsafe {
+        use windows::Win32::Foundation::PROPERTYKEY;
+        use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToStringAlloc};
+        use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow};
+
+        const PKEY_APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
+            fmtid: windows::core::GUID {
+                data1: 0x9F4C2855,
+                data2: 0x9F79,
+                data3: 0x4B39,
+                data4: [0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3],
+            },
+            pid: 5,
+        };
+
+        let store: IPropertyStore = SHGetPropertyStoreForWindow(hwnd).ok()?;
+        let mut prop = store.GetValue(&PKEY_APP_USER_MODEL_ID).ok()?;
+        let result = PropVariantToStringAlloc(&prop)
+            .ok()
+            .map(|pwstr| String::from_utf16_lossy(pwstr.as_wide()).trim().to_string());
+        let _ = PropVariantClear(&mut prop);
+        result.filter(|s| !s.is_empty())
+    }
+}
+
 pub unsafe fn icon_to_base64(hicon: HICON) -> Option<String> {
     let factory: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
     let bitmap = factory.CreateBitmapFromHICON(hicon).ok()?;
-    
+    wic_bitmap_to_base64(&factory, &bitmap)
+}
+
+/// Encodes an `HBITMAP` (as returned by `IShellItemImageFactory::GetImage`) to a base64 PNG.
+pub unsafe fn hbitmap_to_base64(hbitmap: windows::Win32::Graphics::Gdi::HBITMAP) -> Option<String> {
+    let factory: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
+    let bitmap = factory.CreateBitmapFromHBITMAP(hbitmap, windows::Win32::Graphics::Gdi::HPALETTE::default(), windows::Win32::Graphics::Imaging::WICBitmapUsePremultipliedAlpha).ok()?;
+    wic_bitmap_to_base64(&factory, &bitmap)
+}
+
+unsafe fn wic_bitmap_to_base64(factory: &IWICImagingFactory, bitmap: &windows::Win32::Graphics::Imaging::IWICBitmapSource) -> Option<String> {
     let stream = CreateStreamOnHGlobal(HGLOBAL(std::ptr::null_mut()), true).ok()?;
     let encoder = factory.CreateEncoder(&GUID_ContainerFormatPng, std::ptr::null()).ok()?;
     encoder.Initialize(&stream, WICBitmapEncoderNoCache).ok()?;
@@ -170,7 +426,7 @@ pub unsafe fn icon_to_base64(hicon: HICON) -> Option<String> {
     let mut format = GUID_WICPixelFormat32bppPBGRA;
     frame.SetPixelFormat(&mut format).ok()?;
     
-    frame.WriteSource(&bitmap, std::ptr::null()).ok()?;
+    frame.WriteSource(bitmap, std::ptr::null()).ok()?;
     frame.Commit().ok()?;
     encoder.Commit().ok()?;
     
@@ -344,5 +600,42 @@ pub fn capture_hwnd_to_base64(hwnd: HWND, max_width: u32, max_height: u32) -> Op
         ReleaseDC(None, hdc_screen);
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expand_env_vars;
+
+    #[test]
+    fn env_expansion() {
+        let out = expand_env_vars("%SystemRoot%\\System32");
+        assert!(out.to_lowercase().ends_with("\\system32"), "got {out}");
+        assert!(!out.contains('%'), "got {out}");
+
+        // Unknown variables stay verbatim
+        assert_eq!(expand_env_vars("%BLOOM_NOT_A_REAL_VAR%\\x"), "%BLOOM_NOT_A_REAL_VAR%\\x");
+
+        // Unclosed percent is left alone
+        assert_eq!(expand_env_vars("50% done"), "50% done");
+
+        // Plain paths are untouched
+        assert_eq!(expand_env_vars("C:\\plain\\path"), "C:\\plain\\path");
+    }
+
+    #[test]
+    fn bare_executable_resolution() {
+        use super::resolve_executable_path;
+
+        for name in ["notepad", "notepad.exe", "msedge"] {
+            let path = resolve_executable_path(name).unwrap_or_else(|| panic!("{name} did not resolve"));
+            assert!(std::path::Path::new(&path).exists(), "{name} -> {path} does not exist");
+            assert!(path.to_lowercase().ends_with(".exe"), "{name} -> {path}");
+        }
+
+        // Already-qualified paths and nonsense are not resolved
+        assert_eq!(resolve_executable_path("C:\\Windows\\notepad.exe"), None);
+        assert_eq!(resolve_executable_path("bloom-definitely-not-installed"), None);
+        assert_eq!(resolve_executable_path(""), None);
     }
 }
