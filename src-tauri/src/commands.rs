@@ -353,39 +353,97 @@ fn get_uwp_launch_cmd(exe_path: &str) -> Option<String> {
     None
 }
 
+/// Duplicate-event guard. Kept well below the double-click interval so a
+/// double-click still toggles twice.
+const START_TOGGLE_DEBOUNCE_MS: i64 = 80;
+/// Hold time for the Windows key so the shell registers a deliberate tap.
+/// A zero-length tap is dropped by the shell and never opens Start.
+const START_WIN_KEY_HOLD_MS: u64 = 40;
+
+fn send_key_tap(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY, hold_ms: u64) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP};
+    let down = [INPUT {
+        r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: Default::default(), time: 0, dwExtraInfo: 0 },
+        },
+    }];
+    let up = [INPUT {
+        r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 },
+        },
+    }];
+    unsafe {
+        SendInput(&down, std::mem::size_of::<INPUT>() as i32);
+        if hold_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(hold_ms));
+        }
+        SendInput(&up, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+/// True while the native Start menu owns the foreground window.
+/// Depending on the Windows build it is hosted by StartMenuExperienceHost
+/// (older) or SearchHost (Windows 11 24H2+), so match both. The dock is
+/// WS_EX_NOACTIVATE, so clicking it never steals focus from an open menu.
+fn is_start_menu_open() -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() {
+            return false;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(fg, Some(&mut pid));
+        if pid == 0 {
+            return false;
+        }
+        if let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            let mut buf = [0u16; 260];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len);
+            let _ = CloseHandle(process);
+            if ok.is_ok() {
+                let path = String::from_utf16_lossy(&buf[..len as usize]);
+                let file = path.rsplit('\\').next().unwrap_or("").to_lowercase();
+                return file == "startmenuexperiencehost.exe" || file == "searchhost.exe";
+            }
+        }
+        false
+    }
+}
+
+/// Toggle the native Start menu. Checks whether the menu currently owns the
+/// foreground window instead of blindly tapping Win: rapid Win taps are ignored
+/// by the shell while the menu animates, which made a second click replay the
+/// open animation. When the menu is open it is dismissed with Escape, which is
+/// deterministic. The tiny debounce only coalesces duplicate events; it must
+/// stay well below the double-click interval so a double-click still closes.
+fn toggle_start_menu() {
+    let now = get_now_ms();
+    if now - LAST_START_TOGGLE_MS.load(Ordering::Relaxed) < START_TOGGLE_DEBOUNCE_MS {
+        return;
+    }
+    LAST_START_TOGGLE_MS.store(now, Ordering::Relaxed);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_LWIN};
+        if is_start_menu_open() {
+            send_key_tap(VK_ESCAPE, 0);
+        } else {
+            send_key_tap(VK_LWIN, START_WIN_KEY_HOLD_MS);
+        }
+    });
+}
+
 #[tauri::command]
 pub async fn open_app(app: AppHandle, app_name: String) {
     if app_name == "start" {
-        tauri::async_runtime::spawn_blocking(move || unsafe {
-            use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, KEYBDINPUT, VK_LWIN, KEYEVENTF_KEYUP};
-            let inputs = [
-                INPUT {
-                    r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
-                    Anonymous: INPUT_0 {
-                        ki: KEYBDINPUT {
-                            wVk: VK_LWIN,
-                            wScan: 0,
-                            dwFlags: Default::default(),
-                            time: 0,
-                            dwExtraInfo: 0,
-                        },
-                    },
-                },
-                INPUT {
-                    r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
-                    Anonymous: INPUT_0 {
-                        ki: KEYBDINPUT {
-                            wVk: VK_LWIN,
-                            wScan: 0,
-                            dwFlags: KEYEVENTF_KEYUP,
-                            time: 0,
-                            dwExtraInfo: 0,
-                        },
-                    },
-                },
-            ];
-            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-        });
+        toggle_start_menu();
         return;
     }
 
