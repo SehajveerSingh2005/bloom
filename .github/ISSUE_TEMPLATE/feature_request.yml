@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest an idea or improvement for Bloom
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What's your idea?
+      description: What should Bloom do, and what problem does it solve for you?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of Bloom does this relate to?
+      options:
+        - Dock
+        - Notch
+        - Media controls / now playing
+        - Overlays
+        - Settings
+        - Installer / updater / startup
+        - Not sure / everything
+    validations:
+      required: false
+
+  - type: textarea
+    id: media
+    attributes:
+      label: Mockups or examples
+      description: Drag and drop images or links to similar apps here.
+    validations:
+      required: false

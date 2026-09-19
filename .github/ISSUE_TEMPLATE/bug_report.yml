@@ -1,0 +1,65 @@
+name: Bug report
+description: Something in Bloom isn't working as expected
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: input
+    id: bloom-version
+    attributes:
+      label: Bloom version
+      description: "Settings → About (e.g. 3.8.6)"
+      placeholder: "3.8.6"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: "Win+R → `winver` (e.g. Windows 11 24H2, build 26100)"
+      placeholder: "Windows 11 24H2, build 26100"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which part of Bloom?
+      options:
+        - Dock
+        - Notch
+        - Media controls / now playing
+        - Overlays
+        - Settings
+        - Installer / updater / startup
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What went wrong, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Bloom
+        2. Hover over the dock...
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots or recordings
+      description: Drag and drop files here. Visual bugs are much easier to fix with a recording.
+    validations:
+      required: false

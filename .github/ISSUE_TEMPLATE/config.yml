@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/SehajveerSingh2005/bloom/security/advisories/new
+    about: Please report security issues privately, not as a public issue.
+  - name: Website and downloads
+    url: https://github.com/SehajveerSingh2005/bloom#readme
+    about: Installation instructions and general information.
