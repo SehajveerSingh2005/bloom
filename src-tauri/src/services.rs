@@ -2041,6 +2041,30 @@ fn register_dock_appbar_inner(window: tauri::WebviewWindow, attempt: i32) {
     }
 }
 
+/// True when a top-level dialog is a Windows property sheet, detected by its
+/// tab-control child. This is locale-independent, unlike matching the
+/// "Properties" window title.
+unsafe fn dialog_has_tab_control(hwnd: HWND) -> bool {
+    unsafe extern "system" fn child_proc(child: HWND, lparam: LPARAM) -> BOOL {
+        let found = &mut *(lparam.0 as *mut bool);
+        let mut class_name = [0u8; 64];
+        let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(child, &mut class_name);
+        if std::str::from_utf8(&class_name[..len as usize]).unwrap_or("") == "SysTabControl32" {
+            *found = true;
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+
+    let mut found = false;
+    let _ = windows::Win32::UI::WindowsAndMessaging::EnumChildWindows(
+        Some(hwnd),
+        Some(child_proc),
+        LPARAM(&mut found as *mut bool as isize),
+    );
+    found
+}
+
 pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let apps = &mut *(lparam.0 as *mut Vec<AppInfo>);
 
@@ -2074,24 +2098,26 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                     let path = String::from_utf16_lossy(&path_buf[..path_len as usize]);
                     let lowercase_path = path.to_lowercase();
                     
-                    let is_explorer_folder = if lowercase_path.contains("explorer.exe") {
-                        let mut class_name = [0u8; 256];
-                        let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
-                        let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
-                        class_str == "CabinetWClass" || class_str == "ExploreWClass"
-                    } else {
-                        false
-                    };
+                    let mut class_name = [0u8; 256];
+                    let class_len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
+                    let window_class = std::str::from_utf8(&class_name[..class_len as usize]).unwrap_or("");
+
+                    // Explorer hosts folder windows (CabinetWClass/ExploreWClass) and
+                    // shell property sheets (`#32770` dialogs that contain a tab
+                    // control). Both are tracked so the Properties window shows up
+                    // under the File Explorer dock item.
+                    let is_explorer_window = window_class == "CabinetWClass"
+                        || window_class == "ExploreWClass"
+                        || (window_class == "#32770" && dialog_has_tab_control(hwnd));
 
                     // Filter out Bloom itself (except the Settings window) and some common background processes
-                    if (lowercase_path.contains("bloom.exe") && title != "Settings") || 
-                       lowercase_path.contains("conhost.exe") || 
-                       (lowercase_path.contains("explorer.exe") && !is_explorer_folder) || 
+                    if (lowercase_path.contains("bloom.exe") && title != "Settings") ||
+                       lowercase_path.contains("conhost.exe") ||
+                       (lowercase_path.contains("explorer.exe") && !is_explorer_window) ||
                        lowercase_path.contains("shellexperiencehost.exe") ||
-                       lowercase_path.contains("searchhost.exe") || 
-                       lowercase_path.contains("applicationframehost.exe") ||
-                       lowercase_path.contains("textinputhost.exe") || 
-                       lowercase_path.contains("systemsettings.exe") {
+                       lowercase_path.contains("searchhost.exe") ||
+                       lowercase_path.contains("textinputhost.exe") ||
+                       (lowercase_path.contains("applicationframehost.exe") && window_class != "ApplicationFrameWindow") {
                         let _ = CloseHandle(process_handle);
                         return true.into();
                     }
@@ -2105,7 +2131,16 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                         .and_then(|n| n.to_str())
                         .map(|s| s.to_string());
 
-                    let final_name = if (name == "msedge" || name == "chrome" || name == "ApplicationFrameHost") && !title.is_empty() {
+                    // The visible top-level window of a UWP app is the
+                    // ApplicationFrameWindow owned by ApplicationFrameHost.exe; the
+                    // app's own Windows.UI.Core.CoreWindow is a separate top-level
+                    // window and not the one users interact with. The frame carries
+                    // the title and package identity, so track it and skip the inner
+                    // core window to avoid duplicate dock items.
+                    let is_uwp_core_window = window_class == "Windows.UI.Core.CoreWindow";
+                    let is_uwp_frame = window_class == "ApplicationFrameWindow";
+
+                    let final_name = if (name == "msedge" || name == "chrome" || name == "ApplicationFrameHost" || name == "SystemSettings") && !title.is_empty() {
                         // Extract a cleaner name from the window title for host processes (PWAs, UWP apps)
                         title.split(" - ").next().map(|s| s.trim()).unwrap_or(&title).to_string()
                     } else if name == "explorer" && title.is_empty() {
@@ -2117,11 +2152,12 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                     // Only avoid adding the exact same window handle (HWND) multiple times
                     let already_exists = apps.iter().any(|a| a.hwnd == Some(hwnd.0 as isize));
 
-                    if !already_exists {
+                    if !already_exists && !is_uwp_core_window {
                         // Packaged apps (Store/UWP/PWAs) expose their package identity on the
                         // window. Using it as the path makes pinned shell-app entries match
                         // their running windows and gives the icon code an exact AUMID.
-                        let path = if lowercase_path.contains("\\windowsapps\\")
+                        let path = if is_uwp_frame
+                            || lowercase_path.contains("\\windowsapps\\")
                             || lowercase_path.contains("msedge.exe")
                             || lowercase_path.contains("chrome.exe")
                         {
