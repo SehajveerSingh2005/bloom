@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Bun is the root package manager
+/package-lock.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
