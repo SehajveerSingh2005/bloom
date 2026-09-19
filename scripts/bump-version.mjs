@@ -28,7 +28,7 @@ function updateCargoLock() {
   const content = readFileSync(path, "utf8");
   writeFileSync(
     path,
-    content.replace(/(\[\[package\]\]\nname = "bloom"\nversion = ")[^"]*(")/, `$1${version}$2`)
+    content.replace(/(\[\[package\]\]\r?\nname = "bloom"\r?\nversion = ")[^"]*(")/, `$1${version}$2`)
   );
 }
 

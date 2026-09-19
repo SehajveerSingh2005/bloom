@@ -30,6 +30,17 @@ if (execSync(`git tag --list ${tag}`, { cwd: root }).toString().trim()) {
 }
 
 run(`bun scripts/bump-version.mjs ${version}`);
+
+const changed = execSync(`git diff --name-only -- ${versionFiles.join(" ")}`, { cwd: root })
+  .toString()
+  .split(/\r?\n/)
+  .filter(Boolean);
+const missing = versionFiles.filter((file) => !changed.includes(file));
+if (missing.length > 0) {
+  console.error(`Version bump did not modify: ${missing.join(", ")}`);
+  process.exit(1);
+}
+
 run(`git commit -m "chore(release): ${tag}" -- ${versionFiles.join(" ")}`);
 run(`git tag ${tag}`);
 run("git push");
