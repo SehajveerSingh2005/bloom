@@ -5,6 +5,7 @@ import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
 import type { UpdateCheckResult } from "../updater";
 import { useSettingsSync } from "../hooks/useSettingsSync";
+import { preferredEdgeReveal, preferredMode } from "../platform";
 import { hexToHsl } from "../theme";
 import type { WidgetConfig } from "./types";
 
@@ -24,14 +25,14 @@ export function useSettings() {
   const [musicModeEnabled, setMusicModeEnabled] = useState(true);
   const [musicCompactNotch, setMusicCompactNotch] = useState(true);
   const [volumeOverlayEnabled, setVolumeOverlayEnabled] = useState(true);
-  const [volumeEdgeEnabled, setVolumeEdgeEnabled] = useState(
-    () => localStorage.getItem("bloom-volume-edge-enabled") !== "false"
+  const [volumeEdgeEnabled, setVolumeEdgeEnabled] = useState(() =>
+    preferredEdgeReveal("bloom-volume-edge-enabled")
   );
   const [brightnessOverlayEnabled, setBrightnessOverlayEnabled] = useState(
     () => localStorage.getItem("bloom-brightness-overlay-enabled") !== "false"
   );
-  const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(
-    () => localStorage.getItem("bloom-brightness-edge-enabled") !== "false"
+  const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(() =>
+    preferredEdgeReveal("bloom-brightness-edge-enabled")
   );
   const [mediaAmbienceEnabled, setMediaAmbienceEnabled] = useState(true);
   const [mediaCompactGlowEnabled, setMediaCompactGlowEnabled] = useState(true);
@@ -62,11 +63,8 @@ export function useSettings() {
   const [dockIconOnly, setDockIconOnly] = useState(
     () => localStorage.getItem("bloom-dock-icon-only") === "true"
   );
-  const [dockMode, setDockMode] = useState(() => {
-    const raw = localStorage.getItem("bloom-dock-mode") || "smart";
-    return raw === "auto-hide" ? "smart" : raw;
-  });
-  const [notchMode, setNotchMode] = useState("fixed");
+  const [dockMode, setDockMode] = useState(() => preferredMode("bloom-dock-mode"));
+  const [notchMode, setNotchMode] = useState(() => preferredMode("bloom-notch-mode"));
   const [lowBatteryThreshold, setLowBatteryThreshold] = useState(20);
   const [updateStatus, setUpdateStatus] = useState<
     "idle" | "checking" | "available" | "uptodate" | "error" | "downloading" | "installing"

@@ -18,6 +18,11 @@ pub async fn set_menu_open(open: bool, rect: Option<IntRect>) {
 }
 
 #[tauri::command]
+pub fn get_platform() -> String {
+    "windows".into()
+}
+
+#[tauri::command]
 pub async fn set_dock_hovered(hovered: bool) {
     DOCK_IS_HOVERED.store(hovered, Ordering::Relaxed);
 }

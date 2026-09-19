@@ -153,6 +153,47 @@ bun run tauri dev
 
 You'll need [Rust](https://rustup.rs/) and [Bun](https://bun.sh/). That's it.
 
+## Linux (early support)
+
+The first Linux target is **Linux Mint 22.x, Cinnamon, and X11**. Bloom launches,
+shows its notch and dock, discovers and launches installed XDG applications,
+resolves their icons from your icon theme (and lets you set your own per app),
+tracks running windows through X11/EWMH (including focus, close and real hover
+previews), reports CPU, memory, disk, network, brightness and battery, controls
+volume and mute, drives any MPRIS-capable media player (track, artist,
+transport, progress) with the audio visualizer reacting to your system audio,
+reads and toggles Wi-Fi and Bluetooth, and reacts to the screen edges and to
+windows covering it, so the dock's smart mode and the notch's fullscreen hiding
+work the way they do on Windows. Both default to `smart` on Linux, so they move
+out of the way as soon as a window covers them until you choose another mode.
+The volume and brightness displays appear on real changes (your keyboard keys or
+Bloom's own controls) rather than when the pointer touches a side edge, which
+can be changed back in Settings.
+
+It deliberately coexists with Cinnamon's panel rather than replacing it, and
+relies on Cinnamon for media keys. Wayland is not supported yet, and a few
+smaller desktop quirks are listed in the
+[Linux port audit and roadmap](docs/linux-port.md), along with the architecture
+and runtime tool expectations.
+
+### Installing
+
+```bash
+bun install
+bun run tauri build --bundles deb
+sudo apt install ./src-tauri/target/release/bundle/deb/*.deb
+```
+
+This writes `bloom_<version>_amd64.deb`, which installs `/usr/bin/bloom` plus a
+`Utility` menu entry with a hicolor icon set. The build then stops while signing
+the updater artifacts, which requires the maintainer's
+`TAURI_SIGNING_PRIVATE_KEY`; the package itself is already written at that point.
+
+To run from source instead, `bun install && bun run tauri dev` works on Linux
+Mint without extra packages. Runtime helpers `wpctl` (or `pactl`), `pw-record`,
+`gsettings` and `cinnamon-settings` are used where available; Bloom explains
+itself rather than failing when one is missing.
+
 ---
 
 ## Contributing

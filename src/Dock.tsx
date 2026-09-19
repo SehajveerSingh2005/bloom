@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import './Dock.css';
 import { initTheme } from './theme';
 import { useSettingsSync } from './hooks/useSettingsSync';
+import { getPlatform, preferredMode } from './platform';
 
 interface AppInfo {
   name: string;
@@ -34,13 +35,10 @@ const Dock = memo(function Dock() {
 
   const [pinnedApps, setPinnedApps] = useState<AppInfo[]>([]);
   const [activeApps, setActiveApps] = useState<AppInfo[]>([]);
+  const pinnedAppsRef = useRef<AppInfo[]>([]);
   const iconsRef = useRef<Record<string, string>>({});
   const [, setIconsTick] = useState(0); 
-  const [dockMode, setDockMode] = useState(() => {
-    const raw = localStorage.getItem("bloom-dock-mode") || "fixed";
-    if (raw === "auto-hide") return "smart";
-    return raw;
-  });
+  const [dockMode, setDockMode] = useState(() => preferredMode("bloom-dock-mode"));
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(() => localStorage.getItem("bloom-dock-preview-enabled") !== "false");
   const [dockIconOnly, setDockIconOnly] = useState(() => localStorage.getItem("bloom-dock-icon-only") === "true");
   const [previewData, setPreviewData] = useState<{ path: string, previews: { hwnd: number, title: string, image: string }[] } | null>(null);
@@ -49,6 +47,7 @@ const Dock = memo(function Dock() {
   const [isOverlapped, setIsOverlapped] = useState(false);
   const [isVisible, setIsVisible] = useState(true);
   const [showAddPopup, setShowAddPopup] = useState(false);
+  const [appPopupMode, setAppPopupMode] = useState<'add' | 'launch'>('add');
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, app: AppInfo | null } | null>(null);
   const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<string[]>([]);
@@ -94,21 +93,31 @@ const Dock = memo(function Dock() {
   useEffect(() => {
     let cleared = false;
 
+    const markReady = () => {
+      setStartupAnimating(true);
+      setIsReady(true);
+      setTimeout(() => setIsImpacted(true), 280);
+      setTimeout(() => setIsExpanded(true), 350);
+      setTimeout(() => setStartupAnimating(false), 1500);
+    };
+
     const checkVisibility = async (): Promise<boolean> => {
       try {
         const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
         const visible = await getCurrentWebviewWindow().isVisible();
         if (visible) {
-          setStartupAnimating(true);
-          setIsReady(true);
-          setTimeout(() => setIsImpacted(true), 280);
-          setTimeout(() => setIsExpanded(true), 350);
-          setTimeout(() => setStartupAnimating(false), 1500);
+          markReady();
           return true;
         }
       } catch (_) {}
       return false;
     };
+
+    const fallbackTimer = setTimeout(() => {
+      if (cleared) return;
+      markReady();
+      cleared = true;
+    }, 2200);
 
     // Keep polling until visible — no time cap, since the dock can be
     // enabled at runtime from settings after any delay.
@@ -116,14 +125,25 @@ const Dock = memo(function Dock() {
       if (cleared) return;
       if (await checkVisibility()) {
         clearInterval(interval);
+        clearTimeout(fallbackTimer);
         cleared = true;
       }
     }, 200);
 
     // Also attempt immediately
-    checkVisibility().then(ok => { if (ok) { clearInterval(interval); cleared = true; } });
+    checkVisibility().then(ok => {
+      if (ok) {
+        clearInterval(interval);
+        clearTimeout(fallbackTimer);
+        cleared = true;
+      }
+    });
 
-    return () => { clearInterval(interval); cleared = true; };
+    return () => {
+      clearInterval(interval);
+      clearTimeout(fallbackTimer);
+      cleared = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -164,7 +184,7 @@ const Dock = memo(function Dock() {
         return fallback;
       };
       
-      const dMode = getVal("bloom-dock-mode", "fixed");
+      const dMode = getVal("bloom-dock-mode", (await getPlatform()) === "linux" ? "smart" : "fixed");
       if (dMode) {
         const mapped = dMode === "auto-hide" ? "smart" : dMode;
         setDockMode(mapped);
@@ -347,7 +367,16 @@ const Dock = memo(function Dock() {
   const handleAppClick = async (app: AppInfo) => {
     try {
       if (app.path === 'start') {
-        await invoke('open_app', { appName: 'start' });
+        const platform = await invoke<string>('get_platform');
+        if (platform === 'linux') {
+          // Bloom owns the Linux launcher so it can use the XDG application
+          // inventory without modifying Cinnamon's panel or synthesizing a
+          // Super-key press. Windows continues using its native Start menu.
+          setAppPopupMode('launch');
+          setShowAddPopup(true);
+        } else {
+          await invoke('open_app', { appName: 'start' });
+        }
       } else if (app.hwnd) {
         await invoke('focus_window', { hwnd: app.hwnd });
       } else {
@@ -499,20 +528,24 @@ const Dock = memo(function Dock() {
   const pinnedItems = useMemo(() => dockItems.filter(i => i.path !== 'start' && i.is_pinned), [dockItems]);
   const unpinnedItems = useMemo(() => dockItems.filter(i => !i.is_pinned), [dockItems]);
 
+  useEffect(() => {
+    pinnedAppsRef.current = pinnedApps;
+  }, [pinnedApps]);
+
   const handleReorder = (newPaths: string[]) => {
-    const oldPaths = pinnedApps.map(p => p.path);
+    const oldPaths = pinnedAppsRef.current.map(p => p.path);
     if (JSON.stringify(newPaths) !== JSON.stringify(oldPaths)) {
       const reordered = newPaths
-        .map(path => pinnedApps.find(p => p.path === path))
+        .map(path => pinnedAppsRef.current.find(p => p.path === path))
         .filter((p): p is AppInfo => !!p);
       setPinnedApps(reordered);
+      invoke('save_pinned_apps', { apps: reordered }).catch(console.error);
     }
   };
 
   const handleDragEnd = () => {
     setIsDragging(false);
     setPressedApp(null);
-    invoke('save_pinned_apps', { apps: pinnedApps }).catch(console.error);
   };
 
   useEffect(() => {
@@ -901,7 +934,7 @@ const Dock = memo(function Dock() {
                 </>
               )}
               <div className="menu-divider" />
-              <div className="menu-item" onClick={() => { setShowAddPopup(true); closeMenu(); }}>
+              <div className="menu-item" onClick={() => { setAppPopupMode('add'); setShowAddPopup(true); closeMenu(); }}>
                 Add App to Dock...
               </div>
               <div 
@@ -935,7 +968,7 @@ const Dock = memo(function Dock() {
             </>
           ) : (
             <>
-              <div className="menu-item" onClick={() => { setShowAddPopup(true); closeMenu(); }}>
+              <div className="menu-item" onClick={() => { setAppPopupMode('add'); setShowAddPopup(true); closeMenu(); }}>
                 Add App to Dock...
               </div>
               <div 
@@ -971,7 +1004,20 @@ const Dock = memo(function Dock() {
           <AddAppPopup 
             containerRef={popupRef}
             onClose={closePopup} 
-            onAdd={(app: AppInfo) => { togglePin(app); closePopup(); }}
+            mode={appPopupMode}
+            onSelect={async (app: AppInfo) => {
+              if (appPopupMode === 'launch') {
+                try {
+                  await invoke('open_app', { appName: app.path });
+                } catch (error) {
+                  console.error(`Failed to launch ${app.name}:`, error);
+                  return;
+                }
+              } else {
+                await togglePin(app);
+              }
+              closePopup();
+            }}
             scale={scale}
           />
         )}
@@ -995,11 +1041,12 @@ const Dock = memo(function Dock() {
   );
 });
 
-function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
+function AddAppPopup({ onClose, onSelect, containerRef, scale, mode }: {
   onClose: () => void,
-  onAdd: (app: AppInfo) => void,
+  onSelect: (app: AppInfo) => void | Promise<void>,
   containerRef: React.RefObject<HTMLDivElement | null>,
-  scale: number
+  scale: number,
+  mode: 'add' | 'launch'
 }) {
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [search, setSearch] = useState('');
@@ -1064,7 +1111,7 @@ function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         if (filtered[selectedIndex]) {
-          onAdd(filtered[selectedIndex]);
+          void onSelect(filtered[selectedIndex]);
         }
       }
     };
@@ -1083,7 +1130,7 @@ function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
       window.removeEventListener('blur', handleBlur);
       document.removeEventListener('mousedown', handleMouseDown, true);
     };
-  }, [onClose, containerRef, filtered, selectedIndex, onAdd]);
+  }, [onClose, containerRef, filtered, selectedIndex, onSelect]);
 
   useEffect(() => {
     let active = true;
@@ -1157,7 +1204,7 @@ function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
                 <div
                   key={app.path}
                   className={`popup-app-row${idx === selectedIndex ? ' selected' : ''}`}
-                  onClick={() => onAdd(app)}
+                  onClick={() => { void onSelect(app); }}
                   onMouseEnter={() => setSelectedIndex(idx)}
                 >
                   <div className="popup-app-icon">
@@ -1168,7 +1215,7 @@ function AddAppPopup({ onClose, onAdd, containerRef, scale }: {
                     )}
                   </div>
                   <span className="popup-app-name">{app.name}</span>
-                  <span className="popup-app-pin">+</span>
+                  <span className="popup-app-pin">{mode === 'launch' ? 'Open' : '+'}</span>
                 </div>
               );
             })

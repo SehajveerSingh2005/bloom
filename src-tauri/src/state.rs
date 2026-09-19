@@ -35,6 +35,8 @@ pub static SINGLE_INSTANCE_MUTEX_HANDLE: OnceLock<isize> = OnceLock::new();
 pub static SINGLE_INSTANCE_EVENT_HANDLE: OnceLock<isize> = OnceLock::new();
 
 pub fn close_single_instance_handles() {
+    #[cfg(target_os = "windows")]
+    {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Foundation::HANDLE;
     if let Some(&h) = SINGLE_INSTANCE_MUTEX_HANDLE.get() {
@@ -47,6 +49,7 @@ pub fn close_single_instance_handles() {
             unsafe { let _ = CloseHandle(HANDLE(h as *mut _)); }
         }
     }
+    }
 }
 
 pub static MAIN_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> = Mutex::new(None);
@@ -58,4 +61,3 @@ pub static LAST_DISPLAY_CHANGE_MS: AtomicI64 = AtomicI64::new(0);
 pub static THUMBNAIL_CACHE: OnceLock<Mutex<HashMap<isize, (String, i64)>>> = OnceLock::new();
 pub static FOCUS_TIMESTAMPS: OnceLock<Mutex<HashMap<isize, i64>>> = OnceLock::new();
 pub static SETTINGS_CACHE: OnceLock<Mutex<HashMap<String, serde_json::Value>>> = OnceLock::new();
-

@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "forge_extension": {
+      "url": "http://localhost:12269/mcp"
+    }
+  }
+}
