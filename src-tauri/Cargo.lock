@@ -418,7 +418,7 @@ dependencies = [
 name = "bloom"
 version = "3.8.6"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "image",
  "rustfft",
  "serde",

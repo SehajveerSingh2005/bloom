@@ -57,7 +57,7 @@ windows = { version = "0.61", features = [
   "Win32_NetworkManagement_IpHelper",
   "Win32_NetworkManagement_Ndis"
 ] }
-base64 = "0.22"
+base64 = "0.23"
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-updater = "2"
 window-vibrancy = "0.7.1"
