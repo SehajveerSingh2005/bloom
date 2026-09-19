@@ -4,6 +4,8 @@ body {
   padding: 0;
   overflow: hidden;
   background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .dock-container {
@@ -561,6 +563,8 @@ body {
   font-weight: 400;
   font-family: inherit;
   letter-spacing: -0.01em;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .popup-search-input::placeholder {
