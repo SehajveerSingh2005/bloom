@@ -148,6 +148,9 @@ pub async fn init_dock(app: AppHandle, mode: String) {
         // 4. Reset overlap state so the overlap thread re-syncs cleanly
         CURRENT_DOCK_OVERLAP.store(0, Ordering::Relaxed);
         let _ = app.emit("dock-overlap", false);
+        // Sync the adaptive-dock signal so the dock expands immediately if a
+        // maximized window is already in the foreground when it's enabled.
+        let _ = app.emit("dock-maximized", CURRENT_FOREGROUND_MAXIMIZED.load(Ordering::Relaxed));
     }
 }
 
@@ -268,6 +271,7 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
         if current != -1 {
             let _ = app.emit("dock-overlap", current == 1);
         }
+        let _ = app.emit("dock-maximized", CURRENT_FOREGROUND_MAXIMIZED.load(Ordering::Relaxed));
 
         // Double sync after a short delay to catch any layout changes
         let dock_clone = dock_win.clone();

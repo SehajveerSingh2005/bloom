@@ -62,6 +62,9 @@ export function useSettings() {
   const [dockIconOnly, setDockIconOnly] = useState(
     () => localStorage.getItem("bloom-dock-icon-only") === "true"
   );
+  const [dockAdaptive, setDockAdaptive] = useState(
+    () => localStorage.getItem("bloom-dock-adaptive") === "true"
+  );
   const [dockMode, setDockMode] = useState(() => {
     const raw = localStorage.getItem("bloom-dock-mode") || "smart";
     return raw === "auto-hide" ? "smart" : raw;
@@ -131,6 +134,7 @@ export function useSettings() {
       apply(getVal("bloom-dock-enabled"), setDockEnabled, readBool);
       apply(getVal("bloom-dock-preview-enabled"), setDockPreviewEnabled, readBool);
       apply(getVal("bloom-dock-icon-only"), setDockIconOnly, readBool);
+      apply(getVal("bloom-dock-adaptive"), setDockAdaptive, readBool);
 
       apply(getVal("bloom-temp-unit"), setTempUnitFahrenheit, (v) => v === "fahrenheit");
       apply(getVal("bloom-scale"), setScale, parseFloat);
@@ -184,6 +188,7 @@ export function useSettings() {
     "bloom-dock-enabled": setDockEnabled,
     "bloom-dock-icon-only": setDockIconOnly,
     "bloom-dock-preview-enabled": setDockPreviewEnabled,
+    "bloom-dock-adaptive": setDockAdaptive,
     "bloom-weather-enabled": setWeatherEnabled,
     "bloom-calendar-enabled": setCalendarEnabled,
     "bloom-music-mode-enabled": setMusicModeEnabled,
@@ -434,6 +439,12 @@ export function useSettings() {
     saveSetting("bloom-dock-icon-only", String(next));
   };
 
+  const toggleDockAdaptive = () => {
+    const next = !dockAdaptive;
+    setDockAdaptive(next);
+    saveSetting("bloom-dock-adaptive", String(next));
+  };
+
   const toggleAutoUpdate = () => {
     const next = !autoUpdate;
     setAutoUpdate(next);
@@ -668,6 +679,8 @@ export function useSettings() {
     toggleDockPreview,
     dockIconOnly,
     toggleDockIconOnly,
+    dockAdaptive,
+    toggleDockAdaptive,
 
     // Overlays
     volumeOverlayEnabled,

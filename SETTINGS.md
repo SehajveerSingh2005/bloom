@@ -25,6 +25,7 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | `bloom-dock-mode` | `"fixed"` / `"smart"` / `"peek"` | `"fixed"` | Dock visibility behavior. **fixed** = always visible as AppBar. **smart** = auto-hide when overlapped by fullscreen apps. **peek** = hidden until cursor approaches bottom edge. |
 | `bloom-dock-preview-enabled` | `"true"` / `"false"` | `"true"` | Show window thumbnail previews when hovering dock icons. |
 | `bloom-dock-icon-only` | `"true"` / `"false"` | `"false"` | Minimal icon-only style (no background/padding around icons). |
+| `bloom-dock-adaptive` | `"true"` / `"false"` | `"false"` | Fixed dock only. Stretch the dock to full width like a traditional taskbar while a window is maximized, and contract back when it's restored. |
 
 ### Notch
 

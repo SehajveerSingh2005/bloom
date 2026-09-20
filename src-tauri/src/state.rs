@@ -31,6 +31,7 @@ pub static ANY_MEDIA_PLAYING: AtomicBool = AtomicBool::new(false);
 pub static LAST_START_TOGGLE_MS: AtomicI64 = AtomicI64::new(0);
 pub static OVERLAY_IN_SPLASH: AtomicBool = AtomicBool::new(false);
 pub static CURRENT_FOREGROUND_FULLSCREEN: AtomicBool = AtomicBool::new(false);
+pub static CURRENT_FOREGROUND_MAXIMIZED: AtomicBool = AtomicBool::new(false);
 
 pub static SINGLE_INSTANCE_MUTEX_HANDLE: OnceLock<isize> = OnceLock::new();
 pub static SINGLE_INSTANCE_EVENT_HANDLE: OnceLock<isize> = OnceLock::new();

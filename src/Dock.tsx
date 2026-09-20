@@ -64,6 +64,8 @@ const Dock = memo(function Dock() {
   });
   const [dockPreviewEnabled, setDockPreviewEnabled] = useState(() => localStorage.getItem("bloom-dock-preview-enabled") !== "false");
   const [dockIconOnly, setDockIconOnly] = useState(() => localStorage.getItem("bloom-dock-icon-only") === "true");
+  const [dockAdaptive, setDockAdaptive] = useState(() => localStorage.getItem("bloom-dock-adaptive") === "true");
+  const [isMaximized, setIsMaximized] = useState(false);
   const [previewData, setPreviewData] = useState<{ id: string, previews: { hwnd: number, title: string, image: string }[] } | null>(null);
   const [isDockHovered, setIsDockHovered] = useState(false);
   const [isEdgeHovered, setIsEdgeHovered] = useState(false);
@@ -86,6 +88,13 @@ const Dock = memo(function Dock() {
   const toastTimerRef = useRef<any>(null);
   const dockRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(() => parseFloat(localStorage.getItem("bloom-scale") || "1.0"));
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
 
 
@@ -111,6 +120,14 @@ const Dock = memo(function Dock() {
     (dockMode === 'smart' && isOverlapped && interactionState === 'none') ||
     (dockMode === 'peek' && interactionState === 'none')
   );
+
+  // Adaptive mode (fixed dock only): stretch into a full-width taskbar while a
+  // standard maximized window is in the foreground, so the reserved strip no
+  // longer looks like a cut-out around the centered pill.
+  const isAdaptive = dockAdaptive && dockMode === 'fixed' && isMaximized && isExpanded && !isHidden && isVisible;
+  // Nearly full width — 24px margin per side at the visual (scaled) size.
+  // Pre-transform: visual = width * scale, so width = (viewport - 48*scale) / scale.
+  const adaptiveWidth = (viewportWidth - 48 * scale) / scale;
 
   useEffect(() => {
     let cleared = false;
@@ -197,6 +214,9 @@ const Dock = memo(function Dock() {
       const iconOnly = getVal("bloom-dock-icon-only", "false");
       setDockIconOnly(iconOnly === "true");
 
+      const adaptive = getVal("bloom-dock-adaptive", "false");
+      setDockAdaptive(adaptive === "true");
+
       const scaleVal = getVal("bloom-scale");
       if (scaleVal !== null) setScale(parseFloat(scaleVal));
 
@@ -224,10 +244,15 @@ const Dock = memo(function Dock() {
       setIsVisible(event.payload);
     });
 
+    const unlistenMaximized = listen<boolean>("dock-maximized", (event) => {
+      setIsMaximized(event.payload);
+    });
+
     return () => {
       unlistenOverlap.then(f => f());
       unlistenEdgeHover.then(f => f());
       unlistenVisibility.then(f => f());
+      unlistenMaximized.then(f => f());
     };
   }, []);
 
@@ -236,6 +261,7 @@ const Dock = memo(function Dock() {
       "bloom-dock-mode": setDockMode,
       "bloom-dock-preview-enabled": setDockPreviewEnabled,
       "bloom-dock-icon-only": setDockIconOnly,
+      "bloom-dock-adaptive": setDockAdaptive,
       "bloom-scale": setScale,
     }
   );
@@ -624,13 +650,13 @@ const Dock = memo(function Dock() {
         <motion.div
           ref={dockRef}
           layout
-          className={`dock ${isExpanded && !isHidden ? 'dock-expanded' : ''} ${isImpacted && !isExpanded && !isHidden ? 'dock-impacted' : ''} ${dockIconOnly ? 'dock-icon-only' : ''}`}
+          className={`dock ${isExpanded && !isHidden ? 'dock-expanded' : ''} ${isImpacted && !isExpanded && !isHidden ? 'dock-impacted' : ''} ${dockIconOnly ? 'dock-icon-only' : ''} ${isAdaptive ? 'dock-adaptive' : ''}`}
           onMouseEnter={() => setIsDockHovered(true)}
           onMouseLeave={() => { setIsDockHovered(false); setHoveredApp(null); setPressedApp(null); }}
         initial={{ y: -800, opacity: 1, width: 34, height: 34, borderTopLeftRadius: 17, borderTopRightRadius: 17, borderBottomLeftRadius: 17, borderBottomRightRadius: 17 }}
         animate={{
           y: !isReady ? -800 : (isVisible ? (isHidden ? 100 : 0) : 150),
-          width: isExpanded && !isHidden && isVisible ? 'auto' : 34,
+          width: isExpanded && !isHidden && isVisible ? (isAdaptive ? adaptiveWidth : 'auto') : 34,
           height: isExpanded && !isHidden && isVisible ? 'auto' : 34,
           borderTopLeftRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 18 : 17,
           borderTopRightRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 18 : 17,

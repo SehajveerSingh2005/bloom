@@ -1,4 +1,4 @@
-import { Monitor, Eye, EyeOff, Circle } from "lucide-react";
+import { Monitor, Eye, EyeOff, Circle, Maximize2 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 
 interface DockTabProps {
@@ -10,6 +10,8 @@ interface DockTabProps {
   toggleDockPreview: () => void;
   dockIconOnly: boolean;
   toggleDockIconOnly: () => void;
+  dockAdaptive: boolean;
+  toggleDockAdaptive: () => void;
 }
 
 export function DockTab({
@@ -21,6 +23,8 @@ export function DockTab({
   toggleDockPreview,
   dockIconOnly,
   toggleDockIconOnly,
+  dockAdaptive,
+  toggleDockAdaptive,
 }: DockTabProps) {
   return (
     <>
@@ -54,12 +58,21 @@ export function DockTab({
               </label>
             </SettingRow>
 
-            <SettingRow icon={Circle} label="Icon Only" desc="Remove icon background and padding" divider={false}>
+            <SettingRow icon={Circle} label="Icon Only" desc="Remove icon background and padding" divider={dockMode === "fixed"}>
               <label className="toggle-switch">
                 <input type="checkbox" checked={dockIconOnly} onChange={toggleDockIconOnly} />
                 <span className="slider"></span>
               </label>
             </SettingRow>
+
+            {dockMode === "fixed" && (
+              <SettingRow icon={Maximize2} label="Adaptive Mode" desc="Stretch to full width when a window is maximized" divider={false}>
+                <label className="toggle-switch">
+                  <input type="checkbox" checked={dockAdaptive} onChange={toggleDockAdaptive} />
+                  <span className="slider"></span>
+                </label>
+              </SettingRow>
+            )}
           </>
         )}
       </div>

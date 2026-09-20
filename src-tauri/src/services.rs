@@ -821,6 +821,8 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
         let mut last_visible = true;
         let mut last_dock_overlap: Option<bool> = None;
         let mut last_notch_overlap: Option<bool> = None;
+        let mut last_dock_maximized: Option<bool> = None;
+        let mut last_fg_maximized = false;
         let mut last_hwnd = HWND(std::ptr::null_mut());
         let mut last_emit = Instant::now();
         let mut is_known_shell = false;
@@ -871,10 +873,17 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
 
                 let mut should_overlap = false;
                 let mut should_notch_overlap = false;
+                let mut should_maximized = false;
                 let mut current_is_fs = false;
 
-                if !hwnd.is_invalid() && (hwnd != last_hwnd || last_emit.elapsed() >= Duration::from_secs(3)) {
+                // Cheap check every tick: the foreground hwnd doesn't change when
+                // the user clicks maximize, so without this the adaptive dock
+                // would wait for the 3s fallback recompute to react.
+                let fg_is_maximized = !hwnd.is_invalid() && IsZoomed(hwnd).as_bool();
+
+                if !hwnd.is_invalid() && (hwnd != last_hwnd || fg_is_maximized != last_fg_maximized || last_emit.elapsed() >= Duration::from_secs(3)) {
                     last_hwnd = hwnd;
+                    last_fg_maximized = fg_is_maximized;
                     let mut class_name = [0u8; 256];
                     let len = windows::Win32::UI::WindowsAndMessaging::GetClassNameA(hwnd, &mut class_name);
                     let class_str = std::str::from_utf8(&class_name[..len as usize]).unwrap_or("");
@@ -937,6 +946,11 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                     if current_is_fs || is_maximized {
                                         should_overlap = true;
                                         should_notch_overlap = true;
+                                        // Standard maximized windows leave the dock's
+                                        // reserved strip empty on both sides, so the dock
+                                        // can stretch to a full taskbar. True fullscreen
+                                        // windows cover the screen and should not.
+                                        should_maximized = is_maximized && !current_is_fs;
                                     } else {
                                         should_overlap = false;
                                         if let Ok(dock_rect_lock) = DOCK_RECT.lock() {
@@ -1005,6 +1019,15 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                 if Some(should_notch_overlap) != last_notch_overlap || last_emit.elapsed() >= Duration::from_secs(3) {
                     let _ = handle_visibility.emit("notch-overlap", should_notch_overlap);
                     last_notch_overlap = Some(should_notch_overlap);
+                }
+
+                // Adaptive dock signal: a standard maximized foreground window.
+                // Unlike dock-overlap this is not guarded by dock visibility, so
+                // init_dock can emit the current value when the dock is enabled.
+                CURRENT_FOREGROUND_MAXIMIZED.store(should_maximized, Ordering::Relaxed);
+                if Some(should_maximized) != last_dock_maximized || last_emit.elapsed() >= Duration::from_secs(3) {
+                    let _ = handle_visibility.emit("dock-maximized", should_maximized);
+                    last_dock_maximized = Some(should_maximized);
                 }
 
                 // Update full-screen visibility (hides TopBar/Corners)
