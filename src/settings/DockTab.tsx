@@ -1,4 +1,4 @@
-import { Monitor, Eye, EyeOff, Circle, Maximize2 } from "lucide-react";
+import { Monitor, Eye, EyeOff, Circle, Maximize2, Keyboard } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 
 interface DockTabProps {
@@ -12,6 +12,8 @@ interface DockTabProps {
   toggleDockIconOnly: () => void;
   dockAdaptive: boolean;
   toggleDockAdaptive: () => void;
+  dockWinNumberEnabled: boolean;
+  toggleDockWinNumber: () => void;
 }
 
 export function DockTab({
@@ -25,6 +27,8 @@ export function DockTab({
   toggleDockIconOnly,
   dockAdaptive,
   toggleDockAdaptive,
+  dockWinNumberEnabled,
+  toggleDockWinNumber,
 }: DockTabProps) {
   return (
     <>
@@ -58,9 +62,16 @@ export function DockTab({
               </label>
             </SettingRow>
 
-            <SettingRow icon={Circle} label="Icon Only" desc="Remove icon background and padding" divider={dockMode === "fixed"}>
+            <SettingRow icon={Circle} label="Icon Only" desc="Remove icon background and padding" divider={false}>
               <label className="toggle-switch">
                 <input type="checkbox" checked={dockIconOnly} onChange={toggleDockIconOnly} />
+                <span className="slider"></span>
+              </label>
+            </SettingRow>
+
+            <SettingRow icon={Keyboard} label="Win+Number Shortcuts" desc="Open pinned apps with Win+1 through Win+9" divider={dockMode === "fixed"}>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={dockWinNumberEnabled} onChange={toggleDockWinNumber} />
                 <span className="slider"></span>
               </label>
             </SettingRow>

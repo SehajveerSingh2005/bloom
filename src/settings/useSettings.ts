@@ -68,6 +68,9 @@ export function useSettings() {
   const [dockAdaptive, setDockAdaptive] = useState(
     () => localStorage.getItem("bloom-dock-adaptive") === "true"
   );
+  const [dockWinNumberEnabled, setDockWinNumberEnabled] = useState(
+    () => localStorage.getItem("bloom-dock-win-number-enabled") !== "false"
+  );
   const [dockMode, setDockMode] = useState(() => {
     const raw = localStorage.getItem("bloom-dock-mode") || "smart";
     return raw === "auto-hide" ? "smart" : raw;
@@ -139,6 +142,7 @@ export function useSettings() {
       apply(getVal("bloom-dock-preview-enabled"), setDockPreviewEnabled, readBool);
       apply(getVal("bloom-dock-icon-only"), setDockIconOnly, readBool);
       apply(getVal("bloom-dock-adaptive"), setDockAdaptive, readBool);
+      apply(getVal("bloom-dock-win-number-enabled"), setDockWinNumberEnabled, readBool);
 
       apply(getVal("bloom-temp-unit"), setTempUnitFahrenheit, (v) => v === "fahrenheit");
       apply(getVal("bloom-scale"), setScale, parseFloat);
@@ -193,6 +197,7 @@ export function useSettings() {
     "bloom-dock-icon-only": setDockIconOnly,
     "bloom-dock-preview-enabled": setDockPreviewEnabled,
     "bloom-dock-adaptive": setDockAdaptive,
+    "bloom-dock-win-number-enabled": setDockWinNumberEnabled,
     "bloom-weather-enabled": setWeatherEnabled,
     "bloom-calendar-enabled": setCalendarEnabled,
     "bloom-timer-sound-enabled": setTimerSoundEnabled,
@@ -456,6 +461,12 @@ export function useSettings() {
     saveSetting("bloom-dock-adaptive", String(next));
   };
 
+  const toggleDockWinNumber = () => {
+    const next = !dockWinNumberEnabled;
+    setDockWinNumberEnabled(next);
+    saveSetting("bloom-dock-win-number-enabled", String(next));
+  };
+
   const toggleAutoUpdate = () => {
     const next = !autoUpdate;
     setAutoUpdate(next);
@@ -694,6 +705,8 @@ export function useSettings() {
     toggleDockIconOnly,
     dockAdaptive,
     toggleDockAdaptive,
+    dockWinNumberEnabled,
+    toggleDockWinNumber,
 
     // Overlays
     volumeOverlayEnabled,

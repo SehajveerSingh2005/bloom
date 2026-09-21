@@ -94,6 +94,8 @@ const Dock = memo(function Dock() {
   const iconPickerTargetRef = useRef<string | null>(null);
   const toastTimerRef = useRef<any>(null);
   const dockRef = useRef<HTMLDivElement>(null);
+  const pinnedItemsRef = useRef<AppInfo[]>([]);
+  const handleAppClickRef = useRef<(app: AppInfo) => void>(() => {});
   const [scale, setScale] = useState(() => parseFloat(localStorage.getItem("bloom-scale") || "1.0"));
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
 
@@ -574,6 +576,22 @@ const Dock = memo(function Dock() {
   const startItem = useMemo(() => dockItems.find(i => i.path === 'start') as AppInfo, [dockItems]);
   const pinnedItems = useMemo(() => dockItems.filter(i => i.path !== 'start' && i.is_pinned), [dockItems]);
   const unpinnedItems = useMemo(() => dockItems.filter(i => !i.is_pinned), [dockItems]);
+
+  // Latest state for the Win+Number listener, which subscribes only once.
+  useEffect(() => {
+    pinnedItemsRef.current = pinnedItems;
+    handleAppClickRef.current = handleAppClick;
+  });
+
+  useEffect(() => {
+    // The backend claims Win+1-9 while the native taskbar is hidden and reports
+    // which pinned slot was pressed; behaviour matches a click on that icon.
+    const unlisten = listen<number>("dock-win-number", (event) => {
+      const app = pinnedItemsRef.current[event.payload];
+      if (app) handleAppClickRef.current(app);
+    });
+    return () => { unlisten.then(f => f()); };
+  }, []);
 
   const handleReorder = (newPaths: string[]) => {
     const oldPaths = pinnedApps.map(p => p.path);
