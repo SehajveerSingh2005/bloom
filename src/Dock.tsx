@@ -17,15 +17,22 @@ interface AppInfo {
   all_hwnds?: [number, string][];
 }
 
-// Stable identity for a dock item. Host processes (Edge/Chrome/ApplicationFrameHost)
-// run every PWA, so their window title must be part of the identity — otherwise two
+// Host processes (Edge/Chrome/Brave/ApplicationFrameHost) run every PWA/UWP
+// window, so their window title must be part of their identity — otherwise two
 // PWAs running under the same browser collapse into a single dock item.
+const HOST_PROCESSES = ['msedge.exe', 'chrome.exe', 'brave.exe', 'applicationframehost.exe'];
+export function isBrowserHost(path: string) {
+  const p = path.toLowerCase();
+  return HOST_PROCESSES.some(host => p.includes(host));
+}
+
+// Stable identity for a dock item.
 export function appIdentity(p: string, executable?: string, name?: string) {
   if (!p) return "";
   const normalized = p.toLowerCase().replace(/\\/g, '/');
   // Shell application ids (AUMIDs) and bare names are unique on their own.
   if (!normalized.includes('/')) return normalized;
-  if (name && (normalized.includes('msedge.exe') || normalized.includes('chrome.exe') || normalized.includes('applicationframehost.exe'))) {
+  if (name && isBrowserHost(normalized)) {
     return `${normalized}:${name.toLowerCase()}`;
   }
   if (executable) return `${normalized}:${executable.toLowerCase()}`;
@@ -304,7 +311,7 @@ const Dock = memo(function Dock() {
   }, [isDragging]);
 
   const fetchIcon = async (path: string, name?: string, hwnd?: number, retryCount = 0) => {
-    const isHost = path.toLowerCase().includes("msedge.exe") || path.toLowerCase().includes("chrome.exe") || path.toLowerCase().includes("applicationframehost.exe");
+    const isHost = isBrowserHost(path);
     const cacheKey = isHost && name ? `${path}:${name.toLowerCase()}` : (hwnd ? `${path}-${hwnd}` : path);
     
     if (iconsRef.current[cacheKey]) return;
@@ -364,7 +371,7 @@ const Dock = memo(function Dock() {
   const handleRemoveCustomIcon = async (app: AppInfo) => {
     try {
       await invoke('remove_custom_icon', { path: app.path, name: app.name || null });
-      const isHost = app.path.toLowerCase().includes("msedge.exe") || app.path.toLowerCase().includes("chrome.exe") || app.path.toLowerCase().includes("applicationframehost.exe");
+      const isHost = isBrowserHost(app.path);
       const ck = isHost && app.name ? `${app.path}:${app.name.toLowerCase()}` : (app.hwnd ? `${app.path}-${app.hwnd}` : app.path);
       setCustomIcons(prev => {
         const next = { ...prev };
@@ -797,9 +804,13 @@ const Dock = memo(function Dock() {
                   onPointerCancel={() => setPressedApp(null)}
                 >
                   {(() => {
-                    const isHost = app.path.toLowerCase().includes("msedge.exe") || app.path.toLowerCase().includes("chrome.exe") || app.path.toLowerCase().includes("applicationframehost.exe");
+                    const isHost = isBrowserHost(app.path);
                     const cacheKey = isHost ? `${app.path}:${app.name.toLowerCase()}` : (app.hwnd ? `${app.path}-${app.hwnd}` : app.path);
-                    const icon = customIcons[cacheKey] || customIcons[app.path] || iconsRef.current[cacheKey] || iconsRef.current[app.path] || app.icon;
+                    // Running host items must not use the shared path fallback: the
+                    // browser and its PWAs share one path, so it would leak one item's
+                    // icon onto the others.
+                    const allowPathFallback = !isHost || !app.is_running;
+                    const icon = customIcons[cacheKey] || (allowPathFallback && customIcons[app.path]) || iconsRef.current[cacheKey] || (allowPathFallback && iconsRef.current[app.path]) || app.icon;
                     
                     const isBloomOrSettings = app.name.toLowerCase() === 'settings' || 
                                               app.name.toLowerCase() === 'bloom' || 
@@ -887,9 +898,13 @@ const Dock = memo(function Dock() {
                     onPointerCancel={() => setPressedApp(null)}
                   >
                     {(() => {
-                      const isHost = app.path.toLowerCase().includes("msedge.exe") || app.path.toLowerCase().includes("chrome.exe") || app.path.toLowerCase().includes("applicationframehost.exe");
+                      const isHost = isBrowserHost(app.path);
                       const cacheKey = isHost ? `${app.path}:${app.name.toLowerCase()}` : (app.hwnd ? `${app.path}-${app.hwnd}` : app.path);
-                    const icon = customIcons[cacheKey] || customIcons[app.path] || iconsRef.current[cacheKey] || iconsRef.current[app.path] || app.icon;
+                      // Running host items must not use the shared path fallback: the
+                      // browser and its PWAs share one path, so it would leak one item's
+                      // icon onto the others.
+                      const allowPathFallback = !isHost || !app.is_running;
+                      const icon = customIcons[cacheKey] || (allowPathFallback && customIcons[app.path]) || iconsRef.current[cacheKey] || (allowPathFallback && iconsRef.current[app.path]) || app.icon;
                       const isBloomOrSettings = app.name.toLowerCase() === 'settings' || app.name.toLowerCase() === 'bloom' || app.path.toLowerCase().includes('bloom.exe');
                       return icon ? (
                         <img src={icon} alt={app.name} className={isBloomOrSettings ? "bloom-icon-img" : ""} draggable={false} />
@@ -927,7 +942,7 @@ const Dock = memo(function Dock() {
                 <>
                   <div className="menu-divider" />
                   <div className="menu-item" onClick={() => {
-                    const isHost = contextMenu.app!.path.toLowerCase().includes("msedge.exe") || contextMenu.app!.path.toLowerCase().includes("chrome.exe") || contextMenu.app!.path.toLowerCase().includes("applicationframehost.exe");
+                    const isHost = isBrowserHost(contextMenu.app!.path);
                     const ck = isHost ? `${contextMenu.app!.path}:${contextMenu.app!.name.toLowerCase()}` : contextMenu.app!.path;
                     iconPickerTargetRef.current = ck;
                     closeMenu();
@@ -938,7 +953,7 @@ const Dock = memo(function Dock() {
                     Change Icon...
                   </div>
                   {(() => {
-                    const isHost = contextMenu.app!.path.toLowerCase().includes("msedge.exe") || contextMenu.app!.path.toLowerCase().includes("chrome.exe") || contextMenu.app!.path.toLowerCase().includes("applicationframehost.exe");
+                    const isHost = isBrowserHost(contextMenu.app!.path);
                     const ck = isHost ? `${contextMenu.app!.path}:${contextMenu.app!.name.toLowerCase()}` : contextMenu.app!.path;
                     return customIcons[ck] ? (
                       <div className="menu-item" onClick={() => {

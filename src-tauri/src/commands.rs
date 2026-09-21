@@ -577,9 +577,9 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
             let path = app.path.to_lowercase();
             let name = app.name.to_lowercase();
             
-            // For host processes (Edge, Chrome, ApplicationFrameHost), use path + name 
+            // For host processes (Edge, Chrome, Brave, ApplicationFrameHost), use path + name 
             // so that different PWAs/UWP apps are separate dock items.
-            let key = if path.contains("msedge.exe") || path.contains("chrome.exe") || path.contains("applicationframehost.exe") {
+            let key = if path.contains("msedge.exe") || path.contains("chrome.exe") || path.contains("brave.exe") || path.contains("applicationframehost.exe") {
                 format!("{}:{}", path, name)
             } else if let Some(ref exe) = app.executable {
                 format!("{}:{}", path, exe.to_lowercase())
@@ -689,7 +689,7 @@ pub async fn focus_window(hwnd: isize) {
 fn get_cache_key(path: &str, name: Option<&str>) -> String {
     let path_lc = path.to_lowercase();
     let name_lc = name.map(|n| n.to_lowercase()).unwrap_or_default();
-    if path_lc.contains("msedge.exe") || path_lc.contains("chrome.exe") || path_lc.contains("applicationframehost.exe") {
+    if path_lc.contains("msedge.exe") || path_lc.contains("chrome.exe") || path_lc.contains("brave.exe") || path_lc.contains("applicationframehost.exe") {
         format!("{}:{}", path, name_lc)
     } else {
         path.to_string()
@@ -861,7 +861,7 @@ fn pwa_icon_from_command_line(process_path: &str, command_line: &str) -> Option<
 }
 
 /// Browser web app ids are 32 characters from the range a-p.
-fn browser_web_app_id_from_aumid(id: &str) -> Option<String> {
+pub(crate) fn browser_web_app_id_from_aumid(id: &str) -> Option<String> {
     let is_web_app_id = |s: &str| s.len() == 32 && s.bytes().all(|b| (b'a'..=b'p').contains(&b));
     if let Some(segment) = id.rsplit('.').next() {
         if is_web_app_id(segment) { return Some(segment.to_string()); }
@@ -874,17 +874,47 @@ fn browser_web_app_id_from_aumid(id: &str) -> Option<String> {
     None
 }
 
+/// True when a window AppUserModelID belongs to a browser-hosted app (installed
+/// PWA or Store PWA) instead of the browser itself. Regular Chromium windows
+/// carry only the browser id ("Chrome", "MSEdge", "Brave", ...), while PWA
+/// windows carry a web app id or a package AUMID. Browser-generated ids are not
+/// always the canonical 32-character form (Brave uses `Brave._crx_<id>` with a
+/// shortened id), so the `_crx_` marker is checked directly.
+pub(crate) fn is_browser_pwa_aumid(id: &str) -> bool {
+    id.contains('!') || id.contains("_crx_") || browser_web_app_id_from_aumid(id).is_some()
+}
+
 unsafe fn pwa_icon_for_window(hwnd: HWND, process_path: &str) -> Option<String> {
     // The window's own AppUserModelID is the most reliable identity: it is always
     // present, unlike the process command line (Edge reuses its browser process).
-    if let Some(id) = crate::utils::get_window_app_user_model_id(hwnd) {
-        if id.contains('!') {
+    match crate::utils::get_window_app_user_model_id(hwnd) {
+        Some(id) if id.contains('!') => {
             if let Some(icon) = icon_from_aumid(&id) { return Some(icon); }
-        } else if let Some(app_id) = browser_web_app_id_from_aumid(&id) {
-            if let Some(icon_path) = find_browser_pwa_icon(process_path, &format!("--app-id={}", app_id)) {
-                if let Some(icon) = crate::utils::image_file_to_base64(&icon_path) { return Some(icon); }
-            }
         }
+        Some(id) if is_browser_pwa_aumid(&id) => {
+            // PWA window. The canonical app id is in the AUMID when available,
+            // otherwise it must come from the command line. That is safe here
+            // because this window is known to be a PWA and the profile lookup
+            // requires the `--app-id=` form of the executable's arguments.
+            let mut pid = 0u32;
+            windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid == 0 { return None; }
+            if let Some(app_id) = browser_web_app_id_from_aumid(&id) {
+                if let Some(icon_path) = find_browser_pwa_icon(process_path, &format!("--app-id={}", app_id)) {
+                    if let Some(icon) = crate::utils::image_file_to_base64(&icon_path) { return Some(icon); }
+                }
+            }
+            if let Some(command_line) = process_command_line(pid) {
+                if let Some(icon) = pwa_icon_from_command_line(process_path, &command_line) { return Some(icon); }
+            }
+            return None;
+        }
+        // A regular browser window ("Chrome", "MSEdge", "Brave", ...). Chromium can
+        // host PWA windows in the same process as the browser, so the process
+        // command line may advertise an `--app-id` that does not belong to this
+        // window. Do not consult it; let the caller fall back to the window icon.
+        Some(_) => return None,
+        None => {}
     }
     // Fall back to the process command line for hosts that don't stamp the window.
     let mut pid = 0u32;
@@ -2388,6 +2418,17 @@ mod pwa_icon_tests {
         assert_eq!(browser_web_app_id_from_aumid("Chrome._crx_edhbnieanoeijlkpgkminebadpibapgm").as_deref(), Some("edhbnieanoeijlkpgkminebadpibapgm"));
         assert_eq!(browser_web_app_id_from_aumid("4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"), None);
         assert_eq!(browser_web_app_id_from_aumid("MSEdge"), None);
+    }
+
+    #[test]
+    fn browser_pwa_aumid_detection() {
+        assert!(is_browser_pwa_aumid("Chrome.edhbnieanoeijlkpgkminebadpibapgm"));
+        assert!(is_browser_pwa_aumid("Brave._crx_edhbnieanoeijlkpgkminebadpibapgm"));
+        assert!(is_browser_pwa_aumid("Brave._crx_agimnkijcamfeangaknmldooml"));
+        assert!(is_browser_pwa_aumid("4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"));
+        assert!(!is_browser_pwa_aumid("MSEdge"));
+        assert!(!is_browser_pwa_aumid("Chrome"));
+        assert!(!is_browser_pwa_aumid("Brave"));
     }
 
     #[test]

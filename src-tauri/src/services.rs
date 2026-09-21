@@ -2187,7 +2187,33 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                     let is_uwp_core_window = window_class == "Windows.UI.Core.CoreWindow";
                     let is_uwp_frame = window_class == "ApplicationFrameWindow";
 
-                    let final_name = if (name == "msedge" || name == "chrome" || name == "ApplicationFrameHost" || name == "SystemSettings") && !title.is_empty() {
+                    let is_browser_host = lowercase_path.contains("msedge.exe")
+                        || lowercase_path.contains("chrome.exe")
+                        || lowercase_path.contains("brave.exe");
+
+                    // A browser window and an installed PWA running under the same
+                    // browser can share a title, so the title alone cannot tell them
+                    // apart. The window's AppUserModelID can: PWA windows carry a web
+                    // app id (or a package id for Store-installed PWAs), while regular
+                    // browser windows only carry the browser itself ("MSEdge", "Chrome",
+                    // "Brave", ...). A missing id falls back to the title so unusual
+                    // hosts keep the previous behaviour.
+                    let window_aumid = if is_uwp_frame
+                        || lowercase_path.contains("\\windowsapps\\")
+                        || is_browser_host
+                    {
+                        crate::utils::get_window_app_user_model_id(hwnd)
+                    } else {
+                        None
+                    };
+                    let is_browser_pwa = is_browser_host
+                        && window_aumid.as_deref().map_or(false, crate::commands::is_browser_pwa_aumid);
+
+                    let final_name = if ((is_browser_host && (is_browser_pwa || window_aumid.is_none()))
+                        || name == "ApplicationFrameHost"
+                        || name == "SystemSettings")
+                        && !title.is_empty()
+                    {
                         // Extract a cleaner name from the window title for host processes (PWAs, UWP apps)
                         title.split(" - ").next().map(|s| s.trim()).unwrap_or(&title).to_string()
                     } else if name == "explorer" && title.is_empty() {
@@ -2205,10 +2231,9 @@ pub unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> B
                         // their running windows and gives the icon code an exact AUMID.
                         let path = if is_uwp_frame
                             || lowercase_path.contains("\\windowsapps\\")
-                            || lowercase_path.contains("msedge.exe")
-                            || lowercase_path.contains("chrome.exe")
+                            || is_browser_host
                         {
-                            match crate::utils::get_window_app_user_model_id(hwnd) {
+                            match window_aumid {
                                 Some(aumid) if aumid.contains('!') => aumid,
                                 _ => path,
                             }
