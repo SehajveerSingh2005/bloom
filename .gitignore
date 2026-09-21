@@ -36,3 +36,6 @@ skills-lock.json
 
 #agents
 .mimocode
+
+# shell files for running bash script
+*.sh
