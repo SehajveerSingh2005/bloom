@@ -131,6 +131,8 @@ function SettingsApp() {
               setNotchModeValue={settings.setNotchModeValue}
               calendarEnabled={settings.calendarEnabled}
               toggleCalendar={settings.toggleCalendar}
+              timerSoundEnabled={settings.timerSoundEnabled}
+              toggleTimerSound={settings.toggleTimerSound}
               musicModeEnabled={settings.musicModeEnabled}
               toggleMusicMode={settings.toggleMusicMode}
               musicCompactNotch={settings.musicCompactNotch}

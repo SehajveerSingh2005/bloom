@@ -17,7 +17,92 @@ import {
   MemoryStick,
   HardDrive,
   ArrowUpDown,
+  BellRing,
+  Play,
+  Pause,
+  RotateCcw,
 } from "lucide-react";
+
+// Pomodoro timer limit.
+const MAX_TIMER_SECONDS = 180 * 60;
+
+// Inline timer editing: digits fill from the right and the colon is inserted
+// automatically ("130" -> 1:30, "2500" -> 25:00, "45" -> 0:45).
+const timerDigitsToSeconds = (digits: string): number | null => {
+  if (!digits) return null;
+  const secs = parseInt(digits.slice(-2) || "0", 10);
+  const mins = parseInt(digits.slice(0, -2) || "0", 10);
+  const total = mins * 60 + secs;
+  return total > 0 && total <= MAX_TIMER_SECONDS ? total : null;
+};
+
+const timerSecondsToDigits = (seconds: number): string => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}${secs.toString().padStart(2, "0")}`.replace(/^0+(?=\d)/, "");
+};
+
+const formatTimerDigits = (digits: string): string => {
+  if (!digits) return "0:00";
+  const secs = digits.slice(-2).padStart(2, "0");
+  const mins = parseInt(digits.slice(0, -2) || "0", 10);
+  return `${mins}:${secs}`;
+};
+
+
+// Completion chime for the Pomodoro timer. Synthesized with the Web Audio API
+// so no audio asset is needed; created on the Start click so the webview's
+// autoplay policy lets it play when the timer ends.
+let timerChimeCtx: AudioContext | null = null;
+
+const getTimerChimeCtx = (): AudioContext | null => {
+  try {
+    if (!timerChimeCtx) timerChimeCtx = new AudioContext();
+    if (timerChimeCtx.state === "suspended") timerChimeCtx.resume().catch(() => {});
+    return timerChimeCtx;
+  } catch {
+    return null;
+  }
+};
+
+const playTimerChime = () => {
+  const ctx = getTimerChimeCtx();
+  if (!ctx) return;
+  const start = ctx.currentTime + 0.02;
+  const master = ctx.createGain();
+  master.gain.value = 0.45;
+  master.connect(ctx.destination);
+
+  // Soft rising bell arpeggio (A5–C#6–E6) with a quiet octave harmonic.
+  const notes = [
+    { freq: 880.0, at: 0 },
+    { freq: 1108.73, at: 0.18 },
+    { freq: 1318.51, at: 0.36 },
+  ];
+  notes.forEach(({ freq, at }) => {
+    const osc = ctx.createOscillator();
+    const harmonic = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const harmonicGain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    harmonic.type = "sine";
+    harmonic.frequency.value = freq * 2.01;
+    harmonicGain.gain.value = 0.12;
+    gain.gain.setValueAtTime(0.0001, start + at);
+    gain.gain.exponentialRampToValueAtTime(0.32, start + at + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + at + 1.4);
+    osc.connect(gain);
+    harmonic.connect(harmonicGain);
+    harmonicGain.connect(gain);
+    gain.connect(master);
+    osc.start(start + at);
+    harmonic.start(start + at);
+    osc.stop(start + at + 1.5);
+    harmonic.stop(start + at + 1.5);
+  });
+};
+
 
 // Simple SVG icons
 function WifiIcon({ connected }: { connected: boolean }) {
@@ -115,8 +200,7 @@ function GreenDownArrowIcon() {
   );
 }
 
-export const Visualizer = memo(function Visualizer({ isPlaying, bars = 5, height = 20 }: { isPlaying: boolean; bars?: number; height?: number }) {
-  const [audioData, setAudioData] = useState<number[]>(new Array(bars).fill(0.18));
+export const Visualizer = memo(function Visualizer({ isPlaying, bars = 5, height = 20 }: { isPlaying: boolean; bars?: number; height?: number }) {  const [audioData, setAudioData] = useState<number[]>(new Array(bars).fill(0.18));
 
   useEffect(() => {
     if (!isPlaying) {
@@ -157,6 +241,38 @@ export const Visualizer = memo(function Visualizer({ isPlaying, bars = 5, height
         />
       ))}
     </div>
+  );
+});
+
+// Number of week rows the current month occupies. Calendar mode sizes the
+// notch to the month so five-row months stay compact and six-row months never
+// clip the last row.
+const calendarMonthRows = (() => {
+  const now = new Date();
+  const firstWeekday = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return Math.ceil((firstWeekday + daysInMonth) / 7);
+})();
+
+// Odometer-style digit for the timer clock. When the value changes the old
+// digit rolls up and out while the new one rolls in from below with a slight
+// 3D tilt — no card chrome, just the numerals.
+const RollDigit = memo(function RollDigit({ value, compact = false }: { value: string; compact?: boolean }) {
+  return (
+    <span className={`roll-digit ${compact ? "compact" : ""}`}>
+      <AnimatePresence initial={false}>
+        <motion.span
+          key={value}
+          className="roll-num"
+          initial={{ y: "72%", rotateX: -50, opacity: 0 }}
+          animate={{ y: "0%", rotateX: 0, opacity: 1 }}
+          exit={{ y: "-72%", rotateX: 50, opacity: 0 }}
+          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {value}
+        </motion.span>
+      </AnimatePresence>
+    </span>
   );
 });
 
@@ -517,6 +633,7 @@ function App() {
   // Settings state
   const [settingsWeatherEnabled, setSettingsWeatherEnabled] = useState(() => localStorage.getItem("bloom-weather-enabled") !== "false");
   const [settingsCalendarEnabled, setSettingsCalendarEnabled] = useState(() => localStorage.getItem("bloom-calendar-enabled") !== "false");
+  const [settingsTimerSoundEnabled, setSettingsTimerSoundEnabled] = useState(() => localStorage.getItem("bloom-timer-sound-enabled") !== "false");
   const [settingsMusicModeEnabled, setSettingsMusicModeEnabled] = useState(() => localStorage.getItem("bloom-music-mode-enabled") !== "false");
   const [settingsMusicCompactNotch, setSettingsMusicCompactNotch] = useState(() => localStorage.getItem("bloom-music-compact-notch") !== "false");
   const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(() => localStorage.getItem("bloom-visualizer-enabled") !== "false");
@@ -544,6 +661,7 @@ function App() {
 
       setSettingsWeatherEnabled(getVal("bloom-weather-enabled", "true") !== "false");
       setSettingsCalendarEnabled(getVal("bloom-calendar-enabled", "true") !== "false");
+      setSettingsTimerSoundEnabled(getVal("bloom-timer-sound-enabled", "true") !== "false");
       setSettingsMusicModeEnabled(getVal("bloom-music-mode-enabled", "true") !== "false");
       setSettingsMusicCompactNotch(getVal("bloom-music-compact-notch", "true") !== "false");
       const viz = getVal("bloom-media-visualizer-enabled") ?? getVal("bloom-visualizer-enabled", "true");
@@ -675,6 +793,7 @@ function App() {
     {
       "bloom-weather-enabled": setSettingsWeatherEnabled,
       "bloom-calendar-enabled": setSettingsCalendarEnabled,
+      "bloom-timer-sound-enabled": setSettingsTimerSoundEnabled,
       "bloom-music-mode-enabled": setSettingsMusicModeEnabled,
       "bloom-music-compact-notch": setSettingsMusicCompactNotch,
       "bloom-media-visualizer-enabled": setSettingsVisualizerEnabled,
@@ -787,9 +906,17 @@ function App() {
   // Timer state
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [isCompactTimerVisible, setIsCompactTimerVisible] = useState(false);
   const [isTimerFinished, setIsTimerFinished] = useState(false);
+  const [isEditingTimer, setIsEditingTimer] = useState(false);
+  const [timerEditDigits, setTimerEditDigits] = useState("");
+  const [lastDurationSeconds, setLastDurationSeconds] = useState(() => {
+    const stored = parseInt(localStorage.getItem("bloom-timer-last-duration") || "", 10);
+    return Number.isFinite(stored) && stored > 0 ? stored : 25 * 60;
+  });
+  const timerInputRef = useRef<HTMLInputElement>(null);
+  const timerEditActiveRef = useRef(false);
   const timerIntervalRef = useRef<any>(null);
+  const prevTimerFinishedRef = useRef(false);
 
   const formatTimerTime = (totalSeconds: number) => {
     const mins = Math.floor(Math.abs(totalSeconds) / 60);
@@ -797,18 +924,106 @@ function App() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const startTimer = (mins: number) => {
-    setTimerSeconds(mins * 60);
+  const startTimer = (seconds: number) => {
+    // Unlock audio here (user gesture) so the completion chime can play later.
+    getTimerChimeCtx();
+    timerEditActiveRef.current = false;
+    setIsEditingTimer(false);
+    setTimerSeconds(seconds);
+    setLastDurationSeconds(seconds);
+    localStorage.setItem("bloom-timer-last-duration", String(seconds));
     setIsTimerRunning(true);
     setIsTimerFinished(false);
   };
 
-  const toggleTimer = () => setIsTimerRunning(!isTimerRunning);
   const resetTimer = () => {
+    timerEditActiveRef.current = false;
+    setIsEditingTimer(false);
     setIsTimerRunning(false);
     setTimerSeconds(0);
     setIsTimerFinished(false);
   };
+
+  // Idle/finished play restarts the last duration; paused play resumes.
+  const handlePrimaryTimerAction = () => {
+    if (isEditingTimer) {
+      commitTimerEdit(true);
+    } else if (isTimerRunning) {
+      setIsTimerRunning(false);
+    } else if (timerSeconds > 0) {
+      getTimerChimeCtx();
+      setIsTimerRunning(true);
+    } else {
+      startTimer(lastDurationSeconds);
+    }
+  };
+
+  // Clicking the big time turns it into a masked editor. Digits fill from the
+  // right, so the colon never has to be typed.
+  const beginTimerEdit = () => {
+    if (isTimerRunning || isEditingTimer) return;
+    if (isTimerFinished) resetTimer();
+    const base = timerSeconds > 0 ? timerSeconds : lastDurationSeconds;
+    setTimerEditDigits(timerSecondsToDigits(base));
+    timerEditActiveRef.current = true;
+    setIsEditingTimer(true);
+  };
+
+  const commitTimerEdit = (start: boolean) => {
+    if (!timerEditActiveRef.current) return;
+    timerEditActiveRef.current = false;
+    setIsEditingTimer(false);
+    const total = timerDigitsToSeconds(timerEditDigits);
+    if (total === null) return;
+    const base = timerSeconds > 0 ? timerSeconds : lastDurationSeconds;
+    // A tap that changes nothing (e.g. paused timer) must not reset the state.
+    if (!start && total === base) return;
+    localStorage.setItem("bloom-timer-last-duration", String(total));
+    setLastDurationSeconds(total);
+    setTimerSeconds(start ? total : 0);
+    setIsTimerRunning(start);
+    setIsTimerFinished(false);
+    if (start) getTimerChimeCtx();
+  };
+
+  useEffect(() => {
+    if (isEditingTimer) {
+      timerInputRef.current?.focus();
+      timerInputRef.current?.select();
+    }
+  }, [isEditingTimer]);
+
+  const timerEditValid = timerDigitsToSeconds(timerEditDigits) !== null;
+
+  const timerState: 'idle' | 'running' | 'paused' | 'finished' = isEditingTimer
+    ? 'idle'
+    : isTimerFinished
+      ? 'finished'
+      : isTimerRunning
+        ? 'running'
+        : timerSeconds > 0
+          ? 'paused'
+          : 'idle';
+  const timerDisplaySeconds = timerSeconds > 0 || isTimerFinished ? timerSeconds : lastDurationSeconds;
+  const primaryTimerLabel = isTimerRunning ? 'Pause' : timerSeconds > 0 ? 'Resume' : isTimerFinished ? 'Restart' : 'Start';
+  const timerEndTime = timerSeconds > 0 && !isTimerFinished
+    ? new Date(Date.now() + timerSeconds * 1000).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: !timeFormat24h,
+      })
+    : null;
+
+  // Split the display time into individual flip-clock digits. Keys are counted
+  // from the right so existing digits keep their identity when minutes grow
+  // from two digits to three. While editing, the same clock renders the digits
+  // being typed so the layout never changes.
+  const clockText = isEditingTimer ? formatTimerDigits(timerEditDigits) : formatTimerTime(timerDisplaySeconds);
+  const [clockMinutesText, clockSecondsText] = clockText.split(":");
+  const clockMinutesPadded = clockMinutesText.padStart(2, "0");
+  const clockCompact = clockMinutesPadded.length > 2;
+  const minuteDigitItems = clockMinutesPadded.split("").map((digit, i, arr) => ({ digit, key: `m${arr.length - i}` }));
+  const secondDigitItems = clockSecondsText.split("").map((digit, i, arr) => ({ digit, key: `s${arr.length - i}` }));
 
   useEffect(() => {
     if (isTimerRunning && timerSeconds > 0) {
@@ -823,6 +1038,15 @@ function App() {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     };
   }, [isTimerRunning, timerSeconds === 0]);
+
+  // Completion moment: chime once and reveal the notch in peek mode.
+  useEffect(() => {
+    if (isTimerFinished && !prevTimerFinishedRef.current) {
+      if (settingsTimerSoundEnabled) playTimerChime();
+      if (notchMode === 'peek') triggerEventPeek(6000);
+    }
+    prevTimerFinishedRef.current = isTimerFinished;
+  }, [isTimerFinished, settingsTimerSoundEnabled, notchMode, triggerEventPeek]);
 
   const lastTrackRef = useRef<string | null>(null);
   const lastPlayingRef = useRef<boolean>(false);
@@ -908,21 +1132,10 @@ function App() {
     updateTime();
     const interval = setInterval(updateTime, 1000);
 
-    // Toggle compact timer view every 5 seconds if running
-    let timerToggleInterval: any;
-    if (isTimerRunning && bloomMode !== 'calendar') {
-      timerToggleInterval = setInterval(() => {
-        setIsCompactTimerVisible(prev => !prev);
-      }, 5000);
-    } else {
-      setIsCompactTimerVisible(false);
-    }
-
     return () => {
       clearInterval(interval);
-      if (timerToggleInterval) clearInterval(timerToggleInterval);
     };
-  }, [isTimerRunning, bloomMode, timeFormat24h]);
+  }, [timeFormat24h]);
 
   // Battery API
   useEffect(() => {
@@ -1331,7 +1544,8 @@ function App() {
     if (!isExpanded || !isVisible || isHidden) {
       return isImpacted ? 28.9 : 44.2;
     }
-    if (bloomMode === 'calendar') return 310;
+    // Sized to the calendar's week-row count plus the timer's fixed content.
+    if (bloomMode === 'calendar') return calendarMonthRows >= 6 ? 305 : 273;
     if (bloomMode === 'command-center') return isHovered ? 230 : 36;
     if (bloomMode === 'status') return 36;
     if (isMusicMode && isHovered) {
@@ -1724,7 +1938,7 @@ function App() {
                             <div className="time-center">
                               <div className="time-flip-container" onClick={toggleCalendarMode}>
                                 <AnimatePresence initial={false}>
-                                  {isCompactTimerVisible || isTimerFinished ? (
+                                  {timerSeconds > 0 || isTimerFinished ? (
                                     <motion.span
                                       key="timer"
                                       className={`time compact-timer ${isTimerFinished ? 'timer-finished' : ''}`}
@@ -1733,6 +1947,7 @@ function App() {
                                       exit={{ rotateX: 90, opacity: 0 }}
                                       transition={{ type: "spring", stiffness: 600, damping: 30 }}
                                     >
+                                      {isTimerFinished && <BellRing size={13} strokeWidth={2.5} className="timer-bell" />}
                                       {formatTimerTime(timerSeconds)}
                                     </motion.span>
                                   ) : (
@@ -2035,21 +2250,80 @@ function App() {
                     </div>
 
                     <div className="timer-column">
-                      <div className="timer-section-new">
-                        <div className="timer-display-large">
-                          <span className="timer-time-large">{formatTimerTime(timerSeconds)}</span>
+                      <div className={`timer-section-new state-${timerState}`}>
+                        <div className="timer-main">
+                          <div className="timer-status">
+                            {isEditingTimer
+                              ? 'Set duration'
+                              : isTimerFinished
+                                ? "Time's up"
+                                : timerEndTime
+                                  ? `${timerState === 'paused' ? 'Paused · ' : ''}ends ${timerEndTime}`
+                                  : 'Click to edit'}
+                          </div>
+
+                          <div className={`timer-clock-row ${isEditingTimer ? 'editing' : ''}`}>
+                            <div
+                              className={`timer-clock ${isEditingTimer && !timerEditValid ? 'invalid' : ''}`}
+                              onClick={beginTimerEdit}
+                              title={isTimerRunning ? undefined : "Click to set a duration"}
+                            >
+                              {minuteDigitItems.map(({ digit, key }) => (
+                                <RollDigit key={key} value={digit} compact={clockCompact} />
+                              ))}
+                              <span className="timer-colon">:</span>
+                              {secondDigitItems.map(({ digit, key }) => (
+                                <RollDigit key={key} value={digit} compact={clockCompact} />
+                              ))}
+                            </div>
+                            <span className="timer-edit-underline" aria-hidden="true" />
+                            {isEditingTimer && (
+                              <input
+                                ref={timerInputRef}
+                                className="timer-edit-input"
+                                type="text"
+                                inputMode="numeric"
+                                aria-label="Set timer duration"
+                                value={formatTimerDigits(timerEditDigits)}
+                                onChange={(e) => setTimerEditDigits(e.target.value.replace(/\D/g, "").slice(0, 5))}
+                                onKeyDown={(e) => { if (e.key === "Enter") commitTimerEdit(true); }}
+                                onBlur={() => commitTimerEdit(false)}
+                                onWheel={(e) => e.stopPropagation()}
+                              />
+                            )}
+                          </div>
                         </div>
 
-                        <div className="timer-controls-new">
-                          <button onClick={toggleTimer} className="timer-btn primary">
-                            {isTimerRunning ? 'Pause' : 'Start'}
+                        <div className="timer-controls-row">
+                          <span className="timer-controls-spacer" aria-hidden="true" />
+                          <button
+                            onClick={handlePrimaryTimerAction}
+                            onMouseDown={(e) => e.preventDefault()}
+                            className="timer-btn-play"
+                            title={primaryTimerLabel}
+                          >
+                            {isTimerRunning
+                              ? <Pause size={14} strokeWidth={2} fill="currentColor" />
+                              : <Play size={14} strokeWidth={2} fill="currentColor" />}
+                            <span>{primaryTimerLabel}</span>
                           </button>
-                          <button onClick={resetTimer} className="timer-btn secondary">Reset</button>
+                          <button
+                            onClick={resetTimer}
+                            className="timer-btn-reset"
+                            disabled={timerSeconds === 0 && !isTimerFinished}
+                            title="Reset"
+                          >
+                            <RotateCcw size={14} strokeWidth={2.5} />
+                          </button>
                         </div>
 
-                        <div className="timer-presets-new">
+                        <div className="timer-preset-group">
                           {[5, 15, 25, 50].map(mins => (
-                            <button key={mins} onClick={() => startTimer(mins)} className="preset-btn-small">
+                            <button
+                              key={mins}
+                              onClick={() => startTimer(mins * 60)}
+                              className={`timer-preset-segment ${lastDurationSeconds === mins * 60 && !isTimerFinished ? 'active' : ''}`}
+                            >
                               {mins}m
                             </button>
                           ))}

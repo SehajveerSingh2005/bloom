@@ -21,6 +21,9 @@ export function useSettings() {
   const [autostart, setAutostart] = useState(false);
   const [weatherEnabled, setWeatherEnabled] = useState(true);
   const [calendarEnabled, setCalendarEnabled] = useState(true);
+  const [timerSoundEnabled, setTimerSoundEnabled] = useState(
+    () => localStorage.getItem("bloom-timer-sound-enabled") !== "false"
+  );
   const [musicModeEnabled, setMusicModeEnabled] = useState(true);
   const [musicCompactNotch, setMusicCompactNotch] = useState(true);
   const [volumeOverlayEnabled, setVolumeOverlayEnabled] = useState(true);
@@ -119,6 +122,7 @@ export function useSettings() {
 
       apply(getVal("bloom-weather-enabled"), setWeatherEnabled, readBool);
       apply(getVal("bloom-calendar-enabled"), setCalendarEnabled, readBool);
+      apply(getVal("bloom-timer-sound-enabled"), setTimerSoundEnabled, readBool);
       apply(getVal("bloom-music-mode-enabled"), setMusicModeEnabled, readBool);
       apply(getVal("bloom-music-compact-notch"), setMusicCompactNotch, readBool);
       apply(getVal("bloom-volume-overlay-enabled"), setVolumeOverlayEnabled, readBool);
@@ -191,6 +195,7 @@ export function useSettings() {
     "bloom-dock-adaptive": setDockAdaptive,
     "bloom-weather-enabled": setWeatherEnabled,
     "bloom-calendar-enabled": setCalendarEnabled,
+    "bloom-timer-sound-enabled": setTimerSoundEnabled,
     "bloom-music-mode-enabled": setMusicModeEnabled,
     "bloom-music-compact-notch": setMusicCompactNotch,
     "bloom-media-ambience-enabled": setMediaAmbienceEnabled,
@@ -342,6 +347,12 @@ export function useSettings() {
     const next = !calendarEnabled;
     setCalendarEnabled(next);
     saveSetting("bloom-calendar-enabled", String(next));
+  };
+
+  const toggleTimerSound = () => {
+    const next = !timerSoundEnabled;
+    setTimerSoundEnabled(next);
+    saveSetting("bloom-timer-sound-enabled", String(next));
   };
 
   const toggleMusicMode = () => {
@@ -642,6 +653,8 @@ export function useSettings() {
     setNotchModeValue,
     calendarEnabled,
     toggleCalendar,
+    timerSoundEnabled,
+    toggleTimerSound,
     musicModeEnabled,
     toggleMusicMode,
     musicCompactNotch,

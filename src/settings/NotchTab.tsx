@@ -1,6 +1,7 @@
 import {
   PanelTop,
   Calendar,
+  BellRing,
   Music,
   Minimize2,
   LayoutList,
@@ -18,6 +19,8 @@ interface NotchTabProps {
   setNotchModeValue: (mode: string) => void;
   calendarEnabled: boolean;
   toggleCalendar: () => void;
+  timerSoundEnabled: boolean;
+  toggleTimerSound: () => void;
   musicModeEnabled: boolean;
   toggleMusicMode: () => void;
   musicCompactNotch: boolean;
@@ -48,6 +51,8 @@ export function NotchTab({
   setNotchModeValue,
   calendarEnabled,
   toggleCalendar,
+  timerSoundEnabled,
+  toggleTimerSound,
   musicModeEnabled,
   toggleMusicMode,
   musicCompactNotch,
@@ -94,6 +99,15 @@ export function NotchTab({
             <span className="slider"></span>
           </label>
         </SettingRow>
+
+        {calendarEnabled && (
+          <SettingRow icon={BellRing} label="Timer Sound" desc="Play a chime when the timer finishes">
+            <label className="toggle-switch">
+              <input type="checkbox" checked={timerSoundEnabled} onChange={toggleTimerSound} />
+              <span className="slider"></span>
+            </label>
+          </SettingRow>
+        )}
 
         <SettingRow icon={Music} label="Music Mode" desc="Interactive live music widget">
           <label className="toggle-switch">
