@@ -93,6 +93,7 @@ fn main() {
             change_notch_mode,
             sync_appbar,
             open_app,
+            launch_new_instance,
             update_dock_rect,
             update_notch_rect,
             set_dock_hovered,
@@ -263,6 +264,8 @@ fn main() {
             {
                 let _ = crate::state::THUMBNAIL_CACHE.set(std::sync::Mutex::new(std::collections::HashMap::new()));
                 let _ = crate::state::FOCUS_TIMESTAMPS.set(std::sync::Mutex::new(std::collections::HashMap::new()));
+                // Initialize before the scan so its results are actually stored.
+                let _ = crate::state::INSTALLED_APPS_CACHE.set(std::sync::Mutex::new(Vec::new()));
             }
             setup_thumbnail_capture(app.handle().clone());
             trigger_app_scan();

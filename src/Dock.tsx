@@ -422,6 +422,24 @@ const Dock = memo(function Dock() {
     }
   };
 
+  const handleNewInstance = async (app: AppInfo) => {
+    if (!app || app.path === 'start') return;
+    try {
+      await invoke('launch_new_instance', { appPath: app.path, appName: app.name });
+    } catch (e) {
+      console.error(`Failed to launch a new instance of ${app.name}:`, e);
+    }
+  };
+
+  // Middle-click opens a new instance, matching the native taskbar. The
+  // mousedown preventDefault suppresses Chromium's autoscroll cursor.
+  const handleMiddleClick = (e: React.MouseEvent, app: AppInfo) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    handleNewInstance(app);
+  };
+
   const togglePin = async (app: AppInfo) => {
     let newPinned;
     if (app.is_pinned) {
@@ -743,6 +761,8 @@ const Dock = memo(function Dock() {
                     onDragStart={() => { setIsDragging(true); setHoveredApp(null); setPressedApp(null); }}
                     onDragEnd={handleDragEnd}
                     onContextMenu={(e) => handleContextMenu(e, app)}
+                    onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+                    onAuxClick={(e) => handleMiddleClick(e, app)}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (!isDragging) handleAppClick(app);
@@ -849,6 +869,8 @@ const Dock = memo(function Dock() {
                   onContextMenu={(e) => handleContextMenu(e, app)}
                   onMouseEnter={() => setHoveredApp(itemKey(app))}
                   onMouseLeave={() => { if (!isPreviewHoveredRef.current) { setHoveredApp(null); setPressedApp(null); } }}
+                  onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+                  onAuxClick={(e) => handleMiddleClick(e, app)}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleAppClick(app);
@@ -935,6 +957,14 @@ const Dock = memo(function Dock() {
         >
           {contextMenu.app ? (
             <>
+              {contextMenu.app.is_running && contextMenu.app.path !== 'start' && (
+                <>
+                  <div className="menu-item" onClick={() => { handleNewInstance(contextMenu.app!); closeMenu(); }}>
+                    Open New Instance
+                  </div>
+                  <div className="menu-divider" />
+                </>
+              )}
               <div className="menu-item" onClick={() => togglePin(contextMenu.app!)}>
                 {contextMenu.app.is_pinned ? 'Unpin from Dock' : 'Pin to Dock'}
               </div>

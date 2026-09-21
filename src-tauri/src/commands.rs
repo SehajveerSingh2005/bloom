@@ -455,9 +455,46 @@ pub async fn open_app(app: AppHandle, app_name: String) {
         open_settings_window(app);
         return;
     }
-    
-    let path = app_name;
-    tauri::async_runtime::spawn_blocking(move || unsafe {
+
+    tauri::async_runtime::spawn_blocking(move || launch_path(&app_name));
+}
+
+/// Launches another instance of an app instead of focusing an existing window.
+/// Running browser PWAs are relaunched through their Start Menu shortcut so the
+/// new window belongs to the web app rather than the bare browser.
+#[tauri::command]
+pub async fn launch_new_instance(app_path: String, app_name: Option<String>) {
+    tauri::async_runtime::spawn_blocking(move || {
+        if app_path == "start" {
+            return;
+        }
+        let target = pwa_launch_target(&app_path, app_name.as_deref()).unwrap_or(app_path);
+        launch_path(&target);
+    });
+}
+
+/// Finds the Start Menu shortcut of an installed PWA that matches a running
+/// browser-host window: same web app title, hosted by the same browser.
+fn pwa_launch_target(path: &str, name: Option<&str>) -> Option<String> {
+    let name = name?.trim();
+    if name.is_empty() || !is_browser_host_process(path) {
+        return None;
+    }
+    let host_exe = std::path::Path::new(path).file_name()?.to_str()?.to_lowercase();
+    let apps = INSTALLED_APPS_CACHE.get()?.lock().ok()?;
+    apps.iter()
+        .find(|app| is_pwa_shortcut_for(app, name, &host_exe))
+        .map(|app| app.path.clone())
+}
+
+fn is_pwa_shortcut_for(app: &AppInfo, name: &str, host_exe: &str) -> bool {
+    app.name.eq_ignore_ascii_case(name)
+        && app.executable.as_deref().is_some_and(|exe| exe.eq_ignore_ascii_case(host_exe))
+}
+
+/// Opens a file path, shortcut, or shell application id through the shell.
+fn launch_path(path: &str) {
+    unsafe {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         let wide_open: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
@@ -465,8 +502,8 @@ pub async fn open_app(app: AppHandle, app_name: String) {
         // Shortcuts and shell app ids must be launched through the shell itself so
         // that arguments (Chrome/Edge PWAs) and package identities (Store apps) survive.
         let shell_target = if path.to_lowercase().ends_with(".lnk") {
-            Some(path.clone())
-        } else if is_aumid_path(&path) {
+            Some(path.to_string())
+        } else if is_aumid_path(path) {
             let id = path.trim().trim_start_matches("shell:AppsFolder\\");
             Some(format!("shell:AppsFolder\\{}", id))
         } else {
@@ -489,9 +526,7 @@ pub async fn open_app(app: AppHandle, app_name: String) {
             return;
         }
 
-        let actual_path = path.clone();
-
-        if let Some(uwp_cmd) = crate::commands::get_uwp_launch_cmd(&actual_path) {
+        if let Some(uwp_cmd) = crate::commands::get_uwp_launch_cmd(path) {
             let wide_cmd: Vec<u16> = uwp_cmd.encode_utf16().chain(std::iter::once(0)).collect();
             
             let res = ShellExecuteW(
@@ -510,7 +545,7 @@ pub async fn open_app(app: AppHandle, app_name: String) {
         }
 
         use std::path::Path;
-        let mut final_path = actual_path.clone();
+        let mut final_path = path.to_string();
         
         if !Path::new(&final_path).exists() {
             let file_name = Path::new(&final_path).file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
@@ -555,7 +590,7 @@ pub async fn open_app(app: AppHandle, app_name: String) {
         if res.0 as usize <= 32 {
             eprintln!("Failed to open app {}: error code {}", final_path, res.0 as usize);
         }
-    });
+    }
 }
 
 #[tauri::command]
@@ -2437,5 +2472,65 @@ mod pwa_icon_tests {
         assert!(image_size_score(Path::new("C:\\x\\Icons\\256.png")) > image_size_score(Path::new("C:\\x\\Icons\\64.png")));
         assert!(image_size_score(Path::new("C:\\x\\512x512.png")) > image_size_score(Path::new("C:\\x\\192x192.png")));
         assert_eq!(image_size_score(Path::new("C:\\x\\icon.png")), 0);
+    }
+
+    #[test]
+    fn pwa_shortcut_matching() {
+        let app = AppInfo {
+            name: "YouTube".into(),
+            path: "C:\\Users\\x\\Start Menu\\Programs\\YouTube.lnk".into(),
+            icon: None,
+            is_running: false,
+            hwnd: None,
+            executable: Some("brave.exe".into()),
+            all_hwnds: None,
+        };
+        assert!(is_pwa_shortcut_for(&app, "youtube", "brave.exe"));
+        assert!(is_pwa_shortcut_for(&app, "YouTube", "BRAVE.EXE"));
+        assert!(!is_pwa_shortcut_for(&app, "YouTube", "msedge.exe"));
+        assert!(!is_pwa_shortcut_for(&app, "YouTube Music", "brave.exe"));
+    }
+
+    #[test]
+    fn pwa_launch_target_resolution() {
+        // Non-browser paths and missing titles never resolve through the cache.
+        assert_eq!(pwa_launch_target("C:\\Windows\\notepad.exe", Some("Notepad")), None);
+        assert_eq!(pwa_launch_target("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", None), None);
+        assert_eq!(pwa_launch_target("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", Some("   ")), None);
+
+        // With the installed-apps cache populated, a running PWA resolves to its
+        // Start Menu shortcut and a same-titled app under another browser does not.
+        let _ = INSTALLED_APPS_CACHE.set(std::sync::Mutex::new(vec![
+            AppInfo {
+                name: "YouTube".into(),
+                path: "C:\\Start Menu\\YouTube.lnk".into(),
+                icon: None,
+                is_running: false,
+                hwnd: None,
+                executable: Some("brave.exe".into()),
+                all_hwnds: None,
+            },
+            AppInfo {
+                name: "Netflix".into(),
+                path: "C:\\Start Menu\\Netflix.lnk".into(),
+                icon: None,
+                is_running: false,
+                hwnd: None,
+                executable: Some("msedge.exe".into()),
+                all_hwnds: None,
+            },
+        ]));
+        assert_eq!(
+            pwa_launch_target("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", Some("YouTube")),
+            Some("C:\\Start Menu\\YouTube.lnk".into())
+        );
+        assert_eq!(
+            pwa_launch_target("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", Some("YouTube")),
+            None
+        );
+        assert_eq!(
+            pwa_launch_target("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", Some("Netflix")),
+            Some("C:\\Start Menu\\Netflix.lnk".into())
+        );
     }
 }
