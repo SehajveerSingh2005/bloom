@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::sync::{atomic::{AtomicBool, AtomicU8, AtomicI64, AtomicI32, Ordering}, Mutex, OnceLock};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{
 	atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering},
@@ -19,43 +19,134 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use wmi::{COMLibrary, WMIConnection};
 
-pub fn setup_keyboard_hook() -> windows::Win32::UI::WindowsAndMessaging::HHOOK {
-	unsafe {
-		windows::Win32::UI::WindowsAndMessaging::SetWindowsHookExA(
-			windows::Win32::UI::WindowsAndMessaging::WH_KEYBOARD_LL,
-			Some(keyboard_hook_proc),
-			None,
-			0,
-		)
-		.expect("Failed")
-	}
+static KEYBOARD_HOOK_APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+/// Physical Win key state, tracked so Win+1-9 can be claimed while the Win key
+/// itself keeps flowing to the shell (a lone Win tap must still open Start).
+static WIN_KEY_DOWN: AtomicBool = AtomicBool::new(false);
+/// Digit (1-9) of the currently held Win+Number combo, 0 when none. Key
+/// auto-repeat re-fires the keydown; only the first press may toggle an app.
+static WIN_NUMBER_HELD: AtomicU8 = AtomicU8::new(0);
+/// Virtual key Microsoft documents as "unassigned", used as the mask key.
+/// See `send_start_menu_mask`.
+const MASK_VK: u16 = 0xE8;
+
+pub fn setup_keyboard_hook(app_handle: AppHandle) -> windows::Win32::UI::WindowsAndMessaging::HHOOK {
+    let _ = KEYBOARD_HOOK_APP_HANDLE.set(app_handle);
+    unsafe { windows::Win32::UI::WindowsAndMessaging::SetWindowsHookExA(windows::Win32::UI::WindowsAndMessaging::WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0).expect("Failed") }
 }
 
-unsafe extern "system" fn keyboard_hook_proc(
-	code: i32,
-	wparam: windows::Win32::Foundation::WPARAM,
-	lparam: windows::Win32::Foundation::LPARAM,
-) -> windows::Win32::Foundation::LRESULT {
-	use windows::Win32::UI::Input::KeyboardAndMouse::{
-		VIRTUAL_KEY, VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP,
-	};
-	use windows::Win32::UI::WindowsAndMessaging::{KBDLLHOOKSTRUCT, WM_KEYDOWN, WM_SYSKEYDOWN};
-	if code >= 0 {
-		let vk_code = VIRTUAL_KEY((*(lparam.0 as *const KBDLLHOOKSTRUCT)).vkCode as u16);
-		if vk_code == VK_VOLUME_MUTE || vk_code == VK_VOLUME_UP || vk_code == VK_VOLUME_DOWN {
-			if wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize {
-				handle_volume_key_event(vk_code);
-			}
-			return windows::Win32::Foundation::LRESULT(1);
-		}
-		if vk_code.0 == 0x216 || vk_code.0 == 0x217 {
-			if wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize {
-				handle_brightness_key_event(vk_code);
-			}
-			return windows::Win32::Foundation::LRESULT(1);
-		}
-	}
-	windows::Win32::UI::WindowsAndMessaging::CallNextHookEx(None, code, wparam, lparam)
+/// Maps the top-row digit keys `1`-`9` to the zero-based dock slot.
+fn win_number_index(vk: u16) -> Option<u8> {
+    match vk {
+        0x31..=0x39 => Some((vk - 0x31) as u8),
+        _ => None,
+    }
+}
+
+/// The dock's Win+Number replacement can be turned off in Settings > Dock.
+fn dock_win_number_enabled() -> bool {
+    let Some(app) = KEYBOARD_HOOK_APP_HANDLE.get() else { return true };
+    crate::utils::get_setting_str(app, "bloom-dock-win-number-enabled")
+        .map(|v| v != "false")
+        .unwrap_or(true)
+}
+
+/// Physical Win state straight from the OS. The tracked flag can go stale when
+/// a keyup is never delivered (secure desktop, keyboard unplugged, hook
+/// timeout); without this check a stale flag would swallow digits forever.
+fn win_key_physically_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LWIN, VK_RWIN};
+    unsafe {
+        (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000) != 0
+            || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000) != 0
+    }
+}
+
+/// Explorer opens the Start menu when it only sees a Win keydown and keyup.
+/// Swallowing a Win+Number combo would look exactly like that on Win release,
+/// so a tap of an unassigned key is injected first — the same trick as
+/// AutoHotkey's `#MenuMaskKey` — making the shell treat Win as a real modifier.
+fn send_start_menu_mask() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY};
+    let mask = VIRTUAL_KEY(MASK_VK);
+    let inputs = [
+        INPUT {
+            r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+            Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: mask, wScan: 0, dwFlags: Default::default(), time: 0, dwExtraInfo: 0 } },
+        },
+        INPUT {
+            r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+            Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: mask, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 } },
+        },
+    ];
+    unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32); }
+}
+
+/// Hands the slot to the dock window, whose click handler already knows how to
+/// focus a running window or launch a pinned app.
+fn emit_dock_win_number(index: u8) {
+    let Some(app) = KEYBOARD_HOOK_APP_HANDLE.get().cloned() else { return };
+    // Never block the input pipeline on WebView IPC.
+    tauri::async_runtime::spawn(async move {
+        let _ = app.emit_to("dock", "dock-win-number", index);
+    });
+}
+
+unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: windows::Win32::Foundation::WPARAM, lparam: windows::Win32::Foundation::LPARAM) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{KBDLLHOOKSTRUCT, WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP, LLKHF_INJECTED};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_VOLUME_MUTE, VK_VOLUME_UP, VK_VOLUME_DOWN, VK_LWIN, VK_RWIN, VIRTUAL_KEY};
+    if code >= 0 {
+        let kb = *(lparam.0 as *const KBDLLHOOKSTRUCT);
+        let vk_code = VIRTUAL_KEY(kb.vkCode as u16);
+        let is_down = wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize;
+        let is_up = wparam.0 == WM_KEYUP as usize || wparam.0 == WM_SYSKEYUP as usize;
+
+        // Only physical presses drive the Win+Number replacement; injected
+        // events (our own Start taps and mask key) must not re-enter it.
+        if (kb.flags.0 & LLKHF_INJECTED.0) == 0 {
+            if vk_code == VK_LWIN || vk_code == VK_RWIN {
+                if is_down {
+                    WIN_KEY_DOWN.store(true, Ordering::Relaxed);
+                    // A fresh Win press always starts a fresh combo, even if the
+                    // previous digit's keyup was missed.
+                    WIN_NUMBER_HELD.store(0, Ordering::Relaxed);
+                } else if is_up {
+                    WIN_KEY_DOWN.store(false, Ordering::Relaxed);
+                    WIN_NUMBER_HELD.store(0, Ordering::Relaxed);
+                }
+            } else if WIN_KEY_DOWN.load(Ordering::Relaxed) {
+                if let Some(index) = win_number_index(vk_code.0) {
+                    let slot = index + 1;
+                    if is_up {
+                        let _ = WIN_NUMBER_HELD.compare_exchange(slot, 0, Ordering::Relaxed, Ordering::Relaxed);
+                    } else if is_down {
+                        if !win_key_physically_down() {
+                            WIN_KEY_DOWN.store(false, Ordering::Relaxed);
+                            WIN_NUMBER_HELD.store(0, Ordering::Relaxed);
+                        } else if NATIVE_TASKBAR_HIDDEN.load(Ordering::Relaxed)
+                            && dock_win_number_enabled()
+                        {
+                            if WIN_NUMBER_HELD.swap(slot, Ordering::Relaxed) != slot {
+                                send_start_menu_mask();
+                                emit_dock_win_number(index);
+                            }
+                            return windows::Win32::Foundation::LRESULT(1);
+                        }
+                    }
+                }
+            }
+        }
+
+        if vk_code == VK_VOLUME_MUTE || vk_code == VK_VOLUME_UP || vk_code == VK_VOLUME_DOWN {
+            if is_down { handle_volume_key_event(vk_code); }
+            return windows::Win32::Foundation::LRESULT(1);
+        }
+        if vk_code.0 == 0x216 || vk_code.0 == 0x217 {
+            if is_down { handle_brightness_key_event(vk_code); }
+            return windows::Win32::Foundation::LRESULT(1);
+        }
+    }
+    windows::Win32::UI::WindowsAndMessaging::CallNextHookEx(None, code, wparam, lparam)
 }
 
 fn handle_volume_key_event(vk_code: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) {
@@ -3078,4 +3169,20 @@ unsafe extern "system" fn display_monitor_proc(
 		}
 		_ => DefWindowProcW(hwnd, msg, wparam, lparam),
 	}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::win_number_index;
+
+    #[test]
+    fn win_number_maps_top_row_digits_only() {
+        assert_eq!(win_number_index(0x31), Some(0));
+        assert_eq!(win_number_index(0x35), Some(4));
+        assert_eq!(win_number_index(0x39), Some(8));
+        // 0, letters and numpad digits are not dock slots
+        assert_eq!(win_number_index(0x30), None);
+        assert_eq!(win_number_index(0x41), None);
+        assert_eq!(win_number_index(0x61), None);
+    }
 }

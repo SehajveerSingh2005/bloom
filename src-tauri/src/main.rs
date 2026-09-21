@@ -258,20 +258,24 @@ fn main() {
 
 			sync_overlays(app.handle());
 
-			// Initialize the overlay window — on Windows, set_position doesn't
-			// take effect on a window that has never been shown. Show it once
-			// to register it with the compositor, then hide immediately.
-			if let Some(ov_win) = app.get_webview_window("overlay") {
-				let _ = ov_win.show();
-				let _ = ov_win.hide();
-				let overlay_handle = app.handle().clone();
-				ov_win.on_window_event(move |e| {
-					if let tauri::WindowEvent::CloseRequested { api, .. } = e {
-						api.prevent_close();
-						restore_taskbar_and_exit(&overlay_handle);
-					}
-				});
-			}
+            setup_mouse_hook(app.handle().clone());
+            setup_display_change_monitor(app.handle().clone());
+            setup_window_change_hook(app.handle().clone());
+            {
+                let _ = crate::state::THUMBNAIL_CACHE.set(std::sync::Mutex::new(std::collections::HashMap::new()));
+                let _ = crate::state::FOCUS_TIMESTAMPS.set(std::sync::Mutex::new(std::collections::HashMap::new()));
+                // Initialize before the scan so its results are actually stored.
+                let _ = crate::state::INSTALLED_APPS_CACHE.set(std::sync::Mutex::new(Vec::new()));
+            }
+            setup_thumbnail_capture(app.handle().clone());
+            trigger_app_scan();
+            let tx = setup_system_worker(app.handle().clone());
+            let _ = COMMAND_SENDER.set(tx.clone());
+            let _hook = services::setup_keyboard_hook(app.handle().clone());
+            setup_taskbar_hook();
+            setup_audio_visualization(app.handle().clone());
+            crate::utils::init_settings_cache(app.handle());
+            setup_settings_watcher(app.handle().clone());
 
 			setup_mouse_hook(app.handle().clone());
 			setup_display_change_monitor(app.handle().clone());

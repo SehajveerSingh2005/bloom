@@ -1,30 +1,34 @@
-import { Monitor, Eye, EyeOff, Circle, Maximize2 } from "lucide-react";
+import { Monitor, Eye, EyeOff, Circle, Maximize2, Keyboard } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 
 interface DockTabProps {
-	dockEnabled: boolean;
-	toggleDock: () => void;
-	dockMode: string;
-	setDockModeValue: (mode: string) => void;
-	dockPreviewEnabled: boolean;
-	toggleDockPreview: () => void;
-	dockIconOnly: boolean;
-	toggleDockIconOnly: () => void;
-	dockAdaptive: boolean;
-	toggleDockAdaptive: () => void;
+  dockEnabled: boolean;
+  toggleDock: () => void;
+  dockMode: string;
+  setDockModeValue: (mode: string) => void;
+  dockPreviewEnabled: boolean;
+  toggleDockPreview: () => void;
+  dockIconOnly: boolean;
+  toggleDockIconOnly: () => void;
+  dockAdaptive: boolean;
+  toggleDockAdaptive: () => void;
+  dockWinNumberEnabled: boolean;
+  toggleDockWinNumber: () => void;
 }
 
 export function DockTab({
-	dockEnabled,
-	toggleDock,
-	dockMode,
-	setDockModeValue,
-	dockPreviewEnabled,
-	toggleDockPreview,
-	dockIconOnly,
-	toggleDockIconOnly,
-	dockAdaptive,
-	toggleDockAdaptive
+  dockEnabled,
+  toggleDock,
+  dockMode,
+  setDockModeValue,
+  dockPreviewEnabled,
+  toggleDockPreview,
+  dockIconOnly,
+  toggleDockIconOnly,
+  dockAdaptive,
+  toggleDockAdaptive,
+  dockWinNumberEnabled,
+  toggleDockWinNumber,
 }: DockTabProps) {
 	return (
 		<>
@@ -62,34 +66,31 @@ export function DockTab({
 							</label>
 						</SettingRow>
 
-						<SettingRow
-							icon={Circle}
-							label="Icon Only"
-							desc="Remove icon background and padding"
-							divider={dockMode === "fixed"}
-						>
-							<label className="toggle-switch">
-								<input type="checkbox" checked={dockIconOnly} onChange={toggleDockIconOnly} />
-								<span className="slider"></span>
-							</label>
-						</SettingRow>
+            <SettingRow icon={Circle} label="Icon Only" desc="Remove icon background and padding" divider={false}>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={dockIconOnly} onChange={toggleDockIconOnly} />
+                <span className="slider"></span>
+              </label>
+            </SettingRow>
 
-						{dockMode === "fixed" && (
-							<SettingRow
-								icon={Maximize2}
-								label="Adaptive Mode"
-								desc="Stretch to full width when a window is maximized"
-								divider={false}
-							>
-								<label className="toggle-switch">
-									<input type="checkbox" checked={dockAdaptive} onChange={toggleDockAdaptive} />
-									<span className="slider"></span>
-								</label>
-							</SettingRow>
-						)}
-					</>
-				)}
-			</div>
-		</>
-	);
+            <SettingRow icon={Keyboard} label="Win+Number Shortcuts" desc="Open pinned apps with Win+1 through Win+9" divider={dockMode === "fixed"}>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={dockWinNumberEnabled} onChange={toggleDockWinNumber} />
+                <span className="slider"></span>
+              </label>
+            </SettingRow>
+
+            {dockMode === "fixed" && (
+              <SettingRow icon={Maximize2} label="Adaptive Mode" desc="Stretch to full width when a window is maximized" divider={false}>
+                <label className="toggle-switch">
+                  <input type="checkbox" checked={dockAdaptive} onChange={toggleDockAdaptive} />
+                  <span className="slider"></span>
+                </label>
+              </SettingRow>
+            )}
+          </>
+        )}
+      </div>
+    </>
+  );
 }
