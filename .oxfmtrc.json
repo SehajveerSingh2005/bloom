@@ -1,6 +1,6 @@
 {
-  "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "trailingComma": "none",
-  "useTabs": true,
-  "ignorePatterns": ["dist/", "CHANGELOG.md", "node_modules/"]
+	"$schema": "./node_modules/oxfmt/configuration_schema.json",
+	"trailingComma": "none",
+	"useTabs": true,
+	"ignorePatterns": ["dist/", "CHANGELOG.md", "node_modules/"]
 }

@@ -1,6 +1,6 @@
 export interface UpdateCheckResult {
-  available: boolean;
-  version?: string;
-  date?: string;
-  body?: string;
+	available: boolean;
+	version?: string;
+	date?: string;
+	body?: string;
 }

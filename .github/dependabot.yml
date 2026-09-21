@@ -8,13 +8,13 @@ updates:
     rebase-strategy: auto
     groups:
       root-version-updates:
-        patterns: ['*']
+        patterns: ["*"]
         update-types: [minor, patch]
       root-security-updates:
         applies-to: security-updates
-        patterns: ['*']
+        patterns: ["*"]
     ignore:
-      - dependency-name: '*'
+      - dependency-name: "*"
         update-types: [version-update:semver-major]
 
   - package-ecosystem: npm
@@ -25,13 +25,13 @@ updates:
     rebase-strategy: auto
     groups:
       website-version-updates:
-        patterns: ['*']
+        patterns: ["*"]
         update-types: [minor, patch]
       website-security-updates:
         applies-to: security-updates
-        patterns: ['*']
+        patterns: ["*"]
     ignore:
-      - dependency-name: '*'
+      - dependency-name: "*"
         update-types: [version-update:semver-major]
 
   - package-ecosystem: cargo
@@ -42,13 +42,13 @@ updates:
     rebase-strategy: auto
     groups:
       cargo-version-updates:
-        patterns: ['*']
+        patterns: ["*"]
         update-types: [minor, patch]
       cargo-security-updates:
         applies-to: security-updates
-        patterns: ['*']
+        patterns: ["*"]
     ignore:
-      - dependency-name: '*'
+      - dependency-name: "*"
         update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
@@ -59,7 +59,7 @@ updates:
     rebase-strategy: auto
     groups:
       actions-updates:
-        patterns: ['*']
+        patterns: ["*"]
     ignore:
-      - dependency-name: '*'
+      - dependency-name: "*"
         update-types: [version-update:semver-major]
