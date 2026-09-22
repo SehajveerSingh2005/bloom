@@ -11,7 +11,7 @@
 		"tauri": "tauri",
 		"bump": "bun scripts/bump-version.mjs",
 		"release": "bun scripts/release.mjs",
-		"format": "bun x oxfmt && cd src-tauri && cargo fmt"
+		"format": "oxfmt && cd src-tauri && cargo fmt"
 	},
 	"dependencies": {
 		"@crabnebula/tauri-plugin-drag": "^2.1.0",
@@ -33,7 +33,7 @@
 		"@types/react-dom": "^19.3.0",
 		"@vitejs/plugin-react": "^4.7.0",
 		"autoprefixer": "^10.6.1",
-		"oxfmt": "^0.70.0",
+		"oxfmt": "0.70.0",
 		"postcss": "^8.5.28",
 		"tailwindcss": "^4.3.3",
 		"typescript": "~5.9.3",
