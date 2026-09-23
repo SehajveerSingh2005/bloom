@@ -2,8 +2,8 @@ use crate::types::{AppInfo, IntRect, SystemCommand};
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::{
-	atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32},
-	Mutex, OnceLock,
+    atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32},
+    Mutex, OnceLock,
 };
 use tauri::{AppHandle, PhysicalPosition, PhysicalSize};
 
@@ -39,28 +39,28 @@ pub static SINGLE_INSTANCE_MUTEX_HANDLE: OnceLock<isize> = OnceLock::new();
 pub static SINGLE_INSTANCE_EVENT_HANDLE: OnceLock<isize> = OnceLock::new();
 
 pub fn close_single_instance_handles() {
-	use windows::Win32::Foundation::CloseHandle;
-	use windows::Win32::Foundation::HANDLE;
-	if let Some(&h) = SINGLE_INSTANCE_MUTEX_HANDLE.get() {
-		if h != 0 {
-			unsafe {
-				let _ = CloseHandle(HANDLE(h as *mut _));
-			}
-		}
-	}
-	if let Some(&h) = SINGLE_INSTANCE_EVENT_HANDLE.get() {
-		if h != 0 {
-			unsafe {
-				let _ = CloseHandle(HANDLE(h as *mut _));
-			}
-		}
-	}
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Foundation::HANDLE;
+    if let Some(&h) = SINGLE_INSTANCE_MUTEX_HANDLE.get() {
+        if h != 0 {
+            unsafe {
+                let _ = CloseHandle(HANDLE(h as *mut _));
+            }
+        }
+    }
+    if let Some(&h) = SINGLE_INSTANCE_EVENT_HANDLE.get() {
+        if h != 0 {
+            unsafe {
+                let _ = CloseHandle(HANDLE(h as *mut _));
+            }
+        }
+    }
 }
 
 pub static MAIN_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> =
-	Mutex::new(None);
+    Mutex::new(None);
 pub static DOCK_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> =
-	Mutex::new(None);
+    Mutex::new(None);
 
 pub static DISPLAY_MONITOR_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 pub static LAST_DISPLAY_CHANGE_MS: AtomicI64 = AtomicI64::new(0);
