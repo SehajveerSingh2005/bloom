@@ -1,28 +1,27 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod types;
-mod state;
-mod utils;
-mod services;
 mod commands;
+mod services;
+mod state;
+mod types;
 mod updater;
+mod utils;
 
-use tauri::Manager;
-use windows::Win32::System::Console::SetConsoleCtrlHandler;
-use windows::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
-use windows::core::BOOL;
 use std::sync::atomic::Ordering;
+use tauri::Manager;
+use windows::core::BOOL;
+use windows::Win32::System::Console::SetConsoleCtrlHandler;
+use windows::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT};
 
+use crate::commands::*;
+use crate::services::*;
 use crate::state::*;
 use crate::utils::*;
-use crate::services::*;
-use crate::commands::*;
 
 unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     if ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT {
         set_taskbar_visibility(true, true);
         NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
-
     }
     BOOL(0)
 }
@@ -34,29 +33,50 @@ fn main() {
 
     // Single-instance enforcement
     unsafe {
-        use windows::Win32::System::Threading::{CreateMutexW, CreateEventW, OpenEventW, SetEvent, SYNCHRONIZATION_ACCESS_RIGHTS};
-        use windows::Win32::Foundation::{GetLastError, CloseHandle};
+        use windows::Win32::Foundation::{CloseHandle, GetLastError};
+        use windows::Win32::System::Threading::{
+            CreateEventW, CreateMutexW, OpenEventW, SetEvent, SYNCHRONIZATION_ACCESS_RIGHTS,
+        };
 
-        let mutex_name: Vec<u16> = "BloomSingleInstance".encode_utf16().chain(std::iter::once(0)).collect();
-        let event_name: Vec<u16> = "BloomOpenSettings".encode_utf16().chain(std::iter::once(0)).collect();
+        let mutex_name: Vec<u16> = "BloomSingleInstance"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let event_name: Vec<u16> = "BloomOpenSettings"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
 
         let h_mutex = CreateMutexW(None, true, windows::core::PCWSTR(mutex_name.as_ptr())).ok();
         let err = GetLastError();
 
         if err.0 == 183 {
             // Another instance is already running — signal it to open settings
-            if let Ok(h_event) = OpenEventW(SYNCHRONIZATION_ACCESS_RIGHTS(0x00100002), false, windows::core::PCWSTR(event_name.as_ptr())) {
+            if let Ok(h_event) = OpenEventW(
+                SYNCHRONIZATION_ACCESS_RIGHTS(0x00100002),
+                false,
+                windows::core::PCWSTR(event_name.as_ptr()),
+            ) {
                 let _ = SetEvent(h_event);
                 let _ = CloseHandle(h_event);
             }
-            if let Some(h) = h_mutex { let _ = CloseHandle(h); }
+            if let Some(h) = h_mutex {
+                let _ = CloseHandle(h);
+            }
             return;
         }
 
-        if let Ok(h_event) = CreateEventW(None, false, false, windows::core::PCWSTR(event_name.as_ptr())) {
+        if let Ok(h_event) = CreateEventW(
+            None,
+            false,
+            false,
+            windows::core::PCWSTR(event_name.as_ptr()),
+        ) {
             let _ = SINGLE_INSTANCE_EVENT_HANDLE.set(h_event.0 as isize);
         }
-        if let Some(h) = h_mutex { let _ = SINGLE_INSTANCE_MUTEX_HANDLE.set(h.0 as isize); }
+        if let Some(h) = h_mutex {
+            let _ = SINGLE_INSTANCE_MUTEX_HANDLE.set(h.0 as isize);
+        }
     }
 
     setup_brightness_worker();
@@ -86,7 +106,6 @@ fn main() {
             media_previous,
             media_seek,
             open_media_source_app,
-
             init_dock,
             toggle_dock,
             change_dock_mode,
@@ -188,57 +207,53 @@ fn main() {
             let u_main = update_main_rect.clone();
             let win_for_events = window.clone();
             let handle_for_events = app.handle().clone();
-            window.on_window_event(move |e| {
-                match e {
-                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
-                        u_main();
-                        sync_overlays(&handle_for_events);
-                    }
-                    tauri::WindowEvent::ScaleFactorChanged { .. } => {
-                        let w = win_for_events.clone();
-                        let h = handle_for_events.clone();
-                        tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                            register_appbar(w);
-                            sync_overlays(&h);
-                        });
-                    }
-                    tauri::WindowEvent::CloseRequested { api, .. } => {
-                        api.prevent_close();
-                        restore_taskbar_and_exit(&handle_for_events);
-                    }
-                    _ => {}
+            window.on_window_event(move |e| match e {
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                    u_main();
+                    sync_overlays(&handle_for_events);
                 }
+                tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                    let w = win_for_events.clone();
+                    let h = handle_for_events.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        register_appbar(w);
+                        sync_overlays(&h);
+                    });
+                }
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    restore_taskbar_and_exit(&handle_for_events);
+                }
+                _ => {}
             });
 
             let u_dock = update_dock_window_rect.clone();
             let dock_for_events = dock_win.clone();
             let handle_for_dock_events = app.handle().clone();
-            dock_win.on_window_event(move |e| {
-                match e {
-                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
-                        u_dock();
-                        sync_overlays(&handle_for_dock_events);
-                    }
-                    tauri::WindowEvent::ScaleFactorChanged { .. } => {
-                        let h = handle_for_dock_events.clone();
-                        if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
-                            let w = dock_for_events.clone();
-                            tauri::async_runtime::spawn(async move {
-                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                                register_dock_appbar(w);
-                                sync_overlays(&h);
-                            });
-                        } else {
-                             sync_overlays(&h);
-                        }
-                    }
-                    tauri::WindowEvent::CloseRequested { api, .. } => {
-                        api.prevent_close();
-                        restore_taskbar_and_exit(&handle_for_dock_events);
-                    }
-                    _ => {}
+            dock_win.on_window_event(move |e| match e {
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                    u_dock();
+                    sync_overlays(&handle_for_dock_events);
                 }
+                tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                    let h = handle_for_dock_events.clone();
+                    if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                        let w = dock_for_events.clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            register_dock_appbar(w);
+                            sync_overlays(&h);
+                        });
+                    } else {
+                        sync_overlays(&h);
+                    }
+                }
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    restore_taskbar_and_exit(&handle_for_dock_events);
+                }
+                _ => {}
             });
 
             sync_overlays(app.handle());
@@ -262,8 +277,10 @@ fn main() {
             setup_display_change_monitor(app.handle().clone());
             setup_window_change_hook(app.handle().clone());
             {
-                let _ = crate::state::THUMBNAIL_CACHE.set(std::sync::Mutex::new(std::collections::HashMap::new()));
-                let _ = crate::state::FOCUS_TIMESTAMPS.set(std::sync::Mutex::new(std::collections::HashMap::new()));
+                let _ = crate::state::THUMBNAIL_CACHE
+                    .set(std::sync::Mutex::new(std::collections::HashMap::new()));
+                let _ = crate::state::FOCUS_TIMESTAMPS
+                    .set(std::sync::Mutex::new(std::collections::HashMap::new()));
                 // Initialize before the scan so its results are actually stored.
                 let _ = crate::state::INSTALLED_APPS_CACHE.set(std::sync::Mutex::new(Vec::new()));
             }
@@ -282,8 +299,8 @@ fn main() {
                 if h_event != 0 {
                     let app_handle = app.handle().clone();
                     std::thread::spawn(move || {
-                        use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
                         use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
+                        use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
                         let h_event = HANDLE(h_event as *mut _);
                         loop {
                             let result = unsafe { WaitForSingleObject(h_event, INFINITE) };
@@ -342,7 +359,9 @@ fn main() {
                             if let Some(w) = ah.get_webview_window("dock") {
                                 unregister_appbar_native(w.hwnd().unwrap());
                             }
-                            if let Some(w) = ah.get_webview_window("settings") { let _ = w.destroy(); }
+                            if let Some(w) = ah.get_webview_window("settings") {
+                                let _ = w.destroy();
+                            }
                             set_taskbar_visibility(true, true);
                             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
                             close_single_instance_handles();
@@ -374,7 +393,6 @@ fn main() {
         if let tauri::RunEvent::Exit = event {
             set_taskbar_visibility(true, true);
             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
-
         }
     });
 }

@@ -1,7 +1,10 @@
-use std::sync::{atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicI64}, Mutex, OnceLock};
-use std::sync::mpsc::Sender;
+use crate::types::{AppInfo, IntRect, SystemCommand};
 use std::collections::HashMap;
-use crate::types::{SystemCommand, IntRect, AppInfo};
+use std::sync::mpsc::Sender;
+use std::sync::{
+    atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32},
+    Mutex, OnceLock,
+};
 use tauri::{AppHandle, PhysicalPosition, PhysicalSize};
 
 pub static COMMAND_SENDER: OnceLock<Sender<SystemCommand>> = OnceLock::new();
@@ -10,7 +13,6 @@ pub static DOCK_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub static CURRENT_DOCK_OVERLAP: AtomicI32 = AtomicI32::new(-1);
 pub static CURRENT_NOTCH_OVERLAP: AtomicI32 = AtomicI32::new(-1);
 pub static NATIVE_TASKBAR_HIDDEN: AtomicBool = AtomicBool::new(false);
-
 
 pub static DOCK_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
 pub static NOTCH_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
@@ -41,18 +43,24 @@ pub fn close_single_instance_handles() {
     use windows::Win32::Foundation::HANDLE;
     if let Some(&h) = SINGLE_INSTANCE_MUTEX_HANDLE.get() {
         if h != 0 {
-            unsafe { let _ = CloseHandle(HANDLE(h as *mut _)); }
+            unsafe {
+                let _ = CloseHandle(HANDLE(h as *mut _));
+            }
         }
     }
     if let Some(&h) = SINGLE_INSTANCE_EVENT_HANDLE.get() {
         if h != 0 {
-            unsafe { let _ = CloseHandle(HANDLE(h as *mut _)); }
+            unsafe {
+                let _ = CloseHandle(HANDLE(h as *mut _));
+            }
         }
     }
 }
 
-pub static MAIN_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> = Mutex::new(None);
-pub static DOCK_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> = Mutex::new(None);
+pub static MAIN_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> =
+    Mutex::new(None);
+pub static DOCK_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> =
+    Mutex::new(None);
 
 pub static DISPLAY_MONITOR_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 pub static LAST_DISPLAY_CHANGE_MS: AtomicI64 = AtomicI64::new(0);
@@ -60,4 +68,3 @@ pub static LAST_DISPLAY_CHANGE_MS: AtomicI64 = AtomicI64::new(0);
 pub static THUMBNAIL_CACHE: OnceLock<Mutex<HashMap<isize, (String, i64)>>> = OnceLock::new();
 pub static FOCUS_TIMESTAMPS: OnceLock<Mutex<HashMap<isize, i64>>> = OnceLock::new();
 pub static SETTINGS_CACHE: OnceLock<Mutex<HashMap<String, serde_json::Value>>> = OnceLock::new();
-

@@ -4,41 +4,41 @@ import { fileURLToPath } from "node:url";
 
 const version = process.argv[2];
 if (!/^\d+\.\d+\.\d+$/.test(version ?? "")) {
-  console.error("Usage: bun run release <major.minor.patch>");
-  process.exit(1);
+	console.error("Usage: bun run release <major.minor.patch>");
+	process.exit(1);
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const run = (command) => execSync(command, { cwd: root, stdio: "inherit" });
 const tag = `v${version}`;
 const versionFiles = [
-  "package.json",
-  "src-tauri/tauri.conf.json",
-  "src-tauri/Cargo.toml",
-  "src-tauri/Cargo.lock",
+	"package.json",
+	"src-tauri/tauri.conf.json",
+	"src-tauri/Cargo.toml",
+	"src-tauri/Cargo.lock"
 ];
 
 const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: root }).toString().trim();
 if (branch !== "main") {
-  console.error(`Releases must be cut from main (currently on ${branch}).`);
-  process.exit(1);
+	console.error(`Releases must be cut from main (currently on ${branch}).`);
+	process.exit(1);
 }
 
 if (execSync(`git tag --list ${tag}`, { cwd: root }).toString().trim()) {
-  console.error(`Tag ${tag} already exists.`);
-  process.exit(1);
+	console.error(`Tag ${tag} already exists.`);
+	process.exit(1);
 }
 
 run(`bun scripts/bump-version.mjs ${version}`);
 
 const changed = execSync(`git diff --name-only -- ${versionFiles.join(" ")}`, { cwd: root })
-  .toString()
-  .split(/\r?\n/)
-  .filter(Boolean);
+	.toString()
+	.split(/\r?\n/)
+	.filter(Boolean);
 const missing = versionFiles.filter((file) => !changed.includes(file));
 if (missing.length > 0) {
-  console.error(`Version bump did not modify: ${missing.join(", ")}`);
-  process.exit(1);
+	console.error(`Version bump did not modify: ${missing.join(", ")}`);
+	process.exit(1);
 }
 
 run(`git commit -m "chore(release): ${tag}" -- ${versionFiles.join(" ")}`);

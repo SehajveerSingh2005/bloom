@@ -1,12 +1,15 @@
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, Window};
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
-use std::sync::atomic::Ordering;
 
-use crate::types::{IntRect, AppInfo, BrightnessChangeEvent};
+use crate::services::{
+    enum_windows_proc, register_appbar, register_dock_appbar, sync_overlays,
+    unregister_appbar_native,
+};
 use crate::state::*;
+use crate::types::{AppInfo, BrightnessChangeEvent, IntRect};
 use crate::utils::*;
-use crate::services::{register_appbar, register_dock_appbar, sync_overlays, unregister_appbar_native, enum_windows_proc};
 use std::collections::HashMap;
 
 #[tauri::command]
@@ -69,8 +72,7 @@ pub async fn init_dock(app: AppHandle, mode: String) {
     // The frontend already checks this, but settings.json may have a stale
     // value if the write didn't complete before restart. Reading here too
     // makes the dock reliably stay hidden regardless of frontend timing.
-    let enabled = get_setting_str(&app, "bloom-dock-enabled")
-        .unwrap_or_else(|| "true".to_string());
+    let enabled = get_setting_str(&app, "bloom-dock-enabled").unwrap_or_else(|| "true".to_string());
     if enabled != "true" {
         if let Some(dock_win) = app.get_webview_window("dock") {
             let _ = dock_win.hide();
@@ -82,7 +84,9 @@ pub async fn init_dock(app: AppHandle, mode: String) {
     if let Some(dock_win) = app.get_webview_window("dock") {
         // 1. Always show first — idempotent, required before any positioning
         let _ = dock_win.show();
-        if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
+        if let Ok(hwnd) = dock_win.hwnd() {
+            re_assert_topmost(hwnd);
+        }
 
         // 2. Register as appbar (fixed) or manually position (auto-hide)
         if mode == "fixed" {
@@ -98,11 +102,17 @@ pub async fn init_dock(app: AppHandle, mode: String) {
                     // Never use a hardcoded fallback — wrong values produce off-screen placement.
                     // Extract HWND as isize before any await (raw pointer is not Send).
                     let hwnd_val = dock_clone.hwnd().map(|h| h.0 as isize).unwrap_or(0);
-                    let ph = dock_clone.outer_size().map(|s| s.height as i32).unwrap_or(0);
+                    let ph = dock_clone
+                        .outer_size()
+                        .map(|s| s.height as i32)
+                        .unwrap_or(0);
                     let monitor_info = dock_clone.primary_monitor().ok().flatten().map(|m| {
                         let s = m.size();
                         let p = m.position();
-                        (tauri::PhysicalSize::new(s.width, s.height), tauri::PhysicalPosition::new(p.x, p.y))
+                        (
+                            tauri::PhysicalSize::new(s.width, s.height),
+                            tauri::PhysicalPosition::new(p.x, p.y),
+                        )
                     });
 
                     if hwnd_val != 0 {
@@ -110,25 +120,31 @@ pub async fn init_dock(app: AppHandle, mode: String) {
                             if ph <= 10 {
                                 // outer_size() not ready yet — retry next tick
                                 if attempt < 19 {
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(200))
+                                        .await;
                                 }
                                 continue;
                             }
                             let final_y = m_pos.y + m_size.height as i32 - ph;
                             unsafe {
-                                use windows::Win32::UI::WindowsAndMessaging::{
-                                    SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED
-                                };
                                 use windows::Win32::Foundation::HWND;
+                                use windows::Win32::UI::WindowsAndMessaging::{
+                                    SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER,
+                                };
                                 let _ = SetWindowPos(
-                                    HWND(hwnd_val as *mut _), None,
-                                    m_pos.x, final_y,
-                                    m_size.width as i32, ph,
-                                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+                                    HWND(hwnd_val as *mut _),
+                                    None,
+                                    m_pos.x,
+                                    final_y,
+                                    m_size.width as i32,
+                                    ph,
+                                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
                                 );
                             }
                             // Re-assert topmost after repositioning
-                            if let Ok(hwnd) = dock_clone.hwnd() { re_assert_topmost(hwnd); }
+                            if let Ok(hwnd) = dock_clone.hwnd() {
+                                re_assert_topmost(hwnd);
+                            }
                             // Ensure visible after positioning
                             let _ = dock_clone.show();
                             break;
@@ -150,7 +166,10 @@ pub async fn init_dock(app: AppHandle, mode: String) {
         let _ = app.emit("dock-overlap", false);
         // Sync the adaptive-dock signal so the dock expands immediately if a
         // maximized window is already in the foreground when it's enabled.
-        let _ = app.emit("dock-maximized", CURRENT_FOREGROUND_MAXIMIZED.load(Ordering::Relaxed));
+        let _ = app.emit(
+            "dock-maximized",
+            CURRENT_FOREGROUND_MAXIMIZED.load(Ordering::Relaxed),
+        );
     }
 }
 
@@ -190,17 +209,21 @@ pub async fn sync_appbar(app: AppHandle) {
         if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
             register_appbar(main_win);
         } else {
-            if let Ok(hwnd) = main_win.hwnd() { re_assert_topmost(hwnd); }
+            if let Ok(hwnd) = main_win.hwnd() {
+                re_assert_topmost(hwnd);
+            }
         }
     }
     if let Some(dock_win) = app.get_webview_window("dock") {
         // Skip dock re-registration if dock is disabled in settings.
-        let dock_enabled = get_setting_str(&app, "bloom-dock-enabled")
-            .unwrap_or_else(|| "true".to_string());
+        let dock_enabled =
+            get_setting_str(&app, "bloom-dock-enabled").unwrap_or_else(|| "true".to_string());
         if dock_enabled == "true" && DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
             register_dock_appbar(dock_win);
         } else {
-            if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
+            if let Ok(hwnd) = dock_win.hwnd() {
+                re_assert_topmost(hwnd);
+            }
         }
     }
     sync_overlays(&app);
@@ -219,7 +242,7 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
                     unregister_appbar_native(HWND(hwnd_val as *mut _));
                 });
                 DOCK_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
-                
+
                 // Retry primary_monitor() — can fail on autostart before shell initializes
                 let dock_clone = dock_win.clone();
                 tauri::async_runtime::spawn(async move {
@@ -227,28 +250,48 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
                         // Never fall back to a hardcoded pixel height.
                         // Extract HWND as isize before any await (raw pointer is not Send).
                         let hwnd_val = dock_clone.hwnd().map(|h| h.0 as isize).unwrap_or(0);
-                        let ph = dock_clone.outer_size().map(|s| s.height as i32).unwrap_or(0);
+                        let ph = dock_clone
+                            .outer_size()
+                            .map(|s| s.height as i32)
+                            .unwrap_or(0);
                         let monitor_info = dock_clone.primary_monitor().ok().flatten().map(|m| {
                             let s = m.size();
                             let p = m.position();
-                            (tauri::PhysicalSize::new(s.width, s.height), tauri::PhysicalPosition::new(p.x, p.y))
+                            (
+                                tauri::PhysicalSize::new(s.width, s.height),
+                                tauri::PhysicalPosition::new(p.x, p.y),
+                            )
                         });
 
                         if hwnd_val != 0 {
                             if let Some((m_size, m_pos)) = monitor_info {
                                 if ph <= 10 {
                                     if attempt < 9 {
-                                        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(300))
+                                            .await;
                                     }
                                     continue;
                                 }
                                 let final_y = m_pos.y + m_size.height as i32 - ph;
                                 unsafe {
-                                    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED};
                                     use windows::Win32::Foundation::HWND;
-                                    let _ = SetWindowPos(HWND(hwnd_val as *mut _), None, m_pos.x, final_y, m_size.width as i32, ph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                                    use windows::Win32::UI::WindowsAndMessaging::{
+                                        SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+                                        SWP_NOZORDER,
+                                    };
+                                    let _ = SetWindowPos(
+                                        HWND(hwnd_val as *mut _),
+                                        None,
+                                        m_pos.x,
+                                        final_y,
+                                        m_size.width as i32,
+                                        ph,
+                                        SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                                    );
                                 }
-                                if let Ok(hwnd) = dock_clone.hwnd() { re_assert_topmost(hwnd); }
+                                if let Ok(hwnd) = dock_clone.hwnd() {
+                                    re_assert_topmost(hwnd);
+                                }
                                 break;
                             }
                         }
@@ -259,19 +302,23 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
                 });
             }
         }
-        
+
         // Ensure always on top and native taskbar stays hidden
-        if let Ok(hwnd) = dock_win.hwnd() { re_assert_topmost(hwnd); }
+        if let Ok(hwnd) = dock_win.hwnd() {
+            re_assert_topmost(hwnd);
+        }
         set_taskbar_visibility(false, false);
         NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
 
-        
         // Sync the current overlap state immediately to the frontend
         let current = CURRENT_DOCK_OVERLAP.load(Ordering::Relaxed);
         if current != -1 {
             let _ = app.emit("dock-overlap", current == 1);
         }
-        let _ = app.emit("dock-maximized", CURRENT_FOREGROUND_MAXIMIZED.load(Ordering::Relaxed));
+        let _ = app.emit(
+            "dock-maximized",
+            CURRENT_FOREGROUND_MAXIMIZED.load(Ordering::Relaxed),
+        );
 
         // Double sync after a short delay to catch any layout changes
         let dock_clone = dock_win.clone();
@@ -297,12 +344,14 @@ pub async fn change_notch_mode(app: AppHandle, mode: String) {
                     unregister_appbar_native(HWND(hwnd_val as *mut _));
                 });
                 MAIN_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
-                
+
                 let main_clone = main_win.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     if !MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
-                        if let Ok(hwnd) = main_clone.hwnd() { re_assert_topmost(hwnd); }
+                        if let Ok(hwnd) = main_clone.hwnd() {
+                            re_assert_topmost(hwnd);
+                        }
                     }
                 });
             }
@@ -317,7 +366,7 @@ pub async fn change_notch_mode(app: AppHandle, mode: String) {
             let _ = main_win.set_position(tauri::PhysicalPosition::new(m_pos.x, m_pos.y));
             let _ = main_win.set_size(tauri::PhysicalSize::new(m_size.width, target_height));
         }
-        
+
         let current = CURRENT_NOTCH_OVERLAP.load(Ordering::Relaxed);
         if current != -1 {
             let _ = app.emit("notch-overlap", current == 1);
@@ -329,7 +378,7 @@ fn get_uwp_launch_cmd(exe_path: &str) -> Option<String> {
     let path = std::path::Path::new(exe_path);
     let mut is_windows_apps = false;
     let mut package_folder = String::new();
-    
+
     for component in path.components() {
         if let std::path::Component::Normal(s) = component {
             let s_str = s.to_string_lossy();
@@ -342,7 +391,7 @@ fn get_uwp_launch_cmd(exe_path: &str) -> Option<String> {
             }
         }
     }
-    
+
     if !package_folder.is_empty() {
         // package_folder format: PackageName_Version_Architecture__PublisherId
         // We want: PackageName_PublisherId!App
@@ -350,7 +399,10 @@ fn get_uwp_launch_cmd(exe_path: &str) -> Option<String> {
             let publisher_id = &package_folder[publisher_idx + 2..];
             if let Some(first_underscore) = package_folder.find('_') {
                 let package_name = &package_folder[..first_underscore];
-                return Some(format!("shell:AppsFolder\\{}_{}!App", package_name, publisher_id));
+                return Some(format!(
+                    "shell:AppsFolder\\{}_{}!App",
+                    package_name, publisher_id
+                ));
             }
         }
     }
@@ -365,17 +417,31 @@ const START_TOGGLE_DEBOUNCE_MS: i64 = 80;
 const START_WIN_KEY_HOLD_MS: u64 = 40;
 
 fn send_key_tap(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY, hold_ms: u64) {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP,
+    };
     let down = [INPUT {
         r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
-            ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: Default::default(), time: 0, dwExtraInfo: 0 },
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: Default::default(),
+                time: 0,
+                dwExtraInfo: 0,
+            },
         },
     }];
     let up = [INPUT {
         r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
-            ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 },
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
         },
     }];
     unsafe {
@@ -393,7 +459,10 @@ fn send_key_tap(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY, ho
 /// WS_EX_NOACTIVATE, so clicking it never steals focus from an open menu.
 fn is_start_menu_open() -> bool {
     use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
     unsafe {
@@ -409,7 +478,12 @@ fn is_start_menu_open() -> bool {
         if let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
             let mut buf = [0u16; 260];
             let mut len = buf.len() as u32;
-            let ok = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len);
+            let ok = QueryFullProcessImageNameW(
+                process,
+                PROCESS_NAME_WIN32,
+                windows::core::PWSTR(buf.as_mut_ptr()),
+                &mut len,
+            );
             let _ = CloseHandle(process);
             if ok.is_ok() {
                 let path = String::from_utf16_lossy(&buf[..len as usize]);
@@ -480,7 +554,10 @@ fn pwa_launch_target(path: &str, name: Option<&str>) -> Option<String> {
     if name.is_empty() || !is_browser_host_process(path) {
         return None;
     }
-    let host_exe = std::path::Path::new(path).file_name()?.to_str()?.to_lowercase();
+    let host_exe = std::path::Path::new(path)
+        .file_name()?
+        .to_str()?
+        .to_lowercase();
     let apps = INSTALLED_APPS_CACHE.get()?.lock().ok()?;
     apps.iter()
         .find(|app| is_pwa_shortcut_for(app, name, &host_exe))
@@ -489,7 +566,10 @@ fn pwa_launch_target(path: &str, name: Option<&str>) -> Option<String> {
 
 fn is_pwa_shortcut_for(app: &AppInfo, name: &str, host_exe: &str) -> bool {
     app.name.eq_ignore_ascii_case(name)
-        && app.executable.as_deref().is_some_and(|exe| exe.eq_ignore_ascii_case(host_exe))
+        && app
+            .executable
+            .as_deref()
+            .is_some_and(|exe| exe.eq_ignore_ascii_case(host_exe))
 }
 
 /// Opens a file path, shortcut, or shell application id through the shell.
@@ -528,7 +608,7 @@ fn launch_path(path: &str) {
 
         if let Some(uwp_cmd) = crate::commands::get_uwp_launch_cmd(path) {
             let wide_cmd: Vec<u16> = uwp_cmd.encode_utf16().chain(std::iter::once(0)).collect();
-            
+
             let res = ShellExecuteW(
                 None,
                 windows::core::PCWSTR(wide_open.as_ptr()),
@@ -537,28 +617,41 @@ fn launch_path(path: &str) {
                 None,
                 SW_SHOWNORMAL,
             );
-            
+
             if res.0 as usize <= 32 {
-                eprintln!("Failed to open UWP app {}: error code {}", uwp_cmd, res.0 as usize);
+                eprintln!(
+                    "Failed to open UWP app {}: error code {}",
+                    uwp_cmd, res.0 as usize
+                );
             }
             return;
         }
 
         use std::path::Path;
         let mut final_path = path.to_string();
-        
+
         if !Path::new(&final_path).exists() {
-            let file_name = Path::new(&final_path).file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
-            
+            let file_name = Path::new(&final_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+
             // Handle Discord/Slack style auto-updaters (app-x.x.x folder structure)
-            if file_name == "discord.exe" || file_name == "slack.exe" || file_name == "githubdesktop.exe" || file_name == "zentwilight.exe" {
+            if file_name == "discord.exe"
+                || file_name == "slack.exe"
+                || file_name == "githubdesktop.exe"
+                || file_name == "zentwilight.exe"
+            {
                 if let Some(parent) = Path::new(&final_path).parent().and_then(|p| p.parent()) {
                     if parent.exists() {
                         if let Ok(entries) = std::fs::read_dir(parent) {
                             let mut app_dirs = Vec::new();
                             for entry in entries.flatten() {
                                 let name = entry.file_name().to_string_lossy().to_string();
-                                if (name.starts_with("app-") || name.starts_with("current")) && entry.path().is_dir() {
+                                if (name.starts_with("app-") || name.starts_with("current"))
+                                    && entry.path().is_dir()
+                                {
                                     app_dirs.push(entry.path());
                                 }
                             }
@@ -575,9 +668,12 @@ fn launch_path(path: &str) {
             }
         }
 
-        let wide_path: Vec<u16> = final_path.encode_utf16().chain(std::iter::once(0)).collect();
+        let wide_path: Vec<u16> = final_path
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let wide_open: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
-        
+
         let res = ShellExecuteW(
             None,
             windows::core::PCWSTR(wide_open.as_ptr()),
@@ -586,9 +682,12 @@ fn launch_path(path: &str) {
             None,
             SW_SHOWNORMAL,
         );
-        
+
         if res.0 as usize <= 32 {
-            eprintln!("Failed to open app {}: error code {}", final_path, res.0 as usize);
+            eprintln!(
+                "Failed to open app {}: error code {}",
+                final_path, res.0 as usize
+            );
         }
     }
 }
@@ -603,18 +702,25 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
 
         let mut apps: Vec<AppInfo> = Vec::new();
         unsafe {
-            let _ = EnumWindows(Some(enum_windows_proc), LPARAM(&mut apps as *mut Vec<AppInfo> as isize));
+            let _ = EnumWindows(
+                Some(enum_windows_proc),
+                LPARAM(&mut apps as *mut Vec<AppInfo> as isize),
+            );
         }
 
         let mut grouped: HashMap<String, AppInfo> = HashMap::new();
-        
+
         for app in apps {
             let path = app.path.to_lowercase();
             let name = app.name.to_lowercase();
-            
-            // For host processes (Edge, Chrome, Brave, ApplicationFrameHost), use path + name 
+
+            // For host processes (Edge, Chrome, Brave, ApplicationFrameHost), use path + name
             // so that different PWAs/UWP apps are separate dock items.
-            let key = if path.contains("msedge.exe") || path.contains("chrome.exe") || path.contains("brave.exe") || path.contains("applicationframehost.exe") {
+            let key = if path.contains("msedge.exe")
+                || path.contains("chrome.exe")
+                || path.contains("brave.exe")
+                || path.contains("applicationframehost.exe")
+            {
                 format!("{}:{}", path, name)
             } else if let Some(ref exe) = app.executable {
                 format!("{}:{}", path, exe.to_lowercase())
@@ -628,7 +734,7 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
                 } else {
                     existing.all_hwnds = Some(vec![
                         (existing.hwnd.unwrap_or(0), existing.name.clone()),
-                        (app.hwnd.unwrap_or(0), app.name.clone())
+                        (app.hwnd.unwrap_or(0), app.name.clone()),
                     ]);
                 }
             } else {
@@ -649,11 +755,13 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
         for app in &mut result_apps {
             if let Some(ref mut hwnds) = app.all_hwnds {
                 hwnds.sort_by(|a, b| {
-                    let ts_a = focus_guard.as_ref()
+                    let ts_a = focus_guard
+                        .as_ref()
                         .and_then(|g| g.get(&a.0))
                         .copied()
                         .unwrap_or(0);
-                    let ts_b = focus_guard.as_ref()
+                    let ts_b = focus_guard
+                        .as_ref()
                         .and_then(|g| g.get(&b.0))
                         .copied()
                         .unwrap_or(0);
@@ -663,17 +771,24 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
         }
 
         if com_initialized {
-            unsafe { CoUninitialize(); }
+            unsafe {
+                CoUninitialize();
+            }
         }
 
         result_apps
-    }).await.unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
 pub async fn focus_window(hwnd: isize) {
     tauri::async_runtime::spawn_blocking(move || unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW, SW_MINIMIZE, IsIconic, IsWindowVisible, GetForegroundWindow, GetWindowThreadProcessId};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+            SetForegroundWindow, ShowWindow, SW_MINIMIZE, SW_RESTORE, SW_SHOW,
+        };
         let hwnd = HWND(hwnd as *mut _);
         let my_pid = std::process::id();
 
@@ -705,11 +820,16 @@ pub async fn focus_window(hwnd: isize) {
                 let now = crate::utils::get_now_ms();
                 should_minimize = if let Some(map) = crate::state::FOCUS_TIMESTAMPS.get() {
                     if let Ok(guard) = map.lock() {
-                        guard.get(&(hwnd.0 as *mut () as isize))
+                        guard
+                            .get(&(hwnd.0 as *mut () as isize))
                             .map(|ts| now - ts < 2000)
                             .unwrap_or(false)
-                    } else { false }
-                } else { false };
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
             }
 
             if should_minimize {
@@ -718,13 +838,19 @@ pub async fn focus_window(hwnd: isize) {
                 let _ = SetForegroundWindow(hwnd);
             }
         }
-    }).await.unwrap_or_default();
+    })
+    .await
+    .unwrap_or_default();
 }
 
 fn get_cache_key(path: &str, name: Option<&str>) -> String {
     let path_lc = path.to_lowercase();
     let name_lc = name.map(|n| n.to_lowercase()).unwrap_or_default();
-    if path_lc.contains("msedge.exe") || path_lc.contains("chrome.exe") || path_lc.contains("brave.exe") || path_lc.contains("applicationframehost.exe") {
+    if path_lc.contains("msedge.exe")
+        || path_lc.contains("chrome.exe")
+        || path_lc.contains("brave.exe")
+        || path_lc.contains("applicationframehost.exe")
+    {
         format!("{}:{}", path, name_lc)
     } else {
         path.to_string()
@@ -732,13 +858,30 @@ fn get_cache_key(path: &str, name: Option<&str>) -> String {
 }
 
 fn get_custom_icons_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?.join("custom_icons");
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("custom_icons");
     let _ = std::fs::create_dir_all(&dir);
     Ok(dir)
 }
 
 fn sanitize_filename(key: &str) -> String {
-    key.replace(|c: char| c == ':' || c == '\\' || c == '/' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|', "_")
+    key.replace(
+        |c: char| {
+            c == ':'
+                || c == '\\'
+                || c == '/'
+                || c == '*'
+                || c == '?'
+                || c == '"'
+                || c == '<'
+                || c == '>'
+                || c == '|'
+        },
+        "_",
+    )
 }
 
 /// Reads a `--flag=value` style argument from a command line, honoring quotes.
@@ -751,24 +894,42 @@ fn extract_arg(args: &str, key: &str) -> Option<String> {
         rest.split_whitespace().next().unwrap_or("")
     };
     let value = value.trim().trim_matches('"');
-    if value.is_empty() { None } else { Some(value.to_string()) }
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 /// True for shell application ids (`PackageFamily!App`, `Company.Product`, ...)
 /// that are not real file system paths.
 pub fn is_aumid_path(path: &str) -> bool {
     let p = path.trim().trim_matches('"');
-    if p.is_empty() || p.len() < 3 { return false; }
-    if p.to_lowercase().starts_with("shell:appsfolder\\") { return true; }
-    if p.contains('\\') || p.contains('/') || p.contains(':') { return false; }
-    if p.to_lowercase().ends_with(".exe") { return false; }
-    if std::path::Path::new(p).exists() { return false; }
+    if p.is_empty() || p.len() < 3 {
+        return false;
+    }
+    if p.to_lowercase().starts_with("shell:appsfolder\\") {
+        return true;
+    }
+    if p.contains('\\') || p.contains('/') || p.contains(':') {
+        return false;
+    }
+    if p.to_lowercase().ends_with(".exe") {
+        return false;
+    }
+    if std::path::Path::new(p).exists() {
+        return false;
+    }
     true
 }
 
 fn is_browser_host_process(path: &str) -> bool {
     let p = path.to_lowercase();
-    p.contains("msedge.exe") || p.contains("chrome.exe") || p.contains("brave.exe") || p.contains("vivaldi.exe") || p.contains("firefox.exe")
+    p.contains("msedge.exe")
+        || p.contains("chrome.exe")
+        || p.contains("brave.exe")
+        || p.contains("vivaldi.exe")
+        || p.contains("firefox.exe")
 }
 
 /// Resolves the icon of a shell application id (Store/UWP/packaged PWA) through
@@ -776,20 +937,32 @@ fn is_browser_host_process(path: &str) -> bool {
 fn icon_from_aumid(aumid: &str) -> Option<String> {
     unsafe {
         use windows::Win32::Foundation::SIZE;
-        use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY};
+        use windows::Win32::UI::Shell::{
+            IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF, SIIGBF_BIGGERSIZEOK,
+            SIIGBF_ICONONLY,
+        };
 
         let id = aumid.trim().trim_start_matches("shell:AppsFolder\\");
-        if id.is_empty() { return None; }
+        if id.is_empty() {
+            return None;
+        }
 
         let parsing_name = format!("shell:AppsFolder\\{}", id);
-        let wide: Vec<u16> = parsing_name.encode_utf16().chain(std::iter::once(0)).collect();
-        let factory: IShellItemImageFactory = SHCreateItemFromParsingName(windows::core::PCWSTR(wide.as_ptr()), None).ok()?;
+        let wide: Vec<u16> = parsing_name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let factory: IShellItemImageFactory =
+            SHCreateItemFromParsingName(windows::core::PCWSTR(wide.as_ptr()), None).ok()?;
 
         let size = SIZE { cx: 256, cy: 256 };
-        let hbitmap = factory.GetImage(size, SIIGBF(SIIGBF_ICONONLY.0 | SIIGBF_BIGGERSIZEOK.0))
+        let hbitmap = factory
+            .GetImage(size, SIIGBF(SIIGBF_ICONONLY.0 | SIIGBF_BIGGERSIZEOK.0))
             .or_else(|_| factory.GetImage(size, SIIGBF_BIGGERSIZEOK))
             .ok()?;
-        if hbitmap.0.is_null() { return None; }
+        if hbitmap.0.is_null() {
+            return None;
+        }
 
         let result = crate::utils::hbitmap_to_base64(hbitmap);
         let _ = windows::Win32::Graphics::Gdi::DeleteObject(hbitmap.into());
@@ -806,7 +979,9 @@ fn package_family_from_windows_apps_path(path: &str) -> Option<String> {
     let folder = rest.split(['\\', '/']).next()?;
     let (before_publisher, publisher) = folder.rsplit_once("__")?;
     let name = before_publisher.split('_').next()?;
-    if name.is_empty() || publisher.is_empty() { return None; }
+    if name.is_empty() || publisher.is_empty() {
+        return None;
+    }
     Some(format!("{}_{}", name, publisher))
 }
 
@@ -814,7 +989,11 @@ fn package_family_from_windows_apps_path(path: &str) -> Option<String> {
 /// by enumerating `shell:AppsFolder` (the `!App` suffix is not guaranteed).
 fn find_aumid_by_family(family: &str) -> Option<String> {
     use windows::Win32::System::Com::CoTaskMemFree;
-    use windows::Win32::UI::Shell::{SHGetKnownFolderIDList, FOLDERID_AppsFolder, SHGetDesktopFolder, IShellFolder, IEnumIDList, SHGetNameFromIDList, ILCombine, ILFree, SIGDN_DESKTOPABSOLUTEPARSING, SHCONTF_FOLDERS, SHCONTF_NONFOLDERS};
+    use windows::Win32::UI::Shell::{
+        FOLDERID_AppsFolder, IEnumIDList, ILCombine, ILFree, IShellFolder, SHGetDesktopFolder,
+        SHGetKnownFolderIDList, SHGetNameFromIDList, SHCONTF_FOLDERS, SHCONTF_NONFOLDERS,
+        SIGDN_DESKTOPABSOLUTEPARSING,
+    };
 
     unsafe {
         let pidl_apps = SHGetKnownFolderIDList(&FOLDERID_AppsFolder, 0, None).ok()?;
@@ -822,32 +1001,50 @@ fn find_aumid_by_family(family: &str) -> Option<String> {
             let desktop = SHGetDesktopFolder().ok()?;
             let apps_folder: IShellFolder = desktop.BindToObject(pidl_apps, None).ok()?;
             let mut enum_id: Option<IEnumIDList> = None;
-            if apps_folder.EnumObjects(HWND(std::ptr::null_mut()), (SHCONTF_FOLDERS.0 | SHCONTF_NONFOLDERS.0) as u32, &mut enum_id).is_err() { return None; }
+            if apps_folder
+                .EnumObjects(
+                    HWND(std::ptr::null_mut()),
+                    (SHCONTF_FOLDERS.0 | SHCONTF_NONFOLDERS.0) as u32,
+                    &mut enum_id,
+                )
+                .is_err()
+            {
+                return None;
+            }
             let enum_id = enum_id?;
 
             let prefix = format!("{}!", family);
-            let mut pidl_buf: [*mut windows::Win32::UI::Shell::Common::ITEMIDLIST; 1] = [std::ptr::null_mut()];
+            let mut pidl_buf: [*mut windows::Win32::UI::Shell::Common::ITEMIDLIST; 1] =
+                [std::ptr::null_mut()];
             let mut fetched = 0;
             while enum_id.Next(&mut pidl_buf, Some(&mut fetched)).is_ok() && fetched > 0 {
                 let pidl_item = pidl_buf[0];
                 pidl_buf[0] = std::ptr::null_mut();
-                if pidl_item.is_null() { continue; }
+                if pidl_item.is_null() {
+                    continue;
+                }
 
-                let absolute_pidl = ILCombine(Some(pidl_apps as *const _), Some(pidl_item as *const _));
+                let absolute_pidl =
+                    ILCombine(Some(pidl_apps as *const _), Some(pidl_item as *const _));
                 if absolute_pidl.is_null() {
                     CoTaskMemFree(Some(pidl_item as *const _));
                     continue;
                 }
 
                 let mut found = None;
-                if let Ok(p_ptr) = SHGetNameFromIDList(absolute_pidl, SIGDN_DESKTOPABSOLUTEPARSING) {
+                if let Ok(p_ptr) = SHGetNameFromIDList(absolute_pidl, SIGDN_DESKTOPABSOLUTEPARSING)
+                {
                     let s = String::from_utf16_lossy(windows::core::PCWSTR(p_ptr.0).as_wide());
                     CoTaskMemFree(Some(p_ptr.0 as *const _));
-                    if s.starts_with(&prefix) { found = Some(s); }
+                    if s.starts_with(&prefix) {
+                        found = Some(s);
+                    }
                 }
                 ILFree(Some(absolute_pidl as *const _));
                 CoTaskMemFree(Some(pidl_item as *const _));
-                if found.is_some() { return found; }
+                if found.is_some() {
+                    return found;
+                }
             }
             None
         })();
@@ -876,7 +1073,10 @@ fn process_command_line(pid: u32) -> Option<String> {
     let com = wmi::COMLibrary::new().ok()?;
     let connection = wmi::WMIConnection::new(com).ok()?;
     let results: Vec<Win32Process> = connection
-        .raw_query(format!("SELECT CommandLine FROM Win32_Process WHERE ProcessId = {}", pid))
+        .raw_query(format!(
+            "SELECT CommandLine FROM Win32_Process WHERE ProcessId = {}",
+            pid
+        ))
         .ok()?;
     results.into_iter().next().and_then(|p| p.command_line)
 }
@@ -884,12 +1084,16 @@ fn process_command_line(pid: u32) -> Option<String> {
 fn pwa_icon_from_command_line(process_path: &str, command_line: &str) -> Option<String> {
     // Store PWAs launched by Edge carry their package identity inline.
     if let Some(aumid) = extract_arg(command_line, "--ip-aumid=") {
-        if let Some(icon) = icon_from_aumid(&aumid) { return Some(icon); }
+        if let Some(icon) = icon_from_aumid(&aumid) {
+            return Some(icon);
+        }
     }
     // Chrome/Edge/Brave "installed app" windows carry the web app id.
     if command_line.contains("--app-id=") {
         if let Some(icon_path) = find_browser_pwa_icon(process_path, command_line) {
-            if let Some(icon) = crate::utils::image_file_to_base64(&icon_path) { return Some(icon); }
+            if let Some(icon) = crate::utils::image_file_to_base64(&icon_path) {
+                return Some(icon);
+            }
         }
     }
     None
@@ -899,11 +1103,15 @@ fn pwa_icon_from_command_line(process_path: &str, command_line: &str) -> Option<
 pub(crate) fn browser_web_app_id_from_aumid(id: &str) -> Option<String> {
     let is_web_app_id = |s: &str| s.len() == 32 && s.bytes().all(|b| (b'a'..=b'p').contains(&b));
     if let Some(segment) = id.rsplit('.').next() {
-        if is_web_app_id(segment) { return Some(segment.to_string()); }
+        if is_web_app_id(segment) {
+            return Some(segment.to_string());
+        }
     }
     if let Some(idx) = id.find("_crx_") {
         if let Some(segment) = id[idx + 5..].split('.').next() {
-            if is_web_app_id(segment) { return Some(segment.to_string()); }
+            if is_web_app_id(segment) {
+                return Some(segment.to_string());
+            }
         }
     }
     None
@@ -924,7 +1132,9 @@ unsafe fn pwa_icon_for_window(hwnd: HWND, process_path: &str) -> Option<String> 
     // present, unlike the process command line (Edge reuses its browser process).
     match crate::utils::get_window_app_user_model_id(hwnd) {
         Some(id) if id.contains('!') => {
-            if let Some(icon) = icon_from_aumid(&id) { return Some(icon); }
+            if let Some(icon) = icon_from_aumid(&id) {
+                return Some(icon);
+            }
         }
         Some(id) if is_browser_pwa_aumid(&id) => {
             // PWA window. The canonical app id is in the AUMID when available,
@@ -933,14 +1143,22 @@ unsafe fn pwa_icon_for_window(hwnd: HWND, process_path: &str) -> Option<String> 
             // requires the `--app-id=` form of the executable's arguments.
             let mut pid = 0u32;
             windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut pid));
-            if pid == 0 { return None; }
+            if pid == 0 {
+                return None;
+            }
             if let Some(app_id) = browser_web_app_id_from_aumid(&id) {
-                if let Some(icon_path) = find_browser_pwa_icon(process_path, &format!("--app-id={}", app_id)) {
-                    if let Some(icon) = crate::utils::image_file_to_base64(&icon_path) { return Some(icon); }
+                if let Some(icon_path) =
+                    find_browser_pwa_icon(process_path, &format!("--app-id={}", app_id))
+                {
+                    if let Some(icon) = crate::utils::image_file_to_base64(&icon_path) {
+                        return Some(icon);
+                    }
                 }
             }
             if let Some(command_line) = process_command_line(pid) {
-                if let Some(icon) = pwa_icon_from_command_line(process_path, &command_line) { return Some(icon); }
+                if let Some(icon) = pwa_icon_from_command_line(process_path, &command_line) {
+                    return Some(icon);
+                }
             }
             return None;
         }
@@ -954,7 +1172,9 @@ unsafe fn pwa_icon_for_window(hwnd: HWND, process_path: &str) -> Option<String> 
     // Fall back to the process command line for hosts that don't stamp the window.
     let mut pid = 0u32;
     windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut pid));
-    if pid == 0 { return None; }
+    if pid == 0 {
+        return None;
+    }
     let command_line = process_command_line(pid)?;
     pwa_icon_from_command_line(process_path, &command_line)
 }
@@ -982,24 +1202,33 @@ fn find_browser_pwa_icon(executable_path: &str, args: &str) -> Option<String> {
         vec![chrome_base, edge_base]
     };
 
-    let profile = extract_arg(args, "--profile-directory=").unwrap_or_else(|| "Default".to_string());
+    let profile =
+        extract_arg(args, "--profile-directory=").unwrap_or_else(|| "Default".to_string());
 
     for base in bases {
-        if !std::path::Path::new(&base).is_dir() { continue; }
+        if !std::path::Path::new(&base).is_dir() {
+            continue;
+        }
 
         let mut profiles = vec![profile.clone()];
         if let Ok(entries) = std::fs::read_dir(&base) {
             for entry in entries.flatten() {
                 if entry.path().is_dir() {
                     let name = entry.file_name().to_string_lossy().to_string();
-                    if !profiles.iter().any(|p| p.eq_ignore_ascii_case(&name)) { profiles.push(name); }
+                    if !profiles.iter().any(|p| p.eq_ignore_ascii_case(&name)) {
+                        profiles.push(name);
+                    }
                 }
             }
         }
 
         for prof in profiles {
-            let web_apps = std::path::Path::new(&base).join(&prof).join("Web Applications");
-            if !web_apps.is_dir() { continue; }
+            let web_apps = std::path::Path::new(&base)
+                .join(&prof)
+                .join("Web Applications");
+            if !web_apps.is_dir() {
+                continue;
+            }
 
             let candidates = [
                 web_apps.join("Manifest Resources").join(&app_id),
@@ -1007,7 +1236,9 @@ fn find_browser_pwa_icon(executable_path: &str, args: &str) -> Option<String> {
                 web_apps.join(format!("_crx_{}", app_id)),
             ];
             for dir in candidates {
-                if let Some(icon) = find_largest_image_in_dir(&dir) { return Some(icon); }
+                if let Some(icon) = find_largest_image_in_dir(&dir) {
+                    return Some(icon);
+                }
             }
         }
     }
@@ -1015,23 +1246,40 @@ fn find_browser_pwa_icon(executable_path: &str, args: &str) -> Option<String> {
 }
 
 fn find_largest_image_in_dir(dir: &std::path::Path) -> Option<String> {
-    if !dir.is_dir() { return None; }
+    if !dir.is_dir() {
+        return None;
+    }
     let mut best: Option<(u64, String)> = None;
     collect_images(dir, 0, &mut best);
     best.map(|(_, path)| path)
 }
 
 fn collect_images(dir: &std::path::Path, depth: u32, best: &mut Option<(u64, String)>) {
-    if depth > 3 { return; }
-    let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    if depth > 3 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
             collect_images(&path, depth + 1, best);
             continue;
         }
-        let Some(ext) = path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()) else { continue; };
-        if !matches!(ext.as_str(), "png" | "ico" | "jpg" | "jpeg" | "bmp" | "webp") { continue; }
+        let Some(ext) = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+        else {
+            continue;
+        };
+        if !matches!(
+            ext.as_str(),
+            "png" | "ico" | "jpg" | "jpeg" | "bmp" | "webp"
+        ) {
+            continue;
+        }
         let score = image_size_score(&path);
         let is_better = match best.as_ref() {
             Some((best_score, _)) => score > *best_score,
@@ -1045,10 +1293,16 @@ fn collect_images(dir: &std::path::Path, depth: u32, best: &mut Option<(u64, Str
 
 /// Scores an icon file by the pixel dimensions encoded in its name (e.g. `256.png`, `192x192.png`).
 fn image_size_score(path: &std::path::Path) -> u64 {
-    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    let name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     let mut score: u64 = 0;
     for token in name.split(|c: char| !c.is_ascii_digit() && c != 'x') {
-        if token.is_empty() { continue; }
+        if token.is_empty() {
+            continue;
+        }
         if let Some(idx) = token.find('x') {
             let (w, h) = token.split_at(idx);
             let h = &h[1..];
@@ -1083,7 +1337,8 @@ pub fn schedule_icon_cache_save(app: AppHandle) {
                     if !snapshot.is_empty() {
                         let _ = tauri::async_runtime::spawn_blocking(move || {
                             let _ = std::fs::write(&cache_path, snapshot);
-                        }).await;
+                        })
+                        .await;
                     }
                 }
             }
@@ -1092,7 +1347,12 @@ pub fn schedule_icon_cache_save(app: AppHandle) {
 }
 
 #[tauri::command]
-pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hwnd: Option<isize>) -> Result<Option<String>, String> {
+pub async fn get_app_icon(
+    app: AppHandle,
+    path: String,
+    name: Option<String>,
+    hwnd: Option<isize>,
+) -> Result<Option<String>, String> {
     let cache_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     let cache_path = cache_dir.join("icons_cache.json");
     let cache_key = get_cache_key(&path, name.as_deref());
@@ -1111,7 +1371,9 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
     let cache = ICON_CACHE.get_or_init(|| {
         let mut map = std::collections::HashMap::new();
         if let Ok(content) = std::fs::read_to_string(&cache_path) {
-            if let Ok(existing) = serde_json::from_str::<std::collections::HashMap<String, String>>(&content) {
+            if let Ok(existing) =
+                serde_json::from_str::<std::collections::HashMap<String, String>>(&content)
+            {
                 map = existing;
             }
         }
@@ -1138,7 +1400,11 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
     // inside an MSIX package. Neither has a usable icon on disk; the shell resolves
     // the package logo through `shell:AppsFolder`.
     let aumid_opt = if is_aumid_path(&path) {
-        Some(path.trim().trim_start_matches("shell:AppsFolder\\").to_string())
+        Some(
+            path.trim()
+                .trim_start_matches("shell:AppsFolder\\")
+                .to_string(),
+        )
     } else {
         None
     };
@@ -1146,17 +1412,28 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
     if aumid_opt.is_some() || packaged_exe {
         let path_owned = path.clone();
         let result = tauri::async_runtime::spawn_blocking(move || {
-            let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED) };
+            let _ = unsafe {
+                windows::Win32::System::Com::CoInitializeEx(
+                    None,
+                    windows::Win32::System::Com::COINIT_MULTITHREADED,
+                )
+            };
             let icon = match aumid_opt {
                 Some(aumid) => icon_from_aumid(&aumid),
                 None => packaged_exe_icon(&path_owned),
             };
-            unsafe { windows::Win32::System::Com::CoUninitialize(); }
+            unsafe {
+                windows::Win32::System::Com::CoUninitialize();
+            }
             icon
-        }).await.unwrap_or(None);
+        })
+        .await
+        .unwrap_or(None);
 
         if let Some(base64) = result {
-            if let Ok(mut c) = cache.lock() { c.insert(cache_key.clone(), base64.clone()); }
+            if let Ok(mut c) = cache.lock() {
+                c.insert(cache_key.clone(), base64.clone());
+            }
             schedule_icon_cache_save(app);
             return Ok(Some(base64));
         }
@@ -1166,9 +1443,14 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
     if let Some(h) = hwnd {
         let path_owned = path.clone();
         let result = tauri::async_runtime::spawn_blocking(move || unsafe {
-            use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
-            use windows::Win32::UI::WindowsAndMessaging::{GetClassLongPtrW, GCLP_HICON, WM_GETICON, ICON_BIG, SendMessageTimeoutW, SMTO_ABORTIFHUNG};
-            
+            use windows::Win32::System::Com::{
+                CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED,
+            };
+            use windows::Win32::UI::WindowsAndMessaging::{
+                GetClassLongPtrW, SendMessageTimeoutW, GCLP_HICON, ICON_BIG, SMTO_ABORTIFHUNG,
+                WM_GETICON,
+            };
+
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
             // Browser-hosted PWAs (Store apps, installed web apps) only expose the
@@ -1182,23 +1464,46 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
             }
 
             let h_hwnd = HWND(h as *mut _);
-            
-            let mut h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(GetClassLongPtrW(h_hwnd, GCLP_HICON) as *mut _);
+
+            let mut h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(GetClassLongPtrW(
+                h_hwnd, GCLP_HICON,
+            )
+                as *mut _);
             if h_icon.is_invalid() {
-                h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(GetClassLongPtrW(h_hwnd, windows::Win32::UI::WindowsAndMessaging::GCL_HICON) as *mut _);
+                h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(GetClassLongPtrW(
+                    h_hwnd,
+                    windows::Win32::UI::WindowsAndMessaging::GCL_HICON,
+                )
+                    as *mut _);
             }
 
             if h_icon.is_invalid() {
                 let mut res = 0usize;
-                let _ = SendMessageTimeoutW(h_hwnd, WM_GETICON, windows::Win32::Foundation::WPARAM(ICON_BIG as usize), windows::Win32::Foundation::LPARAM(0), SMTO_ABORTIFHUNG, 250, Some(&mut res));
-                if res != 0 { h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(res as *mut _); }
+                let _ = SendMessageTimeoutW(
+                    h_hwnd,
+                    WM_GETICON,
+                    windows::Win32::Foundation::WPARAM(ICON_BIG as usize),
+                    windows::Win32::Foundation::LPARAM(0),
+                    SMTO_ABORTIFHUNG,
+                    250,
+                    Some(&mut res),
+                );
+                if res != 0 {
+                    h_icon = windows::Win32::UI::WindowsAndMessaging::HICON(res as *mut _);
+                }
             }
-            
-            let res = if !h_icon.is_invalid() { icon_to_base64(h_icon) } else { None };
-            
+
+            let res = if !h_icon.is_invalid() {
+                icon_to_base64(h_icon)
+            } else {
+                None
+            };
+
             CoUninitialize();
             res
-        }).await.unwrap_or(None);
+        })
+        .await
+        .unwrap_or(None);
 
         if let Some(base64) = result {
             if let Ok(mut c) = cache.lock() {
@@ -1213,14 +1518,17 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
     let path_clone = path.clone();
     let ck_clone = cache_key.clone();
     let file_icon = tauri::async_runtime::spawn_blocking(move || unsafe {
-        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
+        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
         use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
         use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
-        
+
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let result = {
             let ((actual_path, args), is_lnk) = if path_clone.to_lowercase().ends_with(".lnk") {
-                (resolve_shortcut(&path_clone).unwrap_or((path_clone.clone(), String::new())), true)
+                (
+                    resolve_shortcut(&path_clone).unwrap_or((path_clone.clone(), String::new())),
+                    true,
+                )
             } else {
                 ((path_clone.clone(), String::new()), false)
             };
@@ -1248,8 +1556,17 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
 
             if icon_data.is_none() {
                 let mut shfi: SHFILEINFOW = std::mem::zeroed();
-                let path_u16: Vec<u16> = actual_path.encode_utf16().chain(std::iter::once(0)).collect();
-                let res = SHGetFileInfoW(windows::core::PCWSTR(path_u16.as_ptr()), Default::default(), Some(&mut shfi), std::mem::size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
+                let path_u16: Vec<u16> = actual_path
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let res = SHGetFileInfoW(
+                    windows::core::PCWSTR(path_u16.as_ptr()),
+                    Default::default(),
+                    Some(&mut shfi),
+                    std::mem::size_of::<SHFILEINFOW>() as u32,
+                    SHGFI_ICON | SHGFI_LARGEICON,
+                );
 
                 if res != 0 && !shfi.hIcon.is_invalid() {
                     icon_data = icon_to_base64(shfi.hIcon);
@@ -1258,13 +1575,17 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
             }
 
             if let Some(ref base64) = icon_data {
-                if let Ok(mut lock) = ICON_CACHE.get().unwrap().lock() { lock.insert(ck_clone, base64.clone()); }
+                if let Ok(mut lock) = ICON_CACHE.get().unwrap().lock() {
+                    lock.insert(ck_clone, base64.clone());
+                }
             }
             icon_data
         };
         CoUninitialize();
         result
-    }).await.map_err(|e| e.to_string())?;
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     if file_icon.is_some() {
         schedule_icon_cache_save(app);
@@ -1274,8 +1595,14 @@ pub async fn get_app_icon(app: AppHandle, path: String, name: Option<String>, hw
 
 #[tauri::command]
 pub fn save_pinned_apps(app: AppHandle, apps: Vec<AppInfo>) -> Result<(), String> {
-    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("pinned_apps.json");
-    if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("pinned_apps.json");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let content = serde_json::to_string(&apps).map_err(|e| e.to_string())?;
     std::fs::write(path, content).map_err(|e| e.to_string())?;
     Ok(())
@@ -1283,15 +1610,53 @@ pub fn save_pinned_apps(app: AppHandle, apps: Vec<AppInfo>) -> Result<(), String
 
 #[tauri::command]
 pub async fn load_pinned_apps(app: AppHandle) -> Vec<AppInfo> {
-    let path = app.path().app_config_dir().unwrap_or_default().join("pinned_apps.json");
+    let path = app
+        .path()
+        .app_config_dir()
+        .unwrap_or_default()
+        .join("pinned_apps.json");
     if let Ok(content) = std::fs::read_to_string(path) {
-        if let Ok(apps) = serde_json::from_str(&content) { return apps; }
+        if let Ok(apps) = serde_json::from_str(&content) {
+            return apps;
+        }
     }
     vec![
-        AppInfo { name: "File Explorer".into(), path: "C:\\Windows\\explorer.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("explorer.exe".into()), all_hwnds: None },
-        AppInfo { name: "Microsoft Edge".into(), path: "msedge".into(), icon: None, is_running: false, hwnd: None, executable: Some("msedge.exe".into()), all_hwnds: None },
-        AppInfo { name: "Notepad".into(), path: "notepad.exe".into(), icon: None, is_running: false, hwnd: None, executable: Some("notepad.exe".into()), all_hwnds: None },
-        AppInfo { name: "Settings".into(), path: "bloom-settings".into(), icon: None, is_running: false, hwnd: None, executable: None, all_hwnds: None },
+        AppInfo {
+            name: "File Explorer".into(),
+            path: "C:\\Windows\\explorer.exe".into(),
+            icon: None,
+            is_running: false,
+            hwnd: None,
+            executable: Some("explorer.exe".into()),
+            all_hwnds: None,
+        },
+        AppInfo {
+            name: "Microsoft Edge".into(),
+            path: "msedge".into(),
+            icon: None,
+            is_running: false,
+            hwnd: None,
+            executable: Some("msedge.exe".into()),
+            all_hwnds: None,
+        },
+        AppInfo {
+            name: "Notepad".into(),
+            path: "notepad.exe".into(),
+            icon: None,
+            is_running: false,
+            hwnd: None,
+            executable: Some("notepad.exe".into()),
+            all_hwnds: None,
+        },
+        AppInfo {
+            name: "Settings".into(),
+            path: "bloom-settings".into(),
+            icon: None,
+            is_running: false,
+            hwnd: None,
+            executable: None,
+            all_hwnds: None,
+        },
     ]
 }
 
@@ -1309,7 +1674,11 @@ pub async fn clear_icon_cache(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn set_custom_icon(app: AppHandle, cache_key: String, icon_data: String) -> Result<String, String> {
+pub async fn set_custom_icon(
+    app: AppHandle,
+    cache_key: String,
+    icon_data: String,
+) -> Result<String, String> {
     use base64::Engine;
     use image::GenericImageView;
 
@@ -1325,8 +1694,7 @@ pub async fn set_custom_icon(app: AppHandle, cache_key: String, icon_data: Strin
         .map_err(|e| format!("Invalid base64: {}", e))?;
 
     // Decode image to validate and get dimensions
-    let img = image::load_from_memory(&raw_bytes)
-        .map_err(|e| format!("Invalid image: {}", e))?;
+    let img = image::load_from_memory(&raw_bytes).map_err(|e| format!("Invalid image: {}", e))?;
 
     let (w, h) = img.dimensions();
     if w < 16 || h < 16 {
@@ -1349,7 +1717,11 @@ pub async fn set_custom_icon(app: AppHandle, cache_key: String, icon_data: Strin
 
     // Encode to PNG bytes
     let mut png_bytes: Vec<u8> = Vec::new();
-    final_img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+    final_img
+        .write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            image::ImageFormat::Png,
+        )
         .map_err(|e| format!("Failed to encode PNG: {}", e))?;
 
     // Save to custom_icons directory
@@ -1360,13 +1732,17 @@ pub async fn set_custom_icon(app: AppHandle, cache_key: String, icon_data: Strin
 
     // Update manifest mapping sanitized filename -> original cache key
     let manifest_path = icons_dir.join("custom_icons.json");
-    let mut manifest: std::collections::HashMap<String, String> = if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        std::collections::HashMap::new()
-    };
+    let mut manifest: std::collections::HashMap<String, String> =
+        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
+        };
     manifest.insert(sanitize_filename(&cache_key), cache_key);
-    let _ = std::fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap_or_default());
+    let _ = std::fs::write(
+        &manifest_path,
+        serde_json::to_string(&manifest).unwrap_or_default(),
+    );
 
     // Return the data URI for immediate use
     let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
@@ -1374,7 +1750,11 @@ pub async fn set_custom_icon(app: AppHandle, cache_key: String, icon_data: Strin
 }
 
 #[tauri::command]
-pub async fn remove_custom_icon(app: AppHandle, path: String, name: Option<String>) -> Result<(), String> {
+pub async fn remove_custom_icon(
+    app: AppHandle,
+    path: String,
+    name: Option<String>,
+) -> Result<(), String> {
     let cache_key = get_cache_key(&path, name.as_deref());
     let icons_dir = get_custom_icons_dir(&app)?;
     let sanitized = sanitize_filename(&cache_key);
@@ -1386,9 +1766,14 @@ pub async fn remove_custom_icon(app: AppHandle, path: String, name: Option<Strin
     // Remove from manifest
     let manifest_path = icons_dir.join("custom_icons.json");
     if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-        if let Ok(mut manifest) = serde_json::from_str::<std::collections::HashMap<String, String>>(&content) {
+        if let Ok(mut manifest) =
+            serde_json::from_str::<std::collections::HashMap<String, String>>(&content)
+        {
             manifest.remove(&sanitized);
-            let _ = std::fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap_or_default());
+            let _ = std::fs::write(
+                &manifest_path,
+                serde_json::to_string(&manifest).unwrap_or_default(),
+            );
         }
     }
     // Also remove from persistent cache so the original icon is re-fetched
@@ -1405,11 +1790,12 @@ pub async fn remove_custom_icon(app: AppHandle, path: String, name: Option<Strin
 pub async fn get_custom_icons(app: AppHandle) -> Result<HashMap<String, String>, String> {
     let icons_dir = get_custom_icons_dir(&app)?;
     let manifest_path = icons_dir.join("custom_icons.json");
-    let manifest: std::collections::HashMap<String, String> = if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        std::collections::HashMap::new()
-    };
+    let manifest: std::collections::HashMap<String, String> =
+        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
+        };
     let mut result = HashMap::new();
     if let Ok(entries) = std::fs::read_dir(&icons_dir) {
         for entry in entries.flatten() {
@@ -1417,7 +1803,10 @@ pub async fn get_custom_icons(app: AppHandle) -> Result<HashMap<String, String>,
             if path.extension().and_then(|e| e.to_str()) == Some("png") {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     // Use original cache key from manifest, fallback to sanitized stem
-                    let key = manifest.get(stem).cloned().unwrap_or_else(|| stem.to_string());
+                    let key = manifest
+                        .get(stem)
+                        .cloned()
+                        .unwrap_or_else(|| stem.to_string());
                     if let Ok(data) = std::fs::read(&path) {
                         use base64::Engine;
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
@@ -1433,11 +1822,24 @@ pub async fn get_custom_icons(app: AppHandle) -> Result<HashMap<String, String>,
 #[tauri::command]
 pub async fn get_installed_apps() -> Vec<AppInfo> {
     let cache = INSTALLED_APPS_CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()));
-    let is_empty = if let Ok(lock) = cache.lock() { lock.is_empty() } else { true };
-    if is_empty && !IS_SCANNING.load(Ordering::Relaxed) { crate::services::trigger_app_scan(); }
+    let is_empty = if let Ok(lock) = cache.lock() {
+        lock.is_empty()
+    } else {
+        true
+    };
+    if is_empty && !IS_SCANNING.load(Ordering::Relaxed) {
+        crate::services::trigger_app_scan();
+    }
     let start = std::time::Instant::now();
-    while IS_SCANNING.load(Ordering::Relaxed) && start.elapsed() < std::time::Duration::from_secs(5) { tokio::time::sleep(std::time::Duration::from_millis(100)).await; }
-    if let Ok(cache_lock) = cache.lock() { cache_lock.clone() } else { Vec::new() }
+    while IS_SCANNING.load(Ordering::Relaxed) && start.elapsed() < std::time::Duration::from_secs(5)
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    if let Ok(cache_lock) = cache.lock() {
+        cache_lock.clone()
+    } else {
+        Vec::new()
+    }
 }
 
 #[tauri::command]
@@ -1445,7 +1847,9 @@ pub fn hide_native_osd() {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE};
         let class1 = windows::core::PCSTR(c"NativeHWNDHost".as_ptr() as *const u8);
-        if let Ok(hwnd) = FindWindowA(class1, windows::core::PCSTR::null()) { let _ = ShowWindow(hwnd, SW_HIDE); }
+        if let Ok(hwnd) = FindWindowA(class1, windows::core::PCSTR::null()) {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
     }
 }
 
@@ -1457,7 +1861,9 @@ pub fn open_settings_window(app: AppHandle) {
         let _ = win.set_focus();
         if let Ok(hwnd) = win.hwnd() {
             unsafe {
-                use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW};
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+                };
                 let _ = ShowWindow(hwnd, SW_SHOW);
                 let _ = ShowWindow(hwnd, SW_RESTORE);
                 let _ = SetForegroundWindow(hwnd);
@@ -1468,7 +1874,9 @@ pub fn open_settings_window(app: AppHandle) {
 
 #[tauri::command]
 pub fn hide_overlay(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("overlay") { let _ = win.hide(); }
+    if let Some(win) = app.get_webview_window("overlay") {
+        let _ = win.hide();
+    }
 }
 
 #[tauri::command]
@@ -1500,9 +1908,16 @@ pub fn sync_overlay_position(app: AppHandle) {
 pub fn open_wifi_settings() {
     unsafe {
         use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         use windows::Win32::UI::Shell::ShellExecuteA;
-        let _ = ShellExecuteA(Some(HWND(std::ptr::null_mut())), windows::core::PCSTR(c"open".as_ptr() as *const u8), windows::core::PCSTR(c"ms-availablenetworks:".as_ptr() as *const u8), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let _ = ShellExecuteA(
+            Some(HWND(std::ptr::null_mut())),
+            windows::core::PCSTR(c"open".as_ptr() as *const u8),
+            windows::core::PCSTR(c"ms-availablenetworks:".as_ptr() as *const u8),
+            windows::core::PCSTR::null(),
+            windows::core::PCSTR::null(),
+            SW_SHOWNORMAL,
+        );
     }
 }
 
@@ -1510,9 +1925,16 @@ pub fn open_wifi_settings() {
 pub fn open_sound_settings() {
     unsafe {
         use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         use windows::Win32::UI::Shell::ShellExecuteA;
-        let _ = ShellExecuteA(Some(HWND(std::ptr::null_mut())), windows::core::PCSTR(c"open".as_ptr() as *const u8), windows::core::PCSTR(c"ms-settings:sound".as_ptr() as *const u8), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let _ = ShellExecuteA(
+            Some(HWND(std::ptr::null_mut())),
+            windows::core::PCSTR(c"open".as_ptr() as *const u8),
+            windows::core::PCSTR(c"ms-settings:sound".as_ptr() as *const u8),
+            windows::core::PCSTR::null(),
+            windows::core::PCSTR::null(),
+            SW_SHOWNORMAL,
+        );
     }
 }
 
@@ -1520,9 +1942,16 @@ pub fn open_sound_settings() {
 pub fn open_notification_center() {
     unsafe {
         use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         use windows::Win32::UI::Shell::ShellExecuteA;
-        let _ = ShellExecuteA(Some(HWND(std::ptr::null_mut())), windows::core::PCSTR(c"open".as_ptr() as *const u8), windows::core::PCSTR(c"ms-actioncenter:".as_ptr() as *const u8), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let _ = ShellExecuteA(
+            Some(HWND(std::ptr::null_mut())),
+            windows::core::PCSTR(c"open".as_ptr() as *const u8),
+            windows::core::PCSTR(c"ms-actioncenter:".as_ptr() as *const u8),
+            windows::core::PCSTR::null(),
+            windows::core::PCSTR::null(),
+            SW_SHOWNORMAL,
+        );
     }
 }
 
@@ -1530,86 +1959,165 @@ pub fn open_notification_center() {
 pub fn open_system_tray() {
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use std::sync::atomic::Ordering;
-        use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, GetWindowLongA, SetWindowLongA, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TRANSPARENT, SetLayeredWindowAttributes, LWA_ALPHA, IsWindowVisible, ShowWindow, SW_SHOW};
         use windows::core::PCSTR;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            FindWindowA, GetWindowLongA, IsWindowVisible, SetLayeredWindowAttributes,
+            SetWindowLongA, ShowWindow, GWL_EXSTYLE, LWA_ALPHA, SW_SHOW, WS_EX_LAYERED,
+            WS_EX_TRANSPARENT,
+        };
 
         let tray_class = PCSTR(c"Shell_TrayWnd".as_ptr() as *const u8);
         let hwnd = FindWindowA(tray_class, windows::core::PCSTR::null()).unwrap_or_default();
-        if hwnd.0.is_null() { return; }
+        if hwnd.0.is_null() {
+            return;
+        }
 
         let currently_hidden = crate::state::NATIVE_TASKBAR_HIDDEN.load(Ordering::Relaxed);
         if currently_hidden {
             // 1. Make the taskbar completely invisible and click-through
             let exstyle = GetWindowLongA(hwnd, GWL_EXSTYLE);
-            let _ = SetWindowLongA(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED.0 as i32 | WS_EX_TRANSPARENT.0 as i32);
-            let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 0, LWA_ALPHA);
+            let _ = SetWindowLongA(
+                hwnd,
+                GWL_EXSTYLE,
+                exstyle | WS_EX_LAYERED.0 as i32 | WS_EX_TRANSPARENT.0 as i32,
+            );
+            let _ = SetLayeredWindowAttributes(
+                hwnd,
+                windows::Win32::Foundation::COLORREF(0),
+                0,
+                LWA_ALPHA,
+            );
 
             // 2. Show the taskbar window WITHOUT calling ABM_SETSTATE (prevents work-area
             //    recalculation which would displace the notch/dock appbars).
-            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE};
             use crate::utils::ORIGINAL_TRAY_RECT;
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+            };
             if let Ok(guard) = ORIGINAL_TRAY_RECT.lock() {
                 if let Some(rect) = *guard {
-                    let _ = SetWindowPos(hwnd, None, rect.left, rect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    let _ = SetWindowPos(
+                        hwnd,
+                        None,
+                        rect.left,
+                        rect.top,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
                 }
             }
             let _ = ShowWindow(hwnd, SW_SHOW);
             crate::state::NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
-            
+
             // Give Windows a moment to realize the taskbar is "there"
             std::thread::sleep(std::time::Duration::from_millis(50));
 
             // 3. Send the Win+B and Space macro to open the tray chevron
-            use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, KEYBDINPUT, VK_LWIN, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_SPACE};
+            use windows::Win32::UI::Input::KeyboardAndMouse::{
+                SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LWIN,
+                VK_SPACE,
+            };
             let b_key = VIRTUAL_KEY(0x42); // 'B' key
-            
+
             let inputs = [
                 // Win+B
                 INPUT {
                     r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
-                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_LWIN, wScan: 0, dwFlags: Default::default(), time: 0, dwExtraInfo: 0 } },
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: VK_LWIN,
+                            wScan: 0,
+                            dwFlags: Default::default(),
+                            time: 0,
+                            dwExtraInfo: 0,
+                        },
+                    },
                 },
                 INPUT {
                     r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
-                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: b_key, wScan: 0, dwFlags: Default::default(), time: 0, dwExtraInfo: 0 } },
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: b_key,
+                            wScan: 0,
+                            dwFlags: Default::default(),
+                            time: 0,
+                            dwExtraInfo: 0,
+                        },
+                    },
                 },
                 INPUT {
                     r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
-                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: b_key, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 } },
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: b_key,
+                            wScan: 0,
+                            dwFlags: KEYEVENTF_KEYUP,
+                            time: 0,
+                            dwExtraInfo: 0,
+                        },
+                    },
                 },
                 INPUT {
                     r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
-                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_LWIN, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 } },
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: VK_LWIN,
+                            wScan: 0,
+                            dwFlags: KEYEVENTF_KEYUP,
+                            time: 0,
+                            dwExtraInfo: 0,
+                        },
+                    },
                 },
             ];
             SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-            
+
             std::thread::sleep(std::time::Duration::from_millis(150));
-            
+
             // Space to open the popup
             let space_inputs = [
                 INPUT {
                     r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
-                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_SPACE, wScan: 0, dwFlags: Default::default(), time: 0, dwExtraInfo: 0 } },
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: VK_SPACE,
+                            wScan: 0,
+                            dwFlags: Default::default(),
+                            time: 0,
+                            dwExtraInfo: 0,
+                        },
+                    },
                 },
                 INPUT {
                     r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
-                    Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_SPACE, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 } },
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: VK_SPACE,
+                            wScan: 0,
+                            dwFlags: KEYEVENTF_KEYUP,
+                            time: 0,
+                            dwExtraInfo: 0,
+                        },
+                    },
                 },
             ];
             SendInput(&space_inputs, std::mem::size_of::<INPUT>() as i32);
 
             // 4. Start monitoring for the tray popup to close
             std::thread::spawn(move || {
-                let overflow_class = PCSTR(c"TopLevelWindowForOverflowXamlIsland".as_ptr() as *const u8);
+                let overflow_class =
+                    PCSTR(c"TopLevelWindowForOverflowXamlIsland".as_ptr() as *const u8);
                 let win10_overflow_class = PCSTR(c"NotifyIconOverflowWindow".as_ptr() as *const u8);
-                
+
                 // Wait for it to appear
                 let mut found = false;
                 for _ in 0..50 {
                     let h1 = FindWindowA(overflow_class, PCSTR::null()).unwrap_or_default();
                     let h2 = FindWindowA(win10_overflow_class, PCSTR::null()).unwrap_or_default();
-                    if (!h1.0.is_null() && IsWindowVisible(h1).as_bool()) || (!h2.0.is_null() && IsWindowVisible(h2).as_bool()) {
+                    if (!h1.0.is_null() && IsWindowVisible(h1).as_bool())
+                        || (!h2.0.is_null() && IsWindowVisible(h2).as_bool())
+                    {
                         found = true;
                         break;
                     }
@@ -1621,61 +2129,101 @@ pub fn open_system_tray() {
                     loop {
                         std::thread::sleep(std::time::Duration::from_millis(200));
                         let h1 = FindWindowA(overflow_class, PCSTR::null()).unwrap_or_default();
-                        let h2 = FindWindowA(win10_overflow_class, PCSTR::null()).unwrap_or_default();
-                        let visible = (!h1.0.is_null() && IsWindowVisible(h1).as_bool()) || (!h2.0.is_null() && IsWindowVisible(h2).as_bool());
+                        let h2 =
+                            FindWindowA(win10_overflow_class, PCSTR::null()).unwrap_or_default();
+                        let visible = (!h1.0.is_null() && IsWindowVisible(h1).as_bool())
+                            || (!h2.0.is_null() && IsWindowVisible(h2).as_bool());
                         if !visible {
                             break;
                         }
                     }
                 }
-                
+
                 // Once closed, hide taskbar again
                 crate::utils::set_taskbar_visibility(false, false);
                 crate::state::NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
-                
+
                 // Revert transparency
                 let tray_class = PCSTR(c"Shell_TrayWnd".as_ptr() as *const u8);
                 let hwnd = FindWindowA(tray_class, PCSTR::null()).unwrap_or_default();
                 if !hwnd.0.is_null() {
                     let exstyle = GetWindowLongA(hwnd, GWL_EXSTYLE);
-                    let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
-                    let _ = SetWindowLongA(hwnd, GWL_EXSTYLE, exstyle & !(WS_EX_LAYERED.0 as i32) & !(WS_EX_TRANSPARENT.0 as i32));
+                    let _ = SetLayeredWindowAttributes(
+                        hwnd,
+                        windows::Win32::Foundation::COLORREF(0),
+                        255,
+                        LWA_ALPHA,
+                    );
+                    let _ = SetWindowLongA(
+                        hwnd,
+                        GWL_EXSTYLE,
+                        exstyle & !(WS_EX_LAYERED.0 as i32) & !(WS_EX_TRANSPARENT.0 as i32),
+                    );
                 }
             });
-
         } else {
             // If already toggled on manually, toggle off
             crate::utils::set_taskbar_visibility(false, false);
             crate::state::NATIVE_TASKBAR_HIDDEN.store(true, Ordering::Relaxed);
 
             let exstyle = GetWindowLongA(hwnd, GWL_EXSTYLE);
-            let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
-            let _ = SetWindowLongA(hwnd, GWL_EXSTYLE, exstyle & !(WS_EX_LAYERED.0 as i32) & !(WS_EX_TRANSPARENT.0 as i32));
+            let _ = SetLayeredWindowAttributes(
+                hwnd,
+                windows::Win32::Foundation::COLORREF(0),
+                255,
+                LWA_ALPHA,
+            );
+            let _ = SetWindowLongA(
+                hwnd,
+                GWL_EXSTYLE,
+                exstyle & !(WS_EX_LAYERED.0 as i32) & !(WS_EX_TRANSPARENT.0 as i32),
+            );
         }
     });
 }
 
 #[tauri::command]
-pub fn media_play_pause() { if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(crate::types::SystemCommand::MediaPlayPause); } }
+pub fn media_play_pause() {
+    if let Some(sender) = COMMAND_SENDER.get() {
+        let _ = sender.send(crate::types::SystemCommand::MediaPlayPause);
+    }
+}
 
 #[tauri::command]
-pub fn media_next() { if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(crate::types::SystemCommand::MediaNext); } }
+pub fn media_next() {
+    if let Some(sender) = COMMAND_SENDER.get() {
+        let _ = sender.send(crate::types::SystemCommand::MediaNext);
+    }
+}
 
 #[tauri::command]
-pub fn media_previous() { if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(crate::types::SystemCommand::MediaPrevious); } }
+pub fn media_previous() {
+    if let Some(sender) = COMMAND_SENDER.get() {
+        let _ = sender.send(crate::types::SystemCommand::MediaPrevious);
+    }
+}
 
 #[tauri::command]
-pub fn media_seek(position_ms: f64) { if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(crate::types::SystemCommand::MediaSeek(position_ms as i64)); } }
+pub fn media_seek(position_ms: f64) {
+    if let Some(sender) = COMMAND_SENDER.get() {
+        let _ = sender.send(crate::types::SystemCommand::MediaSeek(position_ms as i64));
+    }
+}
 
 #[tauri::command]
 pub fn open_media_source_app() {
     unsafe {
         use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
-        use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, IsIconic, IsWindowVisible, FindWindowW, EnumWindows, GetWindowThreadProcessId};
         use windows::Win32::Foundation::{HWND, LPARAM};
         use windows::Win32::System::Threading::OpenProcess;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, FindWindowW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+            SetForegroundWindow, ShowWindow, SW_RESTORE,
+        };
 
-        let mgr = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync().and_then(|op| op.get()) {
+        let mgr = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
+            .and_then(|op| op.get())
+        {
             Ok(m) => m,
             Err(_) => return,
         };
@@ -1687,7 +2235,9 @@ pub fn open_media_source_app() {
             Ok(id) => id.to_string(),
             Err(_) => return,
         };
-        if app_id.is_empty() { return; }
+        if app_id.is_empty() {
+            return;
+        }
 
         // First try: FindWindow with the AppUserModelId directly (works for UWP)
         let h_app_id = windows::core::HSTRING::from(&app_id);
@@ -1704,7 +2254,10 @@ pub fn open_media_source_app() {
         // Second try: find window by process name extracted from app_id
         let process_name = app_id.split('.').next().unwrap_or(&app_id).to_lowercase();
 
-        struct EnumData { process_name: String, found_hwnd: Option<HWND> }
+        struct EnumData {
+            process_name: String,
+            found_hwnd: Option<HWND>,
+        }
 
         unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
             let data = &mut *(lparam.0 as *mut EnumData);
@@ -1713,7 +2266,9 @@ pub fn open_media_source_app() {
             }
             let mut pid = 0u32;
             GetWindowThreadProcessId(hwnd, Some(&mut pid));
-            if pid == 0 { return windows::core::BOOL(1); }
+            if pid == 0 {
+                return windows::core::BOOL(1);
+            }
 
             if let Ok(proc) = OpenProcess(
                 windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
@@ -1731,7 +2286,12 @@ pub fn open_media_source_app() {
                 let _ = windows::Win32::Foundation::CloseHandle(proc);
                 if ok.is_ok() {
                     let path = String::from_utf16_lossy(&buf[..size as usize]);
-                    let file_name = path.rsplit('\\').next().unwrap_or("").to_lowercase().replace(".exe", "");
+                    let file_name = path
+                        .rsplit('\\')
+                        .next()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .replace(".exe", "");
                     if file_name == data.process_name {
                         data.found_hwnd = Some(hwnd);
                         return windows::core::BOOL(0);
@@ -1741,8 +2301,12 @@ pub fn open_media_source_app() {
             windows::core::BOOL(1)
         }
 
-        let mut data = EnumData { process_name, found_hwnd: None };
-        let callback: unsafe extern "system" fn(HWND, LPARAM) -> windows::core::BOOL = enum_callback;
+        let mut data = EnumData {
+            process_name,
+            found_hwnd: None,
+        };
+        let callback: unsafe extern "system" fn(HWND, LPARAM) -> windows::core::BOOL =
+            enum_callback;
         let _ = EnumWindows(Some(callback), LPARAM(&mut data as *mut EnumData as isize));
 
         if let Some(hwnd) = data.found_hwnd {
@@ -1755,7 +2319,11 @@ pub fn open_media_source_app() {
 }
 
 #[tauri::command]
-pub fn set_volume(volume: f32) { if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(crate::types::SystemCommand::SetVolume(volume)); } }
+pub fn set_volume(volume: f32) {
+    if let Some(sender) = COMMAND_SENDER.get() {
+        let _ = sender.send(crate::types::SystemCommand::SetVolume(volume));
+    }
+}
 
 /// Restore the native taskbar, unregister Bloom's appbars, and exit gracefully.
 /// Shared by the tray menu, the in-app Quit button, and the window CloseRequested
@@ -1763,10 +2331,14 @@ pub fn set_volume(volume: f32) { if let Some(sender) = COMMAND_SENDER.get() { le
 /// identically.
 pub fn restore_taskbar_and_exit(handle: &AppHandle) {
     if let Some(w) = handle.get_webview_window("main") {
-        if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) { unregister_appbar_native(w.hwnd().unwrap()); }
+        if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+            unregister_appbar_native(w.hwnd().unwrap());
+        }
     }
     if let Some(w) = handle.get_webview_window("dock") {
-        if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) { unregister_appbar_native(w.hwnd().unwrap()); }
+        if DOCK_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+            unregister_appbar_native(w.hwnd().unwrap());
+        }
     }
     set_taskbar_visibility(true, true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
@@ -1785,9 +2357,15 @@ pub async fn quit_bloom(handle: AppHandle) {
 
 #[tauri::command]
 pub async fn restart_bloom(handle: AppHandle) {
-    if let Some(w) = handle.get_webview_window("main") { unregister_appbar_native(w.hwnd().unwrap()); }
-    if let Some(w) = handle.get_webview_window("dock") { unregister_appbar_native(w.hwnd().unwrap()); }
-    if let Some(w) = handle.get_webview_window("settings") { let _ = w.destroy(); }
+    if let Some(w) = handle.get_webview_window("main") {
+        unregister_appbar_native(w.hwnd().unwrap());
+    }
+    if let Some(w) = handle.get_webview_window("dock") {
+        unregister_appbar_native(w.hwnd().unwrap());
+    }
+    if let Some(w) = handle.get_webview_window("settings") {
+        let _ = w.destroy();
+    }
     set_taskbar_visibility(true, true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
     close_single_instance_handles();
@@ -1799,19 +2377,32 @@ pub async fn close_window(hwnd: isize) {
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
         let hwnd = HWND(hwnd as *mut _);
-        let _ = PostMessageW(Some(hwnd), WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
-    }).await.unwrap_or_default();
+        let _ = PostMessageW(
+            Some(hwnd),
+            WM_CLOSE,
+            windows::Win32::Foundation::WPARAM(0),
+            windows::Win32::Foundation::LPARAM(0),
+        );
+    })
+    .await
+    .unwrap_or_default();
 }
 
 fn re_register_appbars(app: &AppHandle, settings: &HashMap<String, serde_json::Value>) {
     if let Some(main_win) = app.get_webview_window("main") {
-        let notch_fixed = settings.get("bloom-notch-mode").map(|v| v.as_str() == Some("fixed")).unwrap_or(true);
+        let notch_fixed = settings
+            .get("bloom-notch-mode")
+            .map(|v| v.as_str() == Some("fixed"))
+            .unwrap_or(true);
         if notch_fixed {
             crate::services::register_appbar(main_win);
         }
     }
     if let Some(dock_win) = app.get_webview_window("dock") {
-        let is_fixed = settings.get("bloom-dock-mode").map(|v| v.as_str() == Some("fixed")).unwrap_or(false);
+        let is_fixed = settings
+            .get("bloom-dock-mode")
+            .map(|v| v.as_str() == Some("fixed"))
+            .unwrap_or(false);
         if is_fixed {
             crate::services::register_dock_appbar(dock_win);
         }
@@ -1820,10 +2411,20 @@ fn re_register_appbars(app: &AppHandle, settings: &HashMap<String, serde_json::V
 
 #[tauri::command]
 pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
-    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
-    if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("settings.json");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let mut settings = HashMap::new();
-    if let Ok(content) = std::fs::read_to_string(&path) { if let Ok(existing) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&content) { settings = existing; } }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(existing) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&content) {
+            settings = existing;
+        }
+    }
     settings.insert(key.clone(), value);
     let content = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
     std::fs::write(path, content).map_err(|e| e.to_string())?;
@@ -1831,7 +2432,10 @@ pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Re
     crate::utils::replace_settings_cache(settings.clone());
 
     // Broadcast so all windows sync — emit the key as-is (bloom-prefixed)
-    let _ = app.emit("settings-changed", serde_json::json!({ "key": &key, "value": &settings[&key] }));
+    let _ = app.emit(
+        "settings-changed",
+        serde_json::json!({ "key": &key, "value": &settings[&key] }),
+    );
 
     if key == "bloom-scale" {
         re_register_appbars(&app, &settings);
@@ -1839,25 +2443,34 @@ pub fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Re
     Ok(())
 }
 
-
 #[tauri::command]
 pub fn load_settings(app: AppHandle) -> Result<HashMap<String, serde_json::Value>, String> {
     let path = match app.path().app_config_dir() {
         Ok(p) => p.join("settings.json"),
         Err(_) => return Ok(HashMap::new()),
     };
-    if let Ok(content) = std::fs::read_to_string(path) { if let Ok(settings) = serde_json::from_str(&content) { return Ok(settings); } }
+    if let Ok(content) = std::fs::read_to_string(path) {
+        if let Ok(settings) = serde_json::from_str(&content) {
+            return Ok(settings);
+        }
+    }
     Ok(HashMap::new())
 }
 
 #[tauri::command]
-pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u32) -> Result<Option<(String, i64)>, String> {
+pub async fn capture_window_thumbnail(
+    hwnd: isize,
+    max_width: u32,
+    max_height: u32,
+) -> Result<Option<(String, i64)>, String> {
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::{IsWindow, IsIconic};
+        use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow};
 
         let hwnd = HWND(hwnd as *mut _);
-        if !IsWindow(Some(hwnd)).as_bool() { return None; }
+        if !IsWindow(Some(hwnd)).as_bool() {
+            return None;
+        }
 
         let hwnd_key = hwnd.0 as isize;
         let is_minimized = IsIconic(hwnd).as_bool();
@@ -1875,7 +2488,10 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
             // minimize/focus window hooks, so minimized windows normally have
             // a cached image already; without one we simply show no preview.
             let cached_img = if let Some(cache) = crate::state::THUMBNAIL_CACHE.get() {
-                cache.lock().ok().and_then(|g| g.get(&hwnd_key).map(|(img, _)| img.clone()))
+                cache
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.get(&hwnd_key).map(|(img, _)| img.clone()))
             } else {
                 None
             };
@@ -1891,18 +2507,17 @@ pub async fn capture_window_thumbnail(hwnd: isize, max_width: u32, max_height: u
                     // Prune dead windows if cache size exceeds 15
                     // Minimized windows (IsWindow == true) are kept intact
                     if guard.len() > 15 {
-                        guard.retain(|&k, _| {
-                            IsWindow(Some(HWND(k as *mut _))).as_bool()
-                        });
+                        guard.retain(|&k, _| IsWindow(Some(HWND(k as *mut _))).as_bool());
                     }
                 }
             }
         }
 
         result.map(|img| (img, focus_time))
-    }).await.map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
-
 
 // ── Radio helpers — Windows Runtime Windows.Devices.Radios ───────────────────
 // Replaces PowerShell -ExecutionPolicy Bypass scripts for WiFi/Bluetooth state.
@@ -1911,7 +2526,8 @@ fn get_radio_state_sync(kind: windows::Devices::Radios::RadioKind) -> Result<boo
     use windows::Devices::Radios::{Radio, RadioState};
     unsafe {
         let _ = windows::Win32::System::Com::CoInitializeEx(
-            None, windows::Win32::System::Com::COINIT_MULTITHREADED,
+            None,
+            windows::Win32::System::Com::COINIT_MULTITHREADED,
         );
     }
     let radios = Radio::GetRadiosAsync()
@@ -1927,11 +2543,15 @@ fn get_radio_state_sync(kind: windows::Devices::Radios::RadioKind) -> Result<boo
     Ok(false)
 }
 
-fn set_radio_state_sync(kind: windows::Devices::Radios::RadioKind, enabled: bool) -> Result<(), String> {
+fn set_radio_state_sync(
+    kind: windows::Devices::Radios::RadioKind,
+    enabled: bool,
+) -> Result<(), String> {
     use windows::Devices::Radios::{Radio, RadioState};
     unsafe {
         let _ = windows::Win32::System::Com::CoInitializeEx(
-            None, windows::Win32::System::Com::COINIT_MULTITHREADED,
+            None,
+            windows::Win32::System::Com::COINIT_MULTITHREADED,
         );
     }
     let radios = Radio::GetRadiosAsync()
@@ -1940,7 +2560,11 @@ fn set_radio_state_sync(kind: windows::Devices::Radios::RadioKind, enabled: bool
     for i in 0..radios.Size().unwrap_or(0) {
         if let Ok(radio) = radios.GetAt(i) {
             if radio.Kind().ok() == Some(kind) {
-                let target = if enabled { RadioState::On } else { RadioState::Off };
+                let target = if enabled {
+                    RadioState::On
+                } else {
+                    RadioState::Off
+                };
                 let _ = radio.SetStateAsync(target).and_then(|op| op.get());
                 return Ok(());
             }
@@ -1963,28 +2587,36 @@ pub fn get_brightness() -> u32 {
 pub async fn get_wifi_state() -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(|| {
         get_radio_state_sync(windows::Devices::Radios::RadioKind::WiFi)
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn set_wifi_state(enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         set_radio_state_sync(windows::Devices::Radios::RadioKind::WiFi, enabled)
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn get_bluetooth_state() -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(|| {
         get_radio_state_sync(windows::Devices::Radios::RadioKind::Bluetooth)
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn set_bluetooth_state(enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         set_radio_state_sync(windows::Devices::Radios::RadioKind::Bluetooth, enabled)
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // Settings openers — use ShellExecuteA directly instead of spawning powershell
@@ -1994,7 +2626,14 @@ pub fn open_bluetooth_settings() {
     unsafe {
         use windows::Win32::UI::Shell::ShellExecuteA;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        let _ = ShellExecuteA(None, windows::core::PCSTR(c"open".as_ptr() as *const u8), windows::core::PCSTR(c"ms-settings:bluetooth".as_ptr() as *const u8), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
+        let _ = ShellExecuteA(
+            None,
+            windows::core::PCSTR(c"open".as_ptr() as *const u8),
+            windows::core::PCSTR(c"ms-settings:bluetooth".as_ptr() as *const u8),
+            windows::core::PCSTR::null(),
+            windows::core::PCSTR::null(),
+            SW_SHOWNORMAL,
+        );
     }
 }
 
@@ -2003,7 +2642,14 @@ pub fn open_airplane_mode_settings() {
     unsafe {
         use windows::Win32::UI::Shell::ShellExecuteA;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        let _ = ShellExecuteA(None, windows::core::PCSTR(c"open".as_ptr() as *const u8), windows::core::PCSTR(c"ms-settings:network-airplanemode".as_ptr() as *const u8), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
+        let _ = ShellExecuteA(
+            None,
+            windows::core::PCSTR(c"open".as_ptr() as *const u8),
+            windows::core::PCSTR(c"ms-settings:network-airplanemode".as_ptr() as *const u8),
+            windows::core::PCSTR::null(),
+            windows::core::PCSTR::null(),
+            SW_SHOWNORMAL,
+        );
     }
 }
 
@@ -2012,7 +2658,10 @@ pub fn set_brightness(app: AppHandle, brightness: u32) {
     let val = brightness.min(100);
     crate::state::CURRENT_BRIGHTNESS.store(val, Ordering::Relaxed);
     crate::state::LAST_BRIGHTNESS_CHANGE.store(crate::utils::get_now_ms(), Ordering::Relaxed);
-    let _ = app.emit("brightness-change", BrightnessChangeEvent { brightness: val });
+    let _ = app.emit(
+        "brightness-change",
+        BrightnessChangeEvent { brightness: val },
+    );
     if let Some(tx) = crate::state::BRIGHTNESS_SENDER.get() {
         let _ = tx.send(val);
     }
@@ -2024,7 +2673,8 @@ pub async fn get_battery_saver_state() -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(|| {
         unsafe {
             let _ = windows::Win32::System::Com::CoInitializeEx(
-                None, windows::Win32::System::Com::COINIT_MULTITHREADED,
+                None,
+                windows::Win32::System::Com::COINIT_MULTITHREADED,
             );
         }
         use windows::System::Power::{EnergySaverStatus, PowerManager};
@@ -2032,7 +2682,9 @@ pub async fn get_battery_saver_state() -> Result<bool, String> {
             Ok(status) => Ok(status == EnergySaverStatus::On),
             Err(_) => Ok(false), // No battery / not supported on this device
         }
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -2040,7 +2692,14 @@ pub fn open_battery_saver_settings() {
     unsafe {
         use windows::Win32::UI::Shell::ShellExecuteA;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        let _ = ShellExecuteA(None, windows::core::PCSTR(c"open".as_ptr() as *const u8), windows::core::PCSTR(c"ms-settings:batterysaver".as_ptr() as *const u8), windows::core::PCSTR::null(), windows::core::PCSTR::null(), SW_SHOWNORMAL);
+        let _ = ShellExecuteA(
+            None,
+            windows::core::PCSTR(c"open".as_ptr() as *const u8),
+            windows::core::PCSTR(c"ms-settings:batterysaver".as_ptr() as *const u8),
+            windows::core::PCSTR::null(),
+            windows::core::PCSTR::null(),
+            SW_SHOWNORMAL,
+        );
     }
 }
 
@@ -2057,8 +2716,12 @@ pub fn get_cpu_usage() -> Result<u32, String> {
         let mut idle = windows::Win32::Foundation::FILETIME::default();
         let mut kernel = windows::Win32::Foundation::FILETIME::default();
         let mut user = windows::Win32::Foundation::FILETIME::default();
-        windows::Win32::System::Threading::GetSystemTimes(Some(&mut idle), Some(&mut kernel), Some(&mut user))
-            .map_err(|e| format!("GetSystemTimes failed: {e}"))?;
+        windows::Win32::System::Threading::GetSystemTimes(
+            Some(&mut idle),
+            Some(&mut kernel),
+            Some(&mut user),
+        )
+        .map_err(|e| format!("GetSystemTimes failed: {e}"))?;
 
         let idle_u64 = (idle.dwHighDateTime as u64) << 32 | idle.dwLowDateTime as u64;
         let kernel_u64 = (kernel.dwHighDateTime as u64) << 32 | kernel.dwLowDateTime as u64;
@@ -2085,7 +2748,8 @@ pub fn get_cpu_usage() -> Result<u32, String> {
 pub fn get_ram_usage() -> Result<f32, String> {
     unsafe {
         let mut mem = windows::Win32::System::SystemInformation::MEMORYSTATUSEX::default();
-        mem.dwLength = std::mem::size_of::<windows::Win32::System::SystemInformation::MEMORYSTATUSEX>() as u32;
+        mem.dwLength =
+            std::mem::size_of::<windows::Win32::System::SystemInformation::MEMORYSTATUSEX>() as u32;
         windows::Win32::System::SystemInformation::GlobalMemoryStatusEx(&mut mem)
             .map_err(|e| format!("GlobalMemoryStatusEx failed: {e}"))?;
         Ok(mem.dwMemoryLoad as f32)
@@ -2103,7 +2767,8 @@ pub fn get_disk_space() -> Result<u64, String> {
             Some(&mut free_bytes),
             Some(&mut total_bytes),
             Some(&mut total_free),
-        ).map_err(|e| format!("GetDiskFreeSpaceEx failed: {e}"))?;
+        )
+        .map_err(|e| format!("GetDiskFreeSpaceEx failed: {e}"))?;
         Ok(free_bytes / (1024 * 1024 * 1024))
     }
 }
@@ -2121,11 +2786,16 @@ pub fn get_network_speed() -> Result<(u64, u64), String> {
         .as_millis() as u64;
 
     let last_check = LAST_CHECK.load(Ordering::Relaxed);
-    let elapsed = if last_check > 0 { (now - last_check).max(1) } else { 1000 };
+    let elapsed = if last_check > 0 {
+        (now - last_check).max(1)
+    } else {
+        1000
+    };
 
     let (mut total_in, mut total_out) = (0u64, 0u64);
     unsafe {
-        let mut table_ptr: *mut windows::Win32::NetworkManagement::IpHelper::MIB_IF_TABLE2 = std::ptr::null_mut();
+        let mut table_ptr: *mut windows::Win32::NetworkManagement::IpHelper::MIB_IF_TABLE2 =
+            std::ptr::null_mut();
         let ret = windows::Win32::NetworkManagement::IpHelper::GetIfTable2(&mut table_ptr);
         if ret.is_ok() && !table_ptr.is_null() {
             let table = &*table_ptr;
@@ -2148,8 +2818,16 @@ pub fn get_network_speed() -> Result<(u64, u64), String> {
         return Ok((0, 0));
     }
 
-    let sent_per_sec = if total_out > prev_sent { ((total_out - prev_sent) * 1000) / elapsed } else { 0 };
-    let recv_per_sec = if total_in > prev_recv { ((total_in - prev_recv) * 1000) / elapsed } else { 0 };
+    let sent_per_sec = if total_out > prev_sent {
+        ((total_out - prev_sent) * 1000) / elapsed
+    } else {
+        0
+    };
+    let recv_per_sec = if total_in > prev_recv {
+        ((total_in - prev_recv) * 1000) / elapsed
+    } else {
+        0
+    };
 
     Ok((sent_per_sec, recv_per_sec))
 }
@@ -2157,10 +2835,14 @@ pub fn get_network_speed() -> Result<(u64, u64), String> {
 #[tauri::command]
 pub fn get_windows_accent_color() -> Option<String> {
     unsafe {
-        use windows::Win32::System::Registry::{RegOpenKeyExW, RegQueryValueExW, RegCloseKey, HKEY_CURRENT_USER, KEY_READ, REG_BINARY, REG_DWORD};
-        
+        use windows::Win32::System::Registry::{
+            RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ, REG_BINARY,
+            REG_DWORD,
+        };
+
         // 1. Try reading AccentPalette from Explorer\Accent for the true system accent color
-        let subkey = windows::core::w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent");
+        let subkey =
+            windows::core::w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent");
         let mut hkey = windows::Win32::System::Registry::HKEY::default();
         if RegOpenKeyExW(HKEY_CURRENT_USER, subkey, Some(0), KEY_READ, &mut hkey).is_ok() {
             let mut value_type = REG_BINARY;
@@ -2173,8 +2855,10 @@ pub fn get_windows_accent_color() -> Option<String> {
                 None,
                 Some(&mut value_type),
                 Some(palette.as_mut_ptr()),
-                Some(&mut value_size)
-            ).is_ok() {
+                Some(&mut value_size),
+            )
+            .is_ok()
+            {
                 let _ = RegCloseKey(hkey);
                 if value_size >= 15 {
                     // bytes 12, 13, 14 are R, G, B of the active accent color
@@ -2202,8 +2886,10 @@ pub fn get_windows_accent_color() -> Option<String> {
                 None,
                 Some(&mut value_type),
                 Some(&mut color_val as *mut u32 as *mut u8),
-                Some(&mut value_size)
-            ).is_ok() {
+                Some(&mut value_size),
+            )
+            .is_ok()
+            {
                 let _ = RegCloseKey(hkey);
                 // color_val is AABBGGRR (ABGR format)
                 let r = (color_val & 0xff) as u8;
@@ -2242,7 +2928,11 @@ pub fn get_system_accent_color() -> Result<String, String> {
 
 #[tauri::command]
 pub fn export_settings(app: AppHandle) -> Result<String, String> {
-    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("settings.json");
     if let Ok(content) = std::fs::read_to_string(&path) {
         // Validate it's valid JSON before returning
         let _settings: HashMap<String, serde_json::Value> =
@@ -2268,7 +2958,11 @@ pub fn import_settings(app: AppHandle, settings: String) -> Result<(), String> {
     let imported: HashMap<String, serde_json::Value> =
         serde_json::from_str(&settings).map_err(|e| format!("Invalid JSON: {}", e))?;
 
-    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("settings.json");
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("settings.json");
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -2280,7 +2974,10 @@ pub fn import_settings(app: AppHandle, settings: String) -> Result<(), String> {
 
     // Broadcast changes for every imported key so all windows re-sync
     for (key, value) in &imported {
-        let _ = app.emit("settings-changed", serde_json::json!({ "key": key, "value": value }));
+        let _ = app.emit(
+            "settings-changed",
+            serde_json::json!({ "key": key, "value": value }),
+        );
     }
 
     if imported.get("bloom-scale").is_some() {
@@ -2305,15 +3002,15 @@ pub fn setup_settings_watcher(app: AppHandle) {
     std::thread::spawn(move || {
         use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
         use windows::Win32::Storage::FileSystem::{
-            CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY,
-            FILE_NOTIFY_CHANGE_LAST_WRITE,
-            OPEN_EXISTING, ReadDirectoryChangesW,
+            CreateFileW, ReadDirectoryChangesW, FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY,
+            FILE_NOTIFY_CHANGE_LAST_WRITE, OPEN_EXISTING,
         };
-        use windows::Win32::System::IO::OVERLAPPED;
         use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+        use windows::Win32::System::IO::OVERLAPPED;
 
         unsafe {
-            let dir_path: Vec<u16> = config_dir.to_string_lossy()
+            let dir_path: Vec<u16> = config_dir
+                .to_string_lossy()
                 .encode_utf16()
                 .chain(std::iter::once(0))
                 .collect();
@@ -2367,7 +3064,9 @@ pub fn setup_settings_watcher(app: AppHandle) {
                 std::thread::sleep(std::time::Duration::from_millis(200));
 
                 if let Ok(new_content) = std::fs::read_to_string(&settings_path) {
-                    if let Ok(new_settings) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&new_content) {
+                    if let Ok(new_settings) =
+                        serde_json::from_str::<HashMap<String, serde_json::Value>>(&new_content)
+                    {
                         // Collect diffs while holding the lock, then drop before emitting
                         let (changed, removed) = {
                             let mut cache = crate::state::SETTINGS_CACHE
@@ -2382,7 +3081,8 @@ pub fn setup_settings_watcher(app: AppHandle) {
                                 }
                             }
 
-                            let removed: Vec<String> = cache.keys()
+                            let removed: Vec<String> = cache
+                                .keys()
                                 .filter(|k| !new_settings.contains_key(*k))
                                 .cloned()
                                 .collect();
@@ -2421,7 +3121,9 @@ mod pwa_icon_tests {
     fn aumid_detection() {
         assert!(is_aumid_path("4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"));
         assert!(is_aumid_path("Microsoft.VisualStudioCode"));
-        assert!(is_aumid_path("shell:AppsFolder\\4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"));
+        assert!(is_aumid_path(
+            "shell:AppsFolder\\4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"
+        ));
         assert!(!is_aumid_path("C:\\Windows\\explorer.exe"));
         assert!(!is_aumid_path("msedge.exe"));
         assert!(!is_aumid_path(""));
@@ -2431,10 +3133,22 @@ mod pwa_icon_tests {
     fn command_line_arg_parsing() {
         let args = "--profile-directory=\"Profile 1\" --app-id=abcdef --ip-aumid=Package_Pub!App";
         assert_eq!(extract_arg(args, "--app-id="), Some("abcdef".into()));
-        assert_eq!(extract_arg(args, "--profile-directory="), Some("Profile 1".into()));
-        assert_eq!(extract_arg(args, "--ip-aumid="), Some("Package_Pub!App".into()));
+        assert_eq!(
+            extract_arg(args, "--profile-directory="),
+            Some("Profile 1".into())
+        );
+        assert_eq!(
+            extract_arg(args, "--ip-aumid="),
+            Some("Package_Pub!App".into())
+        );
         assert_eq!(extract_arg(args, "--missing="), None);
-        assert_eq!(extract_arg("shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", "shell:AppsFolder\\"), Some("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App".into()));
+        assert_eq!(
+            extract_arg(
+                "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+                "shell:AppsFolder\\"
+            ),
+            Some("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App".into())
+        );
     }
 
     #[test]
@@ -2443,24 +3157,48 @@ mod pwa_icon_tests {
             package_family_from_windows_apps_path("C:\\Program Files\\WindowsApps\\5319275A.WhatsAppDesktop_2.2634.101.0_x64__cv1g1gvanyjgm\\WhatsApp.Root.exe").as_deref(),
             Some("5319275A.WhatsAppDesktop_cv1g1gvanyjgm")
         );
-        assert_eq!(package_family_from_windows_apps_path("C:\\Windows\\explorer.exe"), None);
-        assert_eq!(package_family_from_windows_apps_path("C:\\Program Files\\App\\app.exe"), None);
+        assert_eq!(
+            package_family_from_windows_apps_path("C:\\Windows\\explorer.exe"),
+            None
+        );
+        assert_eq!(
+            package_family_from_windows_apps_path("C:\\Program Files\\App\\app.exe"),
+            None
+        );
     }
 
     #[test]
     fn browser_web_app_ids_from_aumids() {
-        assert_eq!(browser_web_app_id_from_aumid("Chrome.edhbnieanoeijlkpgkminebadpibapgm").as_deref(), Some("edhbnieanoeijlkpgkminebadpibapgm"));
-        assert_eq!(browser_web_app_id_from_aumid("Chrome._crx_edhbnieanoeijlkpgkminebadpibapgm").as_deref(), Some("edhbnieanoeijlkpgkminebadpibapgm"));
-        assert_eq!(browser_web_app_id_from_aumid("4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"), None);
+        assert_eq!(
+            browser_web_app_id_from_aumid("Chrome.edhbnieanoeijlkpgkminebadpibapgm").as_deref(),
+            Some("edhbnieanoeijlkpgkminebadpibapgm")
+        );
+        assert_eq!(
+            browser_web_app_id_from_aumid("Chrome._crx_edhbnieanoeijlkpgkminebadpibapgm")
+                .as_deref(),
+            Some("edhbnieanoeijlkpgkminebadpibapgm")
+        );
+        assert_eq!(
+            browser_web_app_id_from_aumid("4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"),
+            None
+        );
         assert_eq!(browser_web_app_id_from_aumid("MSEdge"), None);
     }
 
     #[test]
     fn browser_pwa_aumid_detection() {
-        assert!(is_browser_pwa_aumid("Chrome.edhbnieanoeijlkpgkminebadpibapgm"));
-        assert!(is_browser_pwa_aumid("Brave._crx_edhbnieanoeijlkpgkminebadpibapgm"));
-        assert!(is_browser_pwa_aumid("Brave._crx_agimnkijcamfeangaknmldooml"));
-        assert!(is_browser_pwa_aumid("4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"));
+        assert!(is_browser_pwa_aumid(
+            "Chrome.edhbnieanoeijlkpgkminebadpibapgm"
+        ));
+        assert!(is_browser_pwa_aumid(
+            "Brave._crx_edhbnieanoeijlkpgkminebadpibapgm"
+        ));
+        assert!(is_browser_pwa_aumid(
+            "Brave._crx_agimnkijcamfeangaknmldooml"
+        ));
+        assert!(is_browser_pwa_aumid(
+            "4DF9E0F8.Netflix_mcm4njqhnhss8!Netflix.App"
+        ));
         assert!(!is_browser_pwa_aumid("MSEdge"));
         assert!(!is_browser_pwa_aumid("Chrome"));
         assert!(!is_browser_pwa_aumid("Brave"));
@@ -2469,8 +3207,14 @@ mod pwa_icon_tests {
     #[test]
     fn image_size_scoring_prefers_larger_dimensions() {
         use std::path::Path;
-        assert!(image_size_score(Path::new("C:\\x\\Icons\\256.png")) > image_size_score(Path::new("C:\\x\\Icons\\64.png")));
-        assert!(image_size_score(Path::new("C:\\x\\512x512.png")) > image_size_score(Path::new("C:\\x\\192x192.png")));
+        assert!(
+            image_size_score(Path::new("C:\\x\\Icons\\256.png"))
+                > image_size_score(Path::new("C:\\x\\Icons\\64.png"))
+        );
+        assert!(
+            image_size_score(Path::new("C:\\x\\512x512.png"))
+                > image_size_score(Path::new("C:\\x\\192x192.png"))
+        );
         assert_eq!(image_size_score(Path::new("C:\\x\\icon.png")), 0);
     }
 
@@ -2494,9 +3238,24 @@ mod pwa_icon_tests {
     #[test]
     fn pwa_launch_target_resolution() {
         // Non-browser paths and missing titles never resolve through the cache.
-        assert_eq!(pwa_launch_target("C:\\Windows\\notepad.exe", Some("Notepad")), None);
-        assert_eq!(pwa_launch_target("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", None), None);
-        assert_eq!(pwa_launch_target("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", Some("   ")), None);
+        assert_eq!(
+            pwa_launch_target("C:\\Windows\\notepad.exe", Some("Notepad")),
+            None
+        );
+        assert_eq!(
+            pwa_launch_target(
+                "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            pwa_launch_target(
+                "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+                Some("   ")
+            ),
+            None
+        );
 
         // With the installed-apps cache populated, a running PWA resolves to its
         // Start Menu shortcut and a same-titled app under another browser does not.
@@ -2521,15 +3280,24 @@ mod pwa_icon_tests {
             },
         ]));
         assert_eq!(
-            pwa_launch_target("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", Some("YouTube")),
+            pwa_launch_target(
+                "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+                Some("YouTube")
+            ),
             Some("C:\\Start Menu\\YouTube.lnk".into())
         );
         assert_eq!(
-            pwa_launch_target("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", Some("YouTube")),
+            pwa_launch_target(
+                "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                Some("YouTube")
+            ),
             None
         );
         assert_eq!(
-            pwa_launch_target("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", Some("Netflix")),
+            pwa_launch_target(
+                "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                Some("Netflix")
+            ),
             Some("C:\\Start Menu\\Netflix.lnk".into())
         );
     }

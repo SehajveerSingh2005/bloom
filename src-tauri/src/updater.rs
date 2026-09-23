@@ -182,7 +182,10 @@ async fn install_inner(app: &AppHandle) -> Result<(), String> {
     let updater = app
         .updater_builder()
         .on_before_exit(move || {
-            let _ = hook_handle.emit("auto-update-status", serde_json::json!({ "status": "installing" }));
+            let _ = hook_handle.emit(
+                "auto-update-status",
+                serde_json::json!({ "status": "installing" }),
+            );
             hook_handle.cleanup_before_exit();
         })
         .build()
@@ -194,7 +197,10 @@ async fn install_inner(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "no update available".to_string())?;
 
-    let _ = app.emit("auto-update-status", serde_json::json!({ "status": "downloading", "progress": 0 }));
+    let _ = app.emit(
+        "auto-update-status",
+        serde_json::json!({ "status": "downloading", "progress": 0 }),
+    );
 
     let progress_handle = app.clone();
     let downloaded = Arc::new(AtomicU64::new(0));
@@ -202,7 +208,8 @@ async fn install_inner(app: &AppHandle) -> Result<(), String> {
     update
         .download_and_install(
             move |chunk_len, total| {
-                let current = downloaded_cb.fetch_add(chunk_len as u64, Ordering::Relaxed) + chunk_len as u64;
+                let current =
+                    downloaded_cb.fetch_add(chunk_len as u64, Ordering::Relaxed) + chunk_len as u64;
                 if let Some(total) = total {
                     if total > 0 {
                         let progress = (current.saturating_mul(100) / total) as u32;
@@ -222,7 +229,10 @@ async fn install_inner(app: &AppHandle) -> Result<(), String> {
     // the plugin, so this is only reached on other platforms.
     #[cfg(not(windows))]
     {
-        let _ = app.emit("auto-update-status", serde_json::json!({ "status": "done" }));
+        let _ = app.emit(
+            "auto-update-status",
+            serde_json::json!({ "status": "done" }),
+        );
         app.restart()
     }
 
@@ -233,17 +243,24 @@ async fn install_inner(app: &AppHandle) -> Result<(), String> {
 /// Startup entry point: always checks so the UI can show an update badge, and
 /// auto-installs only when the user enabled it and the release has aged.
 pub async fn run_startup_check(app: AppHandle) {
-    let auto_update = crate::utils::get_setting_str(&app, "bloom-auto-update").as_deref() == Some("true");
+    let auto_update =
+        crate::utils::get_setting_str(&app, "bloom-auto-update").as_deref() == Some("true");
 
     if auto_update {
-        let _ = app.emit("auto-update-status", serde_json::json!({ "status": "checking" }));
+        let _ = app.emit(
+            "auto-update-status",
+            serde_json::json!({ "status": "checking" }),
+        );
     }
 
     let result = match check(&app, false).await {
         Ok(result) => result,
         Err(_) => {
             if auto_update {
-                let _ = app.emit("auto-update-status", serde_json::json!({ "status": "done" }));
+                let _ = app.emit(
+                    "auto-update-status",
+                    serde_json::json!({ "status": "done" }),
+                );
             }
             return;
         }
@@ -251,7 +268,10 @@ pub async fn run_startup_check(app: AppHandle) {
 
     if !result.available {
         if auto_update {
-            let _ = app.emit("auto-update-status", serde_json::json!({ "status": "done" }));
+            let _ = app.emit(
+                "auto-update-status",
+                serde_json::json!({ "status": "done" }),
+            );
         }
         return;
     }
@@ -261,10 +281,16 @@ pub async fn run_startup_check(app: AppHandle) {
     if auto_update && release_is_old_enough(&result) {
         // On Windows this never returns: the installer exits the process.
         if install(&app).await.is_err() {
-            let _ = app.emit("auto-update-status", serde_json::json!({ "status": "done" }));
+            let _ = app.emit(
+                "auto-update-status",
+                serde_json::json!({ "status": "done" }),
+            );
         }
     } else if auto_update {
-        let _ = app.emit("auto-update-status", serde_json::json!({ "status": "done" }));
+        let _ = app.emit(
+            "auto-update-status",
+            serde_json::json!({ "status": "done" }),
+        );
     }
 }
 
@@ -306,7 +332,12 @@ fn parse_rfc3339_utc(value: &str) -> Option<i64> {
     let hour: i64 = value.get(11..13)?.parse().ok()?;
     let minute: i64 = value.get(14..16)?.parse().ok()?;
     let second: i64 = value.get(17..19)?.parse().ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
         return None;
     }
     let days = days_from_civil(year, month, day);
@@ -331,8 +362,14 @@ mod tests {
     #[test]
     fn parses_tauri_action_pub_date() {
         assert_eq!(parse_rfc3339_utc("1970-01-01T00:00:00Z"), Some(0));
-        assert_eq!(parse_rfc3339_utc("2026-09-13T18:14:46Z"), Some(1_789_323_286));
-        assert_eq!(parse_rfc3339_utc("2026-09-13T18:14:46.123Z"), Some(1_789_323_286));
+        assert_eq!(
+            parse_rfc3339_utc("2026-09-13T18:14:46Z"),
+            Some(1_789_323_286)
+        );
+        assert_eq!(
+            parse_rfc3339_utc("2026-09-13T18:14:46.123Z"),
+            Some(1_789_323_286)
+        );
     }
 
     #[test]

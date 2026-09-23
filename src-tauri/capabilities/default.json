@@ -1,19 +1,19 @@
 {
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Capability for all windows",
-  "windows": ["main", "overlay", "settings", "dock"],
-  "permissions": [
-    "core:default",
-    "opener:default",
-    "core:window:default",
-    "core:window:allow-show",
-    "core:window:allow-hide",
-    "core:window:allow-set-focus",
-    "core:window:allow-start-dragging",
-    "core:event:default",
-    "autostart:default",
-    "core:app:default",
-    "dialog:default"
-  ]
+	"$schema": "../gen/schemas/desktop-schema.json",
+	"identifier": "default",
+	"description": "Capability for all windows",
+	"windows": ["main", "overlay", "settings", "dock"],
+	"permissions": [
+		"core:default",
+		"opener:default",
+		"core:window:default",
+		"core:window:allow-show",
+		"core:window:allow-hide",
+		"core:window:allow-set-focus",
+		"core:window:allow-start-dragging",
+		"core:event:default",
+		"autostart:default",
+		"core:app:default",
+		"dialog:default"
+	]
 }

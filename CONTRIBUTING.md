@@ -23,11 +23,12 @@ bun run tauri dev
 
 Useful commands:
 
-| Command              | What it does                          |
-| -------------------- | ------------------------------------- |
-| `bun run build`      | Typecheck and build the frontend      |
-| `bun run tauri build`| Build the full app                    |
-| `bun run bump <ver>` | Bump the version in all manifests     |
+| Command               | What it does                          |
+| --------------------- | ------------------------------------- |
+| `bun run build`       | Typecheck and build the frontend      |
+| `bun run tauri build` | Build the full app                    |
+| `bun run bump <ver>`  | Bump the version in all manifests     |
+| `bun run format`      | Formats the frontend and backend code |
 
 ## Making changes
 

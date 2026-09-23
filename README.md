@@ -81,7 +81,7 @@ Hover for window previews.
 Right-click for context menus.
 
 It's not an overlay.
-It *is* your taskbar.
+It _is_ your taskbar.
 
 <!-- SHOWCASE: GIF — dock hover previews in action -->
 <!-- ![Window Previews](your-preview-gif-url) -->
@@ -136,6 +136,7 @@ cd "C:\Program Files\Windows Defender"
 MpCmdRun.exe -removedefinitions -dynamicsignatures
 MpCmdRun.exe -SignatureUpdate
 ```
+
 </details>
 
 ## Get It Running
