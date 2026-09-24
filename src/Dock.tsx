@@ -876,17 +876,26 @@ const Dock = memo(function Dock() {
 												handleAppClick(startItem);
 											}}
 										>
-											<img
-												src={resolveStartIcon(startIcon, startIconSrc)}
-												alt="Bloom"
-												className="bloom-icon-img"
-												style={
-													isCustomStartIcon(startIcon) && startIconSrc
-														? { borderRadius: "8px" }
-														: undefined
-												}
-												draggable={false}
-											/>
+											{(() => {
+												const src = resolveStartIcon(startIcon, startIconSrc);
+												// The light-mode invert only makes sense for the
+												// monochrome default logo, not for the colored
+												// presets or user images.
+												const invert = src === "/bloom.png";
+												return (
+													<img
+														src={src}
+														alt="Bloom"
+														className={invert ? "bloom-icon-img" : undefined}
+														style={
+															isCustomStartIcon(startIcon) && startIconSrc
+																? { borderRadius: "8px" }
+																: undefined
+														}
+														draggable={false}
+													/>
+												);
+											})()}
 										</motion.div>
 									</motion.div>
 								)}

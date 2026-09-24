@@ -125,6 +125,10 @@ function SettingsApp() {
 							toggleCorners={settings.toggleCorners}
 							scale={settings.scale}
 							handleScaleChange={settings.handleScaleChange}
+							startIcon={settings.startIcon}
+							handleStartIconChange={settings.handleStartIconChange}
+							startIconSrc={settings.startIconSrc}
+							handleStartIconUpload={settings.handleStartIconUpload}
 						/>
 					)}
 					{activeTab === "notch" && (
@@ -174,10 +178,6 @@ function SettingsApp() {
 							toggleDockAdaptive={settings.toggleDockAdaptive}
 							dockWinNumberEnabled={settings.dockWinNumberEnabled}
 							toggleDockWinNumber={settings.toggleDockWinNumber}
-							startIcon={settings.startIcon}
-							handleStartIconChange={settings.handleStartIconChange}
-							startIconSrc={settings.startIconSrc}
-							handleStartIconUpload={settings.handleStartIconUpload}
 						/>
 					)}
 					{activeTab === "overlays" && (

@@ -1,5 +1,18 @@
-import { Palette, Droplet, Contrast, Droplets, Sun, Square, Maximize2 } from "lucide-react";
+import { useRef, type ChangeEvent } from "react";
+import {
+	Palette,
+	Droplet,
+	Contrast,
+	Droplets,
+	Sun,
+	Square,
+	Maximize2,
+	Sparkles,
+	Plus,
+	RotateCcw
+} from "lucide-react";
 import { SettingRow } from "./SettingRow";
+import { START_ICON_PRESETS, isCustomStartIcon } from "../startIcons";
 
 interface AppearanceTabProps {
 	themeMode: string;
@@ -16,6 +29,10 @@ interface AppearanceTabProps {
 	toggleCorners: () => void;
 	scale: number;
 	handleScaleChange: (val: number) => void;
+	startIcon: string;
+	handleStartIconChange: (icon: string) => void;
+	startIconSrc: string | null;
+	handleStartIconUpload: (dataUri: string) => void;
 }
 
 export function AppearanceTab({
@@ -32,10 +49,25 @@ export function AppearanceTab({
 	cornersEnabled,
 	toggleCorners,
 	scale,
-	handleScaleChange
+	handleScaleChange,
+	startIcon,
+	handleStartIconChange,
+	startIconSrc,
+	handleStartIconUpload
 }: AppearanceTabProps) {
 	const showCustomColor = themeMode === "custom";
 	const showAdvancedSliders = themeMode === "custom" || themeMode === "adaptive";
+
+	const fileInputRef = useRef<HTMLInputElement>(null);
+
+	const handleFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
+		const file = e.target.files?.[0];
+		if (!file) return;
+		const reader = new FileReader();
+		reader.onload = () => handleStartIconUpload(reader.result as string);
+		reader.readAsDataURL(file);
+		e.target.value = "";
+	};
 
 	return (
 		<>
@@ -162,6 +194,63 @@ export function AppearanceTab({
 						</button>
 					</div>
 				</SettingRow>
+			</div>
+
+			<div className="setting-group-label">Start Menu</div>
+			<div className="setting-group">
+				<div className="setting-item setting-item-column">
+					<div className="setting-row-header">
+						<div className="setting-icon-bg">
+							<Sparkles size={14} strokeWidth={1.5} />
+						</div>
+						<div className="setting-info">
+							<span className="setting-label">Start Menu Icon</span>
+							<span className="setting-desc">Choose the dock start button icon</span>
+						</div>
+					</div>
+					<div className="start-icon-picker">
+						{START_ICON_PRESETS.map((preset) => (
+							<button
+								key={preset.key}
+								type="button"
+								className={`start-icon-tile ${startIcon === preset.key ? "selected" : ""}`}
+								onClick={() => handleStartIconChange(preset.key)}
+								title={preset.label}
+							>
+								<img src={preset.src} alt={preset.label} draggable={false} />
+							</button>
+						))}
+						<button
+							type="button"
+							className={`start-icon-tile ${isCustomStartIcon(startIcon) ? "selected" : ""}`}
+							onClick={() => fileInputRef.current?.click()}
+							title="Custom icon"
+						>
+							{isCustomStartIcon(startIcon) && startIconSrc ? (
+								<img src={startIconSrc} alt="Custom" draggable={false} />
+							) : (
+								<Plus size={18} strokeWidth={1.5} />
+							)}
+						</button>
+						{startIcon !== "default" && (
+							<button
+								type="button"
+								className="start-icon-tile"
+								onClick={() => handleStartIconChange("default")}
+								title="Reset to default"
+							>
+								<RotateCcw size={18} strokeWidth={1.5} />
+							</button>
+						)}
+					</div>
+					<input
+						ref={fileInputRef}
+						type="file"
+						accept=".png,.jpg,.jpeg,.bmp,.ico"
+						style={{ display: "none" }}
+						onChange={handleFileSelect}
+					/>
+				</div>
 			</div>
 		</>
 	);
