@@ -161,6 +161,10 @@ fn main() {
         ])
         .setup(|app| {
             init_taskbar_marker(app.handle());
+            // Populate the settings cache before anything else: a webview can
+            // invoke save_setting as soon as it loads, which happens before the
+            // rest of this hook runs.
+            crate::utils::init_settings_cache(app.handle());
             // Crash-recovery: if a previous session was force-killed while the native
             // taskbar was hidden, restore it now. Runs before the frontend re-hides it
             // (init_dock fires after a delay), so the flag must be removed first.
@@ -291,7 +295,6 @@ fn main() {
             let _hook = services::setup_keyboard_hook(app.handle().clone());
             setup_taskbar_hook();
             setup_audio_visualization(app.handle().clone());
-            crate::utils::init_settings_cache(app.handle());
             setup_settings_watcher(app.handle().clone());
 
             // Listen for second-instance signal to open settings

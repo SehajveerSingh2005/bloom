@@ -660,7 +660,8 @@ pub fn get_now_ms() -> i64 {
 pub fn init_settings_cache(app: &tauri::AppHandle) {
     use crate::state::SETTINGS_CACHE;
     use tauri::Manager;
-    let _ = SETTINGS_CACHE.set(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let cache =
+        SETTINGS_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     if let Some(path) = app
         .path()
         .app_config_dir()
@@ -672,7 +673,7 @@ pub fn init_settings_cache(app: &tauri::AppHandle) {
                 std::collections::HashMap<String, serde_json::Value>,
             >(&content)
             {
-                if let Ok(mut cache) = SETTINGS_CACHE.get().unwrap().lock() {
+                if let Ok(mut cache) = cache.lock() {
                     *cache = settings;
                 }
             }
@@ -680,9 +681,16 @@ pub fn init_settings_cache(app: &tauri::AppHandle) {
     }
 }
 
-/// Replace the entire settings cache (used by the file watcher on external changes).
+/// Replace the entire settings cache (used by save_setting and the file watcher).
+///
+/// Uses `get_or_init` rather than `get().unwrap()`: a webview can invoke
+/// `save_setting` before the setup hook has initialized the cache, and a panic
+/// on the main thread inside a WebView2 callback cannot unwind, which aborts
+/// the process.
 pub fn replace_settings_cache(new_settings: std::collections::HashMap<String, serde_json::Value>) {
-    if let Ok(mut cache) = crate::state::SETTINGS_CACHE.get().unwrap().lock() {
+    let cache = crate::state::SETTINGS_CACHE
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    if let Ok(mut cache) = cache.lock() {
         *cache = new_settings;
     }
 }
@@ -918,5 +926,24 @@ mod tests {
             None
         );
         assert_eq!(resolve_executable_path(""), None);
+    }
+
+    #[test]
+    fn replace_settings_cache_before_init_does_not_panic() {
+        use super::replace_settings_cache;
+        use crate::state::SETTINGS_CACHE;
+
+        // Mirrors a webview invoking save_setting before the setup hook has
+        // initialized the cache.
+        let mut settings = std::collections::HashMap::new();
+        settings.insert("bloom-test".to_string(), serde_json::json!("true"));
+        replace_settings_cache(settings);
+
+        let cache = SETTINGS_CACHE.get().expect("cache initialized");
+        let guard = cache.lock().expect("cache lock");
+        assert_eq!(
+            guard.get("bloom-test").and_then(|value| value.as_str()),
+            Some("true")
+        );
     }
 }
