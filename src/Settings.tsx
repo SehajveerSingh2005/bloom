@@ -129,6 +129,7 @@ function SettingsApp() {
 							handleStartIconChange={settings.handleStartIconChange}
 							startIconSrc={settings.startIconSrc}
 							handleStartIconUpload={settings.handleStartIconUpload}
+							startIconError={settings.startIconError}
 						/>
 					)}
 					{activeTab === "notch" && (

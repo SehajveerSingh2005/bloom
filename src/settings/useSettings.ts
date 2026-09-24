@@ -18,6 +18,17 @@ function readBool(val: string | null): boolean {
 	return val === "true";
 }
 
+const MAX_START_ICON_BYTES = 10 * 1024 * 1024;
+
+function readFileAsDataUri(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(reader.result as string);
+		reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
+		reader.readAsDataURL(file);
+	});
+}
+
 export function useSettings() {
 	const [autostart, setAutostart] = useState(false);
 	const [weatherEnabled, setWeatherEnabled] = useState(true);
@@ -76,6 +87,7 @@ export function useSettings() {
 		() => localStorage.getItem("bloom-start-icon") || "default"
 	);
 	const [startIconSrc, setStartIconSrc] = useState<string | null>(null);
+	const [startIconError, setStartIconError] = useState<string | null>(null);
 	const [dockMode, setDockMode] = useState(() => {
 		const raw = localStorage.getItem("bloom-dock-mode") || "smart";
 		return raw === "auto-hide" ? "smart" : raw;
@@ -504,16 +516,23 @@ export function useSettings() {
 
 	const handleStartIconChange = (icon: string) => {
 		setStartIcon(icon);
+		setStartIconError(null);
 		saveSetting("bloom-start-icon", icon);
 	};
 
-	const handleStartIconUpload = async (dataUri: string) => {
+	const handleStartIconUpload = async (file: File) => {
+		setStartIconError(null);
+		if (file.size > MAX_START_ICON_BYTES) {
+			setStartIconError("Image is too large (max 10 MB).");
+			return;
+		}
 		try {
+			const dataUri = await readFileAsDataUri(file);
 			const src = await invoke<string>("set_start_icon", { iconData: dataUri });
 			setStartIconSrc(src);
 			handleStartIconChange(CUSTOM_START_ICON);
 		} catch (e) {
-			console.error("Failed to set start icon:", e);
+			setStartIconError(typeof e === "string" ? e : "Failed to set icon.");
 		}
 	};
 
@@ -769,6 +788,7 @@ export function useSettings() {
 		handleStartIconChange,
 		startIconSrc,
 		handleStartIconUpload,
+		startIconError,
 
 		// Overlays
 		volumeOverlayEnabled,

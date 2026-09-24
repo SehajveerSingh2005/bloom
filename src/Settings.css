@@ -376,6 +376,12 @@ body {
 	-webkit-user-drag: none;
 }
 
+.start-icon-error {
+	padding-left: 40px;
+	font-size: 11px;
+	color: #ff453a;
+}
+
 /* Custom iOS Style Toggle Switch */
 .toggle-switch {
 	position: relative;

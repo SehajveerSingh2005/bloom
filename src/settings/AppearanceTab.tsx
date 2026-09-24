@@ -32,7 +32,8 @@ interface AppearanceTabProps {
 	startIcon: string;
 	handleStartIconChange: (icon: string) => void;
 	startIconSrc: string | null;
-	handleStartIconUpload: (dataUri: string) => void;
+	handleStartIconUpload: (file: File) => void;
+	startIconError: string | null;
 }
 
 export function AppearanceTab({
@@ -53,7 +54,8 @@ export function AppearanceTab({
 	startIcon,
 	handleStartIconChange,
 	startIconSrc,
-	handleStartIconUpload
+	handleStartIconUpload,
+	startIconError
 }: AppearanceTabProps) {
 	const showCustomColor = themeMode === "custom";
 	const showAdvancedSliders = themeMode === "custom" || themeMode === "adaptive";
@@ -62,10 +64,7 @@ export function AppearanceTab({
 
 	const handleFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0];
-		if (!file) return;
-		const reader = new FileReader();
-		reader.onload = () => handleStartIconUpload(reader.result as string);
-		reader.readAsDataURL(file);
+		if (file) handleStartIconUpload(file);
 		e.target.value = "";
 	};
 
@@ -243,6 +242,7 @@ export function AppearanceTab({
 							</button>
 						)}
 					</div>
+					{startIconError && <span className="start-icon-error">{startIconError}</span>}
 					<input
 						ref={fileInputRef}
 						type="file"
