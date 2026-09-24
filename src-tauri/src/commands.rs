@@ -1819,6 +1819,30 @@ pub async fn get_custom_icons(app: AppHandle) -> Result<HashMap<String, String>,
     Ok(result)
 }
 
+/// Reserved custom-icon key for the dock's start button icon.
+const START_ICON_CACHE_KEY: &str = "__bloom_start_icon__";
+
+#[tauri::command]
+pub async fn set_start_icon(app: AppHandle, icon_data: String) -> Result<String, String> {
+    let data_uri =
+        set_custom_icon(app.clone(), START_ICON_CACHE_KEY.to_string(), icon_data).await?;
+    let _ = app.emit("start-icon-changed", &data_uri);
+    Ok(data_uri)
+}
+
+#[tauri::command]
+pub async fn get_start_icon(app: AppHandle) -> Result<Option<String>, String> {
+    use base64::Engine;
+    let icons_dir = get_custom_icons_dir(&app)?;
+    let file_path = icons_dir.join(format!("{}.png", sanitize_filename(START_ICON_CACHE_KEY)));
+    if !file_path.exists() {
+        return Ok(None);
+    }
+    let data = std::fs::read(&file_path).map_err(|e| e.to_string())?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+    Ok(Some(format!("data:image/png;base64,{}", b64)))
+}
+
 #[tauri::command]
 pub async fn get_installed_apps() -> Vec<AppInfo> {
     let cache = INSTALLED_APPS_CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()));

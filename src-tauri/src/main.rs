@@ -126,6 +126,8 @@ fn main() {
             set_custom_icon,
             remove_custom_icon,
             get_custom_icons,
+            set_start_icon,
+            get_start_icon,
             set_menu_open,
             focus_window,
             close_window,

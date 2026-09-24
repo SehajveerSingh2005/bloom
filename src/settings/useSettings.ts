@@ -6,6 +6,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import type { UpdateCheckResult } from "../updater";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import { hexToHsl } from "../theme";
+import { CUSTOM_START_ICON } from "../startIcons";
 import type { WidgetConfig } from "./types";
 
 function saveSetting(key: string, value: string) {
@@ -74,6 +75,7 @@ export function useSettings() {
 	const [startIcon, setStartIcon] = useState(
 		() => localStorage.getItem("bloom-start-icon") || "default"
 	);
+	const [startIconSrc, setStartIconSrc] = useState<string | null>(null);
 	const [dockMode, setDockMode] = useState(() => {
 		const raw = localStorage.getItem("bloom-dock-mode") || "smart";
 		return raw === "auto-hide" ? "smart" : raw;
@@ -156,6 +158,11 @@ export function useSettings() {
 			apply(getVal("bloom-dock-win-number-enabled"), setDockWinNumberEnabled, readBool);
 			apply(getVal("bloom-start-icon"), setStartIcon, (v) => v);
 
+			try {
+				const src = await invoke<string | null>("get_start_icon");
+				if (src) setStartIconSrc(src);
+			} catch {}
+
 			apply(getVal("bloom-temp-unit"), setTempUnitFahrenheit, (v) => v === "fahrenheit");
 			apply(getVal("bloom-scale"), setScale, parseFloat);
 			apply(getVal("bloom-low-battery-threshold"), setLowBatteryThreshold, parseInt);
@@ -237,6 +244,16 @@ export function useSettings() {
 		"bloom-theme-brightness": setThemeBrightness,
 		"bloom-weather-city": (v) => setCityName(v || "")
 	});
+
+	// ── Keep the custom start icon in sync across windows ──
+	useEffect(() => {
+		const unlisten = listen<string | null>("start-icon-changed", (event) => {
+			setStartIconSrc(event.payload ?? null);
+		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, []);
 
 	// ── Listen for system accent changes (adaptive theme) ──
 	useEffect(() => {
@@ -490,6 +507,16 @@ export function useSettings() {
 		saveSetting("bloom-start-icon", icon);
 	};
 
+	const handleStartIconUpload = async (dataUri: string) => {
+		try {
+			const src = await invoke<string>("set_start_icon", { iconData: dataUri });
+			setStartIconSrc(src);
+			handleStartIconChange(CUSTOM_START_ICON);
+		} catch (e) {
+			console.error("Failed to set start icon:", e);
+		}
+	};
+
 	const toggleAutoUpdate = () => {
 		const next = !autoUpdate;
 		setAutoUpdate(next);
@@ -740,6 +767,8 @@ export function useSettings() {
 		toggleDockWinNumber,
 		startIcon,
 		handleStartIconChange,
+		startIconSrc,
+		handleStartIconUpload,
 
 		// Overlays
 		volumeOverlayEnabled,

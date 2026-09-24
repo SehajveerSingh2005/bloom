@@ -82,6 +82,7 @@ const Dock = memo(function Dock() {
 	const [startIcon, setStartIcon] = useState(
 		() => localStorage.getItem("bloom-start-icon") || "default"
 	);
+	const [startIconSrc, setStartIconSrc] = useState<string | null>(null);
 	const [isMaximized, setIsMaximized] = useState(false);
 	const [previewData, setPreviewData] = useState<{
 		id: string;
@@ -255,6 +256,11 @@ const Dock = memo(function Dock() {
 			const startIconVal = getVal("bloom-start-icon", "default") || "default";
 			setStartIcon(startIconVal);
 
+			try {
+				const src = await invoke<string | null>("get_start_icon");
+				if (src) setStartIconSrc(src);
+			} catch {}
+
 			const scaleVal = getVal("bloom-scale");
 			if (scaleVal !== null) setScale(parseFloat(scaleVal));
 
@@ -286,11 +292,16 @@ const Dock = memo(function Dock() {
 			setIsMaximized(event.payload);
 		});
 
+		const unlistenStartIcon = listen<string | null>("start-icon-changed", (event) => {
+			setStartIconSrc(event.payload ?? null);
+		});
+
 		return () => {
 			unlistenOverlap.then((f) => f());
 			unlistenEdgeHover.then((f) => f());
 			unlistenVisibility.then((f) => f());
 			unlistenMaximized.then((f) => f());
+			unlistenStartIcon.then((f) => f());
 		};
 	}, []);
 
@@ -866,10 +877,14 @@ const Dock = memo(function Dock() {
 											}}
 										>
 											<img
-												src={resolveStartIcon(startIcon)}
+												src={resolveStartIcon(startIcon, startIconSrc)}
 												alt="Bloom"
 												className="bloom-icon-img"
-												style={isCustomStartIcon(startIcon) ? { borderRadius: "8px" } : undefined}
+												style={
+													isCustomStartIcon(startIcon) && startIconSrc
+														? { borderRadius: "8px" }
+														: undefined
+												}
 												draggable={false}
 											/>
 										</motion.div>

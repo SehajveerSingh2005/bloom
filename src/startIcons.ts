@@ -16,18 +16,18 @@ const START_ICON_MAP: Record<string, string> = Object.fromEntries(
 	START_ICON_PRESETS.map((preset) => [preset.key, preset.src])
 );
 
-const CUSTOM_PREFIX = "custom:";
+/** Stored `bloom-start-icon` value that selects the user-supplied icon. */
+export const CUSTOM_START_ICON = "custom";
 
 export function isCustomStartIcon(value: string): boolean {
-	return value.startsWith(CUSTOM_PREFIX);
+	return value === CUSTOM_START_ICON;
 }
 
-/** Resolve a stored `bloom-start-icon` value to an image URL. */
-export function resolveStartIcon(value: string): string {
-	if (isCustomStartIcon(value)) return value.slice(CUSTOM_PREFIX.length);
+/**
+ * Resolve a stored `bloom-start-icon` value to an image URL.
+ * `customSrc` is the data URI of the user-supplied icon, loaded from disk.
+ */
+export function resolveStartIcon(value: string, customSrc?: string | null): string {
+	if (isCustomStartIcon(value) && customSrc) return customSrc;
 	return START_ICON_MAP[value] ?? "/bloom.png";
-}
-
-export function customStartIconValue(dataUri: string): string {
-	return `${CUSTOM_PREFIX}${dataUri}`;
 }

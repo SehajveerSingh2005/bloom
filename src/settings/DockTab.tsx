@@ -11,12 +11,7 @@ import {
 	RotateCcw
 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
-import {
-	START_ICON_PRESETS,
-	isCustomStartIcon,
-	resolveStartIcon,
-	customStartIconValue
-} from "../startIcons";
+import { START_ICON_PRESETS, isCustomStartIcon } from "../startIcons";
 
 interface DockTabProps {
 	dockEnabled: boolean;
@@ -33,6 +28,8 @@ interface DockTabProps {
 	toggleDockWinNumber: () => void;
 	startIcon: string;
 	handleStartIconChange: (icon: string) => void;
+	startIconSrc: string | null;
+	handleStartIconUpload: (dataUri: string) => void;
 }
 
 export function DockTab({
@@ -49,7 +46,9 @@ export function DockTab({
 	dockWinNumberEnabled,
 	toggleDockWinNumber,
 	startIcon,
-	handleStartIconChange
+	handleStartIconChange,
+	startIconSrc,
+	handleStartIconUpload
 }: DockTabProps) {
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,7 +56,7 @@ export function DockTab({
 		const file = e.target.files?.[0];
 		if (!file) return;
 		const reader = new FileReader();
-		reader.onload = () => handleStartIconChange(customStartIconValue(reader.result as string));
+		reader.onload = () => handleStartIconUpload(reader.result as string);
 		reader.readAsDataURL(file);
 		e.target.value = "";
 	};
@@ -133,8 +132,8 @@ export function DockTab({
 									onClick={() => fileInputRef.current?.click()}
 									title="Custom icon"
 								>
-									{isCustomStartIcon(startIcon) ? (
-										<img src={resolveStartIcon(startIcon)} alt="Custom" draggable={false} />
+									{isCustomStartIcon(startIcon) && startIconSrc ? (
+										<img src={startIconSrc} alt="Custom" draggable={false} />
 									) : (
 										<Plus size={18} strokeWidth={1.5} />
 									)}
