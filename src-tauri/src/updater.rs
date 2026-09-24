@@ -14,6 +14,10 @@ const CHECK_TIMEOUT_SECS: u64 = 10;
 /// A release must be at least this old before auto-update installs it, so a
 /// broken release cannot reach everyone within minutes of being published.
 const MIN_AUTO_INSTALL_AGE_SECS: i64 = 24 * 60 * 60;
+/// Minimum time before an auto-install retries a version whose installer was
+/// already launched. Without it, a failed install would re-download and exit
+/// on every startup, because the process exits from inside the install path.
+const AUTO_INSTALL_RETRY_SECS: i64 = 24 * 60 * 60;
 const STATE_FILE: &str = "update-state.json";
 
 /// Serializes manifest requests so concurrent callers share a single network hit.
@@ -38,6 +42,12 @@ struct PersistedUpdateState {
     app_version: String,
     version: String,
     date: String,
+    /// Version whose installer was last launched, auto or manual.
+    #[serde(default)]
+    attempted_version: String,
+    /// Unix seconds of the last install attempt.
+    #[serde(default)]
+    attempted_at: i64,
 }
 
 fn now_secs() -> i64 {
@@ -104,6 +114,15 @@ pub fn release_is_old_enough(result: &UpdateCheckResult) -> bool {
     }
 }
 
+/// True when an installer was already launched for this exact version recently.
+/// On Windows the process exits from inside the install path, so without this
+/// a failed install would relaunch the installer on every startup.
+fn install_attempted_recently(state: &PersistedUpdateState, version: &str, now: i64) -> bool {
+    state.attempted_version == version
+        && state.attempted_at > 0
+        && now - state.attempted_at < AUTO_INSTALL_RETRY_SECS
+}
+
 /// Checks for an update at most once per `CHECK_INTERVAL_SECS` unless `force`
 /// is set. Development builds skip the automatic network check because their
 /// version never tracks releases; manual checks still work.
@@ -147,6 +166,7 @@ pub async fn check(app: &AppHandle, force: bool) -> Result<UpdateCheckResult, St
         None => UpdateCheckResult::default(),
     };
 
+    let previous = read_state(app);
     write_state(
         app,
         &PersistedUpdateState {
@@ -154,6 +174,8 @@ pub async fn check(app: &AppHandle, force: bool) -> Result<UpdateCheckResult, St
             app_version: app.package_info().version.to_string(),
             version: result.version.clone().unwrap_or_default(),
             date: result.date.clone().unwrap_or_default(),
+            attempted_version: previous.attempted_version,
+            attempted_at: previous.attempted_at,
         },
     );
     if let Ok(mut cached) = LAST_CHECK.lock() {
@@ -205,8 +227,8 @@ async fn install_inner(app: &AppHandle) -> Result<(), String> {
     let progress_handle = app.clone();
     let downloaded = Arc::new(AtomicU64::new(0));
     let downloaded_cb = downloaded.clone();
-    update
-        .download_and_install(
+    let bytes = update
+        .download(
             move |chunk_len, total| {
                 let current =
                     downloaded_cb.fetch_add(chunk_len as u64, Ordering::Relaxed) + chunk_len as u64;
@@ -225,8 +247,20 @@ async fn install_inner(app: &AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    // Windows: `download_and_install` launches the installer and exits inside
-    // the plugin, so this is only reached on other platforms.
+    // Record the attempt before the installer is launched: on Windows the
+    // process exits from inside `install`, so a failed install would otherwise
+    // re-download and exit on every startup.
+    {
+        let mut state = read_state(app);
+        state.attempted_version = update.version.clone();
+        state.attempted_at = now_secs();
+        write_state(app, &state);
+    }
+
+    update.install(bytes).map_err(|e| e.to_string())?;
+
+    // Windows: `install` launches the installer and exits inside the plugin,
+    // so this is only reached on other platforms.
     #[cfg(not(windows))]
     {
         let _ = app.emit(
@@ -278,7 +312,11 @@ pub async fn run_startup_check(app: AppHandle) {
 
     let _ = app.emit("update-available", &result);
 
-    if auto_update && release_is_old_enough(&result) {
+    let attempted_version = result.version.clone().unwrap_or_default();
+    let attempted_recently =
+        install_attempted_recently(&read_state(&app), &attempted_version, now_secs());
+
+    if auto_update && release_is_old_enough(&result) && !attempted_recently {
         // On Windows this never returns: the installer exits the process.
         if install(&app).await.is_err() {
             let _ = app.emit(
@@ -287,6 +325,9 @@ pub async fn run_startup_check(app: AppHandle) {
             );
         }
     } else if auto_update {
+        // An install for this version was already attempted (or is pending),
+        // so keep the badge visible instead of relaunching the installer on
+        // every startup.
         let _ = app.emit(
             "auto-update-status",
             serde_json::json!({ "status": "done" }),
@@ -357,7 +398,9 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{days_from_civil, parse_rfc3339_utc};
+    use super::{
+        days_from_civil, install_attempted_recently, parse_rfc3339_utc, PersistedUpdateState,
+    };
 
     #[test]
     fn parses_tauri_action_pub_date() {
@@ -383,5 +426,35 @@ mod tests {
     fn computes_civil_days() {
         assert_eq!(days_from_civil(1970, 1, 1), 0);
         assert_eq!(days_from_civil(2026, 9, 13), 20_709);
+    }
+
+    #[test]
+    fn parses_legacy_update_state_without_attempt_fields() {
+        let state: PersistedUpdateState = serde_json::from_str(
+            r#"{"last_check":1,"app_version":"3.8.7","version":"3.8.8","date":"2026-09-13T18:14:46Z"}"#,
+        )
+        .expect("legacy state parses");
+        assert_eq!(state.attempted_version, "");
+        assert_eq!(state.attempted_at, 0);
+    }
+
+    #[test]
+    fn skips_recent_install_attempts_only() {
+        let state = PersistedUpdateState {
+            attempted_version: "3.8.8".into(),
+            attempted_at: 1_000,
+            ..Default::default()
+        };
+
+        assert!(install_attempted_recently(&state, "3.8.8", 1_000 + 3_600));
+        assert!(!install_attempted_recently(
+            &state,
+            "3.8.8",
+            1_000 + 24 * 60 * 60
+        ));
+        assert!(!install_attempted_recently(&state, "3.8.9", 1_000 + 3_600));
+
+        let empty = PersistedUpdateState::default();
+        assert!(!install_attempted_recently(&empty, "3.8.8", 1_000));
     }
 }
