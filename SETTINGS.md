@@ -19,14 +19,15 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 
 ### Dock
 
-| Key                             | Type                             | Default   | Description                                                                                                                                                                      |
-| ------------------------------- | -------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bloom-dock-enabled`            | `"true"` / `"false"`             | `"true"`  | Show or hide the Bloom Dock (taskbar replacement).                                                                                                                               |
-| `bloom-dock-mode`               | `"fixed"` / `"smart"` / `"peek"` | `"fixed"` | Dock visibility behavior. **fixed** = always visible as AppBar. **smart** = auto-hide when overlapped by fullscreen apps. **peek** = hidden until cursor approaches bottom edge. |
-| `bloom-dock-preview-enabled`    | `"true"` / `"false"`             | `"true"`  | Show window thumbnail previews when hovering dock icons.                                                                                                                         |
-| `bloom-dock-icon-only`          | `"true"` / `"false"`             | `"false"` | Minimal icon-only style (no background/padding around icons).                                                                                                                    |
-| `bloom-dock-adaptive`           | `"true"` / `"false"`             | `"false"` | Fixed dock only. Stretch the dock to full width like a traditional taskbar while a window is maximized, and contract back when it's restored.                                    |
-| `bloom-dock-win-number-enabled` | `"true"` / `"false"`             | `"true"`  | When the taskbar is replaced, Win+1 through Win+9 activate the matching pinned dock app (focus/minimize if running, launch otherwise) instead of the native taskbar slots.       |
+| Key                             | Type                             | Default     | Description                                                                                                                                                                      |
+| ------------------------------- | -------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bloom-dock-enabled`            | `"true"` / `"false"`             | `"true"`    | Show or hide the Bloom Dock (taskbar replacement).                                                                                                                               |
+| `bloom-dock-mode`               | `"fixed"` / `"smart"` / `"peek"` | `"fixed"`   | Dock visibility behavior. **fixed** = always visible as AppBar. **smart** = auto-hide when overlapped by fullscreen apps. **peek** = hidden until cursor approaches bottom edge. |
+| `bloom-dock-preview-enabled`    | `"true"` / `"false"`             | `"true"`    | Show window thumbnail previews when hovering dock icons.                                                                                                                         |
+| `bloom-dock-icon-only`          | `"true"` / `"false"`             | `"false"`   | Minimal icon-only style (no background/padding around icons).                                                                                                                    |
+| `bloom-dock-adaptive`           | `"true"` / `"false"`             | `"false"`   | Fixed dock only. Stretch the dock to full width like a traditional taskbar while a window is maximized, and contract back when it's restored.                                    |
+| `bloom-dock-win-number-enabled` | `"true"` / `"false"`             | `"true"`    | When the taskbar is replaced, Win+1 through Win+9 activate the matching pinned dock app (focus/minimize if running, launch otherwise) instead of the native taskbar slots.       |
+| `bloom-start-icon`              | string                           | `"default"` | Dock start button icon. One of `"default"`, `"bloom-colorful"`, `"bloom-golden"`, `"bloom-biscuit"`, `"windows"`, or `"custom:<data-uri>"` for a user-supplied image.            |
 
 ### Notch
 

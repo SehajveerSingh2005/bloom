@@ -1,5 +1,22 @@
-import { Monitor, Eye, EyeOff, Circle, Maximize2, Keyboard } from "lucide-react";
+import { useRef, type ChangeEvent } from "react";
+import {
+	Monitor,
+	Eye,
+	EyeOff,
+	Circle,
+	Maximize2,
+	Keyboard,
+	Sparkles,
+	Plus,
+	RotateCcw
+} from "lucide-react";
 import { SettingRow } from "./SettingRow";
+import {
+	START_ICON_PRESETS,
+	isCustomStartIcon,
+	resolveStartIcon,
+	customStartIconValue
+} from "../startIcons";
 
 interface DockTabProps {
 	dockEnabled: boolean;
@@ -14,6 +31,8 @@ interface DockTabProps {
 	toggleDockAdaptive: () => void;
 	dockWinNumberEnabled: boolean;
 	toggleDockWinNumber: () => void;
+	startIcon: string;
+	handleStartIconChange: (icon: string) => void;
 }
 
 export function DockTab({
@@ -28,8 +47,21 @@ export function DockTab({
 	dockAdaptive,
 	toggleDockAdaptive,
 	dockWinNumberEnabled,
-	toggleDockWinNumber
+	toggleDockWinNumber,
+	startIcon,
+	handleStartIconChange
 }: DockTabProps) {
+	const fileInputRef = useRef<HTMLInputElement>(null);
+
+	const handleFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
+		const file = e.target.files?.[0];
+		if (!file) return;
+		const reader = new FileReader();
+		reader.onload = () => handleStartIconChange(customStartIconValue(reader.result as string));
+		reader.readAsDataURL(file);
+		e.target.value = "";
+	};
+
 	return (
 		<>
 			<div className="setting-group-label">Dock</div>
@@ -66,17 +98,67 @@ export function DockTab({
 							</label>
 						</SettingRow>
 
-						<SettingRow
-							icon={Circle}
-							label="Icon Only"
-							desc="Remove icon background and padding"
-							divider={false}
-						>
+						<SettingRow icon={Circle} label="Icon Only" desc="Remove icon background and padding">
 							<label className="toggle-switch">
 								<input type="checkbox" checked={dockIconOnly} onChange={toggleDockIconOnly} />
 								<span className="slider"></span>
 							</label>
 						</SettingRow>
+
+						<div className="setting-item setting-item-column">
+							<div className="setting-row-header">
+								<div className="setting-icon-bg">
+									<Sparkles size={14} strokeWidth={1.5} />
+								</div>
+								<div className="setting-info">
+									<span className="setting-label">Start Menu Icon</span>
+									<span className="setting-desc">Choose the dock start button icon</span>
+								</div>
+							</div>
+							<div className="start-icon-picker">
+								{START_ICON_PRESETS.map((preset) => (
+									<button
+										key={preset.key}
+										type="button"
+										className={`start-icon-tile ${startIcon === preset.key ? "selected" : ""}`}
+										onClick={() => handleStartIconChange(preset.key)}
+										title={preset.label}
+									>
+										<img src={preset.src} alt={preset.label} draggable={false} />
+									</button>
+								))}
+								<button
+									type="button"
+									className={`start-icon-tile ${isCustomStartIcon(startIcon) ? "selected" : ""}`}
+									onClick={() => fileInputRef.current?.click()}
+									title="Custom icon"
+								>
+									{isCustomStartIcon(startIcon) ? (
+										<img src={resolveStartIcon(startIcon)} alt="Custom" draggable={false} />
+									) : (
+										<Plus size={18} strokeWidth={1.5} />
+									)}
+								</button>
+								{startIcon !== "default" && (
+									<button
+										type="button"
+										className="start-icon-tile"
+										onClick={() => handleStartIconChange("default")}
+										title="Reset to default"
+									>
+										<RotateCcw size={18} strokeWidth={1.5} />
+									</button>
+								)}
+							</div>
+							<input
+								ref={fileInputRef}
+								type="file"
+								accept=".png,.ico,.jpg,.jpeg,.svg,.bmp"
+								style={{ display: "none" }}
+								onChange={handleFileSelect}
+							/>
+						</div>
+						<div className="setting-divider" />
 
 						<SettingRow
 							icon={Keyboard}

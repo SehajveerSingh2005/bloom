@@ -317,6 +317,65 @@ body {
 	margin-left: 52px; /* Align with text */
 }
 
+/* Start Menu Icon picker */
+.setting-item-column {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 10px;
+}
+
+.setting-item-column .setting-row-header {
+	display: flex;
+	align-items: center;
+}
+
+.start-icon-picker {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding-left: 40px; /* Align with the setting label */
+}
+
+.start-icon-tile {
+	width: 44px;
+	height: 44px;
+	padding: 6px;
+	border-radius: 10px;
+	border: 2px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
+	background: var(--group-bg);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	box-sizing: border-box;
+	transition:
+		border-color 0.15s ease,
+		background 0.15s ease,
+		color 0.15s ease;
+	color: var(--text-muted, rgba(255, 255, 255, 0.5));
+}
+
+.start-icon-tile:hover {
+	border-color: var(--bloom-border, rgba(255, 255, 255, 0.25));
+	color: var(--text-color, #f5f5f5);
+}
+
+.start-icon-tile.selected {
+	border-color: var(--bloom-accent, #007aff);
+	background: rgba(0, 122, 255, 0.15);
+	background: color-mix(in srgb, var(--bloom-accent, #007aff) 15%, transparent);
+	color: var(--bloom-accent, #007aff);
+}
+
+.start-icon-tile img {
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	border-radius: 6px;
+	pointer-events: none;
+	-webkit-user-drag: none;
+}
+
 /* Custom iOS Style Toggle Switch */
 .toggle-switch {
 	position: relative;

@@ -71,6 +71,9 @@ export function useSettings() {
 	const [dockWinNumberEnabled, setDockWinNumberEnabled] = useState(
 		() => localStorage.getItem("bloom-dock-win-number-enabled") !== "false"
 	);
+	const [startIcon, setStartIcon] = useState(
+		() => localStorage.getItem("bloom-start-icon") || "default"
+	);
 	const [dockMode, setDockMode] = useState(() => {
 		const raw = localStorage.getItem("bloom-dock-mode") || "smart";
 		return raw === "auto-hide" ? "smart" : raw;
@@ -151,6 +154,7 @@ export function useSettings() {
 			apply(getVal("bloom-dock-icon-only"), setDockIconOnly, readBool);
 			apply(getVal("bloom-dock-adaptive"), setDockAdaptive, readBool);
 			apply(getVal("bloom-dock-win-number-enabled"), setDockWinNumberEnabled, readBool);
+			apply(getVal("bloom-start-icon"), setStartIcon, (v) => v);
 
 			apply(getVal("bloom-temp-unit"), setTempUnitFahrenheit, (v) => v === "fahrenheit");
 			apply(getVal("bloom-scale"), setScale, parseFloat);
@@ -206,6 +210,7 @@ export function useSettings() {
 		"bloom-dock-preview-enabled": setDockPreviewEnabled,
 		"bloom-dock-adaptive": setDockAdaptive,
 		"bloom-dock-win-number-enabled": setDockWinNumberEnabled,
+		"bloom-start-icon": setStartIcon,
 		"bloom-weather-enabled": setWeatherEnabled,
 		"bloom-calendar-enabled": setCalendarEnabled,
 		"bloom-timer-sound-enabled": setTimerSoundEnabled,
@@ -480,6 +485,11 @@ export function useSettings() {
 		saveSetting("bloom-dock-win-number-enabled", String(next));
 	};
 
+	const handleStartIconChange = (icon: string) => {
+		setStartIcon(icon);
+		saveSetting("bloom-start-icon", icon);
+	};
+
 	const toggleAutoUpdate = () => {
 		const next = !autoUpdate;
 		setAutoUpdate(next);
@@ -728,6 +738,8 @@ export function useSettings() {
 		toggleDockAdaptive,
 		dockWinNumberEnabled,
 		toggleDockWinNumber,
+		startIcon,
+		handleStartIconChange,
 
 		// Overlays
 		volumeOverlayEnabled,

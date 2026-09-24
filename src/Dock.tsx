@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./Dock.css";
 import { initTheme } from "./theme";
 import { useSettingsSync } from "./hooks/useSettingsSync";
+import { resolveStartIcon, isCustomStartIcon } from "./startIcons";
 
 interface AppInfo {
 	name: string;
@@ -77,6 +78,9 @@ const Dock = memo(function Dock() {
 	);
 	const [dockAdaptive, setDockAdaptive] = useState(
 		() => localStorage.getItem("bloom-dock-adaptive") === "true"
+	);
+	const [startIcon, setStartIcon] = useState(
+		() => localStorage.getItem("bloom-start-icon") || "default"
 	);
 	const [isMaximized, setIsMaximized] = useState(false);
 	const [previewData, setPreviewData] = useState<{
@@ -248,6 +252,9 @@ const Dock = memo(function Dock() {
 			const adaptive = getVal("bloom-dock-adaptive", "false");
 			setDockAdaptive(adaptive === "true");
 
+			const startIconVal = getVal("bloom-start-icon", "default") || "default";
+			setStartIcon(startIconVal);
+
 			const scaleVal = getVal("bloom-scale");
 			if (scaleVal !== null) setScale(parseFloat(scaleVal));
 
@@ -292,6 +299,7 @@ const Dock = memo(function Dock() {
 		"bloom-dock-preview-enabled": setDockPreviewEnabled,
 		"bloom-dock-icon-only": setDockIconOnly,
 		"bloom-dock-adaptive": setDockAdaptive,
+		"bloom-start-icon": setStartIcon,
 		"bloom-scale": setScale
 	});
 
@@ -858,9 +866,10 @@ const Dock = memo(function Dock() {
 											}}
 										>
 											<img
-												src="/bloom.png"
+												src={resolveStartIcon(startIcon)}
 												alt="Bloom"
 												className="bloom-icon-img"
+												style={isCustomStartIcon(startIcon) ? { borderRadius: "8px" } : undefined}
 												draggable={false}
 											/>
 										</motion.div>
