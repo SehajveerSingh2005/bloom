@@ -2379,13 +2379,17 @@ unsafe fn friendly_process_name_uncached(path: &str) -> String {
             &mut trans_len,
         )
         .as_bool()
-            || trans_len == 0
+            || trans_len < 4
             || trans_ptr.is_null()
         {
             break 'description;
         }
-        let lang = *(trans_ptr as *const u16);
-        let codepage = *(trans_ptr as *const u16).add(1);
+        // Translation entries are (LANGID, codepage) u16 pairs. Require a full
+        // four-byte pair, then read it byte-wise so the pointer can't be
+        // dereferenced short or with an alignment assumption.
+        let translation = std::slice::from_raw_parts(trans_ptr as *const u8, 4);
+        let lang = u16::from_le_bytes([translation[0], translation[1]]);
+        let codepage = u16::from_le_bytes([translation[2], translation[3]]);
 
         let query = format!("\\StringFileInfo\\{lang:04x}{codepage:04x}\\FileDescription");
         let query_wide: Vec<u16> = query.encode_utf16().chain(std::iter::once(0)).collect();
