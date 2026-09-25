@@ -1999,11 +1999,7 @@ fn apply_capture_ui_state(app: &AppHandle, active: bool) {
             let _ = main_win.hide();
         } else {
             let _ = main_win.show();
-            if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
-                register_appbar(main_win.clone());
-            } else if let Ok(hwnd) = main_win.hwnd() {
-                re_assert_topmost(hwnd);
-            }
+            reconcile_main_appbar(app);
         }
     }
     if active {
@@ -2816,11 +2812,69 @@ pub fn register_appbar(window: tauri::WebviewWindow) {
             for _ in 0..10 {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 if let Ok(Some(_monitor)) = w.app_handle().primary_monitor() {
-                    register_appbar(w);
+                    // Reconcile rather than register directly: the notch mode
+                    // may have changed while waiting for the monitor.
+                    reconcile_main_appbar(w.app_handle());
                     break;
                 }
             }
         });
+    }
+}
+
+/// Serializes main AppBar register/unregister decisions. Mode switches and
+/// display/power events can otherwise interleave between reading the notch mode
+/// and applying it, leaving the reservation in the wrong state until the next
+/// reconcile.
+static MAIN_APPBAR_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_main_appbar() -> std::sync::MutexGuard<'static, ()> {
+    MAIN_APPBAR_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Apply a reservation decision to the main window. Callers must hold
+/// `MAIN_APPBAR_LOCK`.
+fn set_main_appbar_reservation(main_win: tauri::WebviewWindow, reserve: bool) {
+    if reserve {
+        register_appbar(main_win);
+    } else if let Ok(hwnd) = main_win.hwnd() {
+        // Ask the shell to remove the reservation unconditionally: the flag
+        // may look clean while the shell still holds the strip.
+        unregister_appbar_native(hwnd);
+        MAIN_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
+        re_assert_topmost(hwnd);
+    }
+}
+
+/// Whether the notch's 40px top strip should currently be reserved as an AppBar.
+/// Only fixed mode reserves screen space; smart and peek hide the notch freely.
+/// An unset mode defaults to fixed, matching SETTINGS.md and `re_register_appbars`.
+fn notch_mode_reserves_work_area(mode: Option<&str>) -> bool {
+    mode.map(|m| m == "fixed").unwrap_or(true)
+}
+
+/// Bring the main AppBar registration in line with the configured notch mode.
+///
+/// `MAIN_APPBAR_REGISTERED` can drift from the setting: a DPI/scale change used
+/// to register the window unconditionally, and subsequent power/display events
+/// kept re-registering it from the stale flag, leaving the work-area gap in
+/// smart/peek mode until restart (issue #109). Deciding from the mode makes
+/// every re-registration path self-healing.
+pub fn reconcile_main_appbar(app: &AppHandle) {
+    let _guard = lock_main_appbar();
+    let mode = get_setting_str(app, "bloom-notch-mode");
+    if let Some(main_win) = app.get_webview_window("main") {
+        set_main_appbar_reservation(main_win, notch_mode_reserves_work_area(mode.as_deref()));
+    }
+}
+
+/// Apply an explicit mode to the main AppBar. `change_notch_mode` knows the
+/// target mode even when the settings cache has not caught up yet, so it cannot
+/// rely on a reconcile read.
+pub fn apply_main_appbar_mode(app: &AppHandle, reserve: bool) {
+    let _guard = lock_main_appbar();
+    if let Some(main_win) = app.get_webview_window("main") {
+        set_main_appbar_reservation(main_win, reserve);
     }
 }
 
@@ -3174,11 +3228,7 @@ pub fn unregister_appbar_native(hwnd: HWND) {
 }
 
 fn reposition_all_windows(app_handle: &AppHandle) {
-    if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
-        if let Some(main_win) = app_handle.get_webview_window("main") {
-            register_appbar(main_win);
-        }
-    }
+    reconcile_main_appbar(app_handle);
     // Only reposition the dock if it's enabled in settings.
     // Without this guard, power events (plug/unplug, wake) would re-show
     // a dock that the user had previously disabled.
@@ -3398,7 +3448,7 @@ unsafe extern "system" fn display_monitor_proc(
 
 #[cfg(test)]
 mod tests {
-    use super::win_number_index;
+    use super::{notch_mode_reserves_work_area, win_number_index};
 
     #[test]
     fn win_number_maps_top_row_digits_only() {
@@ -3409,5 +3459,16 @@ mod tests {
         assert_eq!(win_number_index(0x30), None);
         assert_eq!(win_number_index(0x41), None);
         assert_eq!(win_number_index(0x61), None);
+    }
+
+    #[test]
+    fn only_fixed_notch_mode_reserves_the_work_area() {
+        assert!(notch_mode_reserves_work_area(Some("fixed")));
+        assert!(!notch_mode_reserves_work_area(Some("smart")));
+        assert!(!notch_mode_reserves_work_area(Some("peek")));
+        // Legacy alias for smart
+        assert!(!notch_mode_reserves_work_area(Some("auto-hide")));
+        // Unset defaults to fixed, matching SETTINGS.md
+        assert!(notch_mode_reserves_work_area(None));
     }
 }

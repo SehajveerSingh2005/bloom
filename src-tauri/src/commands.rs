@@ -4,8 +4,7 @@ use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 
 use crate::services::{
-    enum_windows_proc, register_appbar, register_dock_appbar, sync_overlays,
-    unregister_appbar_native,
+    enum_windows_proc, register_dock_appbar, sync_overlays, unregister_appbar_native,
 };
 use crate::state::*;
 use crate::types::{AppInfo, BrightnessChangeEvent, IntRect};
@@ -194,26 +193,16 @@ pub async fn toggle_dock(app: AppHandle, enable: bool) {
             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
 
             // Re-sync other appbars
-            if let Some(main_win) = app.get_webview_window("main") {
-                if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
-                    register_appbar(main_win);
-                }
-            }
+            crate::services::reconcile_main_appbar(&app);
         }
     }
 }
 
 #[tauri::command]
 pub async fn sync_appbar(app: AppHandle) {
-    if let Some(main_win) = app.get_webview_window("main") {
-        if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
-            register_appbar(main_win);
-        } else {
-            if let Ok(hwnd) = main_win.hwnd() {
-                re_assert_topmost(hwnd);
-            }
-        }
-    }
+    // Reconcile the notch AppBar against the configured mode so a stale
+    // registration cannot survive DPI/power events (issue #109).
+    crate::services::reconcile_main_appbar(&app);
     if let Some(dock_win) = app.get_webview_window("dock") {
         // Skip dock re-registration if dock is disabled in settings.
         let dock_enabled =
@@ -335,26 +324,22 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
 pub async fn change_notch_mode(app: AppHandle, mode: String) {
     if let Some(main_win) = app.get_webview_window("main") {
         if mode == "fixed" {
-            register_appbar(main_win.clone());
+            crate::services::apply_main_appbar_mode(&app, true);
         } else {
             let _ = main_win.show();
-            if let Ok(hwnd) = main_win.hwnd() {
-                let hwnd_val = hwnd.0 as isize;
-                tauri::async_runtime::spawn_blocking(move || {
-                    unregister_appbar_native(HWND(hwnd_val as *mut _));
-                });
-                MAIN_APPBAR_REGISTERED.store(false, Ordering::Relaxed);
+            // Locked helper so a concurrent display/power event cannot
+            // interleave between the mode decision and the AppBar call.
+            crate::services::apply_main_appbar_mode(&app, false);
 
-                let main_clone = main_win.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    if !MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
-                        if let Ok(hwnd) = main_clone.hwnd() {
-                            re_assert_topmost(hwnd);
-                        }
+            let main_clone = main_win.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                if !MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
+                    if let Ok(hwnd) = main_clone.hwnd() {
+                        re_assert_topmost(hwnd);
                     }
-                });
-            }
+                }
+            });
         }
         // Reposition window to span the full primary monitor so CSS justify-content:center works
         if let Ok(Some(monitor)) = main_win.primary_monitor() {
@@ -2389,15 +2374,9 @@ pub async fn close_window(hwnd: isize) {
 }
 
 fn re_register_appbars(app: &AppHandle, settings: &HashMap<String, serde_json::Value>) {
-    if let Some(main_win) = app.get_webview_window("main") {
-        let notch_fixed = settings
-            .get("bloom-notch-mode")
-            .map(|v| v.as_str() == Some("fixed"))
-            .unwrap_or(true);
-        if notch_fixed {
-            crate::services::register_appbar(main_win);
-        }
-    }
+    // Reconcile the notch from the live mode: a scale change alters the
+    // reserved strip height, and peek/smart must never hold a reservation.
+    crate::services::reconcile_main_appbar(app);
     if let Some(dock_win) = app.get_webview_window("dock") {
         let is_fixed = settings
             .get("bloom-dock-mode")

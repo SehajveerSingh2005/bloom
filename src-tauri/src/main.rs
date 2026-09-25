@@ -209,7 +209,6 @@ fn main() {
             update_dock_window_rect();
 
             let u_main = update_main_rect.clone();
-            let win_for_events = window.clone();
             let handle_for_events = app.handle().clone();
             window.on_window_event(move |e| match e {
                 tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
@@ -217,11 +216,14 @@ fn main() {
                     sync_overlays(&handle_for_events);
                 }
                 tauri::WindowEvent::ScaleFactorChanged { .. } => {
-                    let w = win_for_events.clone();
+                    // Re-evaluate against the configured notch mode instead of
+                    // registering unconditionally: on wake / display re-init a
+                    // scale change in smart/peek mode must not reserve the top
+                    // strip (issue #109).
                     let h = handle_for_events.clone();
                     tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        register_appbar(w);
+                        reconcile_main_appbar(&h);
                         sync_overlays(&h);
                     });
                 }
