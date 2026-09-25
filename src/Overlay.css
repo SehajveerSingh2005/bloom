@@ -119,10 +119,22 @@ body,
 	height: 196px;
 	position: relative;
 	pointer-events: auto;
+	overflow: hidden;
 }
 
-.volume-notch::before,
-.volume-notch::after {
+/* Concave flares where the card meets the screen edge. Kept outside the card
+   so its `overflow: hidden` can clip the mixer while the card grows. */
+.volume-notch-flares {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 13px;
+	pointer-events: none;
+}
+
+.volume-notch-flares::before,
+.volume-notch-flares::after {
 	content: "";
 	position: absolute;
 	left: 0;
@@ -132,7 +144,7 @@ body,
 	pointer-events: none;
 }
 
-.volume-notch::before {
+.volume-notch-flares::before {
 	top: -13px;
 	-webkit-mask-image: radial-gradient(circle at 13px 0px, transparent 12px, black 13px);
 	mask-image: radial-gradient(circle at 13px 0px, transparent 12px, black 13px);
@@ -147,7 +159,7 @@ body,
 		var(--bloom-bg, rgba(0, 0, 0, 0.8));
 }
 
-.volume-notch::after {
+.volume-notch-flares::after {
 	bottom: -13px;
 	-webkit-mask-image: radial-gradient(circle at 13px 13px, transparent 12px, black 13px);
 	mask-image: radial-gradient(circle at 13px 13px, transparent 12px, black 13px);
@@ -168,12 +180,14 @@ body,
 	align-items: center;
 	justify-content: space-between;
 	height: 100%;
-	width: 100%;
+	width: 42px;
+	align-self: flex-start;
+	flex-shrink: 0;
 }
 
 .volume-notch-bar {
 	width: 10px;
-	height: 136px;
+	height: 134px;
 	background: rgba(255, 255, 255, 0.2);
 	border-radius: 20px;
 	position: relative;
@@ -190,7 +204,172 @@ body,
 	border-radius: 20px;
 }
 
-.volume-notch-text {
+.volume-notch-action {
+	position: relative;
+	width: 100%;
+	height: 24px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: var(--bloom-text, white);
+	cursor: pointer;
+}
+
+.volume-notch-action-icon,
+.volume-notch-action-mixer,
+.volume-notch-action-percent {
+	position: absolute;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0;
+	transition:
+		opacity 0.16s ease,
+		transform 0.16s ease;
+}
+
+.volume-notch-action-icon {
+	opacity: 0.8;
+}
+
+.volume-notch-action-mixer {
+	transform: scale(0.82);
+}
+
+.volume-notch-action-percent {
+	font-size: 10px;
+	font-weight: 700;
+	font-family:
+		"Inter",
+		-apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		sans-serif;
+	letter-spacing: -0.02em;
+}
+
+.volume-notch-action:hover .volume-notch-action-icon {
+	opacity: 0;
+	transform: scale(0.82);
+}
+
+.volume-notch-action:hover .volume-notch-action-mixer,
+.volume-notch-action.active .volume-notch-action-mixer {
+	opacity: 1;
+	transform: scale(1);
+}
+
+.volume-notch-action.active .volume-notch-action-icon {
+	opacity: 0;
+}
+
+.volume-notch-action.showing-percent .volume-notch-action-icon,
+.volume-notch-action.showing-percent .volume-notch-action-mixer {
+	opacity: 0;
+}
+
+.volume-notch-action.showing-percent .volume-notch-action-percent {
+	opacity: 1;
+}
+
+/* ─── App Volume Mixer ──────────────────────────────────────────────────── */
+
+.volume-mixer-panel {
+	position: absolute;
+	left: 42px;
+	top: 0;
+	bottom: 0;
+	width: 236px;
+	display: flex;
+	flex-direction: column;
+	pointer-events: auto;
+	overflow: hidden;
+	z-index: 2;
+}
+
+.volume-mixer-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	width: 100%;
+	flex: 1;
+	min-height: 0;
+	padding: 8px 8px;
+	overflow-y: auto;
+	overflow-x: hidden;
+	scrollbar-width: thin;
+	scrollbar-color: var(--bloom-border, rgba(255, 255, 255, 0.2)) transparent;
+}
+
+.volume-mixer-empty {
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.6));
+	font-size: 11px;
+	font-weight: 500;
+	font-family:
+		"Inter",
+		-apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		sans-serif;
+	text-align: center;
+	padding: 20px 0;
+}
+
+.volume-mixer-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 6px;
+	border-radius: 10px;
+	transition: background 0.15s ease;
+}
+
+.volume-mixer-row:hover {
+	background: var(--bloom-border, rgba(255, 255, 255, 0.08));
+}
+
+.volume-mixer-app {
+	width: 24px;
+	height: 24px;
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: none;
+	border-radius: 7px;
+	background: transparent;
+	cursor: pointer;
+	transition:
+		opacity 0.15s ease,
+		transform 0.15s ease;
+}
+
+.volume-mixer-app img {
+	width: 20px;
+	height: 20px;
+	object-fit: contain;
+}
+
+.volume-mixer-app.muted {
+	opacity: 0.35;
+}
+
+.volume-mixer-app:active {
+	transform: scale(0.92);
+}
+
+.volume-mixer-app-fallback {
+	width: 20px;
+	height: 20px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 6px;
+	background: var(--bloom-border, rgba(255, 255, 255, 0.15));
 	color: var(--bloom-text, white);
 	font-size: 10px;
 	font-weight: 700;
@@ -200,10 +379,88 @@ body,
 		BlinkMacSystemFont,
 		"Segoe UI",
 		sans-serif;
-	text-align: center;
+}
+
+.volume-mixer-body {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.volume-mixer-label {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.volume-mixer-name {
+	color: var(--bloom-text, white);
+	font-size: 10.5px;
+	font-weight: 600;
+	font-family:
+		"Inter",
+		-apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		sans-serif;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volume-mixer-pct {
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.6));
+	font-size: 9px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	flex-shrink: 0;
+}
+
+.volume-mixer-track {
+	position: relative;
+	height: 4px;
+	background: var(--bloom-border, rgba(255, 255, 255, 0.15));
+	border-radius: 2px;
+	overflow: hidden;
+}
+
+.volume-mixer-track:hover {
+	height: 5px;
+}
+
+.volume-mixer-fill {
+	position: absolute;
+	left: 0;
+	top: 0;
+	height: 100%;
+	background: var(--bloom-text, white);
+	border-radius: 2px;
+	pointer-events: none;
+	transition: width 0.1s ease-out;
+}
+
+.volume-mixer-slider {
+	-webkit-appearance: none;
+	appearance: none;
+	position: absolute;
+	top: 0;
+	left: 0;
 	width: 100%;
-	margin-bottom: 2px;
-	opacity: 0.85;
+	height: 100%;
+	margin: 0;
+	background: transparent;
+	cursor: pointer;
+	z-index: 2;
+}
+
+.volume-mixer-slider::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 0;
+	height: 0;
 }
 
 /* ─── Brightness Notch (Right Edge) ─────────────────────────────────────── */

@@ -7,3 +7,4 @@ export { VolumeHighIcon } from "./VolumeHighIcon";
 export { MusicNoteIcon } from "./MusicNoteIcon";
 export { SpeakerIcon } from "./SpeakerIcon";
 export { HeadphonesIcon } from "./HeadphonesIcon";
+export { MixerIcon } from "./MixerIcon";

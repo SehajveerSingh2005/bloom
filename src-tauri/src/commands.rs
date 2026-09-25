@@ -1,5 +1,6 @@
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, Window};
+use windows::core::Interface;
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 
@@ -7,7 +8,7 @@ use crate::services::{
     enum_windows_proc, register_dock_appbar, sync_overlays, unregister_appbar_native,
 };
 use crate::state::*;
-use crate::types::{AppInfo, BrightnessChangeEvent, IntRect};
+use crate::types::{AppInfo, AudioSessionInfo, BrightnessChangeEvent, IntRect};
 use crate::utils::*;
 use std::collections::HashMap;
 
@@ -2307,6 +2308,268 @@ pub fn open_media_source_app() {
 pub fn set_volume(volume: f32) {
     if let Some(sender) = COMMAND_SENDER.get() {
         let _ = sender.send(crate::types::SystemCommand::SetVolume(volume));
+    }
+}
+
+/// Full path of a running process, or `None` when it can't be opened.
+unsafe fn process_image_path(pid: u32) -> Option<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+    let mut buf = [0u16; 1024];
+    let mut size = buf.len() as u32;
+    let res = QueryFullProcessImageNameW(
+        handle,
+        PROCESS_NAME_WIN32,
+        windows::core::PWSTR(buf.as_mut_ptr()),
+        &mut size,
+    );
+    let _ = CloseHandle(handle);
+    res.ok()?;
+    Some(String::from_utf16_lossy(&buf[..size as usize]))
+}
+
+/// Friendly name for an executable: the shell's `FileDescription` from version
+/// info ("Google Chrome"), falling back to the prettified file stem.
+unsafe fn friendly_process_name(path: &str) -> String {
+    use windows::Win32::Storage::FileSystem::{
+        GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
+    };
+
+    let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    let filename = windows::core::PCWSTR(wide.as_ptr());
+
+    'description: {
+        let size = GetFileVersionInfoSizeW(filename, None);
+        if size == 0 {
+            break 'description;
+        }
+        let mut data = vec![0u8; size as usize];
+        if GetFileVersionInfoW(filename, None, size, data.as_mut_ptr() as *mut _).is_err() {
+            break 'description;
+        }
+
+        // FileDescription lives under a language/codepage pair taken from the
+        // translation table; the first entry is what Explorer shows.
+        let mut trans_ptr: *mut core::ffi::c_void = std::ptr::null_mut();
+        let mut trans_len = 0u32;
+        if !VerQueryValueW(
+            data.as_ptr() as *const _,
+            windows::core::w!("\\VarFileInfo\\Translation"),
+            &mut trans_ptr,
+            &mut trans_len,
+        )
+        .as_bool()
+            || trans_len == 0
+            || trans_ptr.is_null()
+        {
+            break 'description;
+        }
+        let lang = *(trans_ptr as *const u16);
+        let codepage = *(trans_ptr as *const u16).add(1);
+
+        let query = format!("\\StringFileInfo\\{lang:04x}{codepage:04x}\\FileDescription");
+        let query_wide: Vec<u16> = query.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut value_ptr: *mut core::ffi::c_void = std::ptr::null_mut();
+        let mut value_len = 0u32;
+        if !VerQueryValueW(
+            data.as_ptr() as *const _,
+            windows::core::PCWSTR(query_wide.as_ptr()),
+            &mut value_ptr,
+            &mut value_len,
+        )
+        .as_bool()
+            || value_len == 0
+            || value_ptr.is_null()
+        {
+            break 'description;
+        }
+
+        let chars = std::slice::from_raw_parts(value_ptr as *const u16, value_len as usize);
+        let description = String::from_utf16_lossy(chars)
+            .trim_end_matches('\0')
+            .trim()
+            .to_string();
+        if !description.is_empty() {
+            return description;
+        }
+    }
+
+    std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|stem| {
+            let mut chars = stem.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => stem.to_string(),
+            }
+        })
+        .unwrap_or_else(|| "Unknown app".to_string())
+}
+
+/// Calls `f` for every live audio session on the default render endpoint.
+/// Initializes COM on the calling thread and balances it before returning.
+unsafe fn for_each_audio_session<F: FnMut(&windows::Win32::Media::Audio::IAudioSessionControl2)>(
+    mut f: F,
+) -> Result<(), String> {
+    use windows::Win32::Media::Audio::{
+        eConsole, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
+    };
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+    };
+
+    let com_initialized = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
+    let result = (|| -> Result<(), String> {
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+            &windows::Win32::Media::Audio::MMDeviceEnumerator,
+            None,
+            CLSCTX_ALL,
+        )
+        .map_err(|e| e.to_string())?;
+        let device = enumerator
+            .GetDefaultAudioEndpoint(eRender, eConsole)
+            .map_err(|e| e.to_string())?;
+        let manager: IAudioSessionManager2 = device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| e.to_string())?;
+        let sessions = manager.GetSessionEnumerator().map_err(|e| e.to_string())?;
+        let count = sessions.GetCount().map_err(|e| e.to_string())?;
+        for i in 0..count {
+            let Ok(control) = sessions.GetSession(i) else {
+                continue;
+            };
+            let Ok(control) = control.cast::<IAudioSessionControl2>() else {
+                continue;
+            };
+            f(&control);
+        }
+        Ok(())
+    })();
+    if com_initialized {
+        CoUninitialize();
+    }
+    result
+}
+
+/// Active windows with an audio session on the default output device,
+/// de-duplicated by process and sorted with currently-playing apps first.
+#[tauri::command]
+pub async fn get_audio_sessions() -> Result<Vec<AudioSessionInfo>, String> {
+    tauri::async_runtime::spawn_blocking(|| unsafe {
+        use std::collections::HashSet;
+        use windows::Win32::Media::Audio::{
+            AudioSessionStateActive, AudioSessionStateExpired, ISimpleAudioVolume,
+        };
+
+        let own_pid = std::process::id();
+        let mut seen: HashSet<u32> = HashSet::new();
+        let mut found: Vec<(AudioSessionInfo, bool)> = Vec::new();
+
+        for_each_audio_session(|control| {
+            // Only S_OK marks the system-sounds session; S_FALSE is an ordinary app.
+            if control.IsSystemSoundsSession() == windows::Win32::Foundation::S_OK {
+                return;
+            }
+            let Ok(pid) = control.GetProcessId() else {
+                return;
+            };
+            if pid == 0 || pid == own_pid || !seen.insert(pid) {
+                return;
+            }
+            let state = control.GetState().unwrap_or_default();
+            if state == AudioSessionStateExpired {
+                seen.remove(&pid);
+                return;
+            }
+            let Ok(volume_ctl) = control.cast::<ISimpleAudioVolume>() else {
+                return;
+            };
+            let process_path = process_image_path(pid);
+            let name = match process_path.as_deref() {
+                Some(path) => friendly_process_name(path),
+                None => format!("Process {pid}"),
+            };
+            found.push((
+                AudioSessionInfo {
+                    pid,
+                    name,
+                    process_path,
+                    volume: volume_ctl.GetMasterVolume().unwrap_or(1.0),
+                    is_muted: volume_ctl.GetMute().map(|m| m.as_bool()).unwrap_or(false),
+                },
+                state == AudioSessionStateActive,
+            ));
+        })?;
+
+        found.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| a.0.name.to_lowercase().cmp(&b.0.name.to_lowercase()))
+        });
+        Ok(found.into_iter().map(|(info, _)| info).collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_app_volume(pid: u32, volume: f32) -> Result<(), String> {
+    let volume = volume.clamp(0.0, 1.0);
+    tauri::async_runtime::spawn_blocking(move || unsafe {
+        use windows::Win32::Media::Audio::ISimpleAudioVolume;
+
+        for_each_audio_session(|control| {
+            if control.GetProcessId().ok() != Some(pid) {
+                return;
+            }
+            if let Ok(volume_ctl) = control.cast::<ISimpleAudioVolume>() {
+                let _ = volume_ctl.SetMasterVolume(volume, std::ptr::null());
+                if volume > 0.0 {
+                    let _ = volume_ctl.SetMute(false, std::ptr::null());
+                }
+            }
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_app_mute(pid: u32, muted: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || unsafe {
+        use windows::Win32::Media::Audio::ISimpleAudioVolume;
+
+        for_each_audio_session(|control| {
+            if control.GetProcessId().ok() != Some(pid) {
+                return;
+            }
+            if let Ok(volume_ctl) = control.cast::<ISimpleAudioVolume>() {
+                let _ = volume_ctl.SetMute(muted, std::ptr::null());
+            }
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Reports the on-screen bounds of the expanded mixer panel (overlay CSS px)
+/// so the mouse hook keeps forwarding cursor events while it is open.
+#[tauri::command]
+pub fn set_volume_mixer_rect(x: f64, y: f64, width: f64, height: f64) {
+    if let Ok(mut rect) = VOLUME_MIXER_RECT.lock() {
+        *rect = Some((x, y, width, height));
+    }
+}
+
+#[tauri::command]
+pub fn clear_volume_mixer_rect() {
+    if let Ok(mut rect) = VOLUME_MIXER_RECT.lock() {
+        *rect = None;
     }
 }
 

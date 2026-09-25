@@ -1918,6 +1918,57 @@ static CAPTURE_UI_ACTIVE: AtomicBool = AtomicBool::new(false);
 static CAPTURE_RECHECK: AtomicBool = AtomicBool::new(true);
 static CAPTURE_LAST_SCAN_MS: AtomicI64 = AtomicI64::new(0);
 
+/// Physical bounds `(x, y, width, height)` of the expanded per-app volume
+/// mixer (notch + panel), if it is open. The frontend reports the card in
+/// overlay CSS pixels; scale and monitor offset convert it to virtual-desktop
+/// coordinates.
+fn volume_mixer_physical_rect_for(app: &AppHandle) -> Option<(i32, i32, i32, i32)> {
+    let (x, y, width, height) = (*crate::state::VOLUME_MIXER_RECT.lock().ok()?)?;
+    let ov_win = app.get_webview_window("overlay")?;
+    let monitor = ov_win.primary_monitor().ok().flatten()?;
+    let scale = monitor.scale_factor();
+    let pos = monitor.position();
+    Some((
+        pos.x + (x * scale) as i32,
+        pos.y + (y * scale) as i32,
+        (width * scale) as i32,
+        (height * scale) as i32,
+    ))
+}
+
+/// The mouse hook only runs on mouse movement, so a cursor that stops just
+/// outside the mixer would leave it open indefinitely. This watchdog re-checks
+/// the position and closes the card as soon as the cursor is off it.
+fn setup_volume_mixer_watchdog(app_handle: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(200));
+        let Some((rx, ry, rw, rh)) = volume_mixer_physical_rect_for(&app_handle) else {
+            continue;
+        };
+        let mut pt = windows::Win32::Foundation::POINT::default();
+        if unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt) }.is_err() {
+            continue;
+        }
+        let inside = pt.x >= rx && pt.x <= rx + rw && pt.y >= ry && pt.y <= ry + rh;
+        if inside {
+            continue;
+        }
+        let at_left_edge = app_handle
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .is_some_and(|m| {
+                let pos = m.position();
+                let size = m.size();
+                pt.x <= pos.x + 8 && pt.y >= pos.y && pt.y <= pos.y + size.height as i32
+            });
+        if !at_left_edge && MH_LAST_LEFT_EDGE_HOVER.swap(0, Ordering::Relaxed) != 0 {
+            MH_LEFT_EXPIRY_MS.store(0, Ordering::Relaxed);
+            let _ = app_handle.emit("volume-edge-hover", false);
+        }
+    });
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2017,7 +2068,8 @@ fn apply_capture_ui_state(app: &AppHandle, active: bool) {
 }
 
 pub fn setup_mouse_hook(app_handle: AppHandle) {
-    let _ = MOUSE_HOOK_APP_HANDLE.set(app_handle);
+    let _ = MOUSE_HOOK_APP_HANDLE.set(app_handle.clone());
+    setup_volume_mixer_watchdog(app_handle);
     unsafe {
         SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0)
             .expect("Failed to install mouse hook");
@@ -2335,12 +2387,19 @@ unsafe extern "system" fn mouse_hook_proc(
                 }
             }
 
+            // Expanded per-app volume mixer (if open) — the reported rect covers
+            // the notch plus panel, so it keeps the card alive and clickable.
+            let mixer_rect = volume_mixer_physical_rect_for(app_handle);
+            let in_mixer = mixer_rect.is_some_and(|(rx, ry, rw, rh)| {
+                cursor.x >= rx && cursor.x <= rx + rw && cursor.y >= ry && cursor.y <= ry + rh
+            });
+
             // --- Left Edge (Volume) ---
             if !fg_fs {
                 let at_left_edge =
                     cursor.x <= (mon_x + 8) && cursor.y >= mon_y && cursor.y <= (mon_y + mon_h);
 
-                if at_left_edge {
+                if at_left_edge || in_mixer {
                     MH_LEFT_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
                 }
 
@@ -2396,21 +2455,22 @@ unsafe extern "system" fn mouse_hook_proc(
                         MH_LAST_OV_IGNORE.store(1, Ordering::Relaxed);
                     }
                 } else {
-                    let over_left = if let Ok(Some(m)) = ov_win.primary_monitor() {
-                        let ms = m.size();
-                        let mp = m.position();
-                        let sc = m.scale_factor();
-                        let nw = (42.0 * sc) as i32;
-                        let nh = (196.0 * sc) as i32;
-                        let nx = mp.x;
-                        let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
-                        cursor.x >= nx
-                            && cursor.x <= nx + nw
-                            && cursor.y >= ny
-                            && cursor.y <= ny + nh
-                    } else {
-                        false
-                    };
+                    let over_left = in_mixer
+                        || if let Ok(Some(m)) = ov_win.primary_monitor() {
+                            let ms = m.size();
+                            let mp = m.position();
+                            let sc = m.scale_factor();
+                            let nw = (42.0 * sc) as i32;
+                            let nh = (196.0 * sc) as i32;
+                            let nx = mp.x;
+                            let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
+                            cursor.x >= nx
+                                && cursor.x <= nx + nw
+                                && cursor.y >= ny
+                                && cursor.y <= ny + nh
+                        } else {
+                            false
+                        };
 
                     let over_right = if let Ok(Some(m)) = ov_win.primary_monitor() {
                         let ms = m.size();

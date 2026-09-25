@@ -1,4 +1,4 @@
-import { StrictMode, useState, useEffect, useRef, useCallback } from "react";
+import { StrictMode, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen, emit } from "@tauri-apps/api/event";
@@ -6,22 +6,206 @@ import { invoke } from "@tauri-apps/api/core";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { MixerIcon, SpeakerIcon } from "./icons";
 import "./Overlay.css";
 import { initTheme } from "./theme";
+
+// ─── App Volume Mixer ───────────────────────────────────────────────────────
+
+interface AudioSession {
+	pid: number;
+	name: string;
+	process_path: string | null;
+	volume: number;
+	is_muted: boolean;
+}
+
+function MixerRow({
+	session,
+	onVolumeChange,
+	onMuteToggle,
+	draggingRef
+}: {
+	session: AudioSession;
+	onVolumeChange: (pid: number, volume: number) => void;
+	onMuteToggle: (pid: number) => void;
+	draggingRef: { current: number | null };
+}) {
+	const [icon, setIcon] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!session.process_path) return;
+		let alive = true;
+		invoke<string | null>("get_app_icon", {
+			path: session.process_path,
+			name: session.name,
+			hwnd: null
+		})
+			.then((data) => {
+				if (alive) setIcon(data);
+			})
+			.catch(() => {});
+		return () => {
+			alive = false;
+		};
+	}, [session.process_path, session.name]);
+
+	const percentage = Math.round((session.is_muted ? 0 : session.volume) * 100);
+
+	return (
+		<div className="volume-mixer-row">
+			<button
+				className={`volume-mixer-app ${session.is_muted ? "muted" : ""}`}
+				onClick={() => onMuteToggle(session.pid)}
+				title={session.is_muted ? "Unmute" : "Mute"}
+			>
+				{icon ? (
+					<img src={icon} alt="" draggable={false} />
+				) : (
+					<span className="volume-mixer-app-fallback">{session.name.charAt(0).toUpperCase()}</span>
+				)}
+			</button>
+			<div className="volume-mixer-body">
+				<div className="volume-mixer-label">
+					<span className="volume-mixer-name">{session.name}</span>
+					<span className="volume-mixer-pct">{percentage}%</span>
+				</div>
+				<div className="volume-mixer-track">
+					<div className="volume-mixer-fill" style={{ width: `${percentage}%` }} />
+					<input
+						type="range"
+						className="volume-mixer-slider"
+						min={0}
+						max={1}
+						step={0.01}
+						value={session.is_muted ? 0 : session.volume}
+						onChange={(e) => onVolumeChange(session.pid, parseFloat(e.target.value))}
+						onPointerDown={() => (draggingRef.current = session.pid)}
+						onPointerUp={() => (draggingRef.current = null)}
+						onPointerCancel={() => (draggingRef.current = null)}
+					/>
+				</div>
+			</div>
+		</div>
+	);
+}
 
 // ─── Volume Notch ───────────────────────────────────────────────────────────
 
 function VolumeNotch({
 	volume,
 	isMuted,
-	onVolumeChange
+	onVolumeChange,
+	mixerExpanded,
+	onMixerExpandedChange
 }: {
 	volume: number;
 	isMuted: boolean;
 	onVolumeChange: (vol: number) => void;
+	mixerExpanded: boolean;
+	onMixerExpandedChange: (expanded: boolean) => void;
 }) {
 	const percentage = Math.round(volume * 100);
 	const barRef = useRef<HTMLDivElement>(null);
+	const shellRef = useRef<HTMLDivElement>(null);
+	const draggingRef = useRef<number | null>(null);
+
+	const [sessions, setSessions] = useState<AudioSession[]>([]);
+	const [sessionsLoaded, setSessionsLoaded] = useState(false);
+	const [showPercentage, setShowPercentage] = useState(false);
+	const percentageTimeoutRef = useRef<any>(null);
+
+	// Flash the percentage in place of the icon whenever the volume changes.
+	useEffect(() => {
+		setShowPercentage(true);
+		if (percentageTimeoutRef.current) clearTimeout(percentageTimeoutRef.current);
+		percentageTimeoutRef.current = setTimeout(() => setShowPercentage(false), 1200);
+		return () => {
+			if (percentageTimeoutRef.current) clearTimeout(percentageTimeoutRef.current);
+		};
+	}, [volume]);
+
+	const refreshSessions = useCallback(() => {
+		invoke<AudioSession[]>("get_audio_sessions")
+			.then((list) => {
+				setSessions((prev) => {
+					const prevByPid = new Map(prev.map((s) => [s.pid, s]));
+					return list.map((session) => {
+						if (draggingRef.current === session.pid) {
+							const local = prevByPid.get(session.pid);
+							if (local) {
+								return { ...session, volume: local.volume, is_muted: local.is_muted };
+							}
+						}
+						return session;
+					});
+				});
+				setSessionsLoaded(true);
+			})
+			.catch(() => setSessionsLoaded(true));
+	}, []);
+
+	useEffect(() => {
+		if (!mixerExpanded) return;
+		refreshSessions();
+		const interval = setInterval(refreshSessions, 2000);
+		return () => clearInterval(interval);
+	}, [mixerExpanded, refreshSessions]);
+
+	// Report the shell bounds (notch + expanded panel) so the mouse hook keeps
+	// the whole card clickable and closes it as soon as the cursor leaves.
+	const expandedRef = useRef(mixerExpanded);
+	useEffect(() => {
+		expandedRef.current = mixerExpanded;
+	}, [mixerExpanded]);
+
+	const reportPanelBounds = useCallback(() => {
+		if (!expandedRef.current) return;
+		const el = shellRef.current;
+		if (!el) return;
+		const rect = el.getBoundingClientRect();
+		invoke("set_volume_mixer_rect", {
+			x: rect.x,
+			y: rect.y,
+			width: rect.width,
+			height: rect.height
+		}).catch(() => {});
+	}, []);
+
+	useLayoutEffect(() => {
+		if (!mixerExpanded) return;
+		reportPanelBounds();
+		const el = shellRef.current;
+		const observer = el ? new ResizeObserver(reportPanelBounds) : null;
+		if (el && observer) observer.observe(el);
+		return () => {
+			observer?.disconnect();
+			invoke("clear_volume_mixer_rect").catch(() => {});
+		};
+	}, [mixerExpanded, reportPanelBounds]);
+
+	const lastAppVolumeCall = useRef<Map<number, number>>(new Map());
+	const handleAppVolumeChange = useCallback((pid: number, newVol: number) => {
+		setSessions((prev) =>
+			prev.map((s) =>
+				s.pid === pid ? { ...s, volume: newVol, is_muted: newVol === 0 ? s.is_muted : false } : s
+			)
+		);
+		const now = Date.now();
+		if (now - (lastAppVolumeCall.current.get(pid) ?? 0) < 50) return;
+		lastAppVolumeCall.current.set(pid, now);
+		invoke("set_app_volume", { pid, volume: newVol }).catch(() => {});
+	}, []);
+
+	const handleAppMuteToggle = useCallback(
+		(pid: number) => {
+			const session = sessions.find((s) => s.pid === pid);
+			const muted = !(session?.is_muted ?? false);
+			setSessions((prev) => prev.map((s) => (s.pid === pid ? { ...s, is_muted: muted } : s)));
+			invoke("set_app_mute", { pid, muted }).catch(() => {});
+		},
+		[sessions]
+	);
 
 	const handleBarInteraction = (e: React.MouseEvent | React.TouchEvent) => {
 		if (!barRef.current) return;
@@ -65,7 +249,14 @@ function VolumeNotch({
 			}}
 			transition={{ type: "spring", stiffness: 450, damping: 25, mass: 0.7 }}
 		>
-			<div className="volume-notch">
+			<div className="volume-notch-flares" />
+			<motion.div
+				ref={shellRef}
+				className="volume-notch"
+				animate={{ width: mixerExpanded ? 278 : 42 }}
+				transition={{ type: "spring", bounce: 0, duration: 0.35 }}
+				onAnimationComplete={reportPanelBounds}
+			>
 				<motion.div
 					className="volume-notch-content-group"
 					initial={{ opacity: 0, x: -10 }}
@@ -87,9 +278,62 @@ function VolumeNotch({
 							transition={{ type: "spring", stiffness: 300, damping: 35 }}
 						/>
 					</div>
-					<div className="volume-notch-text">{isMuted ? "0%" : `${percentage}%`}</div>
+					<button
+						className={`volume-notch-action ${mixerExpanded ? "active" : ""} ${
+							showPercentage ? "showing-percent" : ""
+						}`}
+						onClick={(e) => {
+							e.stopPropagation();
+							onMixerExpandedChange(!mixerExpanded);
+						}}
+						title="App volume mixer"
+					>
+						<span className="volume-notch-action-icon">
+							<SpeakerIcon size={16} muted={isMuted} />
+						</span>
+						<span className="volume-notch-action-mixer">
+							<MixerIcon size={16} />
+						</span>
+						<span className="volume-notch-action-percent">{isMuted ? "0%" : `${percentage}%`}</span>
+					</button>
 				</motion.div>
-			</div>
+
+				<AnimatePresence>
+					{mixerExpanded && (
+						<motion.div
+							className="volume-mixer-panel"
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{
+								opacity: 0,
+								x: -18,
+								transition: {
+									x: { duration: 0.28, ease: [0.32, 0.72, 0, 1] },
+									opacity: { duration: 0.18, delay: 0.1 }
+								}
+							}}
+						>
+							<div className="volume-mixer-list">
+								{sessions.length === 0 ? (
+									<div className="volume-mixer-empty">
+										{sessionsLoaded ? "No apps with audio" : "Loading..."}
+									</div>
+								) : (
+									sessions.map((session) => (
+										<MixerRow
+											key={session.pid}
+											session={session}
+											onVolumeChange={handleAppVolumeChange}
+											onMuteToggle={handleAppMuteToggle}
+											draggingRef={draggingRef}
+										/>
+									))
+								)}
+							</div>
+						</motion.div>
+					)}
+				</AnimatePresence>
+			</motion.div>
 		</motion.div>
 	);
 }
@@ -211,6 +455,7 @@ function OverlayApp() {
 	// Volume state
 	const [volume, setVolume] = useState(0.5);
 	const [isMuted, setIsMuted] = useState(false);
+	const [mixerExpanded, setMixerExpanded] = useState(false);
 	const [volumeOverlayEnabled, setVolumeOverlayEnabled] = useState(
 		() => localStorage.getItem("bloom-volume-overlay-enabled") !== "false"
 	);
@@ -234,8 +479,12 @@ function OverlayApp() {
 	const timeoutRef = useRef<any>(null);
 	const hideWindowTimeoutRef = useRef<any>(null);
 	const splashActiveRef = useRef(false);
+	const mixerExpandedRef = useRef(false);
 
 	const resetHideTimeout = useCallback(() => {
+		// Keep the notch pinned while the mixer panel is open; it closes on
+		// mouse leave via the edge-hover timeout instead.
+		if (mixerExpandedRef.current) return;
 		if (timeoutRef.current) clearTimeout(timeoutRef.current);
 		timeoutRef.current = setTimeout(() => {
 			if (!splashActiveRef.current) setMode("idle");
@@ -328,7 +577,10 @@ function OverlayApp() {
 				if (timeoutRef.current) clearTimeout(timeoutRef.current);
 			} else {
 				if (timeoutRef.current) clearTimeout(timeoutRef.current);
-				timeoutRef.current = setTimeout(() => setMode("idle"), 1500);
+				timeoutRef.current = setTimeout(
+					() => setMode("idle"),
+					mixerExpandedRef.current ? 700 : 1500
+				);
 			}
 		});
 
@@ -458,6 +710,23 @@ function OverlayApp() {
 		[resetHideTimeout]
 	);
 
+	const handleMixerExpandedChange = useCallback(
+		(expanded: boolean) => {
+			mixerExpandedRef.current = expanded;
+			setMixerExpanded(expanded);
+			if (!expanded) resetHideTimeout();
+		},
+		[resetHideTimeout]
+	);
+
+	// Collapse the mixer whenever the notch closes so it doesn't reopen expanded.
+	useEffect(() => {
+		if (mode !== "volume" && mixerExpanded) {
+			mixerExpandedRef.current = false;
+			setMixerExpanded(false);
+		}
+	}, [mode, mixerExpanded]);
+
 	// ── Brightness Controls ──
 	const lastBrightnessCall = useRef(0);
 	const handleBrightnessChange = useCallback(
@@ -551,6 +820,8 @@ function OverlayApp() {
 								volume={volume}
 								isMuted={isMuted}
 								onVolumeChange={handleVolumeChange}
+								mixerExpanded={mixerExpanded}
+								onMixerExpandedChange={handleMixerExpandedChange}
 								key="volume-island"
 							/>
 						)}
