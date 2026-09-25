@@ -8,7 +8,7 @@ use crate::services::{
     enum_windows_proc, register_dock_appbar, sync_overlays, unregister_appbar_native,
 };
 use crate::state::*;
-use crate::types::{AppInfo, AudioSessionInfo, BrightnessChangeEvent, IntRect};
+use crate::types::{AppInfo, AudioSessionInfo, BrightnessChangeEvent, IntRect, VolumeChangeEvent};
 use crate::utils::*;
 use std::collections::HashMap;
 
@@ -2334,8 +2334,23 @@ unsafe fn process_image_path(pid: u32) -> Option<String> {
 }
 
 /// Friendly name for an executable: the shell's `FileDescription` from version
-/// info ("Google Chrome"), falling back to the prettified file stem.
+/// info ("Google Chrome"), falling back to the prettified file stem. Results are
+/// cached by path because the mixer polls while it is open.
 unsafe fn friendly_process_name(path: &str) -> String {
+    let cache = PROCESS_NAME_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some(name) = guard.get(path) {
+            return name.clone();
+        }
+    }
+    let name = friendly_process_name_uncached(path);
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(path.to_string(), name.clone());
+    }
+    name
+}
+
+unsafe fn friendly_process_name_uncached(path: &str) -> String {
     use windows::Win32::Storage::FileSystem::{
         GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
     };
@@ -2412,13 +2427,14 @@ unsafe fn friendly_process_name(path: &str) -> String {
         .unwrap_or_else(|| "Unknown app".to_string())
 }
 
-/// Calls `f` for every live audio session on the default render endpoint.
+/// Calls `f` for every live audio session on every active render endpoint.
 /// Initializes COM on the calling thread and balances it before returning.
 unsafe fn for_each_audio_session<F: FnMut(&windows::Win32::Media::Audio::IAudioSessionControl2)>(
     mut f: F,
 ) -> Result<(), String> {
     use windows::Win32::Media::Audio::{
-        eConsole, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
+        eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
+        DEVICE_STATE_ACTIVE,
     };
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
@@ -2432,22 +2448,35 @@ unsafe fn for_each_audio_session<F: FnMut(&windows::Win32::Media::Audio::IAudioS
             CLSCTX_ALL,
         )
         .map_err(|e| e.to_string())?;
-        let device = enumerator
-            .GetDefaultAudioEndpoint(eRender, eConsole)
+        // Windows' volume mixer lists sessions per output device, and per-app
+        // output routing (Windows 11) can put an app on a non-default device,
+        // so scan every active render endpoint instead of only the default one.
+        let devices = enumerator
+            .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
             .map_err(|e| e.to_string())?;
-        let manager: IAudioSessionManager2 = device
-            .Activate(CLSCTX_ALL, None)
-            .map_err(|e| e.to_string())?;
-        let sessions = manager.GetSessionEnumerator().map_err(|e| e.to_string())?;
-        let count = sessions.GetCount().map_err(|e| e.to_string())?;
-        for i in 0..count {
-            let Ok(control) = sessions.GetSession(i) else {
+        let device_count = devices.GetCount().map_err(|e| e.to_string())?;
+        for i in 0..device_count {
+            let Ok(device) = devices.Item(i) else {
                 continue;
             };
-            let Ok(control) = control.cast::<IAudioSessionControl2>() else {
+            let Ok(manager) = device.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None) else {
                 continue;
             };
-            f(&control);
+            let Ok(sessions) = manager.GetSessionEnumerator() else {
+                continue;
+            };
+            let Ok(count) = sessions.GetCount() else {
+                continue;
+            };
+            for j in 0..count {
+                let Ok(control) = sessions.GetSession(j) else {
+                    continue;
+                };
+                let Ok(control) = control.cast::<IAudioSessionControl2>() else {
+                    continue;
+                };
+                f(&control);
+            }
         }
         Ok(())
     })();
@@ -2818,6 +2847,50 @@ fn set_radio_state_sync(
 #[tauri::command]
 pub fn get_volume() -> f32 {
     crate::state::CURRENT_VOLUME.load(std::sync::atomic::Ordering::Relaxed) as f32 / 100.0
+}
+
+/// Live volume and mute state of the default render endpoint, also refreshing
+/// the cache `get_volume` reads. The system worker only emits `volume-change`
+/// when the value differs from its last poll, and its first poll happens before
+/// the overlay webview can register listeners, so HUDs must seed themselves
+/// with this instead of the cached default.
+#[tauri::command]
+pub async fn get_volume_state() -> Result<VolumeChangeEvent, String> {
+    tauri::async_runtime::spawn_blocking(|| unsafe {
+        use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+        use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator};
+        use windows::Win32::System::Com::{
+            CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+        };
+
+        let com_initialized = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
+        let result = (|| -> Result<VolumeChangeEvent, String> {
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+                &windows::Win32::Media::Audio::MMDeviceEnumerator,
+                None,
+                CLSCTX_ALL,
+            )
+            .map_err(|e| e.to_string())?;
+            let device = enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .map_err(|e| e.to_string())?;
+            let endpoint: IAudioEndpointVolume = device
+                .Activate(CLSCTX_ALL, None)
+                .map_err(|e| e.to_string())?;
+            let volume = endpoint
+                .GetMasterVolumeLevelScalar()
+                .map_err(|e| e.to_string())?;
+            let is_muted = endpoint.GetMute().map(|m| m.as_bool()).unwrap_or(false);
+            CURRENT_VOLUME.store((volume * 100.0) as u32, Ordering::Relaxed);
+            Ok(VolumeChangeEvent { volume, is_muted })
+        })();
+        if com_initialized {
+            CoUninitialize();
+        }
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

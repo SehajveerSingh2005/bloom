@@ -110,7 +110,7 @@ body,
 	flex-direction: column;
 	align-items: center;
 	justify-content: space-between;
-	padding: 16px 0;
+	padding: 16px 0 14px;
 	background: var(--bloom-bg, rgba(0, 0, 0, 0.8));
 	border-radius: 0 18px 18px 0;
 	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
@@ -187,12 +187,12 @@ body,
 
 .volume-notch-bar {
 	width: 10px;
-	height: 134px;
+	flex: 1;
+	min-height: 0;
 	background: rgba(255, 255, 255, 0.2);
 	border-radius: 20px;
 	position: relative;
 	overflow: hidden;
-	margin-top: 4px;
 }
 
 .volume-notch-fill {
@@ -207,7 +207,8 @@ body,
 .volume-notch-action {
 	position: relative;
 	width: 100%;
-	height: 24px;
+	height: 20px;
+	margin-top: 2px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -282,7 +283,8 @@ body,
 	left: 42px;
 	top: 0;
 	bottom: 0;
-	width: 236px;
+	/* Overridden inline with the dynamic width (grows with the app count). */
+	width: 204px;
 	display: flex;
 	flex-direction: column;
 	pointer-events: auto;
@@ -291,13 +293,18 @@ body,
 }
 
 .volume-mixer-list {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
+	display: grid;
+	/* Columns are set inline from the app count. */
+	grid-template-columns: repeat(4, 1fr);
+	/* Rows share the height until they hit the tile minimum, then the list scrolls. */
+	grid-auto-rows: minmax(70px, 1fr);
+	gap: 4px;
 	width: 100%;
 	flex: 1;
 	min-height: 0;
-	padding: 8px 8px;
+	/* Aligns the tile sliders with the main bar (17px from the card top) and
+	   the tile logos with the main action button. */
+	padding: 16px 8px 14px;
 	overflow-y: auto;
 	overflow-x: hidden;
 	scrollbar-width: thin;
@@ -315,63 +322,78 @@ body,
 		"Segoe UI",
 		sans-serif;
 	text-align: center;
-	padding: 20px 0;
-}
-
-.volume-mixer-row {
+	grid-column: 1 / -1;
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	padding: 5px 6px;
-	border-radius: 10px;
-	transition: background 0.15s ease;
+	justify-content: center;
 }
 
-.volume-mixer-row:hover {
-	background: var(--bloom-border, rgba(255, 255, 255, 0.08));
+.volume-mixer-tile {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: flex-end;
+	width: 100%;
+	min-width: 0;
+	height: 100%;
 }
 
-.volume-mixer-app {
-	width: 24px;
-	height: 24px;
+/* Mirrors the main volume bar: thin rounded track with a fill from the bottom. */
+.volume-mixer-bar {
+	position: relative;
+	width: 10px;
+	flex: 1;
+	min-height: 48px;
+	background: rgba(255, 255, 255, 0.2);
+	border-radius: 20px;
+	overflow: hidden;
+}
+
+.volume-mixer-fill {
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	width: 100%;
+	background: var(--bloom-text, white);
+	border-radius: 20px;
+	pointer-events: none;
+}
+
+/* The app logo sits at the bottom, like the main notch action, and swaps to
+   the percentage while the volume is being changed. */
+.volume-mixer-action {
+	position: relative;
+	width: 100%;
+	height: 20px;
+	margin-top: 2px;
 	flex-shrink: 0;
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	padding: 0;
 	border: none;
-	border-radius: 7px;
 	background: transparent;
+	color: var(--bloom-text, white);
 	cursor: pointer;
-	transition:
-		opacity 0.15s ease,
-		transform 0.15s ease;
 }
 
-.volume-mixer-app img {
-	width: 20px;
-	height: 20px;
+.volume-mixer-action img {
+	width: 18px;
+	height: 18px;
 	object-fit: contain;
+	transition: opacity 0.16s ease;
 }
 
-.volume-mixer-app.muted {
-	opacity: 0.35;
-}
-
-.volume-mixer-app:active {
-	transform: scale(0.92);
-}
-
-.volume-mixer-app-fallback {
-	width: 20px;
-	height: 20px;
+.volume-mixer-action-fallback {
+	width: 18px;
+	height: 18px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	border-radius: 6px;
+	border-radius: 5px;
 	background: var(--bloom-border, rgba(255, 255, 255, 0.15));
 	color: var(--bloom-text, white);
-	font-size: 10px;
+	font-size: 9px;
 	font-weight: 700;
 	font-family:
 		"Inter",
@@ -379,88 +401,44 @@ body,
 		BlinkMacSystemFont,
 		"Segoe UI",
 		sans-serif;
+	transition: opacity 0.16s ease;
 }
 
-.volume-mixer-body {
-	flex: 1;
-	min-width: 0;
+.volume-mixer-action.muted img,
+.volume-mixer-action.muted .volume-mixer-action-fallback {
+	opacity: 0.35;
+}
+
+.volume-mixer-action:active {
+	transform: scale(0.94);
+}
+
+.volume-mixer-action-pct {
+	position: absolute;
 	display: flex;
-	flex-direction: column;
-	gap: 2px;
-}
-
-.volume-mixer-label {
-	display: flex;
-	align-items: baseline;
-	justify-content: space-between;
-	gap: 8px;
-}
-
-.volume-mixer-name {
-	color: var(--bloom-text, white);
-	font-size: 10.5px;
-	font-weight: 600;
+	align-items: center;
+	justify-content: center;
+	font-size: 9px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.02em;
 	font-family:
 		"Inter",
 		-apple-system,
 		BlinkMacSystemFont,
 		"Segoe UI",
 		sans-serif;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
+	opacity: 0;
+	transition: opacity 0.16s ease;
 }
 
-.volume-mixer-pct {
-	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.6));
-	font-size: 9px;
-	font-weight: 600;
-	font-variant-numeric: tabular-nums;
-	flex-shrink: 0;
+.volume-mixer-action.showing-percent img,
+.volume-mixer-action.showing-percent .volume-mixer-action-fallback {
+	opacity: 0;
 }
 
-.volume-mixer-track {
-	position: relative;
-	height: 4px;
-	background: var(--bloom-border, rgba(255, 255, 255, 0.15));
-	border-radius: 2px;
-	overflow: hidden;
-}
-
-.volume-mixer-track:hover {
-	height: 5px;
-}
-
-.volume-mixer-fill {
-	position: absolute;
-	left: 0;
-	top: 0;
-	height: 100%;
-	background: var(--bloom-text, white);
-	border-radius: 2px;
-	pointer-events: none;
-	transition: width 0.1s ease-out;
-}
-
-.volume-mixer-slider {
-	-webkit-appearance: none;
-	appearance: none;
-	position: absolute;
-	top: 0;
-	left: 0;
-	width: 100%;
-	height: 100%;
-	margin: 0;
-	background: transparent;
-	cursor: pointer;
-	z-index: 2;
-}
-
-.volume-mixer-slider::-webkit-slider-thumb {
-	-webkit-appearance: none;
-	appearance: none;
-	width: 0;
-	height: 0;
+.volume-mixer-action.showing-percent .volume-mixer-action-pct {
+	opacity: 1;
 }
 
 /* ─── Brightness Notch (Right Edge) ─────────────────────────────────────── */

@@ -1377,8 +1377,8 @@ function App() {
 		invoke<boolean>("get_battery_saver_state")
 			.then(setBatterySaverEnabled)
 			.catch(() => {});
-		invoke<number>("get_volume")
-			.then(setVolume)
+		invoke<{ volume: number; is_muted: boolean }>("get_volume_state")
+			.then((state) => setVolume(state.volume))
 			.catch(() => {});
 		invoke<number>("get_brightness")
 			.then(setCurrentBrightness)

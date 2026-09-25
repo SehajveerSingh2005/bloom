@@ -20,7 +20,7 @@ interface AudioSession {
 	is_muted: boolean;
 }
 
-function MixerRow({
+function MixerTile({
 	session,
 	onVolumeChange,
 	onMuteToggle,
@@ -32,6 +32,10 @@ function MixerRow({
 	draggingRef: { current: number | null };
 }) {
 	const [icon, setIcon] = useState<string | null>(null);
+	const [showPercentage, setShowPercentage] = useState(false);
+	const barRef = useRef<HTMLDivElement>(null);
+	const percentageTimeoutRef = useRef<any>(null);
+	const lastPercentageRef = useRef<number | null>(null);
 
 	useEffect(() => {
 		if (!session.process_path) return;
@@ -52,45 +56,91 @@ function MixerRow({
 
 	const percentage = Math.round((session.is_muted ? 0 : session.volume) * 100);
 
+	// Flash the percentage in place of the app logo while its volume changes,
+	// matching the main notch's action button.
+	useEffect(() => {
+		const previous = lastPercentageRef.current;
+		lastPercentageRef.current = percentage;
+		if (previous === null || previous === percentage) return;
+		setShowPercentage(true);
+		if (percentageTimeoutRef.current) clearTimeout(percentageTimeoutRef.current);
+		percentageTimeoutRef.current = setTimeout(() => setShowPercentage(false), 1200);
+		return () => {
+			if (percentageTimeoutRef.current) clearTimeout(percentageTimeoutRef.current);
+		};
+	}, [percentage]);
+
+	const volumeFromY = (clientY: number) => {
+		if (!barRef.current) return;
+		const rect = barRef.current.getBoundingClientRect();
+		const relativeY = rect.bottom - clientY;
+		onVolumeChange(session.pid, Math.max(0, Math.min(1, relativeY / rect.height)));
+	};
+
+	const handleMouseDown = (e: React.MouseEvent) => {
+		draggingRef.current = session.pid;
+		volumeFromY(e.clientY);
+		const handleMouseMove = (moveE: MouseEvent) => volumeFromY(moveE.clientY);
+		const handleMouseUp = () => {
+			draggingRef.current = null;
+			document.removeEventListener("mousemove", handleMouseMove);
+			document.removeEventListener("mouseup", handleMouseUp);
+		};
+		document.addEventListener("mousemove", handleMouseMove);
+		document.addEventListener("mouseup", handleMouseUp);
+	};
+
 	return (
-		<div className="volume-mixer-row">
+		<div className="volume-mixer-tile">
+			<div
+				ref={barRef}
+				className="volume-mixer-bar"
+				onMouseDown={handleMouseDown}
+				onTouchStart={(e) => volumeFromY(e.touches[0].clientY)}
+				title={`${session.name} — ${percentage}%`}
+				style={{ cursor: "pointer" }}
+			>
+				<motion.div
+					className="volume-mixer-fill"
+					initial={false}
+					animate={{ height: `${percentage}%` }}
+					transition={{ type: "spring", stiffness: 300, damping: 35 }}
+				/>
+			</div>
 			<button
-				className={`volume-mixer-app ${session.is_muted ? "muted" : ""}`}
+				className={`volume-mixer-action ${session.is_muted ? "muted" : ""} ${
+					showPercentage ? "showing-percent" : ""
+				}`}
 				onClick={() => onMuteToggle(session.pid)}
 				title={session.is_muted ? "Unmute" : "Mute"}
 			>
 				{icon ? (
 					<img src={icon} alt="" draggable={false} />
 				) : (
-					<span className="volume-mixer-app-fallback">{session.name.charAt(0).toUpperCase()}</span>
+					<span className="volume-mixer-action-fallback">
+						{session.name.charAt(0).toUpperCase()}
+					</span>
 				)}
+				<span className="volume-mixer-action-pct">{percentage}%</span>
 			</button>
-			<div className="volume-mixer-body">
-				<div className="volume-mixer-label">
-					<span className="volume-mixer-name">{session.name}</span>
-					<span className="volume-mixer-pct">{percentage}%</span>
-				</div>
-				<div className="volume-mixer-track">
-					<div className="volume-mixer-fill" style={{ width: `${percentage}%` }} />
-					<input
-						type="range"
-						className="volume-mixer-slider"
-						min={0}
-						max={1}
-						step={0.01}
-						value={session.is_muted ? 0 : session.volume}
-						onChange={(e) => onVolumeChange(session.pid, parseFloat(e.target.value))}
-						onPointerDown={() => (draggingRef.current = session.pid)}
-						onPointerUp={() => (draggingRef.current = null)}
-						onPointerCancel={() => (draggingRef.current = null)}
-					/>
-				</div>
-			</div>
 		</div>
 	);
 }
 
 // ─── Volume Notch ───────────────────────────────────────────────────────────
+
+// Mixer panel geometry. The expanded card grows with the number of apps (one
+// narrow column each) up to a max, so a single app doesn't open a wide card.
+// `MIXER_PANEL_PADDING` must match the horizontal padding on .volume-mixer-list.
+const MIXER_COLUMN_WIDTH = 44;
+const MIXER_COLUMN_GAP = 4;
+const MIXER_PANEL_PADDING = 8;
+const MIXER_MAX_COLUMNS = 4;
+const MIXER_EMPTY_COLUMNS = 2;
+
+// Last fetched session list, so reopening the mixer renders at the right width
+// immediately instead of growing out of the empty-state width.
+let lastKnownSessions: AudioSession[] = [];
 
 function VolumeNotch({
 	volume,
@@ -110,10 +160,19 @@ function VolumeNotch({
 	const shellRef = useRef<HTMLDivElement>(null);
 	const draggingRef = useRef<number | null>(null);
 
-	const [sessions, setSessions] = useState<AudioSession[]>([]);
+	const [sessions, setSessions] = useState<AudioSession[]>(lastKnownSessions);
 	const [sessionsLoaded, setSessionsLoaded] = useState(false);
+	const [sessionsError, setSessionsError] = useState(false);
 	const [showPercentage, setShowPercentage] = useState(false);
 	const percentageTimeoutRef = useRef<any>(null);
+
+	// Panel width follows the app count (empty state keeps room for the message).
+	const mixerColumns =
+		sessions.length === 0 ? MIXER_EMPTY_COLUMNS : Math.min(sessions.length, MIXER_MAX_COLUMNS);
+	const mixerPanelWidth =
+		MIXER_PANEL_PADDING * 2 +
+		mixerColumns * MIXER_COLUMN_WIDTH +
+		(mixerColumns - 1) * MIXER_COLUMN_GAP;
 
 	// Flash the percentage in place of the icon whenever the volume changes.
 	useEffect(() => {
@@ -125,9 +184,24 @@ function VolumeNotch({
 		};
 	}, [volume]);
 
+	// A slider drag can end anywhere (including outside the panel); clear the
+	// drag marker globally so the polling refresh stops preserving its local value.
+	useEffect(() => {
+		const clearDrag = () => {
+			draggingRef.current = null;
+		};
+		window.addEventListener("pointerup", clearDrag);
+		window.addEventListener("pointercancel", clearDrag);
+		return () => {
+			window.removeEventListener("pointerup", clearDrag);
+			window.removeEventListener("pointercancel", clearDrag);
+		};
+	}, []);
+
 	const refreshSessions = useCallback(() => {
 		invoke<AudioSession[]>("get_audio_sessions")
 			.then((list) => {
+				lastKnownSessions = list;
 				setSessions((prev) => {
 					const prevByPid = new Map(prev.map((s) => [s.pid, s]));
 					return list.map((session) => {
@@ -141,8 +215,12 @@ function VolumeNotch({
 					});
 				});
 				setSessionsLoaded(true);
+				setSessionsError(false);
 			})
-			.catch(() => setSessionsLoaded(true));
+			.catch(() => {
+				setSessionsLoaded(true);
+				setSessionsError(true);
+			});
 	}, []);
 
 	useEffect(() => {
@@ -184,18 +262,46 @@ function VolumeNotch({
 		};
 	}, [mixerExpanded, reportPanelBounds]);
 
-	const lastAppVolumeCall = useRef<Map<number, number>>(new Map());
-	const handleAppVolumeChange = useCallback((pid: number, newVol: number) => {
-		setSessions((prev) =>
-			prev.map((s) =>
-				s.pid === pid ? { ...s, volume: newVol, is_muted: newVol === 0 ? s.is_muted : false } : s
-			)
-		);
-		const now = Date.now();
-		if (now - (lastAppVolumeCall.current.get(pid) ?? 0) < 50) return;
-		lastAppVolumeCall.current.set(pid, now);
-		invoke("set_app_volume", { pid, volume: newVol }).catch(() => {});
+	// Slider drags fire many times per second. Coalesce into one backend call
+	// per ~60ms and always flush the final value, so releasing quickly doesn't
+	// leave the backend (and the next poll) snapped back to a stale volume.
+	const pendingAppVolumes = useRef<Map<number, number>>(new Map());
+	const appVolumeFlushRef = useRef<any>(null);
+
+	const flushAppVolumes = useCallback(() => {
+		appVolumeFlushRef.current = null;
+		const pending = pendingAppVolumes.current;
+		pendingAppVolumes.current = new Map();
+		pending.forEach((volume, pid) => {
+			invoke("set_app_volume", { pid, volume }).catch(() => {});
+		});
 	}, []);
+
+	const handleAppVolumeChange = useCallback(
+		(pid: number, newVol: number) => {
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.pid === pid ? { ...s, volume: newVol, is_muted: newVol === 0 ? s.is_muted : false } : s
+				)
+			);
+			pendingAppVolumes.current.set(pid, newVol);
+			if (appVolumeFlushRef.current === null) {
+				appVolumeFlushRef.current = setTimeout(flushAppVolumes, 60);
+			}
+		},
+		[flushAppVolumes]
+	);
+
+	// Send anything still queued when the panel goes away.
+	useEffect(
+		() => () => {
+			if (appVolumeFlushRef.current !== null) {
+				clearTimeout(appVolumeFlushRef.current);
+				flushAppVolumes();
+			}
+		},
+		[flushAppVolumes]
+	);
 
 	const handleAppMuteToggle = useCallback(
 		(pid: number) => {
@@ -239,21 +345,33 @@ function VolumeNotch({
 			style={{ transformOrigin: "left center" }}
 			initial={{ scaleX: 0, scaleY: 0.5, opacity: 0, filter: "blur(12px)", y: "-50%" }}
 			animate={{ scaleX: 1, scaleY: 1, opacity: 1, filter: "blur(0px)", y: "-50%" }}
-			exit={{
-				scaleX: 0,
-				scaleY: 0.8,
-				opacity: 0,
-				filter: "blur(12px)",
-				y: "-50%",
-				transition: { duration: 0.2, ease: [0.32, 0.72, 0, 1] }
-			}}
+			exit={
+				mixerExpanded
+					? {
+							// Retract the expanded card as one surface. Scaling X would
+							// squash the app list into the edge.
+							x: -64,
+							opacity: 0,
+							filter: "blur(8px)",
+							y: "-50%",
+							transition: { duration: 0.22, ease: [0.32, 0.72, 0, 1] }
+						}
+					: {
+							scaleX: 0,
+							scaleY: 0.8,
+							opacity: 0,
+							filter: "blur(12px)",
+							y: "-50%",
+							transition: { duration: 0.2, ease: [0.32, 0.72, 0, 1] }
+						}
+			}
 			transition={{ type: "spring", stiffness: 450, damping: 25, mass: 0.7 }}
 		>
 			<div className="volume-notch-flares" />
 			<motion.div
 				ref={shellRef}
 				className="volume-notch"
-				animate={{ width: mixerExpanded ? 278 : 42 }}
+				animate={{ width: mixerExpanded ? 42 + mixerPanelWidth : 42 }}
 				transition={{ type: "spring", bounce: 0, duration: 0.35 }}
 				onAnimationComplete={reportPanelBounds}
 			>
@@ -302,6 +420,7 @@ function VolumeNotch({
 					{mixerExpanded && (
 						<motion.div
 							className="volume-mixer-panel"
+							style={{ width: mixerPanelWidth }}
 							initial={{ opacity: 0 }}
 							animate={{ opacity: 1 }}
 							exit={{
@@ -313,14 +432,21 @@ function VolumeNotch({
 								}
 							}}
 						>
-							<div className="volume-mixer-list">
+							<div
+								className="volume-mixer-list"
+								style={{ gridTemplateColumns: `repeat(${mixerColumns}, 1fr)` }}
+							>
 								{sessions.length === 0 ? (
 									<div className="volume-mixer-empty">
-										{sessionsLoaded ? "No apps with audio" : "Loading..."}
+										{!sessionsLoaded
+											? "Loading..."
+											: sessionsError
+												? "Couldn't read audio sessions"
+												: "No apps with audio"}
 									</div>
 								) : (
 									sessions.map((session) => (
-										<MixerRow
+										<MixerTile
 											key={session.pid}
 											session={session}
 											onVolumeChange={handleAppVolumeChange}
@@ -506,6 +632,17 @@ function OverlayApp() {
 				}
 			})
 			.catch(console.error);
+	}, []);
+
+	// Seed the HUD with the live system volume; the system worker's only
+	// startup event fires before this webview can register listeners.
+	useEffect(() => {
+		invoke<{ volume: number; is_muted: boolean }>("get_volume_state")
+			.then((state) => {
+				setVolume(state.volume);
+				setIsMuted(state.is_muted);
+			})
+			.catch(() => {});
 	}, []);
 
 	// ── Splash Detection ──
@@ -714,18 +851,34 @@ function OverlayApp() {
 		(expanded: boolean) => {
 			mixerExpandedRef.current = expanded;
 			setMixerExpanded(expanded);
-			if (!expanded) resetHideTimeout();
+			if (expanded) {
+				// Cancel a hide that was scheduled before the mixer opened (e.g.
+				// the edge-hover timeout) so opening it can't close it mid-click.
+				if (timeoutRef.current) {
+					clearTimeout(timeoutRef.current);
+					timeoutRef.current = null;
+				}
+			} else {
+				resetHideTimeout();
+			}
 		},
 		[resetHideTimeout]
 	);
 
-	// Collapse the mixer whenever the notch closes so it doesn't reopen expanded.
+	// Collapse the mixer only after the notch's exit animation finishes (see
+	// onExitComplete on AnimatePresence) so an open panel retracts as one
+	// surface. Splash/update modes unmount the overlay without an exit, so
+	// reset there instead; otherwise the mixer would reopen expanded.
+	const collapseMixer = useCallback(() => {
+		mixerExpandedRef.current = false;
+		setMixerExpanded(false);
+	}, []);
+
 	useEffect(() => {
-		if (mode !== "volume" && mixerExpanded) {
-			mixerExpandedRef.current = false;
-			setMixerExpanded(false);
+		if ((mode === "splash" || mode === "updating") && mixerExpanded) {
+			collapseMixer();
 		}
-	}, [mode, mixerExpanded]);
+	}, [mode, mixerExpanded, collapseMixer]);
 
 	// ── Brightness Controls ──
 	const lastBrightnessCall = useRef(0);
@@ -814,7 +967,12 @@ function OverlayApp() {
 						width: "100%"
 					}}
 				>
-					<AnimatePresence mode="wait">
+					<AnimatePresence
+						mode="wait"
+						onExitComplete={() => {
+							if (mixerExpandedRef.current) collapseMixer();
+						}}
+					>
 						{mode === "volume" && (
 							<VolumeNotch
 								volume={volume}

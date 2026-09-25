@@ -70,6 +70,11 @@ pub static LAST_DISPLAY_CHANGE_MS: AtomicI64 = AtomicI64::new(0);
 /// unions this with the notch rect so the panel can receive cursor events.
 pub static VOLUME_MIXER_RECT: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(None);
 
+/// Process executable path → friendly display name (version-info
+/// `FileDescription`). Cached because the mixer polls sessions every 2s and
+/// reading version info hits the filesystem.
+pub static PROCESS_NAME_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
 pub static THUMBNAIL_CACHE: OnceLock<Mutex<HashMap<isize, (String, i64)>>> = OnceLock::new();
 pub static FOCUS_TIMESTAMPS: OnceLock<Mutex<HashMap<isize, i64>>> = OnceLock::new();
 pub static SETTINGS_CACHE: OnceLock<Mutex<HashMap<String, serde_json::Value>>> = OnceLock::new();

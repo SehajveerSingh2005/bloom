@@ -132,6 +132,7 @@ fn main() {
             quit_bloom,
             restart_bloom,
             get_volume,
+            get_volume_state,
             get_brightness,
             set_volume,
             get_audio_sessions,

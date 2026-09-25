@@ -990,7 +990,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                     .to_string()
                                     .unwrap_or_default();
                                 CoTaskMemFree(Some(id.0 as *const _));
-                                if new_id != current_device_id {
+                                if new_id != current_device_id || audio_endpoint_volume.is_none() {
                                     current_device_id = new_id;
                                     device = Some(new_device);
                                     audio_endpoint_volume = device.as_ref().and_then(|d| {
@@ -2399,7 +2399,33 @@ unsafe extern "system" fn mouse_hook_proc(
                 let at_left_edge =
                     cursor.x <= (mon_x + 8) && cursor.y >= mon_y && cursor.y <= (mon_y + mon_h);
 
-                if at_left_edge || in_mixer {
+                // The collapsed card extends past the 8px edge band, so once the
+                // edge hover is established, keep it alive while the cursor is
+                // over the card too (otherwise pausing on the mixer button lets
+                // the hover expire and the HUD hides mid-click).
+                let over_card = !at_left_edge
+                    && !in_mixer
+                    && MH_LAST_LEFT_EDGE_HOVER.load(Ordering::Relaxed) != 0
+                    && app_handle
+                        .primary_monitor()
+                        .ok()
+                        .flatten()
+                        .is_some_and(|m| {
+                            let bloom_scale = crate::utils::get_bloom_scale(app_handle);
+                            let ms = m.size();
+                            let mp = m.position();
+                            let sc = m.scale_factor() * bloom_scale;
+                            let nw = (42.0 * sc) as i32;
+                            let nh = (196.0 * sc) as i32;
+                            let nx = mp.x;
+                            let ny = mp.y + (ms.height as i32 / 2) - (nh / 2);
+                            cursor.x >= nx
+                                && cursor.x <= nx + nw
+                                && cursor.y >= ny
+                                && cursor.y <= ny + nh
+                        });
+
+                if at_left_edge || in_mixer || over_card {
                     MH_LEFT_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
                 }
 
@@ -2455,11 +2481,14 @@ unsafe extern "system" fn mouse_hook_proc(
                         MH_LAST_OV_IGNORE.store(1, Ordering::Relaxed);
                     }
                 } else {
+                    // The overlay applies `bloom-scale` as CSS zoom, so the cards
+                    // are larger than 42x196 CSS px for non-default scales.
+                    let bloom_scale = crate::utils::get_bloom_scale(app_handle);
                     let over_left = in_mixer
                         || if let Ok(Some(m)) = ov_win.primary_monitor() {
                             let ms = m.size();
                             let mp = m.position();
-                            let sc = m.scale_factor();
+                            let sc = m.scale_factor() * bloom_scale;
                             let nw = (42.0 * sc) as i32;
                             let nh = (196.0 * sc) as i32;
                             let nx = mp.x;
@@ -2475,7 +2504,7 @@ unsafe extern "system" fn mouse_hook_proc(
                     let over_right = if let Ok(Some(m)) = ov_win.primary_monitor() {
                         let ms = m.size();
                         let mp = m.position();
-                        let sc = m.scale_factor();
+                        let sc = m.scale_factor() * bloom_scale;
                         let nw = (42.0 * sc) as i32;
                         let nh = (196.0 * sc) as i32;
                         let nx = mp.x + ms.width as i32 - nw;
