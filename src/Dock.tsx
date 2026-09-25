@@ -45,6 +45,17 @@ const itemKey = (app: AppInfo) => appIdentity(app.path, app.executable, app.name
 // running in the same browser must never be matched by their shared exe name.
 const isIdentifier = (p: string) => !p.includes("/") && !p.includes("\\");
 
+// Resolve the configured start-button icon to a public asset, or to the data
+// URI of a user-uploaded icon (stored with a "custom:" prefix).
+function resolveStartIcon(startIcon: string): string {
+	if (startIcon === "bloom-colorful") return "/bloom-colorful.png";
+	if (startIcon === "bloom-golden") return "/bloom-golden.png";
+	if (startIcon === "bloom-biscuit") return "/bloom-biscuit.png";
+	if (startIcon === "windows") return "/windows.png";
+	if (startIcon.startsWith("custom:")) return startIcon.slice("custom:".length);
+	return "/bloom.png";
+}
+
 // Stable module-level constants so object references never change between renders,
 // preventing Framer Motion from re-triggering animations on every re-render.
 const ITEM_ENTRY_TRANSITION = {
@@ -77,6 +88,9 @@ const Dock = memo(function Dock() {
 	);
 	const [dockAdaptive, setDockAdaptive] = useState(
 		() => localStorage.getItem("bloom-dock-adaptive") === "true"
+	);
+	const [startIcon, setStartIcon] = useState(
+		() => localStorage.getItem("bloom-start-icon") || "default"
 	);
 	const [isMaximized, setIsMaximized] = useState(false);
 	const [previewData, setPreviewData] = useState<{
@@ -248,6 +262,9 @@ const Dock = memo(function Dock() {
 			const adaptive = getVal("bloom-dock-adaptive", "false");
 			setDockAdaptive(adaptive === "true");
 
+			const startIconVal = getVal("bloom-start-icon", "default") || "default";
+			setStartIcon(startIconVal);
+
 			const scaleVal = getVal("bloom-scale");
 			if (scaleVal !== null) setScale(parseFloat(scaleVal));
 
@@ -292,6 +309,7 @@ const Dock = memo(function Dock() {
 		"bloom-dock-preview-enabled": setDockPreviewEnabled,
 		"bloom-dock-icon-only": setDockIconOnly,
 		"bloom-dock-adaptive": setDockAdaptive,
+		"bloom-start-icon": setStartIcon,
 		"bloom-scale": setScale
 	});
 
@@ -858,9 +876,12 @@ const Dock = memo(function Dock() {
 											}}
 										>
 											<img
-												src="/bloom.png"
-												alt="Bloom"
+												src={resolveStartIcon(startIcon)}
+												alt="Start"
 												className="bloom-icon-img"
+												style={
+													startIcon.startsWith("custom:") ? { borderRadius: "8px" } : undefined
+												}
 												draggable={false}
 											/>
 										</motion.div>

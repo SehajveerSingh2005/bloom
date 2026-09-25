@@ -174,6 +174,8 @@ function SettingsApp() {
 							toggleDockAdaptive={settings.toggleDockAdaptive}
 							dockWinNumberEnabled={settings.dockWinNumberEnabled}
 							toggleDockWinNumber={settings.toggleDockWinNumber}
+							startIcon={settings.startIcon}
+							handleStartIconChange={settings.handleStartIconChange}
 						/>
 					)}
 					{activeTab === "overlays" && (
