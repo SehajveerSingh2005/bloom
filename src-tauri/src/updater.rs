@@ -9,8 +9,11 @@ use tauri_plugin_updater::UpdaterExt;
 
 /// Minimum time between background update checks. Manual checks bypass this.
 const CHECK_INTERVAL_SECS: i64 = 24 * 60 * 60;
-/// Network timeout for a single manifest request.
-const CHECK_TIMEOUT_SECS: u64 = 10;
+/// Network timeout for a single manifest request. Generous on purpose: a
+/// stalled TCP connect to github.com can burn ~21s in SYN retries before
+/// succeeding, and the previous 10s cap made every check time out on such
+/// routes (no update found / no badge).
+const CHECK_TIMEOUT_SECS: u64 = 60;
 /// A release must be at least this old before auto-update installs it, so a
 /// broken release cannot reach everyone within minutes of being published.
 const MIN_AUTO_INSTALL_AGE_SECS: i64 = 24 * 60 * 60;
