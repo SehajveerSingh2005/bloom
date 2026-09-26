@@ -1367,6 +1367,107 @@ img {
 	overflow: hidden;
 }
 
+/* Announcement card */
+.announcement-content {
+	position: absolute;
+	top: 36px;
+	left: 0;
+	width: 100%;
+	height: calc(100% - 36px);
+	box-sizing: border-box;
+	z-index: 3;
+	padding: 12px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	color: var(--bloom-text, white);
+	border-radius: 0 0 18px 18px;
+	overflow: hidden;
+}
+
+.announcement-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.announcement-heading {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.announcement-icon {
+	flex-shrink: 0;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.6));
+}
+
+.severity-warning .announcement-icon {
+	color: #ff9f0a;
+}
+
+.announcement-title {
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.announcement-close {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	flex-shrink: 0;
+	border: none;
+	border-radius: 50%;
+	background: var(--bloom-border, rgba(255, 255, 255, 0.12));
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.7));
+	cursor: pointer;
+	transition:
+		background 0.15s ease,
+		color 0.15s ease;
+}
+
+.announcement-close:hover {
+	background: rgba(255, 255, 255, 0.22);
+	color: var(--bloom-text, white);
+}
+
+.announcement-body {
+	margin: 0;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.72));
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.announcement-link {
+	align-self: flex-start;
+	margin-top: auto;
+	padding: 4px 10px;
+	border: none;
+	border-radius: 999px;
+	background: var(--bloom-text, white);
+	color: var(--bloom-bg-expanded, black);
+	font-size: 11px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: opacity 0.15s ease;
+}
+
+.announcement-link:hover {
+	opacity: 0.85;
+}
+
 /* Pills Grid */
 .cc-pills-grid {
 	display: grid;

@@ -3,7 +3,8 @@ import { createRoot } from "react-dom/client";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Effect } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { X, Settings, Palette, PanelTop, Monitor, Layers, Info } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { X, Settings, Palette, PanelTop, Monitor, Layers, Info, Megaphone } from "lucide-react";
 import {
 	useSettings,
 	GeneralTab,
@@ -14,6 +15,7 @@ import {
 	AboutTab
 } from "./settings/index";
 import type { SettingsTab } from "./settings/index";
+import { useAnnouncement } from "./hooks/useAnnouncement";
 import { initTheme } from "./theme";
 import "./Settings.css";
 
@@ -31,6 +33,7 @@ const TABS: { id: SettingsTab; label: string; icon: typeof Settings }[] = [
 function SettingsApp() {
 	const [activeTab, setActiveTab] = useState<SettingsTab>("general");
 	const settings = useSettings();
+	const { announcement, dismissed, dismiss } = useAnnouncement();
 
 	useEffect(() => {
 		return initTheme();
@@ -95,6 +98,32 @@ function SettingsApp() {
 				</div>
 
 				<div className="settings-content">
+					{announcement && !dismissed && (
+						<div className={`announcement-banner severity-${announcement.severity}`}>
+							<Megaphone size={14} className="announcement-banner-icon" />
+							<div className="announcement-banner-text">
+								<span className="announcement-banner-title">{announcement.title}</span>
+								{announcement.body && (
+									<span className="announcement-banner-body">{announcement.body}</span>
+								)}
+							</div>
+							{announcement.url && (
+								<button
+									className="announcement-banner-link"
+									onClick={() => openUrl(announcement.url!)}
+								>
+									Learn more
+								</button>
+							)}
+							<button
+								className="announcement-banner-close"
+								onClick={dismiss}
+								title="Dismiss"
+							>
+								<X size={12} strokeWidth={2.2} />
+							</button>
+						</div>
+					)}
 					{activeTab === "general" && (
 						<GeneralTab
 							autostart={settings.autostart}

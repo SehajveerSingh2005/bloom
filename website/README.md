@@ -71,3 +71,24 @@ export default defineConfig([
 	}
 ]);
 ```
+
+## Announcements
+
+`public/announcements.json` is polled once per day by the Bloom app (3.9.1+) and shown as a persistent notch card and a Settings banner until dismissed. It is served at `https://bloom.sehaz.space/announcements.json`.
+
+Publish one by replacing the contents:
+
+```json
+{
+  "id": "2026-09-26-updater-manual-update",
+  "severity": "warning",
+  "title": "Update checks may fail on some networks",
+  "body": "Bloom 3.8.7 and 3.9.0 can time out reaching GitHub. If no update is found, install the latest release manually.",
+  "url": "https://github.com/SehajveerSingh2005/bloom/releases/latest"
+}
+```
+
+- `id` and `title` are required; `body` and `url` are optional. `{}` means no announcement.
+- `id` must change for each new announcement — dismissals are per id, and a new id re-opens the card.
+- `severity` is `info` (default) or `warning` (orange accent).
+- Changes go live with the normal website deploy; running apps pick it up within an hour (or on their next launch).

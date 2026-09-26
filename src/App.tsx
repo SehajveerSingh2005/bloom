@@ -20,6 +20,8 @@ import {
 import { CompactMediaPlayer } from "./CompactMediaPlayer";
 import { useWeather } from "./hooks/useWeather";
 import { useSettingsSync } from "./hooks/useSettingsSync";
+import { useAnnouncement } from "./hooks/useAnnouncement";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { WidgetConfig } from "./components/StatusWidgetConfig";
 import {
 	Cpu,
@@ -29,7 +31,9 @@ import {
 	BellRing,
 	Play,
 	Pause,
-	RotateCcw
+	RotateCcw,
+	Megaphone,
+	X
 } from "lucide-react";
 
 // Pomodoro timer limit.
@@ -565,6 +569,17 @@ function App() {
 		};
 	}, [windowLabel, notchMode, triggerEventPeek]);
 
+	// Remote announcement shown as a persistent notch card until dismissed.
+	const {
+		announcement,
+		dismissed: announcementDismissed,
+		dismiss: dismissAnnouncement
+	} = useAnnouncement();
+	const announcementShownRef = useRef<string | null>(null);
+	const announcementOpen = !!announcement && !announcementDismissed;
+	const announcementOpenRef = useRef(false);
+	announcementOpenRef.current = announcementOpen;
+
 	const [isVisible, setIsVisible] = useState(true);
 	const [isImpacted, setIsImpacted] = useState(false);
 	const [isExpanded, setIsExpanded] = useState(false);
@@ -994,10 +1009,26 @@ function App() {
 		invoke("change_notch_mode", { mode: notchMode });
 	}, [notchMode, windowLabel]);
 
-	// Bloom mode state: 'music', 'calendar', 'command-center', or 'status'
-	const [bloomMode, setBloomMode] = useState<"music" | "calendar" | "command-center" | "status">(
-		"status"
-	);
+	// Bloom mode state: 'music', 'calendar', 'command-center', 'announcement', or 'status'
+	const [bloomMode, setBloomMode] = useState<
+		"music" | "calendar" | "command-center" | "announcement" | "status"
+	>("status");
+
+	// Open the notch on an unseen announcement; stays open until dismissed.
+	useEffect(() => {
+		if (!announcement || announcementDismissed) return;
+		if (announcementShownRef.current === announcement.id) return;
+		announcementShownRef.current = announcement.id;
+		setBloomMode("announcement");
+		if (notchMode === "peek") triggerEventPeek(6000);
+	}, [announcement, announcementDismissed, notchMode, triggerEventPeek]);
+
+	// Leave the announcement view once it is dismissed (or gone).
+	useEffect(() => {
+		if (bloomMode === "announcement" && (!announcement || announcementDismissed)) {
+			setBloomMode(mediaInfo.has_media && isPlaying ? "music" : "status");
+		}
+	}, [bloomMode, announcement, announcementDismissed, mediaInfo.has_media, isPlaying]);
 
 	// Window height is now kept constant to prevent rendering layout lag and sharp corners
 
@@ -1029,6 +1060,9 @@ function App() {
 			if (m === "calendar" && !settingsCalendarEnabled) return false;
 			return true;
 		});
+
+		// The announcement card is closed explicitly, not cycled away.
+		if (bloomMode === "announcement") return;
 
 		const currentIndex = availableModes.indexOf(bloomMode);
 		if (currentIndex === -1) return;
@@ -1222,12 +1256,13 @@ function App() {
 			triggerEventPeek(3000);
 		}
 
-		// Only auto-switch if music mode is enabled
+		// Only auto-switch if music mode is enabled and no announcement is open
 		if (
 			settingsMusicModeEnabled &&
 			mediaInfo.has_media &&
 			isPlaying &&
 			bloomMode !== "calendar" &&
+			!announcementOpenRef.current &&
 			(isNewTrackWhilePlaying || justStartedPlaying)
 		) {
 			// Switch if compact notch display is enabled OR we are hovered
@@ -1292,6 +1327,7 @@ function App() {
 			mediaInfo.has_media &&
 			isPlaying &&
 			bloomMode === "status" &&
+			!announcementOpenRef.current &&
 			!isHovered
 		) {
 			setBloomMode("music");
@@ -1748,6 +1784,7 @@ function App() {
 
 	// Calculate width dynamically based on enabled features
 	const getDynamicWidth = () => {
+		if (bloomMode === "announcement" && announcement && !announcementDismissed) return 380;
 		if (isCalendarMode) return 480;
 		if (bloomMode === "command-center" && isHovered) return 350;
 		if (bloomMode === "status" && isHovered) {
@@ -1774,6 +1811,10 @@ function App() {
 	const getDynamicHeight = () => {
 		if (!isExpanded || !isVisible || isHidden) {
 			return isImpacted ? 28.9 : 44.2;
+		}
+		// Announcement card: body is line-clamped, so a fixed size fits both cases.
+		if (bloomMode === "announcement" && announcement && !announcementDismissed) {
+			return announcement.url ? 168 : 148;
 		}
 		// Sized to the calendar's week-row count plus the timer's fixed content.
 		if (bloomMode === "calendar") return calendarMonthRows >= 6 ? 305 : 273;
@@ -1865,7 +1906,9 @@ function App() {
 					}}
 					onHoverStart={() => {
 						setIsHovered(true);
-						setBloomMode(mediaInfo.has_media && isPlaying ? "music" : "status");
+						if (bloomMode !== "announcement") {
+							setBloomMode(mediaInfo.has_media && isPlaying ? "music" : "status");
+						}
 					}}
 					onHoverEnd={() => {
 						setIsHovered(false);
@@ -2640,6 +2683,55 @@ function App() {
 											</div>
 										</motion.div>
 									)}
+								</AnimatePresence>
+
+								{/* Announcement Card */}
+								<AnimatePresence>
+									{bloomMode === "announcement" &&
+										announcement &&
+										!announcementDismissed && (
+											<motion.div
+												className={`announcement-content severity-${announcement.severity}`}
+												onClick={(e) => e.stopPropagation()}
+												initial={{ opacity: 0 }}
+												animate={{ opacity: 1 }}
+												exit={{
+													opacity: 0,
+													filter: "blur(4px)",
+													transition: { duration: 0.1 }
+												}}
+												transition={{ type: "spring", stiffness: 400, damping: 30 }}
+											>
+												<div className="announcement-header">
+													<div className="announcement-heading">
+														<Megaphone size={14} className="announcement-icon" />
+														<span className="announcement-title">
+															{announcement.title}
+														</span>
+													</div>
+													<button
+														className="announcement-close"
+														onClick={dismissAnnouncement}
+														title="Dismiss"
+													>
+														<X size={13} strokeWidth={2.2} />
+													</button>
+												</div>
+												{announcement.body && (
+													<p className="announcement-body">
+														{announcement.body}
+													</p>
+												)}
+												{announcement.url && (
+													<button
+														className="announcement-link"
+														onClick={() => openUrl(announcement.url!)}
+													>
+														Learn more
+													</button>
+												)}
+											</motion.div>
+										)}
 								</AnimatePresence>
 
 								{/* Calendar & Timer Split View */}

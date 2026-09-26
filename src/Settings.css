@@ -217,6 +217,93 @@ body {
 	-webkit-app-region: no-drag;
 }
 
+/* Announcement banner (published via website/announcements.json) */
+.announcement-banner {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	margin-bottom: 12px;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var(--bloom-surface-2, rgba(255, 255, 255, 0.06));
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
+	-webkit-app-region: no-drag;
+}
+
+.announcement-banner.severity-warning {
+	border-color: rgba(255, 159, 10, 0.4);
+}
+
+.announcement-banner-icon {
+	flex-shrink: 0;
+	margin-top: 2px;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.55));
+}
+
+.announcement-banner.severity-warning .announcement-banner-icon {
+	color: #ff9f0a;
+}
+
+.announcement-banner-text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	flex: 1;
+}
+
+.announcement-banner-title {
+	font-size: 12.5px;
+	font-weight: 600;
+	color: var(--bloom-text, rgba(255, 255, 255, 0.92));
+}
+
+.announcement-banner-body {
+	font-size: 11.5px;
+	line-height: 15px;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.55));
+}
+
+.announcement-banner-link {
+	flex-shrink: 0;
+	align-self: center;
+	padding: 4px 10px;
+	border: none;
+	border-radius: 999px;
+	background: var(--bloom-text, white);
+	color: var(--bg-color-solid, black);
+	font-size: 11px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: opacity 0.15s ease;
+}
+
+.announcement-banner-link:hover {
+	opacity: 0.85;
+}
+
+.announcement-banner-close {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	border: none;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.5));
+	cursor: pointer;
+	transition:
+		background 0.15s ease,
+		color 0.15s ease;
+}
+
+.announcement-banner-close:hover {
+	background: rgba(255, 255, 255, 0.12);
+	color: var(--bloom-text, white);
+}
+
 /* Custom Scrollbar */
 .settings-content::-webkit-scrollbar {
 	width: 5px;
