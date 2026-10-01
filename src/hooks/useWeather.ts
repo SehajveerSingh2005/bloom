@@ -156,9 +156,10 @@ async function resolveLocation(): Promise<ResolvedLocation> {
 		// try fallback
 	}
 
-	// 3. Fallback IP geolocation
+	// 3. Fallback IP geolocation. ip-api.com's free tier is HTTP-only: the
+	// https:// endpoint answers 403 unless the request carries a paid key.
 	try {
-		const res = await fetch("https://ip-api.com/json/?fields=status,lat,lon,city,country");
+		const res = await fetch("http://ip-api.com/json/?fields=status,lat,lon,city,country");
 		if (res.ok) {
 			const data = await res.json();
 			if (data.lat && data.lon) {
