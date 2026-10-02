@@ -3222,10 +3222,98 @@ pub fn get_windows_accent_color() -> Option<String> {
     None
 }
 
+/// The colour adaptive mode follows: the wallpaper's own, else the Windows accent.
+pub fn adaptive_color() -> Option<String> {
+    wallpaper_color().or_else(get_windows_accent_color)
+}
+
+/// The wallpaper's dominant vivid colour. Windows only derives its accent from
+/// the wallpaper when "automatic accent" is on, and wallpaper apps (WinCux,
+/// Wallpaper Engine...) rarely trigger it, so adaptive mode would sit on the
+/// default blue. Decoded once per wallpaper file (path + modified time).
+fn wallpaper_color() -> Option<String> {
+    use std::sync::Mutex;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETDESKWALLPAPER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    };
+    static CACHE: Mutex<Option<(String, std::time::SystemTime, String)>> = Mutex::new(None);
+
+    let mut buf = [0u16; 1024];
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETDESKWALLPAPER,
+            buf.len() as u32,
+            Some(buf.as_mut_ptr() as *mut _),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .ok()?;
+    }
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let path = String::from_utf16_lossy(&buf[..len]);
+    let path = path.trim_start_matches(r"\\?\").to_string();
+    if path.is_empty() {
+        return None;
+    }
+    let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+    if let Some((p, m, c)) = CACHE.lock().ok()?.as_ref() {
+        if *p == path && *m == modified {
+            return Some(c.clone());
+        }
+    }
+    let color = dominant_color(&image::open(&path).ok()?.thumbnail(64, 64).to_rgb8())?;
+    *CACHE.lock().ok()? = Some((path, modified, color.clone()));
+    Some(color)
+}
+
+/// Buckets pixels by hue, weighting vivid, mid-bright pixels, and returns the
+/// average of the heaviest bucket. Falls back to the plain average for a
+/// greyscale image.
+fn dominant_color(img: &image::RgbImage) -> Option<String> {
+    const BUCKETS: usize = 24;
+    let mut acc = [(0f64, 0f64, 0f64, 0f64); BUCKETS];
+    let (mut ar, mut ag, mut ab, mut n) = (0f64, 0f64, 0f64, 0f64);
+    for p in img.pixels() {
+        let (r, g, b) = (p[0] as f64 / 255.0, p[1] as f64 / 255.0, p[2] as f64 / 255.0);
+        ar += r;
+        ag += g;
+        ab += b;
+        n += 1.0;
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let d = max - min;
+        if d < 0.08 || max < 0.15 {
+            continue;
+        }
+        let h = if max == r {
+            ((g - b) / d).rem_euclid(6.0)
+        } else if max == g {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        } / 6.0;
+        let w = (d / max) * (1.0 - (max - 0.65).abs());
+        let i = ((h * BUCKETS as f64) as usize).min(BUCKETS - 1);
+        acc[i].0 += r * w;
+        acc[i].1 += g * w;
+        acc[i].2 += b * w;
+        acc[i].3 += w;
+    }
+    if n == 0.0 {
+        return None;
+    }
+    let best = acc.iter().max_by(|a, b| a.3.total_cmp(&b.3))?;
+    let (r, g, b) = if best.3 > n * 0.02 {
+        (best.0 / best.3, best.1 / best.3, best.2 / best.3)
+    } else {
+        (ar / n, ag / n, ab / n)
+    };
+    let to = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+    Some(format!("#{:02x}{:02x}{:02x}", to(r), to(g), to(b)))
+}
+
 #[tauri::command]
 pub fn get_system_accent_color() -> Result<String, String> {
-    // Try reading registry first for exact Windows accent color
-    if let Some(color) = get_windows_accent_color() {
+    if let Some(color) = adaptive_color() {
         return Ok(color);
     }
 

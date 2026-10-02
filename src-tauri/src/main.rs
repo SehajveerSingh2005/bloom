@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod glass;
 mod services;
 mod state;
 mod types;
@@ -114,6 +115,7 @@ fn main() {
             open_app,
             launch_new_instance,
             update_dock_rect,
+            glass::set_glass,
             update_notch_rect,
             set_dock_hovered,
             set_notch_hovered,

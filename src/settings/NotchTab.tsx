@@ -1,5 +1,6 @@
 import {
 	PanelTop,
+	PanelBottom,
 	Calendar,
 	BellRing,
 	Music,
@@ -17,6 +18,8 @@ import type { WidgetConfig } from "./types";
 interface NotchTabProps {
 	notchMode: string;
 	setNotchModeValue: (mode: string) => void;
+	infoCentre: boolean;
+	toggleInfoCentre: () => void;
 	calendarEnabled: boolean;
 	toggleCalendar: () => void;
 	timerSoundEnabled: boolean;
@@ -54,6 +57,8 @@ interface NotchTabProps {
 export function NotchTab({
 	notchMode,
 	setNotchModeValue,
+	infoCentre,
+	toggleInfoCentre,
 	calendarEnabled,
 	toggleCalendar,
 	timerSoundEnabled,
@@ -86,6 +91,17 @@ export function NotchTab({
 		<>
 			<div className="setting-group-label">Notch</div>
 			<div className="setting-group">
+				<SettingRow
+					icon={PanelBottom}
+					label="Merge with Dock"
+					desc="Show the notch's content in the dock as one info centre"
+				>
+					<label className="toggle-switch">
+						<input type="checkbox" checked={infoCentre} onChange={toggleInfoCentre} />
+						<span className="slider"></span>
+					</label>
+				</SettingRow>
+
 				<SettingRow icon={PanelTop} label="Notch Behavior" desc="Choose how the notch appears">
 					<select
 						className="settings-select"

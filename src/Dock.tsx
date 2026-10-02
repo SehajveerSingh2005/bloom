@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import "./Dock.css";
 import { initTheme } from "./theme";
 import { useSettingsSync } from "./hooks/useSettingsSync";
+import { InfoLeft, InfoPanel, InfoProvider, InfoRight, type InfoTab } from "./InfoCentre";
+import { useGlass, useGlassEnabled } from "./hooks/useGlass";
 
 interface AppInfo {
 	name: string;
@@ -127,6 +129,22 @@ const Dock = memo(function Dock() {
 		parseFloat(localStorage.getItem("bloom-scale") || "1.0")
 	);
 	const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+	// Info centre: notch content in the dock (see InfoCentre.tsx). infoTab = open panel.
+	const [infoCentre, setInfoCentre] = useState(
+		() => localStorage.getItem("bloom-info-centre") === "true"
+	);
+	const [infoTab, setInfoTab] = useState<InfoTab | null>(null);
+	const infoCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const infoPanelRef = useRef<HTMLDivElement>(null);
+	const updateRectRef = useRef(() => {});
+	const openInfo = (tab: InfoTab | null) => {
+		if (infoCloseTimer.current) clearTimeout(infoCloseTimer.current);
+		setInfoTab((cur) => tab ?? cur);
+	};
+	const scheduleInfoClose = () => {
+		if (infoCloseTimer.current) clearTimeout(infoCloseTimer.current);
+		infoCloseTimer.current = setTimeout(() => setInfoTab(null), 350);
+	};
 
 	useEffect(() => {
 		const onResize = () => setViewportWidth(window.innerWidth);
@@ -212,7 +230,19 @@ const Dock = memo(function Dock() {
 	useEffect(() => {
 		const updateRect = () => {
 			if (dockRef.current) {
-				const rect = dockRef.current.getBoundingClientRect();
+				let rect = dockRef.current.getBoundingClientRect();
+				// The info panel sits above the dock: its box is clickable too.
+				const panel = infoPanelRef.current?.getBoundingClientRect();
+				if (panel && panel.height > 0) {
+					const top = Math.min(rect.top, panel.top);
+					const left = Math.min(rect.left, panel.left);
+					rect = new DOMRect(
+						left,
+						top,
+						Math.max(rect.right, panel.right) - left,
+						Math.max(rect.bottom, panel.bottom) - top
+					);
+				}
 				const hasPreview = !!previewData;
 				invoke("update_dock_rect", {
 					rect: {
@@ -225,6 +255,7 @@ const Dock = memo(function Dock() {
 			}
 		};
 
+		updateRectRef.current = updateRect;
 		updateRect();
 		window.addEventListener("resize", updateRect);
 		const observer = new ResizeObserver(updateRect);
@@ -268,6 +299,8 @@ const Dock = memo(function Dock() {
 			const scaleVal = getVal("bloom-scale");
 			if (scaleVal !== null) setScale(parseFloat(scaleVal));
 
+			setInfoCentre(getVal("bloom-info-centre", "false") === "true");
+
 			const pinned = await invoke<AppInfo[]>("load_pinned_apps");
 			setPinnedApps(pinned.map((a) => ({ ...a, is_pinned: true })));
 			pinned.forEach((app) => fetchIcon(app.path));
@@ -310,8 +343,25 @@ const Dock = memo(function Dock() {
 		"bloom-dock-icon-only": setDockIconOnly,
 		"bloom-dock-adaptive": setDockAdaptive,
 		"bloom-start-icon": setStartIcon,
-		"bloom-scale": setScale
+		"bloom-scale": setScale,
+		"bloom-info-centre": (v) => setInfoCentre(v === true || v === "true")
 	});
+	const infoOpen = infoCentre && !!infoTab && isExpanded && !isHidden && isVisible;
+	// One glass sheet: the open info panel and the dock under it share it.
+	const glass = useGlassEnabled();
+	useGlass(() => [[infoPanelRef.current?.querySelector(".ic-panel"), dockRef.current]], glass);
+
+	// Window previews float where the panel is: an app hover closes the panel.
+	useEffect(() => {
+		if (hoveredApp) setInfoTab(null);
+	}, [hoveredApp]);
+
+	// Once the panel's exit animation is over, shrink the click area back to the
+	// bar — a stale rect would leave an invisible strip above the dock eating clicks.
+	useEffect(() => {
+		const t = setTimeout(() => updateRectRef.current(), 450);
+		return () => clearTimeout(t);
+	}, [infoOpen]);
 
 	useEffect(() => {
 		let pollSeq = 0;
@@ -770,6 +820,7 @@ const Dock = memo(function Dock() {
 	};
 
 	return (
+		<InfoProvider>
 		<div className={`dock-container ${isDragging ? "dragging" : ""}`} onClick={closeMenu}>
 			<div
 				style={{
@@ -783,9 +834,13 @@ const Dock = memo(function Dock() {
 				<motion.div
 					ref={dockRef}
 					layout
-					className={`dock ${isExpanded && !isHidden ? "dock-expanded" : ""} ${isImpacted && !isExpanded && !isHidden ? "dock-impacted" : ""} ${dockIconOnly ? "dock-icon-only" : ""} ${isAdaptive ? "dock-adaptive" : ""}`}
-					onMouseEnter={() => setIsDockHovered(true)}
+					className={`dock ${isExpanded && !isHidden ? "dock-expanded" : ""} ${isImpacted && !isExpanded && !isHidden ? "dock-impacted" : ""} ${dockIconOnly ? "dock-icon-only" : ""} ${isAdaptive ? "dock-adaptive" : ""} ${infoCentre ? "ic-on" : ""} ${infoOpen ? "ic-open" : ""}`}
+					onMouseEnter={() => {
+						setIsDockHovered(true);
+						openInfo(null);
+					}}
 					onMouseLeave={() => {
+						scheduleInfoClose();
 						setIsDockHovered(false);
 						setHoveredApp(null);
 						setPressedApp(null);
@@ -805,8 +860,8 @@ const Dock = memo(function Dock() {
 						width:
 							isExpanded && !isHidden && isVisible ? (isAdaptive ? adaptiveWidth : "auto") : 34,
 						height: isExpanded && !isHidden && isVisible ? "auto" : 34,
-						borderTopLeftRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 18 : 17,
-						borderTopRightRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 18 : 17,
+						borderTopLeftRadius: infoOpen ? 0 : (isImpacted || isExpanded) && !isHidden && isVisible ? 18 : 17,
+						borderTopRightRadius: infoOpen ? 0 : (isImpacted || isExpanded) && !isHidden && isVisible ? 18 : 17,
 						borderBottomLeftRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 0 : 17,
 						borderBottomRightRadius: (isImpacted || isExpanded) && !isHidden && isVisible ? 0 : 17,
 						opacity: isVisible ? 1 : 0,
@@ -824,7 +879,11 @@ const Dock = memo(function Dock() {
 						opacity: { type: "tween", duration: 0.2 },
 						scale: { duration: 0 }
 					}}
-					style={{ originX: 0.5, originY: 1, minWidth: 34 }}
+					style={{
+						originX: 0.5,
+						originY: 1,
+						minWidth: infoCentre && isExpanded && !isHidden && isVisible ? 640 : 34
+					}}
 					onContextMenu={(e) => handleContextMenu(e, null)}
 				>
 					<AnimatePresence>
@@ -837,6 +896,9 @@ const Dock = memo(function Dock() {
 								transition={{ duration: 0.15 }}
 								className="dock-reorder-container"
 							>
+								{infoCentre && (
+									<InfoLeft active={infoTab !== null && infoTab !== "controls"} onOpen={() => openInfo(infoTab && infoTab !== "controls" ? infoTab : "media")} />
+								)}
 								{startItem && (
 									<motion.div
 										initial={{ opacity: 0, scale: 0 }}
@@ -1187,7 +1249,21 @@ const Dock = memo(function Dock() {
 										{app.is_running && <div className="active-indicator" />}
 									</motion.div>
 								))}
+								{infoCentre && (
+									<InfoRight active={infoTab === "controls"} onOpen={() => openInfo("controls")} />
+								)}
 							</motion.div>
+						)}
+					</AnimatePresence>
+					<AnimatePresence>
+						{infoOpen && (
+							<div ref={infoPanelRef} className="ic-panel-anchor" key="info-panel">
+								<InfoPanel
+									tab={infoTab!}
+									setTab={setInfoTab}
+									onResize={() => updateRectRef.current()}
+								/>
+							</div>
 						)}
 					</AnimatePresence>
 				</motion.div>
@@ -1411,6 +1487,7 @@ const Dock = memo(function Dock() {
 				)}
 			</AnimatePresence>
 		</div>
+		</InfoProvider>
 	);
 });
 
