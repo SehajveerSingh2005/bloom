@@ -1702,10 +1702,13 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
             {
                 CAPTURE_RECHECK.store(false, Ordering::Relaxed);
                 CAPTURE_LAST_SCAN_MS.store(scan_now, Ordering::Relaxed);
-                let active = is_capture_ui_present();
-                if active != CAPTURE_UI_ACTIVE.load(Ordering::Relaxed) {
-                    CAPTURE_UI_ACTIVE.store(active, Ordering::Relaxed);
-                    apply_capture_ui_state(&handle_visibility, active);
+                let (full, notch) = capture_ui_state(&handle_visibility);
+                if full != CAPTURE_UI_ACTIVE.load(Ordering::Relaxed)
+                    || notch != CAPTURE_NOTCH_BLOCKED.load(Ordering::Relaxed)
+                {
+                    CAPTURE_UI_ACTIVE.store(full, Ordering::Relaxed);
+                    CAPTURE_NOTCH_BLOCKED.store(notch, Ordering::Relaxed);
+                    apply_capture_ui_state(&handle_visibility, full, notch);
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(150));
@@ -1914,7 +1917,12 @@ static MH_LAST_MONITOR_UPDATE_MS: AtomicI64 = AtomicI64::new(0);
 static MH_CACHED_MON_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 static MH_CACHED_MON_SIZE: Mutex<Option<(u32, u32)>> = Mutex::new(None);
 static MH_LAST_PROCESS_MS: AtomicI64 = AtomicI64::new(0);
+/// A full-screen capture overlay (the snip selection) is up: Bloom steps aside
+/// entirely.
 static CAPTURE_UI_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// A smaller capture window (the recording toolbar) covers the notch: only the
+/// notch steps aside, so the dock still works while recording.
+static CAPTURE_NOTCH_BLOCKED: AtomicBool = AtomicBool::new(false);
 static CAPTURE_RECHECK: AtomicBool = AtomicBool::new(true);
 static CAPTURE_LAST_SCAN_MS: AtomicI64 = AtomicI64::new(0);
 
@@ -1976,18 +1984,29 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
-/// True while a screen-capture UI (Windows Snipping Tool) has a visible window.
-/// Bloom's notch sits exactly where that toolbar lives, so it must get out of
-/// the way even if the capture window isn't recognised as fullscreen.
+struct CaptureScan {
+    /// The notch in physical screen pixels, when known.
+    notch: Option<windows::Win32::Foundation::RECT>,
+    /// A capture window covers its whole monitor (the snip selection overlay).
+    full: bool,
+    /// A capture window overlaps the notch (the capture / recording toolbar).
+    over_notch: bool,
+}
+
+/// Looks at each visible screen-capture window (Windows Snipping Tool). The
+/// recording toolbar stays up for a whole recording, so only a full-screen
+/// overlay makes Bloom step aside entirely; the toolbar only moves the notch,
+/// which sits exactly where it lives.
 unsafe extern "system" fn capture_ui_enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     use windows::Win32::UI::WindowsAndMessaging::IsIconic;
-    let found = &mut *(lparam.0 as *mut bool);
-    if *found {
+    let scan = &mut *(lparam.0 as *mut CaptureScan);
+    if scan.full {
         return BOOL(0);
     }
     if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
         return BOOL(1);
     }
+    let mut found = false;
 
     let mut pid = 0u32;
     GetWindowThreadProcessId(hwnd, Some(&mut pid));
@@ -2009,14 +2028,14 @@ unsafe extern "system" fn capture_ui_enum_proc(hwnd: HWND, lparam: LPARAM) -> BO
                     || name == "screenclippinghost.exe"
                     || name == "screensketch.exe"
                 {
-                    *found = true;
+                    found = true;
                 }
             }
             let _ = CloseHandle(handle);
         }
     }
 
-    if !*found {
+    if !found {
         use windows::Win32::UI::WindowsAndMessaging::GetClassNameA;
         let mut class_buf = [0u8; 256];
         let len = GetClassNameA(hwnd, &mut class_buf);
@@ -2024,28 +2043,73 @@ unsafe extern "system" fn capture_ui_enum_proc(hwnd: HWND, lparam: LPARAM) -> BO
             .unwrap_or("")
             .to_lowercase();
         if class.contains("snipping") {
-            *found = true;
+            found = true;
+        }
+    }
+
+    if found {
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongW, GetWindowRect, GWL_EXSTYLE, WS_EX_TRANSPARENT,
+        };
+        let mut r = RECT::default();
+        if GetWindowRect(hwnd, &mut r).is_ok() {
+            let mut mi = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            // The recording border can cover the screen too, but it lets
+            // clicks through; the snip selection overlay takes them.
+            let click_through = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TRANSPARENT.0 != 0;
+            if !click_through && GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() {
+                let m = mi.rcMonitor;
+                scan.full |= r.left <= m.left + 8
+                    && r.top <= m.top + 8
+                    && r.right >= m.right - 8
+                    && r.bottom >= m.bottom - 8;
+            }
+            scan.over_notch |= scan.notch.is_none_or(|n| {
+                r.left < n.right && r.right > n.left && r.top < n.bottom && r.bottom > n.top
+            });
         }
     }
 
     BOOL(1)
 }
 
-fn is_capture_ui_present() -> bool {
+/// `(full, notch)`: whether a full-screen capture overlay is up, and whether
+/// a capture window covers the notch.
+fn capture_ui_state(app: &AppHandle) -> (bool, bool) {
     use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
-    let mut found = false;
+    let notch = (|| {
+        let n = (*crate::state::NOTCH_RECT.lock().ok()?)?;
+        let monitor = app.primary_monitor().ok().flatten()?;
+        let s = monitor.scale_factor();
+        let pos = monitor.position();
+        let px = |v: i32| (v as f64 * s) as i32;
+        Some(windows::Win32::Foundation::RECT {
+            left: pos.x + px(n.x),
+            top: pos.y + px(n.y),
+            right: pos.x + px(n.x + n.width),
+            bottom: pos.y + px(n.y + n.height),
+        })
+    })();
+    let mut scan = CaptureScan { notch, full: false, over_notch: false };
     unsafe {
         let _ = EnumWindows(
             Some(capture_ui_enum_proc),
-            LPARAM(&mut found as *mut bool as isize),
+            LPARAM(&mut scan as *mut CaptureScan as isize),
         );
     }
-    found
+    (scan.full, scan.full || scan.over_notch)
 }
 
-fn apply_capture_ui_state(app: &AppHandle, active: bool) {
+fn apply_capture_ui_state(app: &AppHandle, active: bool, notch_blocked: bool) {
     if let Some(main_win) = app.get_webview_window("main") {
-        if active {
+        if notch_blocked {
             let _ = main_win.set_ignore_cursor_events(true);
             let _ = main_win.hide();
         } else {
