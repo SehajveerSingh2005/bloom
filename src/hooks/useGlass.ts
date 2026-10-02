@@ -33,7 +33,11 @@ export function useGlassEnabled(): boolean {
 /**
  * Real frosted glass under this window's surfaces (see glass.rs). Every frame
  * the boxes of the surfaces `getItems` returns go to the native blur windows,
- * only when they changed, so the glass follows every resize and animation.
+ * only when they changed, so the glass follows every animation that grows it.
+ * A shrinking one (a collapse) is different: DWM paints a resized blur window
+ * black for a frame, which left a dark trail behind the closing panel. So the
+ * blur steps aside as soon as the glass shrinks and comes back once the shape
+ * has held still for a few frames.
  * Hidden or faded-out elements are left out. Each box is pulled in from its
  * rounded edges so the blur never pokes out of a corner; an edge glued to the
  * top or bottom of the window (square, against the screen edge) stays put.
@@ -43,13 +47,26 @@ export function useGlass(getItems: () => GlassItem[], enabled: boolean) {
 	getRef.current = getItems;
 
 	useEffect(() => {
-		const send = (rects: GlassRect[]) => invoke("set_glass", { rects }).catch(() => {});
+		// Rust answers whether Windows really blurs (transparency effects on,
+		// energy saver off). If not, the page keeps its plain look: <html
+		// class="no-blur"> turns the glass styling off.
+		const send = (rects: GlassRect[]) =>
+			invoke<boolean>("set_glass", { rects })
+				.then((live) => document.documentElement.classList.toggle("no-blur", !live))
+				.catch(() => {});
 		if (!enabled) {
 			send([]);
 			return;
 		}
-		let last = "";
+		let shown = "";
+		let shownArea = 0;
+		let settling = false;
+		let candidate = "";
+		let still = 0;
 		let raf = 0;
+		// Re-sent now and then even when nothing moved, so plugging in or
+		// leaving energy saver brings the glass back.
+		let sinceSend = 0;
 		const measure = (el: Element | null | undefined) => {
 			if (!(el instanceof HTMLElement)) return null;
 			const b = el.getBoundingClientRect();
@@ -86,8 +103,27 @@ export function useGlass(getItems: () => GlassItem[], enabled: boolean) {
 				});
 			}
 			const key = JSON.stringify(rects);
-			if (key !== last) {
-				last = key;
+			const area = rects.reduce((a, r) => a + r.w * r.h, 0);
+			if (!settling && key !== shown && area < shownArea - 4) {
+				settling = true;
+				send([]);
+				candidate = key;
+				still = 0;
+			}
+			if (settling) {
+				if (key !== candidate) {
+					candidate = key;
+					still = 0;
+				} else if (++still >= 8) {
+					settling = false;
+					shown = key;
+					shownArea = area;
+					send(rects);
+				}
+			} else if (key !== shown || ++sinceSend > 150) {
+				shown = key;
+				shownArea = area;
+				sinceSend = 0;
 				send(rects);
 			}
 			raf = requestAnimationFrame(tick);
@@ -96,6 +132,7 @@ export function useGlass(getItems: () => GlassItem[], enabled: boolean) {
 		return () => {
 			cancelAnimationFrame(raf);
 			send([]);
+			document.documentElement.classList.remove("no-blur");
 		};
 	}, [enabled]);
 }

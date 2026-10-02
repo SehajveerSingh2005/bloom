@@ -54,6 +54,7 @@ windows = { version = "0.61", features = [
 	"Win32_Devices_FunctionDiscovery",
 	"Devices_Radios",
 	"System_Power",
+	"Win32_System_Power",
 	"Win32_NetworkManagement_IpHelper",
 	"Win32_NetworkManagement_Ndis"
 ] }

@@ -349,7 +349,14 @@ const Dock = memo(function Dock() {
 	const infoOpen = infoCentre && !!infoTab && isExpanded && !isHidden && isVisible;
 	// One glass sheet: the open info panel and the dock under it share it.
 	const glass = useGlassEnabled();
-	useGlass(() => [[infoPanelRef.current?.querySelector(".ic-panel"), dockRef.current]], glass);
+	const infoOpenRef = useRef(infoOpen);
+	infoOpenRef.current = infoOpen;
+	// A closing panel stops counting as glass at once, not when its exit
+	// animation ends.
+	useGlass(
+		() => [[infoOpenRef.current ? infoPanelRef.current?.querySelector(".ic-panel") : null, dockRef.current]],
+		glass
+	);
 
 	// Window previews float where the panel is: an app hover closes the panel.
 	useEffect(() => {

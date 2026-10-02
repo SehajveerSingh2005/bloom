@@ -15,7 +15,13 @@
 //!   window is instead rounded by DWM (8 px) and the page sends a box inset a
 //!   little from its rounded edges, so those corners stay hidden inside the
 //!   surface's larger curve;
-//! - plain blur-behind (accent 3), not acrylic (4), which lags when moved.
+//! - plain blur-behind (accent 3), not acrylic (4), which lags when moved;
+//! - with "Transparency effects" off, or energy saver on (it switches them
+//!   off below 20 % battery), DWM draws the window solid black, so no glass
+//!   is put down then and the page keeps its plain look;
+//! - a hidden window loses the effect and comes back black, so an unused
+//!   backdrop is parked off-screen instead, and the blur is re-applied
+//!   whenever one is placed.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -30,8 +36,8 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, RegisterClassW, SetWindowPos, ShowWindow, SWP_NOACTIVATE,
-    SWP_SHOWWINDOW, SW_HIDE, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
+    CreateWindowExW, DefWindowProcW, RegisterClassW, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
@@ -136,18 +142,44 @@ fn create_backdrop() -> Option<HWND> {
     }
 }
 
+/// Whether Windows will actually blur: transparency effects on and energy
+/// saver off.
+fn blur_available() -> bool {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let mut transparency: u32 = 1;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    unsafe {
+        let _ = RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"),
+            w!("EnableTransparency"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut transparency as *mut u32 as *mut _),
+            Some(&mut size),
+        );
+        let mut power = SYSTEM_POWER_STATUS::default();
+        let saver = GetSystemPowerStatus(&mut power).is_ok() && power.SystemStatusFlag == 1;
+        transparency != 0 && !saver
+    }
+}
+
 /// Puts frosted glass under each of `rects` (none: no glass) of the calling
-/// window.
+/// window. Returns whether the glass is real (see `blur_available`); when it
+/// isn't, nothing is put down and the page keeps its plain look.
 #[tauri::command]
-pub fn set_glass(window: WebviewWindow, rects: Vec<GlassRect>) {
-    let Ok(owner) = window.hwnd() else { return };
+pub fn set_glass(window: WebviewWindow, rects: Vec<GlassRect>) -> bool {
+    let live = blur_available();
+    let rects = if live { rects } else { Vec::new() };
+    let Ok(owner) = window.hwnd() else { return false };
     let mut guard = BACKDROPS.lock().unwrap();
     let backdrops = guard
         .get_or_insert_with(HashMap::new)
         .entry(window.label().to_string())
         .or_default();
     while backdrops.len() < rects.len() {
-        let Some(h) = create_backdrop() else { return };
+        let Some(h) = create_backdrop() else { return false };
         backdrops.push(h.0 as isize);
     }
 
@@ -163,6 +195,7 @@ pub fn set_glass(window: WebviewWindow, rects: Vec<GlassRect>) {
             match rects.get(i) {
                 // Directly beneath the Bloom window, exactly under its surface.
                 Some(r) => {
+                    set_blur(hwnd);
                     let _ = SetWindowPos(
                         hwnd,
                         Some(owner),
@@ -174,9 +207,10 @@ pub fn set_glass(window: WebviewWindow, rects: Vec<GlassRect>) {
                     );
                 }
                 None => {
-                    let _ = ShowWindow(hwnd, SW_HIDE);
+                    let _ = SetWindowPos(hwnd, None, -32000, -32000, 1, 1, SWP_NOACTIVATE | SWP_NOZORDER);
                 }
             }
         }
     }
+    live
 }
