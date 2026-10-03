@@ -1296,6 +1296,21 @@ body {
 	background: var(--bloom-accent, #7dd3fc);
 	color: #000;
 }
+.ic-tile-more {
+	margin-left: auto;
+	margin-right: -6px;
+	width: 22px;
+	height: 30px;
+	flex: none;
+	display: grid;
+	place-items: center;
+	border-radius: 8px;
+	opacity: 0.6;
+}
+.ic-tile-more:hover {
+	opacity: 1;
+	background: rgba(127, 127, 127, 0.25);
+}
 .ic-sliders {
 	flex: 1;
 	min-width: 0;

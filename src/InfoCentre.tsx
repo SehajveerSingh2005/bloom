@@ -15,6 +15,7 @@ import {
 	Bell,
 	Bluetooth,
 	BluetoothOff,
+	ChevronRight,
 	Music,
 	Pause,
 	Play,
@@ -31,6 +32,24 @@ import { useWeather } from "./hooks/useWeather";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { getTimerChimeCtx, playTimerChime } from "./chime";
 import { PowerModeIcon, powerModeLabel, usePowerMode } from "./powerMode";
+
+/** A tile's "more" arrow: the tile itself toggles, this opens the system's
+ *  list (Wi-Fi networks to join, Bluetooth devices to pair or connect). */
+function TileMore({ title, command }: { title: string; command: string }) {
+	return (
+		<span
+			className="ic-tile-more"
+			role="button"
+			title={title}
+			onClick={(e) => {
+				e.stopPropagation();
+				invoke(command).catch(() => {});
+			}}
+		>
+			<ChevronRight size={14} />
+		</span>
+	);
+}
 
 export type InfoTab = "media" | "calendar" | "timer" | "controls";
 
@@ -620,6 +639,7 @@ function ControlsView() {
 					<span>
 						Wi-Fi<small>{info.wifi ? "On" : "Off"}</small>
 					</span>
+					<TileMore title="Networks" command="open_wifi_settings" />
 				</button>
 				<button className={`ic-tile ${info.bluetooth ? "on" : ""}`} onClick={info.toggleBluetooth}>
 					<span className="ic-tile-icon">
@@ -628,6 +648,7 @@ function ControlsView() {
 					<span>
 						Bluetooth<small>{info.bluetooth ? "On" : "Off"}</small>
 					</span>
+					<TileMore title="Devices" command="open_bluetooth_settings" />
 				</button>
 				<button
 					className={`ic-tile ${powerMode && powerMode !== "balanced" ? "on" : ""}`}

@@ -2518,7 +2518,7 @@ function App() {
 														toggleWifi();
 													}}
 													onContextMenu={handleWifiRightClick}
-													title="Left-click to toggle, Right-click for Settings"
+													title="Click to toggle, arrow for networks"
 												>
 													<div className="cc-pill-icon-wrapper">
 														<WifiIcon enabled={wifiEnabled} connected={wifiConnected} />
@@ -2535,6 +2535,14 @@ function App() {
 																		: "Not connected"}
 														</span>
 													</div>
+													<span
+														className="cc-pill-more"
+														role="button"
+														title="Networks"
+														onClick={handleWifiRightClick}
+													>
+														›
+													</span>
 												</div>
 
 												{/* Dock Mode Pill */}
@@ -2566,7 +2574,7 @@ function App() {
 														toggleBluetooth();
 													}}
 													onContextMenu={handleBluetoothRightClick}
-													title="Left-click to toggle, Right-click for Settings"
+													title="Click to toggle, arrow for devices"
 												>
 													<div className="cc-pill-icon-wrapper">
 														<BluetoothIcon />
@@ -2577,6 +2585,14 @@ function App() {
 															{bluetoothEnabled ? "On" : "Off"}
 														</span>
 													</div>
+													<span
+														className="cc-pill-more"
+														role="button"
+														title="Devices"
+														onClick={handleBluetoothRightClick}
+													>
+														›
+													</span>
 												</div>
 
 												{/* Notch Mode Pill */}

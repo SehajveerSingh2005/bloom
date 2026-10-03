@@ -1537,6 +1537,18 @@ img {
 }
 
 /* Active Monochrome pill states */
+.cc-pill-more {
+	margin-left: auto;
+	padding: 0 4px;
+	font-size: 16px;
+	line-height: 20px;
+	border-radius: 6px;
+	opacity: 0.55;
+}
+.cc-pill-more:hover {
+	opacity: 1;
+	background: var(--bloom-border, rgba(255, 255, 255, 0.12));
+}
 .cc-pill-tile.active {
 	background: var(--bloom-text, rgba(255, 255, 255, 0.95));
 	border-color: var(--bloom-text, rgba(255, 255, 255, 0.95));
@@ -1548,6 +1560,10 @@ img {
 
 .cc-pill-tile.active .cc-pill-status {
 	color: var(--bloom-bg-expanded, rgba(0, 0, 0, 0.5));
+}
+
+.cc-pill-tile.active .cc-pill-more {
+	color: var(--bloom-bg-expanded, #000);
 }
 
 .cc-pill-tile.active .cc-pill-icon-wrapper {
