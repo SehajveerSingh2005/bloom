@@ -127,7 +127,7 @@ function useInfoData() {
 
 		// Wifi, bluetooth and power mode have no change events.
 		const pollStates = () => {
-			invoke<boolean>("get_wifi_state").then(setWifi).catch(() => {});
+			invoke<{ enabled: boolean }>("get_wifi_status").then((s) => setWifi(s.enabled)).catch(() => {});
 			invoke<boolean>("get_bluetooth_state").then(setBluetooth).catch(() => {});
 		};
 		pollStates();
@@ -144,12 +144,20 @@ function useInfoData() {
 				b.addEventListener("chargingchange", onBattery);
 			})
 			.catch(() => {});
+		// WebKitGTK (Linux) has no Battery API: poll the backend instead.
+		const pollBattery = () =>
+			invoke<{ level: number; charging: boolean } | null>("get_battery")
+				.then((b) => b && setBattery({ level: Math.round(b.level * 100), charging: b.charging }))
+				.catch(() => {});
+		const batteryPoll = (navigator as any).getBattery ? undefined : setInterval(pollBattery, 30000);
+		if (batteryPoll) pollBattery();
 
 		return () => {
 			unMedia.then((f) => f());
 			unVolume.then((f) => f());
 			unBrightness.then((f) => f());
 			clearInterval(poll);
+			clearInterval(batteryPoll);
 			if (batt) {
 				batt.removeEventListener("levelchange", onBattery);
 				batt.removeEventListener("chargingchange", onBattery);

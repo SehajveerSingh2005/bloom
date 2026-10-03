@@ -23,18 +23,26 @@
 //!   backdrop is parked off-screen instead, and the blur is re-applied
 //!   whenever one is placed.
 
+#[cfg(windows)]
 use std::collections::HashMap;
+#[cfg(windows)]
 use std::sync::Mutex;
 
 use serde::Deserialize;
 use tauri::WebviewWindow;
+#[cfg(windows)]
 use windows::core::w;
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+#[cfg(windows)]
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
 };
+#[cfg(windows)]
 use windows::Win32::Graphics::Gdi::ClientToScreen;
+#[cfg(windows)]
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, RegisterClassW, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
     SWP_SHOWWINDOW, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
@@ -44,6 +52,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// One glass surface, in the page's CSS pixels, already inset from its
 /// rounded edges (see useGlass).
 #[derive(Deserialize)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct GlassRect {
     x: f64,
     y: f64,
@@ -52,12 +61,15 @@ pub struct GlassRect {
 }
 
 /// Backdrop windows per Bloom window label (HWNDs as isize: `HWND` isn't Send).
+#[cfg(windows)]
 static BACKDROPS: Mutex<Option<HashMap<String, Vec<isize>>>> = Mutex::new(None);
 
+#[cfg(windows)]
 unsafe extern "system" fn backdrop_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
+#[cfg(windows)]
 #[repr(C)]
 struct AccentPolicy {
     state: u32,
@@ -66,6 +78,7 @@ struct AccentPolicy {
     animation: u32,
 }
 
+#[cfg(windows)]
 #[repr(C)]
 struct CompositionData {
     attrib: u32,
@@ -75,6 +88,7 @@ struct CompositionData {
 
 /// DWM blur-behind through the undocumented but long-stable
 /// SetWindowCompositionAttribute (what TranslucentTB uses).
+#[cfg(windows)]
 fn set_blur(hwnd: HWND) {
     type Swca = unsafe extern "system" fn(HWND, *mut CompositionData) -> i32;
     unsafe {
@@ -93,6 +107,7 @@ fn set_blur(hwnd: HWND) {
     }
 }
 
+#[cfg(windows)]
 fn create_backdrop() -> Option<HWND> {
     unsafe {
         let instance = GetModuleHandleW(None).ok()?;
@@ -144,6 +159,7 @@ fn create_backdrop() -> Option<HWND> {
 
 /// Whether Windows will actually blur: transparency effects on and energy
 /// saver off.
+#[cfg(windows)]
 fn blur_available() -> bool {
     use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
     use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
@@ -168,6 +184,7 @@ fn blur_available() -> bool {
 /// Puts frosted glass under each of `rects` (none: no glass) of the calling
 /// window. Returns whether the glass is real (see `blur_available`); when it
 /// isn't, nothing is put down and the page keeps its plain look.
+#[cfg(windows)]
 #[tauri::command]
 pub fn set_glass(window: WebviewWindow, rects: Vec<GlassRect>) -> bool {
     let live = blur_available();
@@ -213,4 +230,13 @@ pub fn set_glass(window: WebviewWindow, rects: Vec<GlassRect>) -> bool {
         }
     }
     live
+}
+
+// ponytail: no portable compositor blur on Linux (KDE's _KDE_NET_WM_BLUR_BEHIND_REGION
+// would cover Plasma only); the page keeps its plain look, as with Windows'
+// transparency effects off.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub fn set_glass(_window: WebviewWindow, _rects: Vec<GlassRect>) -> bool {
+    false
 }

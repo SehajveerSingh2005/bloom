@@ -1357,6 +1357,21 @@ function App() {
 	useEffect(() => {
 		let battery: any = null;
 
+		// WebKitGTK (Linux) has no Battery API: poll the backend instead.
+		if (!(navigator as any).getBattery) {
+			const poll = () =>
+				invoke<{ level: number; charging: boolean } | null>("get_battery")
+					.then((b) => {
+						if (!b) return;
+						setBatteryLevel(Math.round(b.level * 100));
+						setIsCharging(b.charging);
+					})
+					.catch(() => {});
+			poll();
+			const timer = setInterval(poll, 30000);
+			return () => clearInterval(timer);
+		}
+
 		const initBattery = async () => {
 			try {
 				battery = await (navigator as any).getBattery();

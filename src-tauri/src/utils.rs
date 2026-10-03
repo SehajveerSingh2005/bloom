@@ -1,20 +1,30 @@
-use base64::{engine::general_purpose, Engine as _};
+use base64::engine::general_purpose;
+#[cfg(windows)]
+use base64::Engine as _;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use tauri::Manager;
+#[cfg(windows)]
 use windows::core::Interface;
+#[cfg(windows)]
 use windows::Win32::Foundation::{HGLOBAL, HWND};
+#[cfg(windows)]
 use windows::Win32::Graphics::Imaging::{
     CLSID_WICImagingFactory, GUID_ContainerFormatPng, GUID_WICPixelFormat32bppPBGRA,
     IWICImagingFactory, WICBitmapEncoderNoCache,
 };
+#[cfg(windows)]
 use windows::Win32::System::Com::StructuredStorage::{CreateStreamOnHGlobal, GetHGlobalFromStream};
+#[cfg(windows)]
 use windows::Win32::System::Com::{
     CoCreateInstance, IPersistFile, CLSCTX_ALL, CLSCTX_INPROC_SERVER,
 };
+#[cfg(windows)]
 use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::HICON;
 
+#[cfg(windows)]
 pub fn resolve_shortcut(path: &str) -> Option<(String, String)> {
     unsafe {
         let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_ALL).ok()?;
@@ -52,13 +62,19 @@ pub fn resolve_shortcut(path: &str) -> Option<(String, String)> {
     }
 }
 
+#[cfg(windows)]
 pub static ORIGINAL_TRAY_RECT: std::sync::Mutex<Option<windows::Win32::Foundation::RECT>> =
     std::sync::Mutex::new(None);
+#[cfg(windows)]
 static ORIGINAL_SEC_TRAY_RECT: std::sync::Mutex<Option<windows::Win32::Foundation::RECT>> =
     std::sync::Mutex::new(None);
+#[cfg(windows)]
 static ORIGINAL_TASKBAR_STATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
 static TASKBAR_MARKER: OnceLock<PathBuf> = OnceLock::new();
+
+#[cfg(target_os = "linux")]
+pub use crate::linux::{re_assert_topmost, set_taskbar_visibility};
 
 /// Point the crash-recovery marker at this user's app config dir (called from setup).
 pub fn init_taskbar_marker(app: &tauri::AppHandle) {
@@ -72,6 +88,7 @@ pub fn taskbar_marker_exists() -> bool {
     TASKBAR_MARKER.get().is_some_and(|p| p.exists())
 }
 
+#[cfg(windows)]
 pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
     // Crash-recovery marker: a hidden taskbar is persisted so the next launch can
     // undo it if we're ever force-killed (Task Manager / TerminateProcess skips cleanup).
@@ -247,6 +264,7 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
 /// Returns only real image files (`.ico`, `.png`, ...). Icon references into
 /// executables/DLLs are ignored so the regular target-based extraction is used
 /// instead (it yields a better icon than the file's first resource).
+#[cfg(windows)]
 pub fn get_shortcut_icon_location(path: &str) -> Option<String> {
     unsafe {
         let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_ALL).ok()?;
@@ -290,6 +308,7 @@ pub fn get_shortcut_icon_location(path: &str) -> Option<String> {
 }
 
 /// Expands `%VAR%` references using the current process environment.
+#[cfg(windows)]
 fn expand_env_vars(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut rest = input;
@@ -351,6 +370,7 @@ pub fn image_file_to_base64(path: &str) -> Option<String> {
 
 /// True when the window's client area covers its monitor and it is not a
 /// standard (captioned) maximized window — i.e. a real fullscreen window.
+#[cfg(windows)]
 pub fn is_window_fullscreen(hwnd: HWND) -> bool {
     unsafe {
         use windows::Win32::Foundation::{POINT, RECT};
@@ -410,6 +430,7 @@ pub fn is_window_fullscreen(hwnd: HWND) -> bool {
 /// This matters for default pins: on Windows 11 `notepad.exe` resolves through
 /// App Paths to the Store Notepad package, whose icon comes from the package
 /// manifest rather than the stale stub in System32.
+#[cfg(windows)]
 pub fn resolve_executable_path(name: &str) -> Option<String> {
     let trimmed = name.trim().trim_matches('"');
     if trimmed.is_empty() || trimmed.contains('\\') || trimmed.contains('/') {
@@ -434,6 +455,7 @@ pub fn resolve_executable_path(name: &str) -> Option<String> {
 }
 
 /// Reads `HKCU`/`HKLM\Software\Microsoft\Windows\CurrentVersion\App Paths\<file>`.
+#[cfg(windows)]
 fn app_paths_lookup(file: &str) -> Option<String> {
     use windows::Win32::System::Registry::{
         RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
@@ -493,6 +515,7 @@ fn app_paths_lookup(file: &str) -> Option<String> {
 }
 
 /// Standard executable search (PATH, System32, Windows, ...).
+#[cfg(windows)]
 fn search_system_path(file: &str) -> Option<String> {
     use windows::Win32::Storage::FileSystem::SearchPathW;
 
@@ -520,6 +543,7 @@ fn search_system_path(file: &str) -> Option<String> {
 }
 
 /// Last resort for apps that are neither registered in App Paths nor on PATH.
+#[cfg(windows)]
 fn known_install_location(file: &str) -> Option<String> {
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let home = std::env::var("USERPROFILE").unwrap_or_default();
@@ -558,6 +582,7 @@ fn known_install_location(file: &str) -> Option<String> {
 /// apps it is the package AppUserModelID, for installed browser web apps it is
 /// the browser's web app id. Unlike the process command line it is always
 /// available on the window itself.
+#[cfg(windows)]
 pub fn get_window_app_user_model_id(hwnd: HWND) -> Option<String> {
     unsafe {
         use windows::Win32::Foundation::PROPERTYKEY;
@@ -588,6 +613,7 @@ pub fn get_window_app_user_model_id(hwnd: HWND) -> Option<String> {
     }
 }
 
+#[cfg(windows)]
 pub unsafe fn icon_to_base64(hicon: HICON) -> Option<String> {
     let factory: IWICImagingFactory =
         CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
@@ -596,6 +622,7 @@ pub unsafe fn icon_to_base64(hicon: HICON) -> Option<String> {
 }
 
 /// Encodes an `HBITMAP` (as returned by `IShellItemImageFactory::GetImage`) to a base64 PNG.
+#[cfg(windows)]
 pub unsafe fn hbitmap_to_base64(hbitmap: windows::Win32::Graphics::Gdi::HBITMAP) -> Option<String> {
     let factory: IWICImagingFactory =
         CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
@@ -609,6 +636,7 @@ pub unsafe fn hbitmap_to_base64(hbitmap: windows::Win32::Graphics::Gdi::HBITMAP)
     wic_bitmap_to_base64(&factory, &bitmap)
 }
 
+#[cfg(windows)]
 unsafe fn wic_bitmap_to_base64(
     factory: &IWICImagingFactory,
     bitmap: &windows::Win32::Graphics::Imaging::IWICBitmapSource,
@@ -722,6 +750,7 @@ pub fn get_setting_str(_app: &tauri::AppHandle, key: &str) -> Option<String> {
 ///
 /// This helper uses the raw Win32 call with the correct flags and re-stamps
 /// `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` to prevent both problems.
+#[cfg(windows)]
 pub fn re_assert_topmost(hwnd: HWND) {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{
@@ -748,6 +777,7 @@ pub fn re_assert_topmost(hwnd: HWND) {
 }
 
 /// Captures an HWND to a base64-encoded PNG thumbnail, scaling it down if it exceeds max_width x max_height.
+#[cfg(windows)]
 pub fn capture_hwnd_to_base64(hwnd: HWND, max_width: u32, max_height: u32) -> Option<String> {
     unsafe {
         use windows::Win32::Foundation::RECT;
@@ -889,8 +919,10 @@ pub fn capture_hwnd_to_base64(hwnd: HWND, max_width: u32, max_height: u32) -> Op
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
     use super::expand_env_vars;
 
+    #[cfg(windows)]
     #[test]
     fn env_expansion() {
         let out = expand_env_vars("%SystemRoot%\\System32");
@@ -910,6 +942,7 @@ mod tests {
         assert_eq!(expand_env_vars("C:\\plain\\path"), "C:\\plain\\path");
     }
 
+    #[cfg(windows)]
     #[test]
     fn bare_executable_resolution() {
         use super::resolve_executable_path;
