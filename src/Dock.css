@@ -1253,6 +1253,9 @@ body {
 	display: flex;
 	gap: 12px;
 }
+.ic-cc-page {
+	min-height: 190px;
+}
 .ic-tiles {
 	width: 300px;
 	flex: none;

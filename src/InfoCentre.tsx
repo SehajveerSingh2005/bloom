@@ -32,10 +32,11 @@ import { useWeather } from "./hooks/useWeather";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { getTimerChimeCtx, playTimerChime } from "./chime";
 import { PowerModeIcon, powerModeLabel, usePowerMode } from "./powerMode";
+import { ConnectPage } from "./ConnectPage";
 
-/** A tile's "more" arrow: the tile itself toggles, this opens the system's
- *  list (Wi-Fi networks to join, Bluetooth devices to pair or connect). */
-function TileMore({ title, command }: { title: string; command: string }) {
+/** A tile's "more" arrow: the tile itself toggles, this opens its page
+ *  (Wi-Fi networks to join, Bluetooth devices to pair or connect). */
+function TileMore({ title, onOpen }: { title: string; onOpen: () => void }) {
 	return (
 		<span
 			className="ic-tile-more"
@@ -43,7 +44,7 @@ function TileMore({ title, command }: { title: string; command: string }) {
 			title={title}
 			onClick={(e) => {
 				e.stopPropagation();
-				invoke(command).catch(() => {});
+				onOpen();
 			}}
 		>
 			<ChevronRight size={14} />
@@ -96,7 +97,9 @@ function useInfoData() {
 	const [wifi, setWifi] = useState(true);
 	const [bluetooth, setBluetooth] = useState(false);
 
-	const [weatherEnabled, setWeatherEnabled] = useState(() => readBool("bloom-weather-enabled", true));
+	const [weatherEnabled, setWeatherEnabled] = useState(() =>
+		readBool("bloom-weather-enabled", true)
+	);
 	const [time24h, setTime24h] = useState(() => readBool("bloom-time-format-24h", false));
 	const [timerSound, setTimerSound] = useState(() => readBool("bloom-timer-sound-enabled", true));
 	useSettingsSync({
@@ -142,18 +145,25 @@ function useInfoData() {
 				setMuted(s.is_muted);
 			})
 			.catch(() => {});
-		invoke<number>("get_brightness").then(setBrightnessState).catch(() => {});
+		invoke<number>("get_brightness")
+			.then(setBrightnessState)
+			.catch(() => {});
 
 		// Wifi, bluetooth and power mode have no change events.
 		const pollStates = () => {
-			invoke<{ enabled: boolean }>("get_wifi_status").then((s) => setWifi(s.enabled)).catch(() => {});
-			invoke<boolean>("get_bluetooth_state").then(setBluetooth).catch(() => {});
+			invoke<{ enabled: boolean }>("get_wifi_status")
+				.then((s) => setWifi(s.enabled))
+				.catch(() => {});
+			invoke<boolean>("get_bluetooth_state")
+				.then(setBluetooth)
+				.catch(() => {});
 		};
 		pollStates();
 		const poll = setInterval(pollStates, 5000);
 
 		let batt: any = null;
-		const onBattery = () => setBattery({ level: Math.round(batt.level * 100), charging: batt.charging });
+		const onBattery = () =>
+			setBattery({ level: Math.round(batt.level * 100), charging: batt.charging });
 		(navigator as any)
 			.getBattery?.()
 			.then((b: any) => {
@@ -471,12 +481,15 @@ function MediaView() {
 	}
 
 	const duration = media.duration_ms ?? 0;
-	const since = media.is_playing && media.position_updated_at ? Date.now() - media.position_updated_at : 0;
+	const since =
+		media.is_playing && media.position_updated_at ? Date.now() - media.position_updated_at : 0;
 	const position = Math.min(duration, (media.position_ms ?? 0) + since);
 	const seek = (e: React.MouseEvent<HTMLDivElement>) => {
 		if (!media.seek_enabled || !duration) return;
 		const r = e.currentTarget.getBoundingClientRect();
-		invoke("media_seek", { positionMs: ((e.clientX - r.left) / r.width) * duration }).catch(() => {});
+		invoke("media_seek", { positionMs: ((e.clientX - r.left) / r.width) * duration }).catch(
+			() => {}
+		);
 	};
 
 	return (
@@ -623,23 +636,43 @@ function ControlsView() {
 	const [ram, setRam] = useState<number | null>(null);
 	useEffect(() => {
 		const poll = () => {
-			invoke<number>("get_cpu_usage").then(setCpu).catch(() => {});
-			invoke<number>("get_ram_usage").then(setRam).catch(() => {});
+			invoke<number>("get_cpu_usage")
+				.then(setCpu)
+				.catch(() => {});
+			invoke<number>("get_ram_usage")
+				.then(setRam)
+				.catch(() => {});
 		};
 		poll();
 		const id = setInterval(poll, 2000);
 		return () => clearInterval(id);
 	}, []);
+	const [page, setPage] = useState<"wifi" | "bluetooth" | null>(null);
+
+	if (page) {
+		return (
+			<div className="ic-cc ic-cc-page">
+				<ConnectPage
+					kind={page}
+					enabled={page === "wifi" ? info.wifi : info.bluetooth}
+					onToggle={page === "wifi" ? info.toggleWifi : info.toggleBluetooth}
+					onBack={() => setPage(null)}
+				/>
+			</div>
+		);
+	}
 
 	return (
 		<div className="ic-cc">
 			<div className="ic-tiles">
 				<button className={`ic-tile ${info.wifi ? "on" : ""}`} onClick={info.toggleWifi}>
-					<span className="ic-tile-icon">{info.wifi ? <Wifi size={16} /> : <WifiOff size={16} />}</span>
+					<span className="ic-tile-icon">
+						{info.wifi ? <Wifi size={16} /> : <WifiOff size={16} />}
+					</span>
 					<span>
 						Wi-Fi<small>{info.wifi ? "On" : "Off"}</small>
 					</span>
-					<TileMore title="Networks" command="open_wifi_settings" />
+					<TileMore title="Networks" onOpen={() => setPage("wifi")} />
 				</button>
 				<button className={`ic-tile ${info.bluetooth ? "on" : ""}`} onClick={info.toggleBluetooth}>
 					<span className="ic-tile-icon">
@@ -648,7 +681,7 @@ function ControlsView() {
 					<span>
 						Bluetooth<small>{info.bluetooth ? "On" : "Off"}</small>
 					</span>
-					<TileMore title="Devices" command="open_bluetooth_settings" />
+					<TileMore title="Devices" onOpen={() => setPage("bluetooth")} />
 				</button>
 				<button
 					className={`ic-tile ${powerMode && powerMode !== "balanced" ? "on" : ""}`}
@@ -661,7 +694,10 @@ function ControlsView() {
 						Power mode<small>{powerModeLabel(powerMode)}</small>
 					</span>
 				</button>
-				<button className="ic-tile" onClick={() => invoke("open_notification_center").catch(() => {})}>
+				<button
+					className="ic-tile"
+					onClick={() => invoke("open_notification_center").catch(() => {})}
+				>
 					<span className="ic-tile-icon">
 						<Bell size={16} />
 					</span>

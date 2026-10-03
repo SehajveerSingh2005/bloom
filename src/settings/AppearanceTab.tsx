@@ -164,7 +164,7 @@ export function AppearanceTab({
 							className="scale-adjust-btn"
 							title="Decrease Scale"
 						>
-							—
+							−
 						</button>
 						<span className="scale-display-value">{Math.round(scale * 100)}%</span>
 						<button

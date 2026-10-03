@@ -67,9 +67,17 @@ windows = { version = "0.61", features = [
 	"Win32_System_Power",
 	"Win32_NetworkManagement_IpHelper",
 	"Win32_NetworkManagement_Ndis",
-	"Win32_NetworkManagement_WiFi"
+	"Win32_NetworkManagement_WiFi",
+	"Win32_Media_KernelStreaming",
+	"Foundation",
+	"Foundation_Collections",
+	"Devices_WiFi",
+	"Devices_Enumeration",
+	"Networking_Connectivity",
+	"Security_Credentials"
 ] }
 window-vibrancy = "0.7.1"
+windows-collections = "0.2"
 wmi = "0.14"
 
 [target.'cfg(target_os = "linux")'.dependencies]

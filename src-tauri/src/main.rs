@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod connect;
 mod glass;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -167,6 +168,16 @@ fn main() {
             set_wifi_state,
             get_bluetooth_state,
             set_bluetooth_state,
+            connect::wifi_networks,
+            connect::wifi_connect,
+            connect::wifi_disconnect,
+            connect::bt_watch,
+            connect::bt_unwatch,
+            connect::bt_pair,
+            connect::bt_pair_answer,
+            connect::bt_connect,
+            connect::bt_forget,
+            connect::take_keyboard,
             open_bluetooth_settings,
             open_airplane_mode_settings,
             set_brightness,

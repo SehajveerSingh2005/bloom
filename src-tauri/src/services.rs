@@ -1016,6 +1016,10 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                 i64,
                 i64,
             )> = None;
+            // When the shown track last changed: players send the new title
+            // before its cover, so the cover is re-read for a few seconds
+            // before it's trusted from the cache.
+            let mut track_changed_at = std::time::Instant::now();
             let mut last_volume: f32 = -1.0;
             let mut last_muted: bool = false;
 
@@ -1226,7 +1230,10 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                                 _,
                                             )) = last_emitted_info
                                             {
-                                                if last_title == &title && last_artist == &artist {
+                                                if last_title == &title
+                                                    && last_artist == &artist
+                                                    && track_changed_at.elapsed().as_secs() >= 6
+                                                {
                                                     artwork = last_art
                                                         .as_ref()
                                                         .map(|art| vec![art.clone()]);
@@ -1364,6 +1371,9 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                         // For position: emit if >1s difference (avoid spamming on every poll)
                         (*pos - current.position_ms).abs() > 1000
                     }) {
+                        if last_emitted_info.as_ref().is_none_or(|(t, a, ..)| t != &current.title || a != &current.artist) {
+                            track_changed_at = std::time::Instant::now();
+                        }
                         let _ = handle_system.emit("media-update", current.clone());
                         ANY_MEDIA_PLAYING.store(current.is_playing, Ordering::Relaxed);
                         last_emitted_info = Some((current.title, current.artist, current.is_playing, current.has_media, art_str, current.position_ms, current.duration_ms));

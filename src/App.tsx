@@ -26,6 +26,7 @@ import { useGlass, useGlassEnabled } from "./hooks/useGlass";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { WidgetConfig } from "./components/StatusWidgetConfig";
 import { PowerModeIcon, powerModeLabel, usePowerMode } from "./powerMode";
+import { ConnectPage } from "./ConnectPage";
 import {
 	Cpu,
 	MemoryStick,
@@ -64,7 +65,6 @@ const formatTimerDigits = (digits: string): string => {
 	const mins = parseInt(digits.slice(0, -2) || "0", 10);
 	return `${mins}:${secs}`;
 };
-
 
 // Simple SVG icons
 function WifiIcon({ enabled, connected }: { enabled: boolean; connected: boolean }) {
@@ -595,7 +595,10 @@ function App() {
 	infoCentreRef.current = infoCentre;
 	// The notch draws nothing while merged into the dock: no glass for it then.
 	const glass = useGlassEnabled();
-	useGlass(() => (windowLabel === "main" && !infoCentreRef.current ? [bloomRef.current] : []), glass);
+	useGlass(
+		() => (windowLabel === "main" && !infoCentreRef.current ? [bloomRef.current] : []),
+		glass
+	);
 
 	useEffect(() => {
 		if (windowLabel === "main") {
@@ -1429,10 +1432,7 @@ function App() {
 		const initializeWifiStatus = async (attempt: number) => {
 			const loaded = await refreshWifiStatus();
 			if (!loaded && !cancelled && attempt < 3) {
-				retryTimer = setTimeout(
-					() => void initializeWifiStatus(attempt + 1),
-					(attempt + 1) * 1000
-				);
+				retryTimer = setTimeout(() => void initializeWifiStatus(attempt + 1), (attempt + 1) * 1000);
 			}
 		};
 		void initializeWifiStatus(0);
@@ -1608,14 +1608,11 @@ function App() {
 		invoke("set_volume", { volume: newVol }).catch(() => {});
 	}, []);
 
-	// Open WiFi settings
-	const openWifiSettings = useCallback(async () => {
-		try {
-			await invoke("open_wifi_settings");
-		} catch (e) {
-			console.error("Failed to open WiFi settings:", e);
-		}
-	}, []);
+	// The command centre's Wi-Fi / Bluetooth page (ConnectPage), or the pills.
+	const [ccPage, setCcPage] = useState<"wifi" | "bluetooth" | null>(null);
+	useEffect(() => {
+		if (bloomMode !== "command-center") setCcPage(null);
+	}, [bloomMode]);
 
 	// WiFi toggle
 	const toggleWifi = useCallback(async () => {
@@ -1678,14 +1675,11 @@ function App() {
 		}
 	}, []);
 
-	const handleWifiRightClick = useCallback(
-		(e: React.MouseEvent) => {
-			e.preventDefault();
-			e.stopPropagation();
-			openWifiSettings();
-		},
-		[openWifiSettings]
-	);
+	const handleWifiRightClick = useCallback((e: React.MouseEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setCcPage("wifi");
+	}, []);
 
 	const toggleDockModeSetting = useCallback(
 		async (e: React.MouseEvent) => {
@@ -1722,7 +1716,7 @@ function App() {
 	const handleBluetoothRightClick = useCallback((e: React.MouseEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
-		invoke("open_bluetooth_settings");
+		setCcPage("bluetooth");
 	}, []);
 
 	const toggleCalendarMode = (e: React.MouseEvent) => {
@@ -1751,7 +1745,7 @@ function App() {
 					<div
 						className="passive-feature"
 						key="weather"
-						title={cityName ? `${weatherCondition} — ${cityName}` : weatherCondition}
+						title={cityName ? `${weatherCondition} · ${cityName}` : weatherCondition}
 					>
 						<WeatherIcon size={12} strokeWidth={2.2} />
 						<span className="label">
@@ -1873,7 +1867,10 @@ function App() {
 	}, [isHovered, mediaLayout, bloomMode]);
 
 	return (
-		<div className="screen" style={{ overflow: "hidden", display: infoCentre ? "none" : undefined }}>
+		<div
+			className="screen"
+			style={{ overflow: "hidden", display: infoCentre ? "none" : undefined }}
+		>
 			{/* Screen Corners (Top) */}
 			<AnimatePresence>
 				{isVisible && settingsCornersEnabled && (
@@ -2508,288 +2505,295 @@ function App() {
 											exit={{ opacity: 0, filter: "blur(4px)", transition: { duration: 0.1 } }}
 											transition={{ type: "spring", stiffness: 400, damping: 30 }}
 										>
-											{/* Pills Grid */}
-											<div className="cc-pills-grid">
-												{/* Wi-Fi Pill */}
-												<div
-													className={`cc-pill-tile ${wifiEnabled ? "active" : ""}`}
-													onClick={(e) => {
-														e.stopPropagation();
-														toggleWifi();
-													}}
-													onContextMenu={handleWifiRightClick}
-													title="Click to toggle, arrow for networks"
-												>
-													<div className="cc-pill-icon-wrapper">
-														<WifiIcon enabled={wifiEnabled} connected={wifiConnected} />
-													</div>
-													<div className="cc-pill-info">
-														<span className="cc-pill-title">Wi-Fi</span>
-														<span className="cc-pill-status">
-															{wifiStatus === null
-																? "…"
-																: !wifiEnabled
-																	? "Off"
-																	: wifiConnected
-																		? "Connected"
-																		: "Not connected"}
-														</span>
-													</div>
-													<span
-														className="cc-pill-more"
-														role="button"
-														title="Networks"
-														onClick={handleWifiRightClick}
-													>
-														›
-													</span>
-												</div>
-
-												{/* Dock Mode Pill */}
-												<div
-													className={`cc-pill-tile ${dockMode === "fixed" ? "active" : ""}`}
-													onClick={toggleDockModeSetting}
-													title="Cycle dock mode: Fixed / Smart / Peek"
-												>
-													<div className="cc-pill-icon-wrapper">
-														<DockIcon />
-													</div>
-													<div className="cc-pill-info">
-														<span className="cc-pill-title">Dock Mode</span>
-														<span className="cc-pill-status">
-															{dockMode === "fixed"
-																? "Fixed"
-																: dockMode === "smart"
-																	? "Smart"
-																	: "Peek"}
-														</span>
-													</div>
-												</div>
-
-												{/* Bluetooth Pill */}
-												<div
-													className={`cc-pill-tile ${bluetoothEnabled ? "active" : ""}`}
-													onClick={(e) => {
-														e.stopPropagation();
-														toggleBluetooth();
-													}}
-													onContextMenu={handleBluetoothRightClick}
-													title="Click to toggle, arrow for devices"
-												>
-													<div className="cc-pill-icon-wrapper">
-														<BluetoothIcon />
-													</div>
-													<div className="cc-pill-info">
-														<span className="cc-pill-title">Bluetooth</span>
-														<span className="cc-pill-status">
-															{bluetoothEnabled ? "On" : "Off"}
-														</span>
-													</div>
-													<span
-														className="cc-pill-more"
-														role="button"
-														title="Devices"
-														onClick={handleBluetoothRightClick}
-													>
-														›
-													</span>
-												</div>
-
-												{/* Notch Mode Pill */}
-												<div
-													className={`cc-pill-tile ${notchMode === "fixed" ? "active" : ""}`}
-													onClick={toggleNotchModeSetting}
-													title="Cycle notch mode: Fixed / Smart / Peek"
-												>
-													<div className="cc-pill-icon-wrapper">
-														<NotchIcon />
-													</div>
-													<div className="cc-pill-info">
-														<span className="cc-pill-title">Notch Mode</span>
-														<span className="cc-pill-status">
-															{notchMode === "fixed"
-																? "Fixed"
-																: notchMode === "smart"
-																	? "Smart"
-																	: "Peek"}
-														</span>
-													</div>
-												</div>
-											</div>
-
-											{/* Circular Actions Row */}
-											<div className="cc-circular-actions-row">
-												<button
-													className={`cc-circular-btn ${dndActive ? "active" : ""}`}
-													onClick={(e) => {
-														e.stopPropagation();
-														setDndActive((prev) => !prev);
-													}}
-													title={`Focus / DND: ${dndActive ? "On" : "Off"}`}
-												>
-													<MoonIcon />
-												</button>
-												<button
-													className={`cc-circular-btn ${powerMode && powerMode !== "balanced" ? "active" : ""}`}
-													onClick={(e) => {
-														e.stopPropagation();
-														cyclePowerMode();
-													}}
-													title={
-														powerMode
-															? `Power mode: ${powerModeLabel(powerMode)}. Click to switch`
-															: "Power mode: click to open Settings"
-													}
-												>
-													<PowerModeIcon mode={powerMode} size={18} strokeWidth={2.5} />
-												</button>
-												<button
-													className="cc-circular-btn"
-													onClick={(e) => {
-														e.stopPropagation();
-														openSystemTray(e);
-													}}
-													title="System Tray"
-												>
-													<TrayIcon />
-												</button>
-												<button
-													className="cc-circular-btn"
-													onClick={(e) => {
-														e.stopPropagation();
-														invoke("open_notification_center");
-													}}
-													title="Notification Center"
-												>
-													<BellIcon />
-												</button>
-												<button
-													className="cc-circular-btn"
-													onClick={(e) => {
-														e.stopPropagation();
-														openSettingsWindow();
-													}}
-													title="Bloom Settings"
-												>
-													<SettingsIcon />
-												</button>
-												<button
-													className="cc-circular-btn"
-													onClick={(e) => {
-														e.stopPropagation();
-														invoke("restart_bloom");
-													}}
-													title="Restart Bloom"
-												>
-													<ReloadIcon />
-												</button>
-											</div>
-
-											{/* Classic Sliders Area */}
-											<div className="cc-classic-sliders-area">
-												{/* Volume Slider */}
-												<div className="cc-classic-slider-row">
-													<div className="cc-classic-slider-label">
-														<VolumeLowIcon style={{ opacity: 0.5 }} />
-														<span>Volume</span>
-													</div>
-													<div className="cc-classic-slider-track">
-														<input
-															type="range"
-															min="0"
-															max="1"
-															step="0.01"
-															value={volume}
-															onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-															onPointerDown={(e) => e.stopPropagation()}
-															onClick={(e) => e.stopPropagation()}
-															className="cc-classic-input"
-														/>
+											{ccPage ? (
+												<ConnectPage
+													kind={ccPage}
+													enabled={ccPage === "wifi" ? wifiEnabled : bluetoothEnabled}
+													onToggle={ccPage === "wifi" ? toggleWifi : toggleBluetooth}
+													onBack={() => setCcPage(null)}
+												/>
+											) : (
+												<>
+													{/* Pills Grid */}
+													<div className="cc-pills-grid">
+														{/* Wi-Fi Pill */}
 														<div
-															className="cc-classic-fill"
-															style={{ width: `${volume * 100}%` }}
-														/>
-													</div>
-													<span className="cc-classic-percentage">{Math.round(volume * 100)}%</span>
-												</div>
+															className={`cc-pill-tile ${wifiEnabled ? "active" : ""}`}
+															onClick={(e) => {
+																e.stopPropagation();
+																toggleWifi();
+															}}
+															onContextMenu={handleWifiRightClick}
+															title="Click to toggle, arrow or right-click for networks"
+														>
+															<div className="cc-pill-icon-wrapper">
+																<WifiIcon enabled={wifiEnabled} connected={wifiConnected} />
+															</div>
+															<div className="cc-pill-info">
+																<span className="cc-pill-title">Wi-Fi</span>
+																<span className="cc-pill-status">
+																	{wifiStatus === null
+																		? "…"
+																		: !wifiEnabled
+																			? "Off"
+																			: wifiConnected
+																				? "Connected"
+																				: "Not connected"}
+																</span>
+															</div>
+															<span
+																className="cc-pill-more"
+																role="button"
+																title="Networks"
+																onClick={handleWifiRightClick}
+															>
+																›
+															</span>
+														</div>
 
-												{/* Brightness Slider */}
-												<div className="cc-classic-slider-row">
-													<div className="cc-classic-slider-label">
-														<BrightnessLowIcon />
-														<span>Brightness</span>
-													</div>
-													<div className="cc-classic-slider-track">
-														<input
-															type="range"
-															min="0"
-															max="100"
-															step="1"
-															value={currentBrightness}
-															onChange={(e) => handleBrightnessChange(parseInt(e.target.value))}
-															onPointerDown={(e) => e.stopPropagation()}
-															onClick={(e) => e.stopPropagation()}
-															className="cc-classic-input"
-														/>
+														{/* Dock Mode Pill */}
 														<div
-															className="cc-classic-fill"
-															style={{ width: `${currentBrightness}%` }}
-														/>
+															className={`cc-pill-tile ${dockMode === "fixed" ? "active" : ""}`}
+															onClick={toggleDockModeSetting}
+															title="Cycle dock mode: Fixed / Smart / Peek"
+														>
+															<div className="cc-pill-icon-wrapper">
+																<DockIcon />
+															</div>
+															<div className="cc-pill-info">
+																<span className="cc-pill-title">Dock Mode</span>
+																<span className="cc-pill-status">
+																	{dockMode === "fixed"
+																		? "Fixed"
+																		: dockMode === "smart"
+																			? "Smart"
+																			: "Peek"}
+																</span>
+															</div>
+														</div>
+
+														{/* Bluetooth Pill */}
+														<div
+															className={`cc-pill-tile ${bluetoothEnabled ? "active" : ""}`}
+															onClick={(e) => {
+																e.stopPropagation();
+																toggleBluetooth();
+															}}
+															onContextMenu={handleBluetoothRightClick}
+															title="Click to toggle, arrow or right-click for devices"
+														>
+															<div className="cc-pill-icon-wrapper">
+																<BluetoothIcon />
+															</div>
+															<div className="cc-pill-info">
+																<span className="cc-pill-title">Bluetooth</span>
+																<span className="cc-pill-status">
+																	{bluetoothEnabled ? "On" : "Off"}
+																</span>
+															</div>
+															<span
+																className="cc-pill-more"
+																role="button"
+																title="Devices"
+																onClick={handleBluetoothRightClick}
+															>
+																›
+															</span>
+														</div>
+
+														{/* Notch Mode Pill */}
+														<div
+															className={`cc-pill-tile ${notchMode === "fixed" ? "active" : ""}`}
+															onClick={toggleNotchModeSetting}
+															title="Cycle notch mode: Fixed / Smart / Peek"
+														>
+															<div className="cc-pill-icon-wrapper">
+																<NotchIcon />
+															</div>
+															<div className="cc-pill-info">
+																<span className="cc-pill-title">Notch Mode</span>
+																<span className="cc-pill-status">
+																	{notchMode === "fixed"
+																		? "Fixed"
+																		: notchMode === "smart"
+																			? "Smart"
+																			: "Peek"}
+																</span>
+															</div>
+														</div>
 													</div>
-													<span className="cc-classic-percentage">{currentBrightness}%</span>
-												</div>
-											</div>
+
+													{/* Circular Actions Row */}
+													<div className="cc-circular-actions-row">
+														<button
+															className={`cc-circular-btn ${dndActive ? "active" : ""}`}
+															onClick={(e) => {
+																e.stopPropagation();
+																setDndActive((prev) => !prev);
+															}}
+															title={`Focus / DND: ${dndActive ? "On" : "Off"}`}
+														>
+															<MoonIcon />
+														</button>
+														<button
+															className={`cc-circular-btn ${powerMode && powerMode !== "balanced" ? "active" : ""}`}
+															onClick={(e) => {
+																e.stopPropagation();
+																cyclePowerMode();
+															}}
+															title={
+																powerMode
+																	? `Power mode: ${powerModeLabel(powerMode)}. Click to switch`
+																	: "Power mode: click to open Settings"
+															}
+														>
+															<PowerModeIcon mode={powerMode} size={18} strokeWidth={2.5} />
+														</button>
+														<button
+															className="cc-circular-btn"
+															onClick={(e) => {
+																e.stopPropagation();
+																openSystemTray(e);
+															}}
+															title="System Tray"
+														>
+															<TrayIcon />
+														</button>
+														<button
+															className="cc-circular-btn"
+															onClick={(e) => {
+																e.stopPropagation();
+																invoke("open_notification_center");
+															}}
+															title="Notification Center"
+														>
+															<BellIcon />
+														</button>
+														<button
+															className="cc-circular-btn"
+															onClick={(e) => {
+																e.stopPropagation();
+																openSettingsWindow();
+															}}
+															title="Bloom Settings"
+														>
+															<SettingsIcon />
+														</button>
+														<button
+															className="cc-circular-btn"
+															onClick={(e) => {
+																e.stopPropagation();
+																invoke("restart_bloom");
+															}}
+															title="Restart Bloom"
+														>
+															<ReloadIcon />
+														</button>
+													</div>
+
+													{/* Classic Sliders Area */}
+													<div className="cc-classic-sliders-area">
+														{/* Volume Slider */}
+														<div className="cc-classic-slider-row">
+															<div className="cc-classic-slider-label">
+																<VolumeLowIcon style={{ opacity: 0.5 }} />
+																<span>Volume</span>
+															</div>
+															<div className="cc-classic-slider-track">
+																<input
+																	type="range"
+																	min="0"
+																	max="1"
+																	step="0.01"
+																	value={volume}
+																	onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+																	onPointerDown={(e) => e.stopPropagation()}
+																	onClick={(e) => e.stopPropagation()}
+																	className="cc-classic-input"
+																/>
+																<div
+																	className="cc-classic-fill"
+																	style={{ width: `${volume * 100}%` }}
+																/>
+															</div>
+															<span className="cc-classic-percentage">
+																{Math.round(volume * 100)}%
+															</span>
+														</div>
+
+														{/* Brightness Slider */}
+														<div className="cc-classic-slider-row">
+															<div className="cc-classic-slider-label">
+																<BrightnessLowIcon />
+																<span>Brightness</span>
+															</div>
+															<div className="cc-classic-slider-track">
+																<input
+																	type="range"
+																	min="0"
+																	max="100"
+																	step="1"
+																	value={currentBrightness}
+																	onChange={(e) => handleBrightnessChange(parseInt(e.target.value))}
+																	onPointerDown={(e) => e.stopPropagation()}
+																	onClick={(e) => e.stopPropagation()}
+																	className="cc-classic-input"
+																/>
+																<div
+																	className="cc-classic-fill"
+																	style={{ width: `${currentBrightness}%` }}
+																/>
+															</div>
+															<span className="cc-classic-percentage">{currentBrightness}%</span>
+														</div>
+													</div>
+												</>
+											)}
 										</motion.div>
 									)}
 								</AnimatePresence>
 
 								{/* Announcement Card */}
 								<AnimatePresence>
-									{bloomMode === "announcement" &&
-										announcement &&
-										!announcementDismissed && (
-											<motion.div
-												className={`announcement-content severity-${announcement.severity}`}
-												onClick={(e) => e.stopPropagation()}
-												initial={{ opacity: 0 }}
-												animate={{ opacity: 1 }}
-												exit={{
-													opacity: 0,
-													filter: "blur(4px)",
-													transition: { duration: 0.1 }
-												}}
-												transition={{ type: "spring", stiffness: 400, damping: 30 }}
-											>
-												<div className="announcement-header">
-													<div className="announcement-heading">
-														<Megaphone size={14} className="announcement-icon" />
-														<span className="announcement-title">
-															{announcement.title}
-														</span>
-													</div>
-													<button
-														className="announcement-close"
-														onClick={dismissAnnouncement}
-														title="Dismiss"
-													>
-														<X size={13} strokeWidth={2.2} />
-													</button>
+									{bloomMode === "announcement" && announcement && !announcementDismissed && (
+										<motion.div
+											className={`announcement-content severity-${announcement.severity}`}
+											onClick={(e) => e.stopPropagation()}
+											initial={{ opacity: 0 }}
+											animate={{ opacity: 1 }}
+											exit={{
+												opacity: 0,
+												filter: "blur(4px)",
+												transition: { duration: 0.1 }
+											}}
+											transition={{ type: "spring", stiffness: 400, damping: 30 }}
+										>
+											<div className="announcement-header">
+												<div className="announcement-heading">
+													<Megaphone size={14} className="announcement-icon" />
+													<span className="announcement-title">{announcement.title}</span>
 												</div>
-												{announcement.body && (
-													<p className="announcement-body">
-														{announcement.body}
-													</p>
-												)}
-												{announcement.url && (
-													<button
-														className="announcement-link"
-														onClick={() => openUrl(announcement.url!)}
-													>
-														Learn more
-													</button>
-												)}
-											</motion.div>
-										)}
+												<button
+													className="announcement-close"
+													onClick={dismissAnnouncement}
+													title="Dismiss"
+												>
+													<X size={13} strokeWidth={2.2} />
+												</button>
+											</div>
+											{announcement.body && (
+												<p className="announcement-body">{announcement.body}</p>
+											)}
+											{announcement.url && (
+												<button
+													className="announcement-link"
+													onClick={() => openUrl(announcement.url!)}
+												>
+													Learn more
+												</button>
+											)}
+										</motion.div>
+									)}
 								</AnimatePresence>
 
 								{/* Calendar & Timer Split View */}
