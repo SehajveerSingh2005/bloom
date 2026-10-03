@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(windows)]
 #[derive(Deserialize, Debug)]
 #[serde(rename = "WmiMonitorBrightness")]
 #[serde(rename_all = "PascalCase")]
@@ -7,6 +8,7 @@ pub struct WmiMonitorBrightness {
     pub current_brightness: u8,
 }
 
+#[cfg(windows)]
 #[derive(Clone, Serialize)]
 pub struct AudioVisualizationData {
     pub frequencies: Vec<f32>,
@@ -30,8 +32,11 @@ pub struct MediaInfo {
 }
 
 pub enum SystemCommand {
+    #[cfg(windows)]
     VolumeMute,
+    #[cfg(windows)]
     VolumeUp,
+    #[cfg(windows)]
     VolumeDown,
     SetVolume(f32),
     MediaPlayPause,
@@ -39,7 +44,9 @@ pub enum SystemCommand {
     MediaPrevious,
     MediaSeek(i64),
     ToggleVisibility(bool),
+    #[cfg(windows)]
     BrightnessUp,
+    #[cfg(windows)]
     BrightnessDown,
 }
 

@@ -53,6 +53,8 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | Key                         | Type                 | Default  | Description                                                           |
 | --------------------------- | -------------------- | -------- | --------------------------------------------------------------------- |
 | `bloom-calendar-enabled`    | `"true"` / `"false"` | `"true"` | Enable calendar/timer mode in the notch.                              |
+| `bloom-info-centre`        | `"true"` / `"false"` | `"false"` | Merge the notch into the dock as one info centre ("Merge with Dock"). |
+| `bloom-glass`               | `"true"` / `"false"` | `"true"`  | Frosted glass (native blur) under the dock and notch; off saves power. |
 | `bloom-music-mode-enabled`  | `"true"` / `"false"` | `"true"` | Enable interactive music media widget.                                |
 | `bloom-music-compact-notch` | `"true"` / `"false"` | `"true"` | Show compact music display (visualizer + artwork) in collapsed notch. |
 

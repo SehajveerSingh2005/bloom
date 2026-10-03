@@ -5,7 +5,9 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32},
     Mutex, OnceLock,
 };
-use tauri::{AppHandle, PhysicalPosition, PhysicalSize};
+#[cfg(windows)]
+use tauri::AppHandle;
+use tauri::{PhysicalPosition, PhysicalSize};
 
 pub static COMMAND_SENDER: OnceLock<Sender<SystemCommand>> = OnceLock::new();
 pub static MAIN_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
@@ -43,9 +45,12 @@ pub static OVERLAY_IN_SPLASH: AtomicBool = AtomicBool::new(false);
 pub static CURRENT_FOREGROUND_FULLSCREEN: AtomicBool = AtomicBool::new(false);
 pub static CURRENT_FOREGROUND_MAXIMIZED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(windows)]
 pub static SINGLE_INSTANCE_MUTEX_HANDLE: OnceLock<isize> = OnceLock::new();
+#[cfg(windows)]
 pub static SINGLE_INSTANCE_EVENT_HANDLE: OnceLock<isize> = OnceLock::new();
 
+#[cfg(windows)]
 pub fn close_single_instance_handles() {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Foundation::HANDLE;
@@ -65,12 +70,17 @@ pub fn close_single_instance_handles() {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub use crate::linux::close_single_instance_handles;
+
 pub static MAIN_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> =
     Mutex::new(None);
 pub static DOCK_WINDOW_RECT: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>> =
     Mutex::new(None);
 
+#[cfg(windows)]
 pub static DISPLAY_MONITOR_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+#[cfg(windows)]
 pub static LAST_DISPLAY_CHANGE_MS: AtomicI64 = AtomicI64::new(0);
 
 /// Bounds (x, y, width, height) of the expanded per-app volume mixer panel in
@@ -81,6 +91,7 @@ pub static VOLUME_MIXER_RECT: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(N
 /// Process executable path → friendly display name (version-info
 /// `FileDescription`). Cached because the mixer polls sessions every 2s and
 /// reading version info hits the filesystem.
+#[cfg(windows)]
 pub static PROCESS_NAME_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
 pub static THUMBNAIL_CACHE: OnceLock<Mutex<HashMap<isize, (String, i64)>>> = OnceLock::new();
