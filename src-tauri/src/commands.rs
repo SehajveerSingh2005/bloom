@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, Window};
-use windows::core::Interface;
+use windows::core::{Interface, GUID};
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 
@@ -3055,35 +3055,147 @@ pub fn set_brightness(app: AppHandle, brightness: u32) {
     }
 }
 
-#[tauri::command]
-pub async fn get_battery_saver_state() -> Result<bool, String> {
-    // Uses Windows Runtime PowerManager — no PowerShell required.
-    tauri::async_runtime::spawn_blocking(|| {
-        unsafe {
-            let _ = windows::Win32::System::Com::CoInitializeEx(
-                None,
-                windows::Win32::System::Com::COINIT_MULTITHREADED,
-            );
+// --- Power mode ---
+// Windows 11 "Power mode" is a powrprof overlay scheme on top of the power plan.
+// Same GUIDs Settings writes (also used by g-helper's PowerNative.cs); Balanced
+// is "no overlay". Order is the click cycle.
+const POWER_MODES: [(&str, GUID); 3] = [
+    (
+        "performance",
+        GUID::from_u128(0xded574b5_45a0_4f42_8737_46345c09c238),
+    ),
+    ("balanced", GUID::zeroed()),
+    (
+        "efficiency",
+        GUID::from_u128(0x961cc777_2547_4f9d_8174_7d86181b8a7a),
+    ),
+];
+
+fn power_mode_index(guid: &GUID) -> Option<usize> {
+    POWER_MODES.iter().position(|(_, g)| g == guid)
+}
+
+fn next_power_mode(index: usize) -> usize {
+    (index + 1) % POWER_MODES.len()
+}
+
+/// The overlay exports are undocumented and not in the `windows` crate, so they
+/// are resolved at runtime (like glass.rs): a build without them just falls back.
+fn powrprof_proc(name: windows::core::PCSTR) -> Option<unsafe extern "system" fn() -> isize> {
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    unsafe { GetProcAddress(LoadLibraryW(windows::core::w!("powrprof.dll")).ok()?, name) }
+}
+
+/// Power mode only applies while the active plan is Balanced or derived from it
+/// (Microsoft's "Customize the power slider" doc). Windows records that as the
+/// plan's personality setting, where 2 = Balanced.
+fn balanced_plan_active() -> bool {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::System::Power::{PowerGetActiveScheme, PowerReadACValueIndex};
+    const NO_SUBGROUP_GUID: GUID = GUID::from_u128(0xfea3413e_7e05_4911_9a71_700331f1c294);
+    const PERSONALITY_GUID: GUID = GUID::from_u128(0x245d8541_3943_4422_b025_13a784f679b7);
+    unsafe {
+        let mut scheme: *mut GUID = std::ptr::null_mut();
+        if PowerGetActiveScheme(None, &mut scheme).is_err() {
+            return false;
         }
-        use windows::System::Power::{EnergySaverStatus, PowerManager};
-        match PowerManager::EnergySaverStatus() {
-            Ok(status) => Ok(status == EnergySaverStatus::On),
-            Err(_) => Ok(false), // No battery / not supported on this device
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        let mut personality = 0u32;
+        let ok = PowerReadACValueIndex(
+            None,
+            Some(scheme),
+            Some(&NO_SUBGROUP_GUID),
+            Some(&PERSONALITY_GUID),
+            &mut personality,
+        )
+        .is_ok();
+        LocalFree(Some(HLOCAL(scheme as _)));
+        ok && personality == 2
+    }
+}
+
+/// Effective mode (energy saver forcing efficiency included); None if unknown
+/// or not applicable to the active plan.
+fn read_power_mode() -> Option<usize> {
+    if !balanced_plan_active() {
+        return None;
+    }
+    type GetOverlay = unsafe extern "system" fn(*mut GUID) -> u32;
+    let get: GetOverlay = unsafe {
+        std::mem::transmute(powrprof_proc(windows::core::s!(
+            "PowerGetEffectiveOverlayScheme"
+        ))?)
+    };
+    let mut guid = GUID::zeroed();
+    if unsafe { get(&mut guid) } != 0 {
+        return None;
+    }
+    power_mode_index(&guid)
+}
+
+fn write_power_mode(index: usize) -> bool {
+    type SetOverlay = unsafe extern "system" fn(GUID) -> u32;
+    let Some(proc) = powrprof_proc(windows::core::s!("PowerSetActiveOverlayScheme")) else {
+        return false;
+    };
+    let set: SetOverlay = unsafe { std::mem::transmute(proc) };
+    unsafe { set(POWER_MODES[index].1) == 0 }
+}
+
+fn energy_saver_on() -> bool {
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_MULTITHREADED,
+        );
+    }
+    use windows::System::Power::{EnergySaverStatus, PowerManager};
+    // Err = no battery / not supported on this device
+    PowerManager::EnergySaverStatus().is_ok_and(|s| s == EnergySaverStatus::On)
 }
 
 #[tauri::command]
-pub fn open_battery_saver_settings() {
+pub async fn get_power_mode() -> Result<Option<&'static str>, String> {
+    tauri::async_runtime::spawn_blocking(|| read_power_mode().map(|i| POWER_MODES[i].0))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Steps to the next mode and returns the mode Windows now reports. When Windows
+/// can't take it (energy saver on, a non-Balanced plan, unknown overlay, or the
+/// write didn't stick) it opens Power settings instead, so the UI never guesses.
+#[tauri::command]
+pub async fn cycle_power_mode() -> Result<Option<&'static str>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        if let Some(i) = read_power_mode().filter(|_| !energy_saver_on()) {
+            let next = next_power_mode(i);
+            // Windows may report the new mode a beat late: re-read briefly
+            // before treating the switch as refused.
+            if write_power_mode(next)
+                && (0..3).any(|attempt| {
+                    if attempt > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    read_power_mode() == Some(next)
+                })
+            {
+                return Some(POWER_MODES[next].0);
+            }
+        }
+        open_power_settings();
+        read_power_mode().map(|i| POWER_MODES[i].0)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+fn open_power_settings() {
     unsafe {
         use windows::Win32::UI::Shell::ShellExecuteA;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         let _ = ShellExecuteA(
             None,
             windows::core::PCSTR(c"open".as_ptr() as *const u8),
-            windows::core::PCSTR(c"ms-settings:batterysaver".as_ptr() as *const u8),
+            windows::core::PCSTR(c"ms-settings:powersleep".as_ptr() as *const u8),
             windows::core::PCSTR::null(),
             windows::core::PCSTR::null(),
             SW_SHOWNORMAL,
@@ -3632,6 +3744,43 @@ pub fn setup_settings_watcher(app: AppHandle) {
             let _ = CloseHandle(dir_handle);
         }
     });
+}
+
+#[cfg(test)]
+mod power_mode_tests {
+    use super::*;
+
+    #[test]
+    fn guid_mapping_and_cycle() {
+        let idx = |s: &str| power_mode_index(&GUID::try_from(s).unwrap());
+        assert_eq!(idx("ded574b5-45a0-4f42-8737-46345c09c238"), Some(0));
+        assert_eq!(idx("00000000-0000-0000-0000-000000000000"), Some(1));
+        assert_eq!(idx("961cc777-2547-4f9d-8174-7d86181b8a7a"), Some(2));
+        // The Balanced *plan* GUID is not an overlay.
+        assert_eq!(idx("381b4222-f694-41f0-9685-ff5bb260df2e"), None);
+        let mut i = 0;
+        let names: Vec<_> = (0..4)
+            .map(|_| {
+                let name = POWER_MODES[i].0;
+                i = next_power_mode(i);
+                name
+            })
+            .collect();
+        assert_eq!(
+            names,
+            ["performance", "balanced", "efficiency", "performance"]
+        );
+    }
+
+    // Read-only probe of this PC: cargo test -- --ignored read_power_mode_probe --nocapture
+    #[test]
+    #[ignore]
+    fn read_power_mode_probe() {
+        println!(
+            "effective overlay: {:?}",
+            read_power_mode().map(|i| POWER_MODES[i].0)
+        );
+    }
 }
 
 #[cfg(test)]

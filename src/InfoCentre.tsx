@@ -15,7 +15,6 @@ import {
 	Bell,
 	Bluetooth,
 	BluetoothOff,
-	Leaf,
 	Music,
 	Pause,
 	Play,
@@ -31,6 +30,7 @@ import {
 import { useWeather } from "./hooks/useWeather";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { getTimerChimeCtx, playTimerChime } from "./chime";
+import { PowerModeIcon, powerModeLabel, usePowerMode } from "./powerMode";
 
 export type InfoTab = "media" | "calendar" | "timer" | "controls";
 
@@ -76,7 +76,6 @@ function useInfoData() {
 	const [brightness, setBrightnessState] = useState(50);
 	const [wifi, setWifi] = useState(true);
 	const [bluetooth, setBluetooth] = useState(false);
-	const [batterySaver, setBatterySaver] = useState(false);
 
 	const [weatherEnabled, setWeatherEnabled] = useState(() => readBool("bloom-weather-enabled", true));
 	const [time24h, setTime24h] = useState(() => readBool("bloom-time-format-24h", false));
@@ -126,11 +125,10 @@ function useInfoData() {
 			.catch(() => {});
 		invoke<number>("get_brightness").then(setBrightnessState).catch(() => {});
 
-		// Wifi, bluetooth and battery saver have no change events.
+		// Wifi, bluetooth and power mode have no change events.
 		const pollStates = () => {
 			invoke<boolean>("get_wifi_state").then(setWifi).catch(() => {});
 			invoke<boolean>("get_bluetooth_state").then(setBluetooth).catch(() => {});
-			invoke<boolean>("get_battery_saver_state").then(setBatterySaver).catch(() => {});
 		};
 		pollStates();
 		const poll = setInterval(pollStates, 5000);
@@ -171,7 +169,6 @@ function useInfoData() {
 		brightness,
 		wifi,
 		bluetooth,
-		batterySaver,
 		weather,
 		weatherEnabled,
 		time24h,
@@ -593,6 +590,8 @@ function TimerView() {
 
 function ControlsView() {
 	const info = useInfo();
+	// Only polled while the Controls tab is showing.
+	const [powerMode, cyclePowerMode] = usePowerMode();
 	const [cpu, setCpu] = useState<number | null>(null);
 	const [ram, setRam] = useState<number | null>(null);
 	useEffect(() => {
@@ -623,14 +622,14 @@ function ControlsView() {
 					</span>
 				</button>
 				<button
-					className={`ic-tile ${info.batterySaver ? "on" : ""}`}
-					onClick={() => invoke("open_battery_saver_settings").catch(() => {})}
+					className={`ic-tile ${powerMode && powerMode !== "balanced" ? "on" : ""}`}
+					onClick={cyclePowerMode}
 				>
 					<span className="ic-tile-icon">
-						<Leaf size={16} />
+						<PowerModeIcon mode={powerMode} size={16} />
 					</span>
 					<span>
-						Battery saver<small>{info.batterySaver ? "On" : "Off"}</small>
+						Power mode<small>{powerModeLabel(powerMode)}</small>
 					</span>
 				</button>
 				<button className="ic-tile" onClick={() => invoke("open_notification_center").catch(() => {})}>

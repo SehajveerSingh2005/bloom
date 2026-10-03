@@ -25,6 +25,7 @@ import { useAnnouncement } from "./hooks/useAnnouncement";
 import { useGlass, useGlassEnabled } from "./hooks/useGlass";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { WidgetConfig } from "./components/StatusWidgetConfig";
+import { PowerModeIcon, powerModeLabel, usePowerMode } from "./powerMode";
 import {
 	Cpu,
 	MemoryStick,
@@ -469,7 +470,7 @@ function App() {
 	const wifiEnabled = wifiStatus?.enabled ?? false;
 	const wifiConnected = wifiStatus?.connected ?? false;
 	const [bluetoothEnabled, setBluetoothEnabled] = useState(true);
-	const [batterySaverEnabled, setBatterySaverEnabled] = useState(false);
+	const [powerMode, cyclePowerMode] = usePowerMode();
 	const [currentBrightness, setCurrentBrightness] = useState(50);
 
 	// System metrics for status widgets
@@ -1431,23 +1432,12 @@ function App() {
 		invoke<boolean>("get_bluetooth_state")
 			.then(setBluetoothEnabled)
 			.catch(() => {});
-		invoke<boolean>("get_battery_saver_state")
-			.then(setBatterySaverEnabled)
-			.catch(() => {});
 		invoke<{ volume: number; is_muted: boolean }>("get_volume_state")
 			.then((state) => setVolume(state.volume))
 			.catch(() => {});
 		invoke<number>("get_brightness")
 			.then(setCurrentBrightness)
 			.catch(() => {});
-
-		// Poll battery saver state every 5s (since we can't listen for changes)
-		const interval = setInterval(() => {
-			invoke<boolean>("get_battery_saver_state")
-				.then(setBatterySaverEnabled)
-				.catch(() => {});
-		}, 5000);
-		return () => clearInterval(interval);
 	}, []);
 
 	// Refresh Wi-Fi status while the command center is open so changes made
@@ -1641,15 +1631,6 @@ function App() {
 			console.error("Failed to toggle Bluetooth:", e);
 		}
 	}, [bluetoothEnabled]);
-
-	// Battery Saver - opens settings (no public API to toggle without admin)
-	const openBatterySaverSettings = useCallback(async () => {
-		try {
-			await invoke("open_battery_saver_settings");
-		} catch (e) {
-			console.error("Failed to open Battery Saver settings:", e);
-		}
-	}, []);
 
 	// Brightness change with throttling
 	const lastBrightnessCallRef = useRef(0);
@@ -2618,14 +2599,18 @@ function App() {
 													<MoonIcon />
 												</button>
 												<button
-													className={`cc-circular-btn ${batterySaverEnabled ? "active" : ""}`}
+													className={`cc-circular-btn ${powerMode && powerMode !== "balanced" ? "active" : ""}`}
 													onClick={(e) => {
 														e.stopPropagation();
-														openBatterySaverSettings();
+														cyclePowerMode();
 													}}
-													title={`Energy Saver: ${batterySaverEnabled ? "On" : "Off"} — Click to open Settings`}
+													title={
+														powerMode
+															? `Power mode: ${powerModeLabel(powerMode)}. Click to switch`
+															: "Power mode: click to open Settings"
+													}
 												>
-													<BatterySaverIcon />
+													<PowerModeIcon mode={powerMode} size={18} strokeWidth={2.5} />
 												</button>
 												<button
 													className="cc-circular-btn"
@@ -3086,25 +3071,6 @@ function ReloadIcon() {
 			strokeLinejoin="round"
 		>
 			<path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-		</svg>
-	);
-}
-
-function BatterySaverIcon() {
-	return (
-		<svg
-			width="18"
-			height="18"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2.5"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-		>
-			<rect x="2" y="7" width="16" height="10" rx="2" />
-			<path d="M22 11v2" />
-			<path d="M6 12h4l2-3v6l-2-3H6" />
 		</svg>
 	);
 }
