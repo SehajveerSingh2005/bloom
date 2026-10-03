@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo, useRef, memo } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, memo } from "react";
 import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./Dock.css";
 import { initTheme } from "./theme";
 import { useSettingsSync } from "./hooks/useSettingsSync";
+import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 import { InfoLeft, InfoPanel, InfoProvider, InfoRight, type InfoTab } from "./InfoCentre";
 import { useGlass, useGlassEnabled } from "./hooks/useGlass";
 
@@ -67,6 +68,17 @@ const ITEM_ENTRY_TRANSITION = {
 const ITEM_INITIAL = { opacity: 0, scale: 0 };
 const ITEM_ANIMATE = { opacity: 1, scale: 1 };
 const ITEM_EXIT = { opacity: 0, scale: 0 };
+
+// One dot per open window, capped at three.
+function WindowDots({ count }: { count: number }) {
+	return (
+		<div className="window-dots">
+			{Array.from({ length: Math.min(Math.max(count, 1), 3) }, (_, i) => (
+				<div key={i} className="active-indicator" />
+			))}
+		</div>
+	);
+}
 
 const Dock = memo(function Dock() {
 	useEffect(() => {
@@ -270,6 +282,7 @@ const Dock = memo(function Dock() {
 	useEffect(() => {
 		const init = async () => {
 			const settings: any = await invoke("load_settings").catch(() => ({}));
+			if (await reloadIfMirrorWasStale(settings)) return;
 			const getVal = (key: string, fallback: string | null = null) => {
 				const val = settings[key];
 				if (val !== undefined && val !== null) return String(val);
@@ -519,6 +532,9 @@ const Dock = memo(function Dock() {
 		try {
 			if (app.path === "start") {
 				await invoke("open_app", { appName: "start" });
+			} else if (app.all_hwnds && app.all_hwnds.length > 1) {
+				// Several windows: bring the most recent forward, then cycle.
+				await invoke("focus_app_windows", { hwnds: app.all_hwnds.map(([hwnd]) => hwnd) });
 			} else if (app.hwnd) {
 				await invoke("focus_window", { hwnd: app.hwnd });
 			} else {
@@ -550,9 +566,9 @@ const Dock = memo(function Dock() {
 	const togglePin = async (app: AppInfo) => {
 		let newPinned;
 		if (app.is_pinned) {
-			newPinned = pinnedApps.filter((a) => a.path !== app.path);
+			newPinned = pinnedApps.filter((a) => itemKey(a) !== itemKey(app));
 		} else {
-			if (pinnedApps.find((a) => a.path === app.path)) return;
+			if (pinnedApps.find((a) => itemKey(a) === itemKey(app))) return;
 			newPinned = [...pinnedApps, { ...app, is_pinned: true, is_running: false, hwnd: undefined }];
 			fetchIcon(app.path, app.name);
 		}
@@ -569,6 +585,23 @@ const Dock = memo(function Dock() {
 		e.preventDefault();
 		setContextMenu({ x: e.clientX, y: e.clientY, app });
 	};
+
+	// Measured before paint: the menu's height depends on which items it shows,
+	// so it opens just above the cursor and stays inside the dock window.
+	// Positions are in visual pixels; the menu's CSS zoom scales left/top.
+	const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
+	useLayoutEffect(() => {
+		if (!contextMenu || !menuRef.current) {
+			setMenuPos(null);
+			return;
+		}
+		const margin = 8;
+		const r = menuRef.current.getBoundingClientRect();
+		setMenuPos({
+			left: Math.max(margin, Math.min(contextMenu.x, window.innerWidth - r.width - margin)),
+			top: Math.max(margin, contextMenu.y - r.height - margin)
+		});
+	}, [contextMenu, scale]);
 
 	const closeMenu = () => {
 		setContextMenu(null);
@@ -606,7 +639,7 @@ const Dock = memo(function Dock() {
 		}
 
 		invoke("set_menu_open", { open, rect }).catch(() => {});
-	}, [contextMenu, showAddPopup, pinnedApps, activeApps, activeSubmenu, scale]);
+	}, [contextMenu, menuPos, showAddPopup, pinnedApps, activeApps, activeSubmenu, scale]);
 
 	const dockItems = useMemo(() => {
 		const runningMap = new Map();
@@ -725,11 +758,13 @@ const Dock = memo(function Dock() {
 		};
 	}, []);
 
-	const handleReorder = (newPaths: string[]) => {
-		const oldPaths = pinnedApps.map((p) => p.path);
-		if (JSON.stringify(newPaths) !== JSON.stringify(oldPaths)) {
-			const reordered = newPaths
-				.map((path) => pinnedApps.find((p) => p.path === path))
+	// Items are keyed by identity, not path: web apps running in the same
+	// browser share one executable path.
+	const handleReorder = (newKeys: string[]) => {
+		const oldKeys = pinnedApps.map(itemKey);
+		if (JSON.stringify(newKeys) !== JSON.stringify(oldKeys)) {
+			const reordered = newKeys
+				.map((key) => pinnedApps.find((p) => itemKey(p) === key))
 				.filter((p): p is AppInfo => !!p);
 			setPinnedApps(reordered);
 		}
@@ -960,15 +995,15 @@ const Dock = memo(function Dock() {
 								<Reorder.Group
 									as="div"
 									axis="x"
-									values={pinnedItems.map((i) => i.path)}
+									values={pinnedItems.map(itemKey)}
 									onReorder={handleReorder}
 									className="dock-reorder-group"
 								>
 									{pinnedItems.map((app) => (
 										<Reorder.Item
 											as="div"
-											key={app.path}
-											value={app.path}
+											key={itemKey(app)}
+											value={itemKey(app)}
 											style={{ position: "relative" }}
 											onDragStart={() => {
 												setIsDragging(true);
@@ -1111,7 +1146,7 @@ const Dock = memo(function Dock() {
 														);
 													})()}
 												</motion.div>
-												{app.is_running && <div className="active-indicator" />}
+												{app.is_running && <WindowDots count={app.all_hwnds?.length ?? 1} />}
 											</motion.div>
 										</Reorder.Item>
 									))}
@@ -1119,7 +1154,7 @@ const Dock = memo(function Dock() {
 
 								{unpinnedItems.map((app) => (
 									<motion.div
-										key={app.path}
+										key={itemKey(app)}
 										layout
 										initial={{ opacity: 0, scale: 0 }}
 										animate={{
@@ -1253,7 +1288,7 @@ const Dock = memo(function Dock() {
 												);
 											})()}
 										</motion.div>
-										{app.is_running && <div className="active-indicator" />}
+										{app.is_running && <WindowDots count={app.all_hwnds?.length ?? 1} />}
 									</motion.div>
 								))}
 								{infoCentre && (
@@ -1281,8 +1316,9 @@ const Dock = memo(function Dock() {
 					ref={menuRef}
 					className="context-menu"
 					style={{
-						left: contextMenu.x,
-						top: contextMenu.y - (contextMenu.app ? 200 : 100) * scale,
+						left: (menuPos?.left ?? contextMenu.x) / scale,
+						top: (menuPos?.top ?? contextMenu.y) / scale,
+						visibility: menuPos ? "visible" : "hidden",
 						zoom: scale
 					}}
 					onClick={(e) => e.stopPropagation()}
@@ -1395,10 +1431,13 @@ const Dock = memo(function Dock() {
 									<div
 										className="menu-item quit"
 										onClick={async () => {
-											if (contextMenu.app?.hwnd) {
-												await invoke("close_window", { hwnd: contextMenu.app.hwnd });
-												closeMenu();
-											}
+											// Close every window of the item, like the taskbar's
+											// "Close all windows", not just the first one.
+											const app = contextMenu.app;
+											const hwnds =
+												app?.all_hwnds?.map(([hwnd]) => hwnd) ?? (app?.hwnd ? [app.hwnd] : []);
+											await Promise.all(hwnds.map((hwnd) => invoke("close_window", { hwnd })));
+											closeMenu();
 										}}
 									>
 										Quit {contextMenu.app.name}

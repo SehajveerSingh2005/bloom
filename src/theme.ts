@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 
 // Convert a hex color string to rgba with a specified alpha
 function hexToRgba(hex: string, alpha: number): string {
@@ -256,7 +257,9 @@ export function initTheme() {
 
 	// Sync settings.json in background to avoid flickers
 	invoke<Record<string, any>>("load_settings")
-		.then((settings) => {
+		.then(async (settings) => {
+			// Don't write a stale mirror value back while the window reloads.
+			if (await reloadIfMirrorWasStale(settings)) return;
 			const mode = settings["bloom-theme-mode"] ? String(settings["bloom-theme-mode"]) : syncMode;
 			const color = settings["bloom-theme-color"]
 				? String(settings["bloom-theme-color"])

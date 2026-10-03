@@ -4,7 +4,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsSync } from "./hooks/useSettingsSync";
+import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
 import { getVersion } from "@tauri-apps/api/app";
+import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { MixerIcon, SpeakerIcon } from "./icons";
 import "./Overlay.css";
@@ -620,7 +622,8 @@ function OverlayApp() {
 	// Load scale from settings
 	useEffect(() => {
 		invoke("load_settings")
-			.then((settings: any) => {
+			.then(async (settings: any) => {
+				if (await reloadIfMirrorWasStale(settings)) return;
 				if (settings && settings["bloom-scale"] !== undefined) {
 					setScale(parseFloat(settings["bloom-scale"]));
 				}
@@ -831,20 +834,18 @@ function OverlayApp() {
 	}, [mode]);
 
 	// ── Volume Controls ──
-	const lastVolumeCall = useRef(0);
+	const sendVolume = useTrailingThrottle((newVol: number) => {
+		invoke("set_volume", { volume: newVol }).catch(() => {});
+	}, 50);
 	const handleVolumeChange = useCallback(
 		(newVol: number) => {
 			setVolume(newVol);
 			setIsMuted(newVol === 0);
 			setMode("volume");
 			resetHideTimeout();
-
-			const now = Date.now();
-			if (now - lastVolumeCall.current < 50) return;
-			lastVolumeCall.current = now;
-			invoke("set_volume", { volume: newVol }).catch(() => {});
+			sendVolume(newVol);
 		},
-		[resetHideTimeout]
+		[resetHideTimeout, sendVolume]
 	);
 
 	const handleMixerExpandedChange = useCallback(
@@ -881,19 +882,17 @@ function OverlayApp() {
 	}, [mode, mixerExpanded, collapseMixer]);
 
 	// ── Brightness Controls ──
-	const lastBrightnessCall = useRef(0);
+	const sendBrightness = useTrailingThrottle((newBrightness: number) => {
+		invoke("set_brightness", { brightness: Math.round(newBrightness) }).catch(() => {});
+	}, 50);
 	const handleBrightnessChange = useCallback(
 		(newBrightness: number) => {
 			setBrightness(newBrightness);
 			setMode("brightness");
 			resetHideTimeout();
-
-			const now = Date.now();
-			if (now - lastBrightnessCall.current < 50) return;
-			lastBrightnessCall.current = now;
-			invoke("set_brightness", { brightness: Math.round(newBrightness) }).catch(() => {});
+			sendBrightness(newBrightness);
 		},
-		[resetHideTimeout]
+		[resetHideTimeout, sendBrightness]
 	);
 
 	const isLeft = mode === "volume";

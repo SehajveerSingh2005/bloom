@@ -32,6 +32,7 @@ unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     if ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT {
         set_taskbar_visibility(true, true);
         NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+        set_native_osd_suppressed(false);
     }
     BOOL(0)
 }
@@ -149,6 +150,7 @@ fn main() {
             get_custom_icons,
             set_menu_open,
             focus_window,
+            focus_app_windows,
             close_window,
             quit_bloom,
             restart_bloom,
@@ -163,6 +165,7 @@ fn main() {
             clear_volume_mixer_rect,
             save_setting,
             load_settings,
+            settings_file_readable,
             capture_window_thumbnail,
             get_wifi_status,
             set_wifi_state,
@@ -207,7 +210,7 @@ fn main() {
             // taskbar was hidden, restore it now. Runs before the frontend re-hides it
             // (init_dock fires after a delay), so the flag must be removed first.
             if taskbar_marker_exists() {
-                set_taskbar_visibility(true, true);
+                restore_taskbar_after_crash();
                 NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
             }
 
@@ -390,6 +393,7 @@ fn main() {
                     .menu(&menu)
                     .on_menu_event(move |_, event| match event.id().as_ref() {
                         "quit" => {
+                            SHUTTING_DOWN.store(true, Ordering::Relaxed);
                             if let Some(w) = ah.get_webview_window("main") {
                                 unregister_appbar_native(w.hwnd().unwrap());
                             }
@@ -398,10 +402,12 @@ fn main() {
                             }
                             set_taskbar_visibility(true, true);
                             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+                            set_native_osd_suppressed(false);
 
                             ah.exit(0);
                         }
                         "restart" => {
+                            SHUTTING_DOWN.store(true, Ordering::Relaxed);
                             if let Some(w) = ah.get_webview_window("main") {
                                 unregister_appbar_native(w.hwnd().unwrap());
                             }
@@ -413,6 +419,7 @@ fn main() {
                             }
                             set_taskbar_visibility(true, true);
                             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+                            set_native_osd_suppressed(false);
                             close_single_instance_handles();
 
                             ah.restart();
@@ -442,6 +449,7 @@ fn main() {
         if let tauri::RunEvent::Exit = event {
             set_taskbar_visibility(true, true);
             NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+            set_native_osd_suppressed(false);
         }
     });
 }

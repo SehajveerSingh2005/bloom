@@ -21,8 +21,10 @@ import { CompactMediaPlayer } from "./CompactMediaPlayer";
 import { getTimerChimeCtx, playTimerChime } from "./chime";
 import { useWeather } from "./hooks/useWeather";
 import { useSettingsSync } from "./hooks/useSettingsSync";
+import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
 import { useAnnouncement } from "./hooks/useAnnouncement";
 import { useGlass, useGlassEnabled } from "./hooks/useGlass";
+import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { WidgetConfig } from "./components/StatusWidgetConfig";
 import { PowerModeIcon, powerModeLabel, usePowerMode } from "./powerMode";
@@ -464,6 +466,9 @@ function App() {
 	const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
 	const [albumArtKey, setAlbumArtKey] = useState(0);
 	const [volume, setVolume] = useState(0.5);
+	const [isMuted, setIsMuted] = useState(false);
+	// Sliders show 0 while muted, matching the overlay HUD.
+	const displayVolume = isMuted ? 0 : volume;
 	// Null until the first successful fetch so the pill can't flash a wrong
 	// default on startup.
 	const [wifiStatus, setWifiStatus] = useState<WifiStatus | null>(null);
@@ -787,7 +792,8 @@ function App() {
 		if (!windowLabel) return;
 
 		invoke("load_settings")
-			.then((settings: any) => {
+			.then(async (settings: any) => {
+				if (await reloadIfMirrorWasStale(settings)) return;
 				const getVal = (key: string, fallback: string | null = null) => {
 					const val = settings[key];
 					if (val !== undefined && val !== null) return String(val);
@@ -1405,6 +1411,7 @@ function App() {
 	useEffect(() => {
 		const unlisten = listen<{ volume: number; is_muted: boolean }>("volume-change", (event) => {
 			setVolume(event.payload.volume);
+			setIsMuted(event.payload.is_muted);
 		});
 		return () => {
 			unlisten.then((fn) => fn());
@@ -1448,7 +1455,10 @@ function App() {
 			.then(setBluetoothEnabled)
 			.catch(() => {});
 		invoke<{ volume: number; is_muted: boolean }>("get_volume_state")
-			.then((state) => setVolume(state.volume))
+			.then((state) => {
+				setVolume(state.volume);
+				setIsMuted(state.is_muted);
+			})
 			.catch(() => {});
 		invoke<number>("get_brightness")
 			.then(setCurrentBrightness)
@@ -1596,17 +1606,19 @@ function App() {
 		skipNext();
 	}, [skipNext, nextFront, nextBack]);
 
-	const lastVolumeCallRef = useRef(0);
-
-	const handleVolumeChange = useCallback((newVol: number) => {
-		setVolume(newVol);
-
-		const now = Date.now();
-		if (now - lastVolumeCallRef.current < 50) return;
-		lastVolumeCallRef.current = now;
-
+	const sendVolume = useTrailingThrottle((newVol: number) => {
 		invoke("set_volume", { volume: newVol }).catch(() => {});
-	}, []);
+	}, 50);
+
+	const handleVolumeChange = useCallback(
+		(newVol: number) => {
+			setVolume(newVol);
+			// set_volume unmutes for any non-zero level.
+			setIsMuted(newVol === 0);
+			sendVolume(newVol);
+		},
+		[sendVolume]
+	);
 
 	// The command centre's Wi-Fi / Bluetooth page (ConnectPage), or the pills.
 	const [ccPage, setCcPage] = useState<"wifi" | "bluetooth" | null>(null);
@@ -1645,17 +1657,17 @@ function App() {
 	}, [bluetoothEnabled]);
 
 	// Brightness change with throttling
-	const lastBrightnessCallRef = useRef(0);
-
-	const handleBrightnessChange = useCallback((newVal: number) => {
-		setCurrentBrightness(newVal);
-
-		const now = Date.now();
-		if (now - lastBrightnessCallRef.current < 50) return;
-		lastBrightnessCallRef.current = now;
-
+	const sendBrightness = useTrailingThrottle((newVal: number) => {
 		invoke("set_brightness", { brightness: newVal }).catch(() => {});
-	}, []);
+	}, 50);
+
+	const handleBrightnessChange = useCallback(
+		(newVal: number) => {
+			setCurrentBrightness(newVal);
+			sendBrightness(newVal);
+		},
+		[sendBrightness]
+	);
 
 	// Open system tray (unhide taskbar and invoke Win+B)
 	const openSystemTray = useCallback(async (e: React.MouseEvent) => {
@@ -2029,7 +2041,7 @@ function App() {
 													albumArtUrl={albumArtUrl}
 													albumArtKey={albumArtKey}
 													isPlaying={isPlaying}
-													volume={volume}
+													volume={displayVolume}
 													volumeExpanded={compactVolumeExpanded}
 													onVolumeExpandedChange={setCompactVolumeExpanded}
 													onTogglePlayPause={togglePlayPause}
@@ -2043,6 +2055,10 @@ function App() {
 													onLayoutChange={(layout) => {
 														setMediaLayout(layout);
 														localStorage.setItem("bloom-media-layout", layout);
+														invoke("save_setting", {
+															key: "bloom-media-layout",
+															value: layout
+														}).catch(console.error);
 														window.dispatchEvent(
 															new CustomEvent("settings-changed", {
 																detail: { key: "media-layout", value: layout }
@@ -2061,6 +2077,10 @@ function App() {
 																e.stopPropagation();
 																setMediaLayout("compact");
 																localStorage.setItem("bloom-media-layout", "compact");
+																invoke("save_setting", {
+																	key: "bloom-media-layout",
+																	value: "compact"
+																}).catch(console.error);
 																window.dispatchEvent(
 																	new CustomEvent("settings-changed", {
 																		detail: { key: "media-layout", value: "compact" }
@@ -2249,7 +2269,7 @@ function App() {
 																	min="0"
 																	max="1"
 																	step="0.01"
-																	value={volume}
+																	value={displayVolume}
 																	onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
 																	onPointerDown={(e) => e.stopPropagation()}
 																	onClick={(e) => e.stopPropagation()}
@@ -2257,7 +2277,7 @@ function App() {
 																/>
 																<div
 																	className="slider-progress-fill"
-																	style={{ width: `${volume * 100}%` }}
+																	style={{ width: `${displayVolume * 100}%` }}
 																/>
 															</div>
 															<VolumeHighIcon size={14} style={{ opacity: 0.5 }} />
@@ -2705,7 +2725,7 @@ function App() {
 																	min="0"
 																	max="1"
 																	step="0.01"
-																	value={volume}
+																	value={displayVolume}
 																	onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
 																	onPointerDown={(e) => e.stopPropagation()}
 																	onClick={(e) => e.stopPropagation()}
@@ -2713,11 +2733,11 @@ function App() {
 																/>
 																<div
 																	className="cc-classic-fill"
-																	style={{ width: `${volume * 100}%` }}
+																	style={{ width: `${displayVolume * 100}%` }}
 																/>
 															</div>
 															<span className="cc-classic-percentage">
-																{Math.round(volume * 100)}%
+																{Math.round(displayVolume * 100)}%
 															</span>
 														</div>
 

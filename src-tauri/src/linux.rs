@@ -89,6 +89,10 @@ pub fn re_assert_topmost(_hwnd: HWND) {}
 /// API, so the native panel stays; Bloom's dock reserves its own strip.
 pub fn set_taskbar_visibility(_visible: bool, _always_on_top: bool) {}
 
+/// The panel is never hidden (see `set_taskbar_visibility`), so a crash leaves
+/// nothing to restore.
+pub fn restore_taskbar_after_crash() {}
+
 /// Dock-type hints, set before the windows are first shown, keep Bloom's
 /// surfaces out of the window switcher, make the WM honour their struts, and
 /// stop it treating the screen-sized overlay as a fullscreen app.
@@ -277,6 +281,10 @@ pub fn poll_pointer(app: AppHandle) {
         let mut last = None;
         loop {
             std::thread::sleep(Duration::from_millis(32));
+            // Stands down during shutdown, like the Windows mouse hook.
+            if SHUTTING_DOWN.load(Ordering::Relaxed) {
+                continue;
+            }
             let Some(cursor) = cursor_pos() else { continue };
             if last != Some(cursor) {
                 last = Some(cursor);
@@ -575,6 +583,10 @@ pub fn setup_window_change_hook(app: AppHandle) {
 /// follows the volume) and Win+Number isn't replaced.
 pub fn setup_keyboard_hook(_app: AppHandle) {}
 
+/// ponytail: the desktop's own volume/brightness OSD can't be suppressed (see
+/// `hide_native_osd`), so there is nothing to hide or restore.
+pub fn set_native_osd_suppressed(_suppress: bool) {}
+
 /// ponytail: no native panel to keep hidden (see `set_taskbar_visibility`).
 pub fn setup_taskbar_hook() {}
 
@@ -627,6 +639,9 @@ fn overlap_loop(app: AppHandle, tx: Sender<SystemCommand>) {
 
     loop {
         std::thread::sleep(Duration::from_millis(150));
+        if SHUTTING_DOWN.load(Ordering::Relaxed) {
+            continue;
+        }
         if monitor_checked.is_none_or(|t| t.elapsed() > Duration::from_secs(1)) {
             if let Some(m) = app.primary_monitor().ok().flatten() {
                 monitor = Some((*m.position(), *m.size(), m.scale_factor()));
@@ -1816,6 +1831,19 @@ pub mod cmds {
     #[tauri::command]
     pub async fn focus_window(hwnd: isize) {
         let _ = tauri::async_runtime::spawn_blocking(move || toggle_window(hwnd as Window)).await;
+    }
+
+    #[tauri::command]
+    pub async fn focus_app_windows(hwnds: Vec<isize>) {
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let Some(x) = x11() else { return };
+            let fg = effective_active(x) as isize;
+            if let Some(win) = crate::commands::next_app_window(&hwnds, fg) {
+                // Source 2, as in toggle_window; it also restores a minimized window.
+                x.message(win as Window, x.atoms._NET_ACTIVE_WINDOW, [2, 0, 0, 0, 0]);
+            }
+        })
+        .await;
     }
 
     #[tauri::command]

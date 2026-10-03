@@ -36,7 +36,7 @@ use wmi::{COMLibrary, WMIConnection};
 use crate::linux::{register_dock_appbar_inner, WindowHandleExt};
 #[cfg(target_os = "linux")]
 pub use crate::linux::{
-    register_appbar, setup_audio_visualization, setup_brightness_worker,
+    register_appbar, set_native_osd_suppressed, setup_audio_visualization, setup_brightness_worker,
     setup_display_change_monitor, setup_keyboard_hook, setup_system_worker, setup_taskbar_hook,
     setup_thumbnail_capture, setup_window_change_hook, trigger_app_scan, unregister_appbar_native,
 };
@@ -90,6 +90,23 @@ fn dock_win_number_enabled() -> bool {
     crate::utils::get_setting_str(app, "bloom-dock-win-number-enabled")
         .map(|v| v != "false")
         .unwrap_or(true)
+}
+
+/// Whether one of Bloom's HUD overlays is enabled (`bloom-volume-overlay-enabled`,
+/// `bloom-brightness-overlay-enabled`). With an overlay off, the matching keys
+/// and the native flyout are left to Windows instead of being taken over.
+#[cfg(windows)]
+fn overlay_enabled(app: &AppHandle, key: &str) -> bool {
+    crate::utils::get_setting_str(app, key)
+        .map(|v| v != "false")
+        .unwrap_or(true)
+}
+
+#[cfg(windows)]
+fn hook_overlay_enabled(key: &str) -> bool {
+    KEYBOARD_HOOK_APP_HANDLE
+        .get()
+        .is_none_or(|app| overlay_enabled(app, key))
 }
 
 /// Physical Win state straight from the OS. The tracked flag can go stale when
@@ -217,13 +234,17 @@ unsafe extern "system" fn keyboard_hook_proc(
             }
         }
 
-        if vk_code == VK_VOLUME_MUTE || vk_code == VK_VOLUME_UP || vk_code == VK_VOLUME_DOWN {
+        if (vk_code == VK_VOLUME_MUTE || vk_code == VK_VOLUME_UP || vk_code == VK_VOLUME_DOWN)
+            && hook_overlay_enabled("bloom-volume-overlay-enabled")
+        {
             if is_down {
                 handle_volume_key_event(vk_code);
             }
             return windows::Win32::Foundation::LRESULT(1);
         }
-        if vk_code.0 == 0x216 || vk_code.0 == 0x217 {
+        if (vk_code.0 == 0x216 || vk_code.0 == 0x217)
+            && hook_overlay_enabled("bloom-brightness-overlay-enabled")
+        {
             if is_down {
                 handle_brightness_key_event(vk_code);
             }
@@ -1023,7 +1044,11 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
             let mut last_volume: f32 = -1.0;
             let mut last_muted: bool = false;
 
-            let hide_osd = || {
+            // Only hide the native flyout when Bloom's matching overlay replaces it.
+            let hide_osd = |overlay_key: &str| {
+                if !overlay_enabled(&handle_system, overlay_key) {
+                    return;
+                }
                 use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, ShowWindow, SW_HIDE};
                 let class1 = windows::core::PCSTR(c"NativeHWNDHost".as_ptr() as *const u8);
                 if let Ok(hwnd1) = FindWindowA(class1, windows::core::PCSTR::null()) {
@@ -1063,119 +1088,125 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                         .ok();
                 }
                 while let Ok(cmd) = rx.try_recv() {
-                    if let Some(ref aev) = audio_endpoint_volume {
-                        match cmd {
-                            SystemCommand::VolumeMute => {
-                                if let Ok(muted) = aev.GetMute() {
-                                    let _ = aev.SetMute(!muted.as_bool(), std::ptr::null());
-                                    hide_osd();
-                                }
+                    // Only the volume commands need the audio endpoint. Media, brightness and
+                    // visibility commands must keep working when there is no output device.
+                    match (cmd, audio_endpoint_volume.as_ref()) {
+                        (SystemCommand::VolumeMute, Some(aev)) => {
+                            if let Ok(muted) = aev.GetMute() {
+                                let _ = aev.SetMute(!muted.as_bool(), std::ptr::null());
+                                hide_osd("bloom-volume-overlay-enabled");
                             }
-                            SystemCommand::VolumeUp => {
-                                if let (Ok(vol), Ok(muted)) =
-                                    (aev.GetMasterVolumeLevelScalar(), aev.GetMute())
-                                {
-                                    let _ = aev.SetMasterVolumeLevelScalar(
-                                        (vol + 0.05).min(1.0),
-                                        std::ptr::null(),
-                                    );
-                                    if muted.as_bool() {
-                                        let _ = aev.SetMute(false, std::ptr::null());
-                                    }
-                                    hide_osd();
-                                }
-                            }
-                            SystemCommand::VolumeDown => {
-                                if let Ok(vol) = aev.GetMasterVolumeLevelScalar() {
-                                    let _ = aev.SetMasterVolumeLevelScalar(
-                                        (vol - 0.05).max(0.0),
-                                        std::ptr::null(),
-                                    );
-                                    hide_osd();
-                                }
-                            }
-                            SystemCommand::SetVolume(volume) => {
+                        }
+                        (SystemCommand::VolumeUp, Some(aev)) => {
+                            if let (Ok(vol), Ok(muted)) =
+                                (aev.GetMasterVolumeLevelScalar(), aev.GetMute())
+                            {
                                 let _ = aev.SetMasterVolumeLevelScalar(
-                                    volume.clamp(0.0, 1.0),
+                                    (vol + 0.05).min(1.0),
                                     std::ptr::null(),
                                 );
-                                if volume > 0.0 {
+                                if muted.as_bool() {
                                     let _ = aev.SetMute(false, std::ptr::null());
                                 }
-                                hide_osd();
+                                hide_osd("bloom-volume-overlay-enabled");
                             }
-                            SystemCommand::MediaPlayPause => {
-                                if let Some(ref mgr) = manager {
-                                    if let Ok(session) = mgr.GetCurrentSession() {
-                                        let _ = session.TryTogglePlayPauseAsync();
-                                    }
-                                }
-                            }
-                            SystemCommand::MediaNext => {
-                                if let Some(ref mgr) = manager {
-                                    if let Ok(session) = mgr.GetCurrentSession() {
-                                        let _ = session.TrySkipNextAsync();
-                                    }
-                                }
-                            }
-                            SystemCommand::MediaPrevious => {
-                                if let Some(ref mgr) = manager {
-                                    if let Ok(session) = mgr.GetCurrentSession() {
-                                        let _ = session.TrySkipPreviousAsync();
-                                    }
-                                }
-                            }
-                            SystemCommand::MediaSeek(position_ms) => {
-                                if let Some(ref mgr) = manager {
-                                    if let Ok(session) = mgr.GetCurrentSession() {
-                                        let ticks = position_ms * 10_000;
-                                        let _ = session.TryChangePlaybackPositionAsync(ticks);
-                                    }
-                                }
-                            }
-                            SystemCommand::ToggleVisibility(visible) => {
-                                let _ = handle_system.emit("visibility-change", visible);
-                                if let Some(w) = handle_system.get_webview_window("bottom-corners")
-                                {
-                                    if visible {
-                                        let _ = w.show();
-                                    } else {
-                                        let _ = w.hide();
-                                    }
-                                }
-                            }
-                            SystemCommand::BrightnessUp => {
-                                let new_val =
-                                    (CURRENT_BRIGHTNESS.load(Ordering::Relaxed) + 10).min(100);
-                                CURRENT_BRIGHTNESS.store(new_val, Ordering::Relaxed);
-                                LAST_BRIGHTNESS_CHANGE.store(get_now_ms(), Ordering::Relaxed);
-                                let _ = handle_system.emit(
-                                    "brightness-change",
-                                    BrightnessChangeEvent {
-                                        brightness: new_val,
-                                    },
+                        }
+                        (SystemCommand::VolumeDown, Some(aev)) => {
+                            if let Ok(vol) = aev.GetMasterVolumeLevelScalar() {
+                                let _ = aev.SetMasterVolumeLevelScalar(
+                                    (vol - 0.05).max(0.0),
+                                    std::ptr::null(),
                                 );
-                                if let Some(tx) = BRIGHTNESS_SENDER.get() {
-                                    let _ = tx.send(new_val);
-                                }
-                                hide_osd();
+                                hide_osd("bloom-volume-overlay-enabled");
                             }
-                            SystemCommand::BrightnessDown => {
-                                let current = CURRENT_BRIGHTNESS.load(Ordering::Relaxed);
-                                let new_val = current.saturating_sub(10);
-                                CURRENT_BRIGHTNESS.store(new_val, Ordering::Relaxed);
-                                LAST_BRIGHTNESS_CHANGE.store(get_now_ms(), Ordering::Relaxed);
-                                let _ = handle_system.emit(
-                                    "brightness-change",
-                                    BrightnessChangeEvent {
-                                        brightness: new_val,
-                                    },
-                                );
-                                if let Some(tx) = BRIGHTNESS_SENDER.get() {
-                                    let _ = tx.send(new_val);
-                                }
-                                hide_osd();
+                        }
+                        (SystemCommand::SetVolume(volume), Some(aev)) => {
+                            let _ = aev.SetMasterVolumeLevelScalar(
+                                volume.clamp(0.0, 1.0),
+                                std::ptr::null(),
+                            );
+                            if volume > 0.0 {
+                                let _ = aev.SetMute(false, std::ptr::null());
                             }
+                            hide_osd("bloom-volume-overlay-enabled");
+                        }
+                        (
+                            SystemCommand::VolumeMute
+                            | SystemCommand::VolumeUp
+                            | SystemCommand::VolumeDown
+                            | SystemCommand::SetVolume(_),
+                            None,
+                        ) => {}
+                        (SystemCommand::MediaPlayPause, _) => {
+                            if let Some(ref mgr) = manager {
+                                if let Ok(session) = mgr.GetCurrentSession() {
+                                    let _ = session.TryTogglePlayPauseAsync();
+                                }
+                            }
+                        }
+                        (SystemCommand::MediaNext, _) => {
+                            if let Some(ref mgr) = manager {
+                                if let Ok(session) = mgr.GetCurrentSession() {
+                                    let _ = session.TrySkipNextAsync();
+                                }
+                            }
+                        }
+                        (SystemCommand::MediaPrevious, _) => {
+                            if let Some(ref mgr) = manager {
+                                if let Ok(session) = mgr.GetCurrentSession() {
+                                    let _ = session.TrySkipPreviousAsync();
+                                }
+                            }
+                        }
+                        (SystemCommand::MediaSeek(position_ms), _) => {
+                            if let Some(ref mgr) = manager {
+                                if let Ok(session) = mgr.GetCurrentSession() {
+                                    let ticks = position_ms * 10_000;
+                                    let _ = session.TryChangePlaybackPositionAsync(ticks);
+                                }
+                            }
+                        }
+                        (SystemCommand::ToggleVisibility(visible), _) => {
+                            let _ = handle_system.emit("visibility-change", visible);
+                            if let Some(w) = handle_system.get_webview_window("bottom-corners") {
+                                if visible {
+                                    let _ = w.show();
+                                } else {
+                                    let _ = w.hide();
+                                }
+                            }
+                        }
+                        (SystemCommand::BrightnessUp, _) => {
+                            let new_val =
+                                (CURRENT_BRIGHTNESS.load(Ordering::Relaxed) + 10).min(100);
+                            CURRENT_BRIGHTNESS.store(new_val, Ordering::Relaxed);
+                            LAST_BRIGHTNESS_CHANGE.store(get_now_ms(), Ordering::Relaxed);
+                            let _ = handle_system.emit(
+                                "brightness-change",
+                                BrightnessChangeEvent {
+                                    brightness: new_val,
+                                },
+                            );
+                            if let Some(tx) = BRIGHTNESS_SENDER.get() {
+                                let _ = tx.send(new_val);
+                            }
+                            hide_osd("bloom-brightness-overlay-enabled");
+                        }
+                        (SystemCommand::BrightnessDown, _) => {
+                            let current = CURRENT_BRIGHTNESS.load(Ordering::Relaxed);
+                            let new_val = current.saturating_sub(10);
+                            CURRENT_BRIGHTNESS.store(new_val, Ordering::Relaxed);
+                            LAST_BRIGHTNESS_CHANGE.store(get_now_ms(), Ordering::Relaxed);
+                            let _ = handle_system.emit(
+                                "brightness-change",
+                                BrightnessChangeEvent {
+                                    brightness: new_val,
+                                },
+                            );
+                            if let Some(tx) = BRIGHTNESS_SENDER.get() {
+                                let _ = tx.send(new_val);
+                            }
+                            hide_osd("bloom-brightness-overlay-enabled");
                         }
                     }
                 }
@@ -1195,7 +1226,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                     is_muted,
                                 },
                             );
-                            hide_osd();
+                            hide_osd("bloom-volume-overlay-enabled");
                         }
                     }
                 }
@@ -1443,8 +1474,15 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
         let my_process_id = std::process::id();
         let mut last_monitor_update = Instant::now() - Duration::from_secs(5);
         let mut cached_scale = 1.0f64;
+        // Re-check the native flyout every ~1.5s: picks up setting changes and
+        // a host window recreated by an Explorer restart.
+        let mut osd_sync_ticks = 0u32;
 
         loop {
+            if SHUTTING_DOWN.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                continue;
+            }
             unsafe {
                 let now = Instant::now();
                 if now.duration_since(last_monitor_update) > Duration::from_millis(1000) {
@@ -1739,6 +1777,12 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     last_visible = true;
                 }
 
+                osd_sync_ticks += 1;
+                if osd_sync_ticks >= 10 {
+                    osd_sync_ticks = 0;
+                    sync_native_osd(&handle_visibility);
+                }
+
                 // Enforce native taskbar hiding (periodic check)
                 if NATIVE_TASKBAR_HIDDEN.load(Ordering::Relaxed) {
                     use windows::Win32::UI::WindowsAndMessaging::{FindWindowA, IsWindowVisible};
@@ -1872,6 +1916,105 @@ fn set_physical_monitors_brightness(brightness: u32) {
     }
 }
 
+/// Explorer-owned windows that host the Windows 11 volume/brightness flyout.
+/// The flyout lives in a small, non-activating `XamlExplorerHostIslandWindow`;
+/// the same class also hosts full-screen surfaces (Alt+Tab, Task View), which
+/// the size check excludes.
+#[cfg(windows)]
+fn native_osd_windows() -> Vec<HWND> {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowA, FindWindowExW, GetSystemMetrics, GetWindowRect, SM_CXSCREEN, SM_CYSCREEN,
+        WS_EX_NOACTIVATE,
+    };
+    let mut found = Vec::new();
+    unsafe {
+        let tray_class = windows::core::PCSTR(c"Shell_TrayWnd".as_ptr() as *const u8);
+        let Ok(tray) = FindWindowA(tray_class, windows::core::PCSTR::null()) else {
+            return found;
+        };
+        let mut explorer_pid = 0u32;
+        GetWindowThreadProcessId(tray, Some(&mut explorer_pid));
+        let (screen_w, screen_h) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+
+        let mut after: Option<HWND> = None;
+        while let Ok(hwnd) = FindWindowExW(
+            None,
+            after,
+            windows::core::w!("XamlExplorerHostIslandWindow"),
+            windows::core::PCWSTR::null(),
+        ) {
+            after = Some(hwnd);
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+            let mut rect = RECT::default();
+            let small = GetWindowRect(hwnd, &mut rect).is_ok()
+                && (rect.right - rect.left) < screen_w / 2
+                && (rect.bottom - rect.top) < screen_h / 2;
+            if pid == explorer_pid && (ex_style & WS_EX_NOACTIVATE.0) != 0 && small {
+                found.push(hwnd);
+            }
+        }
+    }
+    found
+}
+
+/// Laptop brightness keys bypass input hooks (the firmware changes brightness
+/// and notifies the display driver directly), so unlike the volume keys they
+/// cannot be swallowed to keep Windows from drawing its own flyout. While
+/// Bloom's overlay replaces it, the flyout host is kept fully transparent and
+/// click-through instead; Explorer may still show it, but nothing is visible.
+#[cfg(windows)]
+pub fn set_native_osd_suppressed(suppress: bool) {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetLayeredWindowAttributes, SetLayeredWindowAttributes, SetWindowLongW, LWA_ALPHA,
+        WS_EX_LAYERED, WS_EX_TRANSPARENT,
+    };
+    for hwnd in native_osd_windows() {
+        unsafe {
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+            let mut alpha = 255u8;
+            // Explorer never makes this window layered itself, so a layered
+            // window at alpha 0 is Bloom's doing, including from a crashed run.
+            let suppressed = (ex_style & WS_EX_LAYERED.0) != 0
+                && GetLayeredWindowAttributes(hwnd, None, Some(&mut alpha), None).is_ok()
+                && alpha == 0;
+            if suppress && !suppressed {
+                SetWindowLongW(
+                    hwnd,
+                    GWL_EXSTYLE,
+                    (ex_style | WS_EX_LAYERED.0 | WS_EX_TRANSPARENT.0) as i32,
+                );
+                let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+            } else if !suppress && suppressed {
+                let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
+                SetWindowLongW(
+                    hwnd,
+                    GWL_EXSTYLE,
+                    (ex_style & !(WS_EX_LAYERED.0 | WS_EX_TRANSPARENT.0)) as i32,
+                );
+            }
+        }
+    }
+}
+
+/// The volume and brightness flyouts share one host window, so it is only
+/// suppressed while Bloom replaces both. With either overlay turned off, the
+/// user asked for the native flyout and it must stay visible.
+#[cfg(windows)]
+fn sync_native_osd(app_handle: &AppHandle) {
+    let enabled = |key: &str| {
+        get_setting_str(app_handle, key)
+            .map(|v| v != "false")
+            .unwrap_or(true)
+    };
+    set_native_osd_suppressed(
+        enabled("bloom-brightness-overlay-enabled") && enabled("bloom-volume-overlay-enabled"),
+    );
+}
+
 #[cfg(windows)]
 pub fn setup_brightness_worker() {
     let (tx, rx) = channel::<u32>();
@@ -1879,7 +2022,8 @@ pub fn setup_brightness_worker() {
     std::thread::spawn(move || unsafe {
         // Direct WMI COM + DXVA2 implementation (zero child processes spawned).
         use windows::Win32::System::Com::{
-            CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+            CoCreateInstance, CoInitializeEx, CoSetProxyBlanket, CoUninitialize, CLSCTX_ALL,
+            COINIT_MULTITHREADED, EOAC_NONE, RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE,
         };
         use windows::Win32::System::Variant::{VariantClear, VARENUM, VARIANT};
         use windows::Win32::System::Wmi::{
@@ -1913,7 +2057,54 @@ pub fn setup_brightness_worker() {
             }
         };
 
-        while let Ok(brightness) = rx.recv() {
+        // Without impersonation on the proxy, WMI rejects the query with
+        // WBEM_E_ACCESS_DENIED whenever process-wide COM security was not
+        // initialized for it, so every write was silently dropped.
+        // 10 = RPC_C_AUTHN_WINNT, 0 = RPC_C_AUTHZ_NONE (Win32_System_Rpc is not enabled).
+        let _ = CoSetProxyBlanket(
+            &services,
+            10,
+            0,
+            windows::core::PCWSTR::null(),
+            RPC_C_AUTHN_LEVEL_CALL,
+            RPC_C_IMP_LEVEL_IMPERSONATE,
+            None,
+            EOAC_NONE,
+        );
+
+        // GetMethod only works on the class definition; on an instance it
+        // fails with WBEM_E_ILLEGAL_OPERATION. Resolve the input signature once.
+        let set_brightness_params = {
+            let mut class_def: Option<IWbemClassObject> = None;
+            let mut in_cls: Option<IWbemClassObject> = None;
+            if services
+                .GetObject(
+                    &windows::core::BSTR::from("WmiMonitorBrightnessMethods"),
+                    WBEM_GENERIC_FLAG_TYPE(0),
+                    None,
+                    Some(&mut class_def),
+                    None,
+                )
+                .is_ok()
+            {
+                if let Some(ref class_def) = class_def {
+                    let _ = class_def.GetMethod(
+                        windows::core::w!("WmiSetBrightness"),
+                        0i32,
+                        &mut in_cls,
+                        std::ptr::null_mut(),
+                    );
+                }
+            }
+            in_cls
+        };
+
+        while let Ok(mut brightness) = rx.recv() {
+            // A slider drag queues a value per input event, and each write is
+            // slow (WMI plus DDC/CI per monitor). Only the latest value matters.
+            while let Ok(newer) = rx.try_recv() {
+                brightness = newer;
+            }
             let brightness = brightness.min(100);
             // 1. Laptop internal panel via WMI WmiMonitorBrightnessMethods
             let wql = windows::core::BSTR::from("WQL");
@@ -1934,50 +2125,39 @@ pub fn setup_brightness_worker() {
                                 let obj_path = windows::core::BSTR::from(relpath_str.as_str());
                                 let method_name = windows::core::BSTR::from("WmiSetBrightness");
 
-                                let mut in_cls: Option<IWbemClassObject> = None;
-                                if obj
-                                    .GetMethod(
-                                        windows::core::w!("WmiSetBrightness"),
-                                        0i32,
-                                        &mut in_cls,
-                                        std::ptr::null_mut(),
-                                    )
-                                    .is_ok()
-                                {
-                                    if let Some(in_cls) = in_cls {
-                                        if let Ok(in_params) = in_cls.SpawnInstance(0i32) {
-                                            let mut b_var = VARIANT::default();
-                                            let b_anon = &mut b_var.Anonymous.Anonymous;
-                                            b_anon.vt = VARENUM(17); // VT_UI1
-                                            b_anon.Anonymous.bVal = brightness as u8;
-                                            let _ = in_params.Put(
-                                                windows::core::w!("Brightness"),
-                                                0i32,
-                                                &b_var,
-                                                0,
-                                            );
+                                if let Some(ref in_cls) = set_brightness_params {
+                                    if let Ok(in_params) = in_cls.SpawnInstance(0i32) {
+                                        let mut b_var = VARIANT::default();
+                                        let b_anon = &mut b_var.Anonymous.Anonymous;
+                                        b_anon.vt = VARENUM(17); // VT_UI1
+                                        b_anon.Anonymous.bVal = brightness as u8;
+                                        let _ = in_params.Put(
+                                            windows::core::w!("Brightness"),
+                                            0i32,
+                                            &b_var,
+                                            0,
+                                        );
 
-                                            let mut t_var = VARIANT::default();
-                                            let t_anon = &mut t_var.Anonymous.Anonymous;
-                                            t_anon.vt = VARENUM(3); // VT_I4
-                                            t_anon.Anonymous.lVal = 0i32;
-                                            let _ = in_params.Put(
-                                                windows::core::w!("Timeout"),
-                                                0i32,
-                                                &t_var,
-                                                0,
-                                            );
+                                        let mut t_var = VARIANT::default();
+                                        let t_anon = &mut t_var.Anonymous.Anonymous;
+                                        t_anon.vt = VARENUM(3); // VT_I4
+                                        t_anon.Anonymous.lVal = 0i32;
+                                        let _ = in_params.Put(
+                                            windows::core::w!("Timeout"),
+                                            0i32,
+                                            &t_var,
+                                            0,
+                                        );
 
-                                            let _ = services.ExecMethod(
-                                                &obj_path,
-                                                &method_name,
-                                                WBEM_GENERIC_FLAG_TYPE(0),
-                                                None,
-                                                Some(&in_params),
-                                                None,
-                                                None,
-                                            );
-                                        }
+                                        let _ = services.ExecMethod(
+                                            &obj_path,
+                                            &method_name,
+                                            WBEM_GENERIC_FLAG_TYPE(0),
+                                            None,
+                                            Some(&in_params),
+                                            None,
+                                            None,
+                                        );
                                     }
                                 }
                             }
@@ -2060,6 +2240,9 @@ fn volume_mixer_physical_rect_for(app: &AppHandle) -> Option<(i32, i32, i32, i32
 fn setup_volume_mixer_watchdog(app_handle: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(200));
+        if SHUTTING_DOWN.load(Ordering::Relaxed) {
+            continue;
+        }
         let Some((rx, ry, rw, rh)) = volume_mixer_physical_rect_for(&app_handle) else {
             continue;
         };
@@ -2228,6 +2411,9 @@ fn capture_ui_state(app: &AppHandle) -> (bool, bool) {
 
 #[cfg(windows)]
 fn apply_capture_ui_state(app: &AppHandle, active: bool, notch_blocked: bool) {
+    if SHUTTING_DOWN.load(Ordering::Relaxed) {
+        return;
+    }
     if let Some(main_win) = app.get_webview_window("main") {
         if notch_blocked {
             let _ = main_win.set_ignore_cursor_events(true);
@@ -2468,7 +2654,7 @@ fn update_main_interaction(
 fn setup_top_edge_watchdog(app_handle: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(TOP_EDGE_POLL_MS));
-        if CAPTURE_UI_ACTIVE.load(Ordering::Relaxed) {
+        if CAPTURE_UI_ACTIVE.load(Ordering::Relaxed) || SHUTTING_DOWN.load(Ordering::Relaxed) {
             continue;
         }
         if MH_TOP_EDGE_ENTER_MS.load(Ordering::Relaxed) == 0
@@ -2498,7 +2684,7 @@ unsafe extern "system" fn mouse_hook_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
-    if code >= 0 && wparam.0 == WM_MOUSEMOVE as usize {
+    if code >= 0 && wparam.0 == WM_MOUSEMOVE as usize && !SHUTTING_DOWN.load(Ordering::Relaxed) {
         // Throttle to ~30fps (32ms) to match old polling cadence.
         // Without this, state checks and set_ignore_cursor_events fire on
         // every pixel of cursor movement, causing notch flicker at edges.
@@ -3654,6 +3840,9 @@ pub fn unregister_appbar_native(hwnd: HWND) {
 }
 
 pub(crate) fn reposition_all_windows(app_handle: &AppHandle) {
+    if SHUTTING_DOWN.load(Ordering::Relaxed) {
+        return;
+    }
     reconcile_main_appbar(app_handle);
     // Only reposition the dock if it's enabled in settings.
     // Without this guard, power events (plug/unplug, wake) would re-show

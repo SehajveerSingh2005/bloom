@@ -5,6 +5,7 @@ import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getVersion } from "@tauri-apps/api/app";
 import type { UpdateCheckResult } from "../updater";
 import { useSettingsSync } from "../hooks/useSettingsSync";
+import { reloadIfMirrorWasStale } from "../hooks/settingsMirror";
 import { hexToHsl } from "../theme";
 import type { WidgetConfig } from "./types";
 
@@ -132,6 +133,7 @@ export function useSettings() {
 	const loadAllSettings = useCallback(async () => {
 		try {
 			const settings: Record<string, string> = await invoke("load_settings");
+			if (await reloadIfMirrorWasStale(settings)) return;
 			const getVal = (key: string) => {
 				const val = settings[key];
 				if (val !== undefined && val !== null) return String(val);

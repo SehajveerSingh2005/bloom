@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { useWeather } from "./hooks/useWeather";
 import { useSettingsSync } from "./hooks/useSettingsSync";
+import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
 import { getTimerChimeCtx, playTimerChime } from "./chime";
 import { PowerModeIcon, powerModeLabel, usePowerMode } from "./powerMode";
 import { ConnectPage } from "./ConnectPage";
@@ -195,8 +196,12 @@ function useInfoData() {
 	}, []);
 
 	// Sliders fire on every pixel; the backend only needs ~20 updates a second.
-	const lastVolumeCall = useRef(0);
-	const lastBrightnessCall = useRef(0);
+	const sendVolume = useTrailingThrottle((v: number) => {
+		invoke("set_volume", { volume: v }).catch(() => {});
+	}, 50);
+	const sendBrightness = useTrailingThrottle((v: number) => {
+		invoke("set_brightness", { brightness: v }).catch(() => {});
+	}, 50);
 
 	return {
 		media,
@@ -231,17 +236,13 @@ function useInfoData() {
 		},
 		setVolume: (v: number) => {
 			setVolumeState(v);
-			const now = Date.now();
-			if (now - lastVolumeCall.current < 50) return;
-			lastVolumeCall.current = now;
-			invoke("set_volume", { volume: v }).catch(() => {});
+			// set_volume unmutes for any non-zero level.
+			setMuted(v === 0);
+			sendVolume(v);
 		},
 		setBrightness: (v: number) => {
 			setBrightnessState(v);
-			const now = Date.now();
-			if (now - lastBrightnessCall.current < 50) return;
-			lastBrightnessCall.current = now;
-			invoke("set_brightness", { brightness: v }).catch(() => {});
+			sendBrightness(v);
 		},
 		toggleWifi: () => {
 			const next = !wifi;
@@ -710,7 +711,7 @@ function ControlsView() {
 				<Slider
 					label="Volume"
 					icon={<Volume2 size={14} />}
-					value={info.volume}
+					value={info.muted ? 0 : info.volume}
 					max={1}
 					step={0.01}
 					onChange={info.setVolume}

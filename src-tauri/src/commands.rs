@@ -245,6 +245,12 @@ pub async fn sync_appbar(app: AppHandle) {
 
 #[tauri::command]
 pub async fn change_dock_mode(app: AppHandle, mode: String) {
+    // A disabled dock keeps the new mode in settings (init_dock applies it on
+    // re-enable) but must not be shown or replace the native taskbar now.
+    let enabled = get_setting_str(&app, "bloom-dock-enabled").unwrap_or_else(|| "true".to_string());
+    if enabled != "true" {
+        return;
+    }
     if let Some(dock_win) = app.get_webview_window("dock") {
         if mode == "fixed" {
             register_dock_appbar(dock_win.clone());
@@ -875,6 +881,47 @@ pub async fn focus_window(hwnd: isize) {
                 let _ = SetForegroundWindow(hwnd);
             }
         }
+    })
+    .await
+    .unwrap_or_default();
+}
+
+/// Brings one window of a multi-window dock item forward, like the taskbar's
+/// Win+number / Ctrl+click. `hwnds` comes most-recently-focused first: with
+/// none of them in front, that one is activated; with one in front, the next
+/// window in a stable order is, so repeated clicks visit every window instead
+/// of flipping between the two most recent.
+pub(crate) fn next_app_window(hwnds: &[isize], foreground: isize) -> Option<isize> {
+    let &most_recent = hwnds.first()?;
+    let mut ring = hwnds.to_vec();
+    ring.sort_unstable();
+    Some(match ring.iter().position(|&h| h == foreground) {
+        Some(i) => ring[(i + 1) % ring.len()],
+        None => most_recent,
+    })
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub async fn focus_app_windows(hwnds: Vec<isize>) {
+    tauri::async_runtime::spawn_blocking(move || unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow,
+            SW_RESTORE, SW_SHOW,
+        };
+        let foreground = GetForegroundWindow().0 as isize;
+        let Some(target) = next_app_window(&hwnds, foreground) else {
+            return;
+        };
+
+        let hwnd = HWND(target as *mut _);
+        if !IsWindowVisible(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+        }
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(hwnd);
     })
     .await
     .unwrap_or_default();
@@ -2748,11 +2795,8 @@ pub fn clear_volume_mixer_rect() {
     }
 }
 
-/// Restore the native taskbar, unregister Bloom's appbars, and exit gracefully.
-/// Shared by the tray menu, the in-app Quit button, and the window CloseRequested
-/// handlers so that any shutdown path (including Task Manager's WM_CLOSE) behaves
-/// identically.
-pub fn restore_taskbar_and_exit(handle: &AppHandle) {
+/// Unregisters the notch and dock AppBars so Windows gives their work area back.
+pub fn release_appbars(handle: &AppHandle) {
     if let Some(w) = handle.get_webview_window("main") {
         if MAIN_APPBAR_REGISTERED.load(Ordering::Relaxed) {
             unregister_appbar_native(w.hwnd().unwrap());
@@ -2763,8 +2807,18 @@ pub fn restore_taskbar_and_exit(handle: &AppHandle) {
             unregister_appbar_native(w.hwnd().unwrap());
         }
     }
+}
+
+/// Restore the native taskbar, unregister Bloom's appbars, and exit gracefully.
+/// Shared by the tray menu, the in-app Quit button, and the window CloseRequested
+/// handlers so that any shutdown path (including Task Manager's WM_CLOSE) behaves
+/// identically.
+pub fn restore_taskbar_and_exit(handle: &AppHandle) {
+    SHUTTING_DOWN.store(true, Ordering::Relaxed);
+    release_appbars(handle);
     set_taskbar_visibility(true, true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+    crate::services::set_native_osd_suppressed(false);
     // Destroy all webview windows before exiting so Chromium's UnregisterClass for
     // Chrome_WidgetWin_0 finds no open windows (avoids the harmless Error=1412 log).
     for (_, w) in handle.webview_windows() {
@@ -2780,6 +2834,7 @@ pub async fn quit_bloom(handle: AppHandle) {
 
 #[tauri::command]
 pub async fn restart_bloom(handle: AppHandle) {
+    SHUTTING_DOWN.store(true, Ordering::Relaxed);
     if let Some(w) = handle.get_webview_window("main") {
         unregister_appbar_native(w.hwnd().unwrap());
     }
@@ -2791,6 +2846,7 @@ pub async fn restart_bloom(handle: AppHandle) {
     }
     set_taskbar_visibility(true, true);
     NATIVE_TASKBAR_HIDDEN.store(false, Ordering::Relaxed);
+    crate::services::set_native_osd_suppressed(false);
     close_single_instance_handles();
     handle.restart();
 }
@@ -2873,6 +2929,19 @@ pub fn load_settings(app: AppHandle) -> Result<HashMap<String, serde_json::Value
         }
     }
     Ok(HashMap::new())
+}
+
+/// Whether settings.json exists and parses, which load_settings can't tell
+/// apart from a missing file since both load as an empty map.
+#[tauri::command]
+pub fn settings_file_readable(app: AppHandle) -> bool {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
+        .is_some_and(|content| {
+            serde_json::from_str::<HashMap<String, serde_json::Value>>(&content).is_ok()
+        })
 }
 
 #[cfg(windows)]
@@ -3732,6 +3801,10 @@ pub fn import_settings(app: AppHandle, settings: String) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    let previous: HashMap<String, serde_json::Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default();
 
     let content = serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())?;
     std::fs::write(&path, content).map_err(|e| e.to_string())?;
@@ -3743,6 +3816,19 @@ pub fn import_settings(app: AppHandle, settings: String) -> Result<(), String> {
         let _ = app.emit(
             "settings-changed",
             serde_json::json!({ "key": key, "value": value }),
+        );
+    }
+
+    // Keys the imported file doesn't have must leave each window's localStorage
+    // mirror too, or they come back from it on the next start. Same sentinels
+    // as reset_settings are kept.
+    let keep = ["bloom-first-run", "bloom-app-version"];
+    for key in previous.keys().filter(|key| {
+        key.starts_with("bloom-") && !keep.contains(&key.as_str()) && !imported.contains_key(*key)
+    }) {
+        let _ = app.emit(
+            "settings-external-changed",
+            serde_json::json!({ "key": key, "value": null }),
         );
     }
 
@@ -4162,5 +4248,20 @@ mod pwa_icon_tests {
             ),
             Some("C:\\Start Menu\\Netflix.lnk".into())
         );
+    }
+}
+
+#[cfg(test)]
+mod app_window_cycle_tests {
+    use super::next_app_window;
+
+    #[test]
+    fn app_windows_cycle_in_a_stable_order() {
+        // Most recent first; nothing of the app in front: the most recent wins.
+        assert_eq!(next_app_window(&[30, 10, 20], 99), Some(30));
+        // One in front: the next in sorted order, wrapping around.
+        assert_eq!(next_app_window(&[30, 10, 20], 10), Some(20));
+        assert_eq!(next_app_window(&[30, 10, 20], 30), Some(10));
+        assert_eq!(next_app_window(&[], 10), None);
     }
 }

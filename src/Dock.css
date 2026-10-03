@@ -344,6 +344,17 @@ body {
 	box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
 }
 
+.window-dots {
+	position: absolute;
+	bottom: -4px;
+	display: flex;
+	gap: 3px;
+}
+
+.window-dots .active-indicator {
+	position: static;
+}
+
 .start-icon-inner {
 	display: none;
 }

@@ -15,6 +15,11 @@ pub static DOCK_APPBAR_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub static CURRENT_DOCK_OVERLAP: AtomicI32 = AtomicI32::new(-1);
 pub static CURRENT_NOTCH_OVERLAP: AtomicI32 = AtomicI32::new(-1);
 pub static NATIVE_TASKBAR_HIDDEN: AtomicBool = AtomicBool::new(false);
+/// Set first on every quit/restart path. While windows and webviews are torn
+/// down, Tauri's window table is mutably borrowed; a window call arriving then
+/// (from the mouse hook or a background loop) panics with "RefCell already
+/// mutably borrowed", so those callers stand down once this is set.
+pub static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 pub static DOCK_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
 pub static NOTCH_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
