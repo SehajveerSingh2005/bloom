@@ -66,7 +66,7 @@ const formatTimerDigits = (digits: string): string => {
 
 
 // Simple SVG icons
-function WifiIcon({ connected }: { connected: boolean }) {
+function WifiIcon({ enabled, connected }: { enabled: boolean; connected: boolean }) {
 	return (
 		<svg
 			width="18"
@@ -77,7 +77,7 @@ function WifiIcon({ connected }: { connected: boolean }) {
 			strokeWidth="2.5"
 			strokeLinecap="round"
 			strokeLinejoin="round"
-			opacity={connected ? 1 : 0.4}
+			opacity={!enabled ? 0.4 : connected ? 1 : 0.7}
 		>
 			<path d="M5 12.55a11 11 0 0 1 14.08 0" />
 			<path d="M1.42 9a16 16 0 0 1 21.16 0" />
@@ -320,6 +320,11 @@ interface MediaInfo {
 	position_updated_at?: number;
 }
 
+interface WifiStatus {
+	enabled: boolean;
+	connected: boolean;
+}
+
 const MARQUEE_SPEED = 30; // px/s — constant for all titles
 const MARQUEE_MIN_DURATION = 5; // floor so short titles don't flicker
 
@@ -458,7 +463,11 @@ function App() {
 	const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
 	const [albumArtKey, setAlbumArtKey] = useState(0);
 	const [volume, setVolume] = useState(0.5);
-	const [wifiEnabled, setWifiEnabled] = useState(true);
+	// Null until the first successful fetch so the pill can't flash a wrong
+	// default on startup.
+	const [wifiStatus, setWifiStatus] = useState<WifiStatus | null>(null);
+	const wifiEnabled = wifiStatus?.enabled ?? false;
+	const wifiConnected = wifiStatus?.connected ?? false;
 	const [bluetoothEnabled, setBluetoothEnabled] = useState(true);
 	const [batterySaverEnabled, setBatterySaverEnabled] = useState(false);
 	const [currentBrightness, setCurrentBrightness] = useState(50);
@@ -493,8 +502,12 @@ function App() {
 		let disposed = false;
 
 		listen<UpdateCheckResult>("update-available", (event) => {
-			if (!event.payload.available) return;
-			setUpdateAvailable(true);
+			setUpdateAvailable(event.payload.available);
+			if (!event.payload.available) {
+				setShowUpdatePulse(false);
+				if (updatePulseTimerRef.current) clearTimeout(updatePulseTimerRef.current);
+				return;
+			}
 			setShowUpdatePulse(true);
 			if (notchMode === "peek") triggerEventPeek(6000);
 			if (updatePulseTimerRef.current) clearTimeout(updatePulseTimerRef.current);
@@ -508,6 +521,8 @@ function App() {
 
 		invoke<UpdateCheckResult>("get_update_state")
 			.then((state) => {
+				// Only restore a badge; clearing is left to check results so a
+				// late mount read cannot race an "update-available" event.
 				if (state.available) setUpdateAvailable(true);
 			})
 			.catch((e) => console.error("Failed to read update state:", e));
@@ -536,7 +551,7 @@ function App() {
 	const [startupAnimating, setStartupAnimating] = useState(false);
 
 	const [dockMode, setDockMode] = useState(() => {
-		const raw = localStorage.getItem("bloom-dock-mode") || "fixed";
+		const raw = localStorage.getItem("bloom-dock-mode") || "smart";
 		if (raw === "auto-hide") return "smart";
 		return raw;
 	});
@@ -586,6 +601,15 @@ function App() {
 			invoke("set_notch_hovered", { hovered: isNotchHovered }).catch(() => {});
 		}
 	}, [isNotchHovered, windowLabel]);
+
+	// Tell the backend whether the notch is actually on screen so a hidden
+	// notch (smart/peek mode) stays click-through instead of swallowing clicks
+	// in its footprint.
+	useEffect(() => {
+		if (windowLabel === "main") {
+			invoke("set_notch_visible", { visible: isVisible && !isHidden }).catch(() => {});
+		}
+	}, [isVisible, isHidden, windowLabel]);
 
 	useEffect(() => {
 		const updateRect = () => {
@@ -804,7 +828,7 @@ function App() {
 						});
 						localStorage.setItem("bloom-first-run", "done");
 					}
-					const rawDockMode = getVal("bloom-dock-mode", "fixed") as string;
+					const rawDockMode = getVal("bloom-dock-mode", "smart") as string;
 					const dockMode = rawDockMode === "auto-hide" ? "smart" : rawDockMode;
 					const syncWindows = async () => {
 						const dockEnabled = getVal("bloom-dock-enabled", "true") === "true";
@@ -947,7 +971,7 @@ function App() {
 			return;
 		}
 		if (dockEnabled) {
-			invoke("init_dock", { mode: localStorage.getItem("bloom-dock-mode") || "fixed" });
+			invoke("init_dock", { mode: localStorage.getItem("bloom-dock-mode") || "smart" });
 		} else {
 			invoke("toggle_dock", { enable: false });
 		}
@@ -1368,11 +1392,42 @@ function App() {
 		};
 	}, []);
 
-	// Load wifi/bluetooth/volume/brightness state on mount
+	// Wi-Fi is a three-state control: Off, on-but-not-connected, Connected.
+	// The radio state alone can't tell those apart, so get_wifi_status returns
+	// both flags. Returns false so the startup loader knows to retry.
+	const refreshWifiStatus = useCallback(async (): Promise<boolean> => {
+		try {
+			setWifiStatus(await invoke<WifiStatus>("get_wifi_status"));
+			return true;
+		} catch {
+			return false;
+		}
+	}, []);
+
+	// Seed the Wi-Fi pill at startup. The first call can fail while the WLAN
+	// service is still coming up, so retry instead of leaving the pill stuck on
+	// its default.
 	useEffect(() => {
-		invoke<boolean>("get_wifi_state")
-			.then(setWifiEnabled)
-			.catch(() => {});
+		let cancelled = false;
+		let retryTimer: ReturnType<typeof setTimeout> | undefined;
+		const initializeWifiStatus = async (attempt: number) => {
+			const loaded = await refreshWifiStatus();
+			if (!loaded && !cancelled && attempt < 3) {
+				retryTimer = setTimeout(
+					() => void initializeWifiStatus(attempt + 1),
+					(attempt + 1) * 1000
+				);
+			}
+		};
+		void initializeWifiStatus(0);
+		return () => {
+			cancelled = true;
+			if (retryTimer) clearTimeout(retryTimer);
+		};
+	}, [refreshWifiStatus]);
+
+	// Load bluetooth/volume/brightness state on mount
+	useEffect(() => {
 		invoke<boolean>("get_bluetooth_state")
 			.then(setBluetoothEnabled)
 			.catch(() => {});
@@ -1394,6 +1449,15 @@ function App() {
 		}, 5000);
 		return () => clearInterval(interval);
 	}, []);
+
+	// Refresh Wi-Fi status while the command center is open so changes made
+	// outside Bloom (keyboard toggle, Windows quick settings) show up.
+	useEffect(() => {
+		if (bloomMode !== "command-center") return;
+		void refreshWifiStatus();
+		const interval = setInterval(() => void refreshWifiStatus(), 5000);
+		return () => clearInterval(interval);
+	}, [bloomMode, refreshWifiStatus]);
 
 	// Poll system metrics for status widgets
 	useEffect(() => {
@@ -1550,15 +1614,21 @@ function App() {
 
 	// WiFi toggle
 	const toggleWifi = useCallback(async () => {
-		const newState = !wifiEnabled;
-		setWifiEnabled(newState);
+		const previous = wifiStatus;
+		const newState = !(previous?.enabled ?? false);
+		setWifiStatus({
+			enabled: newState,
+			connected: newState ? (previous?.connected ?? false) : false
+		});
 		try {
 			await invoke("set_wifi_state", { enabled: newState });
+			// The radio and association take a moment to settle.
+			setTimeout(() => void refreshWifiStatus(), 800);
 		} catch (e) {
-			setWifiEnabled(!newState);
+			setWifiStatus(previous);
 			console.error("Failed to toggle WiFi:", e);
 		}
-	}, [wifiEnabled]);
+	}, [wifiStatus, refreshWifiStatus]);
 
 	// Bluetooth toggle
 	const toggleBluetooth = useCallback(async () => {
@@ -2455,12 +2525,18 @@ function App() {
 													title="Left-click to toggle, Right-click for Settings"
 												>
 													<div className="cc-pill-icon-wrapper">
-														<WifiIcon connected={wifiEnabled} />
+														<WifiIcon enabled={wifiEnabled} connected={wifiConnected} />
 													</div>
 													<div className="cc-pill-info">
 														<span className="cc-pill-title">Wi-Fi</span>
 														<span className="cc-pill-status">
-															{wifiEnabled ? "Connected" : "Off"}
+															{wifiStatus === null
+																? "…"
+																: !wifiEnabled
+																	? "Off"
+																	: wifiConnected
+																		? "Connected"
+																		: "Not connected"}
 														</span>
 													</div>
 												</div>

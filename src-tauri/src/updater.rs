@@ -97,6 +97,13 @@ fn result_from_state(state: &PersistedUpdateState) -> UpdateCheckResult {
     }
 }
 
+/// Persisted state only describes the version that wrote it: after an update it
+/// still names the old version and the update it found, which must never be
+/// shown against the newly installed one.
+fn state_is_current(state: &PersistedUpdateState, current_version: &str) -> bool {
+    state.app_version == current_version
+}
+
 /// Returns a cached result only when the last check is recent and was made
 /// against the version currently running (so updating invalidates the cache).
 fn cached_result(app: &AppHandle) -> Option<UpdateCheckResult> {
@@ -104,7 +111,7 @@ fn cached_result(app: &AppHandle) -> Option<UpdateCheckResult> {
     if state.last_check == 0 || now_secs() - state.last_check >= CHECK_INTERVAL_SECS {
         return None;
     }
-    if state.app_version != app.package_info().version.to_string() {
+    if !state_is_current(&state, &app.package_info().version.to_string()) {
         return None;
     }
     Some(result_from_state(&state))
@@ -184,6 +191,9 @@ pub async fn check(app: &AppHandle, force: bool) -> Result<UpdateCheckResult, St
     if let Ok(mut cached) = LAST_CHECK.lock() {
         *cached = Some(result.clone());
     }
+    // Report the outcome (including "no update") so the UI can clear a stale
+    // badge after this version replaced one that had an update pending.
+    let _ = app.emit("update-available", &result);
     Ok(result)
 }
 
@@ -313,8 +323,6 @@ pub async fn run_startup_check(app: AppHandle) {
         return;
     }
 
-    let _ = app.emit("update-available", &result);
-
     let attempted_version = result.version.clone().unwrap_or_default();
     let attempted_recently =
         install_attempted_recently(&read_state(&app), &attempted_version, now_secs());
@@ -340,11 +348,8 @@ pub async fn run_startup_check(app: AppHandle) {
 
 #[tauri::command]
 pub async fn check_for_updates(app: AppHandle, force: bool) -> Result<UpdateCheckResult, String> {
-    let result = check(&app, force).await?;
-    if result.available {
-        let _ = app.emit("update-available", &result);
-    }
-    Ok(result)
+    // `check` emits the result (available or not) so callers don't have to.
+    check(&app, force).await
 }
 
 #[tauri::command]
@@ -359,7 +364,11 @@ pub fn get_update_state(app: AppHandle) -> UpdateCheckResult {
             return result.clone();
         }
     }
-    result_from_state(&read_state(&app))
+    let state = read_state(&app);
+    if !state_is_current(&state, &app.package_info().version.to_string()) {
+        return UpdateCheckResult::default();
+    }
+    result_from_state(&state)
 }
 
 fn parse_rfc3339_utc(value: &str) -> Option<i64> {
@@ -402,7 +411,8 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        days_from_civil, install_attempted_recently, parse_rfc3339_utc, PersistedUpdateState,
+        days_from_civil, install_attempted_recently, parse_rfc3339_utc, state_is_current,
+        PersistedUpdateState,
     };
 
     #[test]
@@ -459,5 +469,19 @@ mod tests {
 
         let empty = PersistedUpdateState::default();
         assert!(!install_attempted_recently(&empty, "3.8.8", 1_000));
+    }
+
+    #[test]
+    fn persisted_state_only_applies_to_the_version_that_wrote_it() {
+        // State written by 3.8.7 saying "3.9.1 is available" must not surface
+        // once 3.9.1 is installed, or the badge sticks for a whole session.
+        let state = PersistedUpdateState {
+            app_version: "3.8.7".into(),
+            version: "3.9.1".into(),
+            ..Default::default()
+        };
+
+        assert!(state_is_current(&state, "3.8.7"));
+        assert!(!state_is_current(&state, "3.9.1"));
     }
 }

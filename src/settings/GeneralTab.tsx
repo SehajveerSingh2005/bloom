@@ -1,4 +1,4 @@
-import { Power, Download, Clock, BatteryWarning, RefreshCw, LogOut } from "lucide-react";
+import { Power, Download, Clock, BatteryWarning, RefreshCw, RotateCcw, LogOut } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 
 interface GeneralTabProps {
@@ -11,6 +11,7 @@ interface GeneralTabProps {
 	lowBatteryThreshold: number;
 	handleThresholdChange: (val: number) => void;
 	restartBloom: () => void;
+	resetToDefaults: () => void;
 	quitBloom: () => void;
 }
 
@@ -24,6 +25,7 @@ export function GeneralTab({
 	lowBatteryThreshold,
 	handleThresholdChange,
 	restartBloom,
+	resetToDefaults,
 	quitBloom
 }: GeneralTabProps) {
 	return (
@@ -75,6 +77,14 @@ export function GeneralTab({
 
 			<div className="setting-group-label">App</div>
 			<div className="setting-group">
+				<SettingRow
+					icon={RotateCcw}
+					label="Reset to Defaults"
+					desc="Restore all settings and restart Bloom"
+					action
+					danger
+					onClick={resetToDefaults}
+				/>
 				<SettingRow
 					icon={RefreshCw}
 					label="Restart Bloom"

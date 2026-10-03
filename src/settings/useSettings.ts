@@ -81,10 +81,16 @@ export function useSettings() {
 		() => localStorage.getItem("bloom-dock-win-number-enabled") !== "false"
 	);
 	const [dockMode, setDockMode] = useState(() => {
+		// "smart" is the fresh-install default — keep in step with App.tsx,
+		// Dock.tsx, and the backend fallback in commands.rs.
 		const raw = localStorage.getItem("bloom-dock-mode") || "smart";
 		return raw === "auto-hide" ? "smart" : raw;
 	});
 	const [notchMode, setNotchMode] = useState("fixed");
+	const [notchEdgeDelay, setNotchEdgeDelay] = useState(() => {
+		const val = localStorage.getItem("bloom-notch-edge-delay");
+		return val !== null ? parseInt(val) : 200;
+	});
 	const [lowBatteryThreshold, setLowBatteryThreshold] = useState(20);
 	const [updateStatus, setUpdateStatus] = useState<
 		"idle" | "checking" | "available" | "uptodate" | "error" | "downloading" | "installing"
@@ -169,6 +175,7 @@ export function useSettings() {
 			apply(getVal("bloom-low-battery-threshold"), setLowBatteryThreshold, parseInt);
 
 			apply(getVal("bloom-notch-mode"), setNotchMode, (v) => (v === "auto-hide" ? "smart" : v));
+			apply(getVal("bloom-notch-edge-delay"), setNotchEdgeDelay, parseInt);
 			apply(getVal("bloom-dock-mode"), setDockMode, (v) => (v === "auto-hide" ? "smart" : v));
 
 			const savedCity = getVal("bloom-weather-city");
@@ -213,6 +220,7 @@ export function useSettings() {
 	useSettingsSync({
 		"bloom-dock-mode": setDockMode,
 		"bloom-notch-mode": setNotchMode,
+		"bloom-notch-edge-delay": setNotchEdgeDelay,
 		"bloom-dock-enabled": setDockEnabled,
 		"bloom-dock-icon-only": setDockIconOnly,
 		"bloom-start-icon": setStartIcon,
@@ -529,6 +537,11 @@ export function useSettings() {
 		saveSetting("bloom-notch-mode", newMode);
 	};
 
+	const handleNotchEdgeDelayChange = (val: number) => {
+		setNotchEdgeDelay(val);
+		saveSetting("bloom-notch-edge-delay", val.toString());
+	};
+
 	const handleThresholdChange = (val: number) => {
 		setLowBatteryThreshold(val);
 		saveSetting("bloom-low-battery-threshold", val.toString());
@@ -631,6 +644,39 @@ export function useSettings() {
 		emit("weather-refresh", true);
 	};
 
+	// ── Reset to defaults ──
+	const resetToDefaults = async () => {
+		try {
+			const { ask } = await import("@tauri-apps/plugin-dialog");
+			const confirmed = await ask(
+				"All settings return to their defaults and Bloom restarts. Pinned apps and custom icons are kept.",
+				{
+					title: "Reset Bloom to Defaults",
+					kind: "warning",
+					okLabel: "Reset and Restart",
+					cancelLabel: "Cancel"
+				}
+			);
+			if (!confirmed) return;
+
+			await invoke("reset_settings");
+
+			// settings.json is cleared, but every window also caches bloom keys
+			// in localStorage; drop them so the restart can't resurrect values.
+			// The first-run/version sentinels are lifecycle markers, not
+			// preferences — keeping them avoids replaying the splash, which
+			// would also re-trigger the first-run autostart enable.
+			const keep = new Set(["bloom-first-run", "bloom-app-version"]);
+			for (const key of Object.keys(localStorage)) {
+				if (key.startsWith("bloom-") && !keep.has(key)) localStorage.removeItem(key);
+			}
+
+			await invoke("restart_bloom").catch(console.error);
+		} catch (e) {
+			console.error("Reset failed:", e);
+		}
+	};
+
 	// ── Export / Import ──
 	const handleExportSettings = async () => {
 		setExportStatus("exporting");
@@ -715,6 +761,8 @@ export function useSettings() {
 		// Notch
 		notchMode,
 		setNotchModeValue,
+		notchEdgeDelay,
+		handleNotchEdgeDelayChange,
 		calendarEnabled,
 		toggleCalendar,
 		infoCentre,
@@ -792,6 +840,7 @@ export function useSettings() {
 
 		// Utilities
 		restartBloom: () => invoke("restart_bloom"),
+		resetToDefaults,
 		quitBloom: () => invoke("quit_bloom")
 	};
 }

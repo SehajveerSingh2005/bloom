@@ -8,7 +8,9 @@ use crate::services::{
     enum_windows_proc, register_dock_appbar, sync_overlays, unregister_appbar_native,
 };
 use crate::state::*;
-use crate::types::{AppInfo, AudioSessionInfo, BrightnessChangeEvent, IntRect, VolumeChangeEvent};
+use crate::types::{
+    AppInfo, AudioSessionInfo, BrightnessChangeEvent, IntRect, VolumeChangeEvent, WifiStatus,
+};
 use crate::utils::*;
 use std::collections::HashMap;
 
@@ -28,6 +30,11 @@ pub async fn set_dock_hovered(hovered: bool) {
 #[tauri::command]
 pub async fn set_notch_hovered(hovered: bool) {
     NOTCH_IS_HOVERED.store(hovered, Ordering::Relaxed);
+}
+
+#[tauri::command]
+pub async fn set_notch_visible(visible: bool) {
+    NOTCH_IS_VISIBLE.store(visible, Ordering::Relaxed);
 }
 
 #[tauri::command]
@@ -177,9 +184,9 @@ pub async fn init_dock(app: AppHandle, mode: String) {
 pub async fn toggle_dock(app: AppHandle, enable: bool) {
     if let Some(dock_win) = app.get_webview_window("dock") {
         if enable {
-            // Load the saved dock mode rather than hardcoding "fixed"
+            // Load the saved dock mode; "smart" is the fresh-install default.
             let saved_mode = crate::utils::get_setting_str(&app, "bloom-dock-mode")
-                .unwrap_or_else(|| "fixed".to_string());
+                .unwrap_or_else(|| "smart".to_string());
             init_dock(app, saved_mode).await;
         } else {
             let _ = dock_win.hide();
@@ -2902,10 +2909,72 @@ pub fn get_brightness() -> u32 {
     crate::state::CURRENT_BRIGHTNESS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+// ── Wi-Fi status — WLAN API for association state ────────────────────────────
+// The radio state only says Wi-Fi is on, not whether it is connected, so the
+// notch quick settings needs a second bit to distinguish "on" from "connected".
+
+fn is_wlan_connected_sync() -> bool {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::NetworkManagement::WiFi::{
+        wlan_intf_opcode_current_connection, WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory,
+        WlanOpenHandle, WlanQueryInterface, WLAN_INTERFACE_INFO_LIST,
+    };
+
+    unsafe {
+        let mut negotiated_version = 0u32;
+        let mut client_handle = HANDLE::default();
+        if WlanOpenHandle(2, None, &mut negotiated_version, &mut client_handle) != 0 {
+            return false;
+        }
+
+        let mut interface_list: *mut WLAN_INTERFACE_INFO_LIST = std::ptr::null_mut();
+        let mut connected = false;
+        if WlanEnumInterfaces(client_handle, None, &mut interface_list) == 0
+            && !interface_list.is_null()
+        {
+            let interfaces = std::slice::from_raw_parts(
+                (*interface_list).InterfaceInfo.as_ptr(),
+                (*interface_list).dwNumberOfItems as usize,
+            );
+            for interface in interfaces {
+                let mut data_size = 0u32;
+                let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
+                // Returns ERROR_INVALID_STATE when the interface is not
+                // associated, so a successful query means an active connection.
+                let result = WlanQueryInterface(
+                    client_handle,
+                    &interface.InterfaceGuid,
+                    wlan_intf_opcode_current_connection,
+                    None,
+                    &mut data_size,
+                    &mut data,
+                    None,
+                );
+                if !data.is_null() {
+                    WlanFreeMemory(data);
+                }
+                if result == 0 {
+                    connected = true;
+                    break;
+                }
+            }
+            WlanFreeMemory(interface_list as *const _);
+        }
+
+        WlanCloseHandle(client_handle, None);
+        connected
+    }
+}
+
+/// Wi-Fi radio and association state, so the notch quick settings tile can show
+/// Off / On / Connected. `connected` is false while the radio is on but no
+/// network is associated.
 #[tauri::command]
-pub async fn get_wifi_state() -> Result<bool, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        get_radio_state_sync(windows::Devices::Radios::RadioKind::WiFi)
+pub async fn get_wifi_status() -> Result<WifiStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| -> Result<WifiStatus, String> {
+        let enabled = get_radio_state_sync(windows::Devices::Radios::RadioKind::WiFi)?;
+        let connected = enabled && is_wlan_connected_sync();
+        Ok(WifiStatus { enabled, connected })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -3391,6 +3460,51 @@ pub fn import_settings(app: AppHandle, settings: String) -> Result<(), String> {
         re_register_appbars(&app, &imported);
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reset_settings(app: AppHandle) -> Result<(), String> {
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("settings.json");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    // Keep non-Bloom keys (the file is user-editable) and the first-run/version
+    // sentinels (lifecycle markers, not preferences — keeping them avoids
+    // replaying the splash after a reset). Everything else falls back to
+    // defaults in both the backend and the frontends.
+    let keep = ["bloom-first-run", "bloom-app-version"];
+    let mut settings: HashMap<String, serde_json::Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default();
+    let removed: Vec<String> = settings
+        .keys()
+        .filter(|key| key.starts_with("bloom-") && !keep.contains(&key.as_str()))
+        .cloned()
+        .collect();
+    for key in &removed {
+        settings.remove(key);
+    }
+
+    let content = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    crate::utils::replace_settings_cache(settings);
+
+    // Mirror the external-edit watcher so every open window drops the removed
+    // keys from localStorage. The caller restarts Bloom right after, but this
+    // keeps the reset correct even if a window lingers.
+    for key in removed {
+        let _ = app.emit(
+            "settings-external-changed",
+            serde_json::json!({ "key": key, "value": null }),
+        );
+    }
     Ok(())
 }
 

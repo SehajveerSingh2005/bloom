@@ -78,7 +78,7 @@ const Dock = memo(function Dock() {
 	const iconsRef = useRef<Record<string, string>>({});
 	const [, setIconsTick] = useState(0);
 	const [dockMode, setDockMode] = useState(() => {
-		const raw = localStorage.getItem("bloom-dock-mode") || "fixed";
+		const raw = localStorage.getItem("bloom-dock-mode") || "smart";
 		if (raw === "auto-hide") return "smart";
 		return raw;
 	});
@@ -278,7 +278,7 @@ const Dock = memo(function Dock() {
 				return fallback;
 			};
 
-			const dMode = getVal("bloom-dock-mode", "fixed");
+			const dMode = getVal("bloom-dock-mode", "smart");
 			if (dMode) {
 				const mapped = dMode === "auto-hide" ? "smart" : dMode;
 				setDockMode(mapped);

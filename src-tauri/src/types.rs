@@ -74,6 +74,12 @@ pub struct VolumeChangeEvent {
 }
 
 #[derive(Clone, Serialize)]
+pub struct WifiStatus {
+    pub enabled: bool,
+    pub connected: bool,
+}
+
+#[derive(Clone, Serialize)]
 pub struct AudioSessionInfo {
     pub pid: u32,
     pub name: String,

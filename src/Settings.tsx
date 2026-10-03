@@ -135,6 +135,7 @@ function SettingsApp() {
 							lowBatteryThreshold={settings.lowBatteryThreshold}
 							handleThresholdChange={settings.handleThresholdChange}
 							restartBloom={settings.restartBloom}
+							resetToDefaults={settings.resetToDefaults}
 							quitBloom={settings.quitBloom}
 						/>
 					)}
@@ -164,6 +165,8 @@ function SettingsApp() {
 							setNotchModeValue={settings.setNotchModeValue}
 							infoCentre={settings.infoCentre}
 							toggleInfoCentre={settings.toggleInfoCentre}
+							notchEdgeDelay={settings.notchEdgeDelay}
+							handleNotchEdgeDelayChange={settings.handleNotchEdgeDelayChange}
 							calendarEnabled={settings.calendarEnabled}
 							toggleCalendar={settings.toggleCalendar}
 							timerSoundEnabled={settings.timerSoundEnabled}

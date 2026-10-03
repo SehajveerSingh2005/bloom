@@ -1926,6 +1926,20 @@ static CAPTURE_NOTCH_BLOCKED: AtomicBool = AtomicBool::new(false);
 static CAPTURE_RECHECK: AtomicBool = AtomicBool::new(true);
 static CAPTURE_LAST_SCAN_MS: AtomicI64 = AtomicI64::new(0);
 
+/// Hover-intent ("pressure") gate for the top edge. Contact with the top band
+/// only starts a dwell clock; the edge is armed — and only then peeks the notch
+/// or claims cursor input — after the cursor has rested in the band for the
+/// configured delay. A pass-through to a maximized window's tab/title-bar
+/// controls never arms it. The delay is user-tunable via
+/// `bloom-notch-edge-delay` (ms); `0` restores the old instant behavior.
+const TOP_EDGE_BAND_PX: f64 = 8.0;
+const TOP_EDGE_DWELL_MS: i64 = 200;
+/// The mouse hook only fires on WM_MOUSEMOVE, so a pending dwell is completed
+/// by a watchdog that re-checks at this cadence.
+const TOP_EDGE_POLL_MS: u64 = 40;
+static MH_TOP_EDGE_ENTER_MS: AtomicI64 = AtomicI64::new(0);
+static MH_TOP_EDGE_ARMED: AtomicBool = AtomicBool::new(false);
+
 /// Physical bounds `(x, y, width, height)` of the expanded per-app volume
 /// mixer (notch + panel), if it is open. The frontend reports the card in
 /// overlay CSS pixels; scale and monitor offset convert it to virtual-desktop
@@ -2129,15 +2143,237 @@ fn apply_capture_ui_state(app: &AppHandle, active: bool, notch_blocked: bool) {
     MH_LAST_MAIN_IGNORE.store(-1, Ordering::Relaxed);
     MH_LAST_DOCK_IGNORE.store(-1, Ordering::Relaxed);
     MH_LAST_OV_IGNORE.store(-1, Ordering::Relaxed);
+    // Cancel any pending top-edge dwell so it cannot arm while Bloom is
+    // click-through for the capture tool.
+    MH_TOP_EDGE_ENTER_MS.store(0, Ordering::Relaxed);
+    MH_TOP_EDGE_ARMED.store(false, Ordering::Relaxed);
 }
 
 pub fn setup_mouse_hook(app_handle: AppHandle) {
     let _ = MOUSE_HOOK_APP_HANDLE.set(app_handle.clone());
-    setup_volume_mixer_watchdog(app_handle);
+    setup_volume_mixer_watchdog(app_handle.clone());
+    setup_top_edge_watchdog(app_handle);
     unsafe {
         SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0)
             .expect("Failed to install mouse hook");
     }
+}
+
+/// Top-edge hover-intent delay in milliseconds. `0` disables the gate so the
+/// notch reveals the moment the band is touched (the pre-fix behavior).
+fn top_edge_dwell_ms(app_handle: &AppHandle) -> i64 {
+    crate::utils::get_setting_str(app_handle, "bloom-notch-edge-delay")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(TOP_EDGE_DWELL_MS)
+        .clamp(0, 2000)
+}
+
+/// True when the cursor sits inside the top-edge hot band on the primary
+/// monitor. Shared by the dwell gate and top-edge hit-testing continuity.
+fn in_top_edge_band(cursor: windows::Win32::Foundation::POINT, scale: f64) -> bool {
+    let (mon_x, mon_y) = MH_CACHED_MON_POS
+        .lock()
+        .ok()
+        .and_then(|g| *g)
+        .unwrap_or((0, 0));
+    let mon_w = MH_CACHED_MON_SIZE
+        .lock()
+        .ok()
+        .and_then(|g| *g)
+        .map(|s| s.0 as i32)
+        .unwrap_or(1920);
+
+    cursor.y <= (mon_y + (TOP_EDGE_BAND_PX * scale) as i32)
+        && cursor.x >= mon_x
+        && cursor.x <= (mon_x + mon_w)
+}
+
+/// True once the cursor has stayed inside the top band long enough to count as
+/// a deliberate reveal. Mere contact does not arm: a pass through the top strip
+/// on the way to a maximized window's tab/title-bar controls must not peek the
+/// notch. Leaving the band disarms and restarts the clock.
+///
+/// The mouse hook only fires on movement, so `setup_top_edge_watchdog` also
+/// calls this while a dwell is pending so it can complete on a stationary
+/// cursor.
+fn top_edge_armed_for(
+    app_handle: &AppHandle,
+    cursor: windows::Win32::Foundation::POINT,
+    now: i64,
+    scale: f64,
+) -> bool {
+    if !in_top_edge_band(cursor, scale) {
+        MH_TOP_EDGE_ENTER_MS.store(0, Ordering::Relaxed);
+        MH_TOP_EDGE_ARMED.store(false, Ordering::Relaxed);
+        return false;
+    }
+    if MH_TOP_EDGE_ARMED.load(Ordering::Relaxed) {
+        return true;
+    }
+    let dwell_ms = top_edge_dwell_ms(app_handle);
+    if dwell_ms <= 0 {
+        MH_TOP_EDGE_ARMED.store(true, Ordering::Relaxed);
+        return true;
+    }
+    let enter = MH_TOP_EDGE_ENTER_MS.load(Ordering::Relaxed);
+    if enter == 0 {
+        MH_TOP_EDGE_ENTER_MS.store(now, Ordering::Relaxed);
+        return false;
+    }
+    if now - enter >= dwell_ms {
+        MH_TOP_EDGE_ARMED.store(true, Ordering::Relaxed);
+        return true;
+    }
+    false
+}
+
+/// Hover + click-through state for the notch window. Shared by the mouse hook
+/// (on movement) and the top-edge watchdog (to finish a stationary dwell).
+fn update_main_interaction(
+    app_handle: &AppHandle,
+    cursor: windows::Win32::Foundation::POINT,
+    now: i64,
+    fg_fs: bool,
+) {
+    if fg_fs {
+        // Fullscreen foreground app or capture overlay: Bloom steps aside and
+        // any pending top-edge dwell is dropped.
+        MH_TOP_EDGE_ENTER_MS.store(0, Ordering::Relaxed);
+        MH_TOP_EDGE_ARMED.store(false, Ordering::Relaxed);
+        if let Some(main_win) = app_handle.get_webview_window("main") {
+            if MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed) != 1 {
+                if let Ok(hwnd) = main_win.hwnd() {
+                    re_assert_topmost(hwnd);
+                }
+                let _ = main_win.set_ignore_cursor_events(true);
+                MH_LAST_MAIN_IGNORE.store(1, Ordering::Relaxed);
+            }
+        }
+        if MH_LAST_TOP_EDGE_HOVER.swap(0, Ordering::Relaxed) != 0 {
+            let _ = app_handle.emit("notch-edge-hover", false);
+        }
+        return;
+    }
+
+    let Some(main_win) = app_handle.get_webview_window("main") else {
+        return;
+    };
+    if !main_win.is_visible().unwrap_or(false) {
+        return;
+    }
+
+    let in_notch_hover = NOTCH_IS_HOVERED.load(Ordering::Relaxed);
+    let scale = main_win.scale_factor().unwrap_or(1.0);
+    // The top-edge reveal exists only to bring a hidden notch on screen: it is
+    // dwell-gated, and fixed mode (always visible) skips it entirely. This is
+    // about showing the notch — the hit-testing continuity below is separate
+    // and must stay immediate.
+    let edge_armed = if notch_mode_reserves_work_area(
+        get_setting_str(app_handle, "bloom-notch-mode").as_deref(),
+    ) {
+        MH_TOP_EDGE_ENTER_MS.store(0, Ordering::Relaxed);
+        MH_TOP_EDGE_ARMED.store(false, Ordering::Relaxed);
+        false
+    } else {
+        top_edge_armed_for(app_handle, cursor, now, scale)
+    };
+
+    let mut is_notch_hovered = false;
+    if edge_armed || in_notch_hover {
+        is_notch_hovered = true;
+        MH_TOPBAR_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
+    }
+
+    let mut is_click_interactive = false;
+    let main_rect_val = MAIN_WINDOW_RECT.lock().ok().and_then(|g| *g);
+
+    if let Some((win_pos, _)) = main_rect_val {
+        if let Ok(region) = NOTCH_RECT.try_lock() {
+            if let Some(r) = *region {
+                let pad_x = (20.0 * scale) as i32;
+                let pad_y_bottom = (5.0 * scale) as i32;
+                // Hysteresis keeps the notch interactive a little past its
+                // bounds once grabbed, so removing the edge-forced
+                // interactivity doesn't reintroduce boundary flicker.
+                let hyst = if MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed) == 0 {
+                    (10.0 * scale) as i32
+                } else {
+                    0
+                };
+                let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x - hyst;
+                let rw = (r.width as f64 * scale) as i32 + (pad_x * 2) + (hyst * 2);
+                let ry_top = win_pos.y;
+                let ry_bottom =
+                    win_pos.y + (r.height as f64 * scale) as i32 + pad_y_bottom + hyst;
+
+                let in_notch_rect = cursor.x >= rx
+                    && cursor.x <= (rx + rw)
+                    && cursor.y >= ry_top
+                    && cursor.y <= ry_bottom;
+
+                // Approaching along the top edge keeps the window interactive
+                // while near the notch's horizontal span. This must stay
+                // immediate (never dwell-gated): NOTCH_RECT lags the expand/
+                // contract animation, and letting click-through flip mid-hover
+                // makes the notch expand/contract repeatedly. It is gated on
+                // the notch being on screen (or a live hover) so a hidden
+                // notch still can't swallow pass-by clicks.
+                let edge_pad = (60.0 * scale) as i32;
+                let in_top_span = in_top_edge_band(cursor, scale)
+                    && cursor.x >= rx - edge_pad
+                    && cursor.x <= rx + rw + edge_pad;
+
+                let notch_visible = NOTCH_IS_VISIBLE.load(Ordering::Relaxed);
+                let hover_active =
+                    is_notch_hovered || now < MH_TOPBAR_EXPIRY_MS.load(Ordering::Relaxed);
+                if (notch_visible || hover_active) && (in_notch_rect || in_top_span) {
+                    is_click_interactive = true;
+                }
+            }
+        }
+    }
+
+    let final_notch_hover = is_notch_hovered || now < MH_TOPBAR_EXPIRY_MS.load(Ordering::Relaxed);
+    let prev = MH_LAST_TOP_EDGE_HOVER.load(Ordering::Relaxed);
+    let new_val = if final_notch_hover { 1 } else { 0 };
+    if prev != new_val {
+        let _ = app_handle.emit("notch-edge-hover", final_notch_hover);
+        MH_LAST_TOP_EDGE_HOVER.store(new_val, Ordering::Relaxed);
+    }
+
+    let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
+    let prev_ignore = MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed);
+    let new_ignore = if final_ignore { 1 } else { 0 };
+    if prev_ignore != new_ignore {
+        if let Ok(hwnd) = main_win.hwnd() {
+            re_assert_topmost(hwnd);
+        }
+        let _ = main_win.set_ignore_cursor_events(final_ignore);
+        MH_LAST_MAIN_IGNORE.store(new_ignore, Ordering::Relaxed);
+    }
+}
+
+/// Completes a pending top-edge dwell while the cursor is stationary. The mouse
+/// hook only fires on movement, so without this an intentional "rest on the top
+/// edge" gesture would never arm.
+fn setup_top_edge_watchdog(app_handle: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(TOP_EDGE_POLL_MS));
+        if CAPTURE_UI_ACTIVE.load(Ordering::Relaxed) {
+            continue;
+        }
+        if MH_TOP_EDGE_ENTER_MS.load(Ordering::Relaxed) == 0
+            || MH_TOP_EDGE_ARMED.load(Ordering::Relaxed)
+        {
+            continue;
+        }
+        let mut pt = windows::Win32::Foundation::POINT::default();
+        if unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt) }.is_err() {
+            continue;
+        }
+        let fg_fs = CURRENT_FOREGROUND_FULLSCREEN.load(Ordering::Relaxed);
+        update_main_interaction(&app_handle, pt, now_ms(), fg_fs);
+    });
 }
 
 unsafe extern "system" fn mouse_hook_proc(
@@ -2347,109 +2583,7 @@ unsafe extern "system" fn mouse_hook_proc(
             }
 
             // --- Main (TopBar) Interaction ---
-            if !fg_fs {
-                if let Some(main_win) = app_handle.get_webview_window("main") {
-                    if main_win.is_visible().unwrap_or(false) {
-                        let in_notch_hover = NOTCH_IS_HOVERED.load(Ordering::Relaxed);
-                        let mut is_notch_hovered = false;
-                        let scale = main_win.scale_factor().unwrap_or(1.0);
-                        let at_top_edge = cursor.y <= (mon_y + (8.0 * scale) as i32)
-                            && cursor.x >= mon_x
-                            && cursor.x <= (mon_x + mon_w);
-
-                        if at_top_edge || in_notch_hover {
-                            is_notch_hovered = true;
-                            MH_TOPBAR_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
-                        }
-
-                        let mut is_click_interactive = false;
-                        let main_rect_val = MAIN_WINDOW_RECT.lock().ok().and_then(|g| *g);
-
-                        if let Some((win_pos, _)) = main_rect_val {
-                            if let Ok(region) = NOTCH_RECT.try_lock() {
-                                if let Some(r) = *region {
-                                    let scale = main_win.scale_factor().unwrap_or(1.0);
-                                    let pad_x = (20.0 * scale) as i32;
-                                    let pad_y_bottom = (5.0 * scale) as i32;
-                                    // Hysteresis keeps the notch interactive a little past
-                                    // its bounds once grabbed, so removing the edge-forced
-                                    // interactivity doesn't reintroduce boundary flicker.
-                                    let hyst = if MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed) == 0 {
-                                        (10.0 * scale) as i32
-                                    } else {
-                                        0
-                                    };
-                                    let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad_x - hyst;
-                                    let rw =
-                                        (r.width as f64 * scale) as i32 + (pad_x * 2) + (hyst * 2);
-                                    let ry_top = win_pos.y;
-                                    let ry_bottom = win_pos.y
-                                        + (r.height as f64 * scale) as i32
-                                        + pad_y_bottom
-                                        + hyst;
-
-                                    if cursor.x >= rx
-                                        && cursor.x <= (rx + rw)
-                                        && cursor.y >= ry_top
-                                        && cursor.y <= ry_bottom
-                                    {
-                                        is_click_interactive = true;
-                                    }
-
-                                    // Approaching along the top edge keeps the window
-                                    // interactive while near the notch's horizontal
-                                    // span, so peek/hover can't flicker at the
-                                    // boundary. The screen corners stay click-through.
-                                    let edge_pad = (60.0 * scale) as i32;
-                                    if at_top_edge
-                                        && cursor.x >= rx - edge_pad
-                                        && cursor.x <= rx + rw + edge_pad
-                                    {
-                                        is_click_interactive = true;
-                                    }
-                                }
-                            }
-                        }
-
-                        let final_notch_hover =
-                            is_notch_hovered || now < MH_TOPBAR_EXPIRY_MS.load(Ordering::Relaxed);
-                        let prev = MH_LAST_TOP_EDGE_HOVER.load(Ordering::Relaxed);
-                        let new_val = if final_notch_hover { 1 } else { 0 };
-                        if prev != new_val {
-                            let _ = app_handle.emit("notch-edge-hover", final_notch_hover);
-                            MH_LAST_TOP_EDGE_HOVER.store(new_val, Ordering::Relaxed);
-                        }
-
-                        let final_ignore =
-                            !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
-                        let prev_ignore = MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed);
-                        let new_ignore = if final_ignore { 1 } else { 0 };
-                        if prev_ignore != new_ignore {
-                            if let Ok(hwnd) = main_win.hwnd() {
-                                re_assert_topmost(hwnd);
-                            }
-                            let _ = main_win.set_ignore_cursor_events(final_ignore);
-                            MH_LAST_MAIN_IGNORE.store(new_ignore, Ordering::Relaxed);
-                        }
-                    }
-                }
-            } else {
-                if let Some(main_win) = app_handle.get_webview_window("main") {
-                    let prev = MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed);
-                    if prev != 1 {
-                        if let Ok(hwnd) = main_win.hwnd() {
-                            re_assert_topmost(hwnd);
-                        }
-                        let _ = main_win.set_ignore_cursor_events(true);
-                        MH_LAST_MAIN_IGNORE.store(1, Ordering::Relaxed);
-                    }
-                }
-                let prev = MH_LAST_TOP_EDGE_HOVER.load(Ordering::Relaxed);
-                if prev != 0 {
-                    let _ = app_handle.emit("notch-edge-hover", false);
-                    MH_LAST_TOP_EDGE_HOVER.store(0, Ordering::Relaxed);
-                }
-            }
+            update_main_interaction(app_handle, cursor, now, fg_fs);
 
             // Expanded per-app volume mixer (if open) — the reported rect covers
             // the notch plus panel, so it keeps the card alive and clickable.

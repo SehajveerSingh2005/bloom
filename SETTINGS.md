@@ -22,7 +22,7 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | Key                             | Type                             | Default   | Description                                                                                                                                                                      |
 | ------------------------------- | -------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bloom-dock-enabled`            | `"true"` / `"false"`             | `"true"`  | Show or hide the Bloom Dock (taskbar replacement).                                                                                                                               |
-| `bloom-dock-mode`               | `"fixed"` / `"smart"` / `"peek"` | `"fixed"` | Dock visibility behavior. **fixed** = always visible as AppBar. **smart** = auto-hide when overlapped by fullscreen apps. **peek** = hidden until cursor approaches bottom edge. |
+| `bloom-dock-mode`               | `"fixed"` / `"smart"` / `"peek"` | `"smart"` | Dock visibility behavior. **fixed** = always visible as AppBar. **smart** = auto-hide when overlapped by fullscreen apps. **peek** = hidden until cursor approaches bottom edge. |
 | `bloom-dock-preview-enabled`    | `"true"` / `"false"`             | `"true"`  | Show window thumbnail previews when hovering dock icons.                                                                                                                         |
 | `bloom-dock-icon-only`          | `"true"` / `"false"`             | `"false"` | Minimal icon-only style (no background/padding around icons).                                                                                                                    |
 | `bloom-start-icon`              | icon key / `custom:<data URI>`   | `"default"` | Start button icon: `default`, `bloom-colorful`, `bloom-golden`, `bloom-biscuit`, `windows`, or `custom:` followed by an uploaded image's data URI.                               |
@@ -31,9 +31,10 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 
 ### Notch
 
-| Key                | Type                             | Default   | Description                                                                                                                  |
-| ------------------ | -------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `bloom-notch-mode` | `"fixed"` / `"smart"` / `"peek"` | `"fixed"` | Notch (top bar) visibility behavior. Same modes as dock. **peek** shows the notch briefly on media events and notifications. |
+| Key                      | Type                             | Default   | Description                                                                                                                  |
+| ------------------------ | -------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `bloom-notch-mode`       | `"fixed"` / `"smart"` / `"peek"` | `"fixed"` | Notch (top bar) visibility behavior. Same modes as dock. **peek** shows the notch briefly on media events and notifications. |
+| `bloom-notch-edge-delay` | milliseconds `"0"`–`"2000"`      | `"200"`   | In smart/peek mode, how long the cursor must rest against the top screen edge before the notch peeks. `"0"` reveals instantly. |
 
 ### Weather
 
@@ -180,4 +181,5 @@ with open(path, 'w') as f: json.dump(settings, f)
 - The `useSettingsSync` hook auto-converts `"true"` / `"false"` strings to booleans.
 - `auto-hide` mode values in `bloom-dock-mode` and `bloom-notch-mode` are legacy aliases for `smart` — they are mapped automatically.
 - Changing `bloom-scale` triggers AppBar re-registration to adjust reserved screen space.
+- Settings → General → Reset to Defaults removes every `bloom-` key from `settings.json` and `localStorage` (except the `bloom-first-run` / `bloom-app-version` lifecycle sentinels), then restarts Bloom. Pinned apps (`pinned_apps.json`) and uploaded icons (`custom_icons/`) are preserved.
 - Theme changes (`bloom-theme-*`) are applied by reading all theme values from `localStorage` and calling `applyTheme()` — the theme system depends on all five theme keys being in sync.

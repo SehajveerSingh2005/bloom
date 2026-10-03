@@ -9,6 +9,7 @@ import {
 	Sparkles,
 	Circle,
 	CloudSun,
+	Timer,
 	X
 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
@@ -20,6 +21,8 @@ interface NotchTabProps {
 	setNotchModeValue: (mode: string) => void;
 	infoCentre: boolean;
 	toggleInfoCentre: () => void;
+	notchEdgeDelay: number;
+	handleNotchEdgeDelayChange: (val: number) => void;
 	calendarEnabled: boolean;
 	toggleCalendar: () => void;
 	timerSoundEnabled: boolean;
@@ -59,6 +62,8 @@ export function NotchTab({
 	setNotchModeValue,
 	infoCentre,
 	toggleInfoCentre,
+	notchEdgeDelay,
+	handleNotchEdgeDelayChange,
 	calendarEnabled,
 	toggleCalendar,
 	timerSoundEnabled,
@@ -113,6 +118,28 @@ export function NotchTab({
 						<option value="peek">Peek</option>
 					</select>
 				</SettingRow>
+
+				{notchMode !== "fixed" && (
+					<SettingRow
+						icon={Timer}
+						label="Peek Delay"
+						desc={
+							notchEdgeDelay === 0
+								? "Reveal instantly on top-edge contact"
+								: `Rest on the top edge for ${notchEdgeDelay}ms to reveal`
+						}
+					>
+						<input
+							type="range"
+							min="0"
+							max="800"
+							step="50"
+							value={notchEdgeDelay}
+							onChange={(e) => handleNotchEdgeDelayChange(parseInt(e.target.value))}
+							className="settings-slider"
+						/>
+					</SettingRow>
+				)}
 
 				<SettingRow icon={Calendar} label="Calendar & Timer" desc="Enable productivity split-view">
 					<label className="toggle-switch">
