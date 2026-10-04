@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Cpu, Keyboard, KeyRound, Mail, Mic, AudioLines, Server, Shield, Sparkles, Trash2 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 import { useSettingsSync } from "../hooks/useSettingsSync";
+import { cleanAiName } from "../ai/aiName";
 import "./AiTab.css";
 
 interface AiStatus {
@@ -121,6 +122,8 @@ function keyName(vk: number): string {
 export function AiTab() {
 	const [status, setStatus] = useState<AiStatus | null>(null);
 	const [enabled, setEnabled] = useAiSetting("bloom-ai-enabled", "false");
+	const [rawName, setName] = useAiSetting("bloom-ai-name", "Janice");
+	const aiName = cleanAiName(rawName);
 	const [baseUrl, setBaseUrl] = useAiSetting("bloom-ai-base-url", "https://api.openai.com/v1");
 	const [model, setModel] = useAiSetting("bloom-ai-model", "");
 	const [sttUrl, setSttUrl] = useAiSetting("bloom-ai-stt-url", "");
@@ -149,6 +152,12 @@ export function AiTab() {
 		// The agent answers with a secret_status event (booleans only).
 		if (enabled === "true") invoke("ai_secret_status").catch(() => {});
 	}, [enabled]);
+
+	// The name decides whether the wake word counts as trained; let the save land first.
+	useEffect(() => {
+		const t = setTimeout(refresh, 300);
+		return () => clearTimeout(t);
+	}, [rawName]);
 
 	useEffect(() => {
 		const off = listen<any>("ai-event", ({ payload }) => {
@@ -277,12 +286,23 @@ export function AiTab() {
 							? `Hold ${keyName(vk)} to talk, or use the dock button to type`
 							: "The AI agent isn't installed (bloom-ai.exe is missing)"
 					}
-					divider={false}
 				>
 					<label className="toggle-switch">
 						<input type="checkbox" checked={on} onChange={() => setEnabled(on ? "false" : "true")} />
 						<span className="slider"></span>
 					</label>
+				</SettingRow>
+				<SettingRow
+					icon={Sparkles}
+					label="Name"
+					desc={
+						status.wake_trained
+							? "What you call the assistant"
+							: `Retrain the wake word: say "Hey ${aiName}"`
+					}
+					divider={false}
+				>
+					<Field value={aiName} onSave={(v) => setName(cleanAiName(v))} placeholder="Janice" />
 				</SettingRow>
 			</div>
 			{message && <p className="ai-warning">{message}</p>}
@@ -315,11 +335,11 @@ export function AiTab() {
 						</SettingRow>
 						<SettingRow
 							icon={AudioLines}
-							label="Teach Janice your voice"
+							label={`Teach ${aiName} your voice`}
 							desc={
 								enrolling || !status.wake_trained
-									? `Say "Hello Janice" after you click. Sample ${Math.min(next, 5)} of 5`
-									: "Janice knows your voice. Retrain if it mishears you."
+									? `Say "Hey ${aiName}" after you click. Sample ${Math.min(next, 5)} of 5`
+									: `${aiName} knows your voice. Retrain if it mishears you.`
 							}
 						>
 							{enrolling || !status.wake_trained ? (
@@ -347,17 +367,17 @@ export function AiTab() {
 						</SettingRow>
 						<SettingRow
 							icon={AudioLines}
-							label="Hello Janice"
+							label={`Hey ${aiName}`}
 							desc={
 								status.wake_trained
-									? 'While on, the microphone listens on this PC. Only what you say after "Hello Janice" is sent.'
-									: "Teach Janice your voice first"
+									? `While on, the microphone listens on this PC. Only what you say after "Hey ${aiName}" is sent.`
+									: `Teach ${aiName} your voice first`
 							}
 						>
 							<label className="toggle-switch">
 								<input
 									type="checkbox"
-									checked={wake === "true"}
+									checked={wake === "true" && status.wake_trained}
 									disabled={!status.wake_trained}
 									onChange={() => setWake(wake === "true" ? "false" : "true")}
 								/>

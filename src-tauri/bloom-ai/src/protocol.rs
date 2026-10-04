@@ -81,7 +81,7 @@ pub enum Out {
         ok: bool,
         message: String,
     },
-    /// "Hello Janice" heard; request `task` is being recorded.
+    /// "Hey <name>" heard; request `task` is being recorded.
     Wake {
         task: u64,
     },

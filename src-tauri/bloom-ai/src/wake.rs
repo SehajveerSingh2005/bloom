@@ -1,6 +1,6 @@
-//! "Hello Janice": an optional wake word trained on the user's own voice.
+//! "Hey <name>": an optional wake word trained on the user's own voice.
 //! The user records a few samples (enroll_sample), Rustpotter turns them into
-//! `wake/hello-janice.rpw` (build), and while the toggle is on a Listener keeps
+//! `wake/wake.rpw` (build, with the trained name in `wake/name.txt` for Bloom to compare), and while the toggle is on a Listener keeps
 //! the microphone open and runs Rustpotter on it, all locally. After a
 //! detection the Listener records the request until the user stops talking.
 
@@ -18,12 +18,13 @@ use tokio::sync::mpsc::UnboundedSender;
 
 /// Task ids for wake requests start here, far above Bloom's own counter.
 pub const FIRST_TASK: u64 = 1_000_000_000;
-const NAME: &str = "hello janice";
+/// Rustpotter's label for the model; the spoken name lives in name.txt.
+const NAME: &str = "wake";
 /// MFCC coefficients per frame, Rustpotter's usual value.
 const MFCC_SIZE: u16 = 16;
 const SAMPLE_MS: usize = 2500;
 const MIN_SAMPLES: usize = 3;
-/// A second detection this soon after one is the same "Hello Janice".
+/// A second detection this soon after one is the same "Hey <name>".
 const COOLDOWN: Duration = Duration::from_secs(2);
 /// Audio kept from before a detection, so words said right after the wake
 /// word (while Rustpotter is still confirming it) are not lost.
@@ -39,7 +40,11 @@ const MAX_REQUEST_MS: usize = 12_000;
 const NO_SPEECH_MS: usize = 4_000;
 
 pub fn model_path(dir: &Path) -> PathBuf {
-    dir.join("wake").join("hello-janice.rpw")
+    dir.join("wake").join("wake.rpw")
+}
+
+fn name_path(dir: &Path) -> PathBuf {
+    dir.join("wake").join("name.txt")
 }
 
 fn sample_path(dir: &Path, index: u32) -> PathBuf {
@@ -61,7 +66,7 @@ fn samples(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Records one "Hello Janice" (blocking, ~2.5 s) and saves it without the
+/// Records one "Hey <name>" (blocking, ~2.5 s) and saves it without the
 /// silence around it. Sample 1 starts a new set, so a retrain never mixes in
 /// samples from an earlier one.
 pub fn enroll_sample(dir: &Path, index: u32) -> Result<PathBuf, String> {
@@ -83,18 +88,19 @@ pub fn enroll_sample(dir: &Path, index: u32) -> Result<PathBuf, String> {
 }
 
 /// Turns the saved samples into the wake word file.
-pub fn build(dir: &Path) -> Result<(), String> {
+pub fn build(dir: &Path, name: &str) -> Result<(), String> {
     let files: Vec<String> = samples(dir)
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
     if files.len() < MIN_SAMPLES {
         return Err(format!(
-            "Record at least {MIN_SAMPLES} samples of \"Hello Janice\" first."
+            "Record at least {MIN_SAMPLES} samples of \"Hey {name}\" first."
         ));
     }
     let wakeword = WakewordRef::new_from_sample_files(NAME.into(), None, None, files, MFCC_SIZE)?;
-    wakeword.save_to_file(&model_path(dir).to_string_lossy())
+    wakeword.save_to_file(&model_path(dir).to_string_lossy())?;
+    std::fs::write(name_path(dir), name).map_err(|e| e.to_string())
 }
 
 /// Counts running or recording requests while alive. The Listener ignores
@@ -116,7 +122,7 @@ impl Drop for Busy {
 
 /// What the Listener tells the message loop.
 pub enum Event {
-    /// "Hello Janice" was heard; the request is being recorded.
+    /// "Hey <name>" was heard; the request is being recorded.
     Wake,
     /// The request ended. `Err` means nobody spoke. `busy` keeps the wake
     /// word paused until the request is done with it.
@@ -457,14 +463,9 @@ mod tests {
     #[test]
     fn sample_paths_and_listing() {
         let dir = temp_dir();
-        assert!(model_path(&dir).ends_with("wake/hello-janice.rpw"));
+        assert!(model_path(&dir).ends_with("wake/wake.rpw"));
         std::fs::create_dir_all(dir.join("wake")).unwrap();
-        for name in [
-            "sample-2.wav",
-            "sample-1.wav",
-            "hello-janice.rpw",
-            "notes.txt",
-        ] {
+        for name in ["sample-2.wav", "sample-1.wav", "wake.rpw", "notes.txt"] {
             std::fs::write(dir.join("wake").join(name), b"").unwrap();
         }
         let names: Vec<String> = samples(&dir)
@@ -494,11 +495,12 @@ mod tests {
         let dir = temp_dir();
         std::fs::create_dir_all(dir.join("wake")).unwrap();
         std::fs::write(sample_path(&dir, 1), voice::wav(&fake_voice(1), RATE)).unwrap();
-        assert!(build(&dir).unwrap_err().contains("at least 3"));
+        assert!(build(&dir, "Mina").unwrap_err().contains("at least 3"));
         for i in 2..=3 {
             std::fs::write(sample_path(&dir, i), voice::wav(&fake_voice(i), RATE)).unwrap();
         }
-        build(&dir).unwrap();
+        build(&dir, "Mina").unwrap();
+        assert_eq!(std::fs::read_to_string(name_path(&dir)).unwrap(), "Mina");
         let model = WakewordRef::load_from_file(&model_path(&dir).to_string_lossy()).unwrap();
         assert_eq!(model.name, NAME);
         assert_eq!(model.samples_features.len(), 3);

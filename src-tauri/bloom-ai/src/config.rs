@@ -16,6 +16,8 @@ pub enum Tier {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
+    /// What the assistant is called (see `clean_name`).
+    pub name: String,
     pub base_url: String,
     pub model: String,
     pub stt_url: String,
@@ -26,6 +28,19 @@ pub struct Config {
     pub smtp_host: String,
     /// 0: use the preset.
     pub smtp_port: u16,
+}
+
+pub const DEFAULT_NAME: &str = "Janice";
+
+/// The assistant's name: trimmed, 1-24 letters, spaces, hyphens or
+/// apostrophes; anything else gives the default.
+pub fn clean_name(raw: &str) -> String {
+    let name = raw.trim();
+    let ok = (1..=24).contains(&name.chars().count())
+        && name
+            .chars()
+            .all(|c| c.is_alphabetic() || matches!(c, ' ' | '-' | '\'' | '’'));
+    if ok { name } else { DEFAULT_NAME }.to_string()
 }
 
 impl Config {
@@ -42,6 +57,11 @@ impl Config {
             .trim_end_matches('/')
             .to_string();
         Config {
+            name: clean_name(
+                map.get("bloom-ai-name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            ),
             stt_url: get("bloom-ai-stt-url", &base_url)
                 .trim_end_matches('/')
                 .to_string(),
@@ -110,6 +130,18 @@ mod tests {
         assert_eq!(tier("competent"), Tier::Competent);
         assert_eq!(tier("carte-blanche"), Tier::CarteBlanche);
         assert_eq!(tier("yolo"), Tier::Conservative);
+    }
+
+    #[test]
+    fn names_are_validated() {
+        assert_eq!(clean_name("  Mina "), "Mina");
+        assert_eq!(clean_name("Anne-Marie O'Neil"), "Anne-Marie O'Neil");
+        for bad in ["", "   ", "R2D2", "a<b", &"x".repeat(25)] {
+            assert_eq!(clean_name(bad), "Janice", "{bad}");
+        }
+        let c = Config::from_map(&map(&[("bloom-ai-name", "Mina")]));
+        assert_eq!(c.name, "Mina");
+        assert_eq!(Config::from_map(&HashMap::new()).name, "Janice");
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { IDLE, reduceAiEvent } from "../src/ai/aiState";
+import { cleanAiName } from "../src/ai/aiName";
 
 test("a voice request: recording, transcribing, working, done", () => {
 	let s = reduceAiEvent(IDLE, { type: "recording", on: true });
@@ -50,4 +51,10 @@ test("an old task's error is ignored after a newer task starts; the current repl
 	expect(reduceAiEvent(s, { type: "reply", task: 1, text: "old" })).toBe(s);
 	s = reduceAiEvent(s, { type: "reply", task: 2, text: "ok" });
 	expect(s).toMatchObject({ phase: "done", reply: "ok" });
+});
+
+test("the assistant's name is validated", () => {
+	expect(cleanAiName("  Mina ")).toBe("Mina");
+	expect(cleanAiName("Anne-Marie O'Neil")).toBe("Anne-Marie O'Neil");
+	for (const bad of ["", "  ", "R2D2", "a<b", "x".repeat(25), null, undefined]) expect(cleanAiName(bad)).toBe("Janice");
 });

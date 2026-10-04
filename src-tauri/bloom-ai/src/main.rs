@@ -169,7 +169,9 @@ async fn serve(shared: Arc<Shared>) {
             },
             In::SecretStatus => {
                 let [llm_key, stt_key, email_password, outlook] =
-                    tokio::task::spawn_blocking(secrets::status).await.unwrap_or([false; 4]);
+                    tokio::task::spawn_blocking(secrets::status)
+                        .await
+                        .unwrap_or([false; 4]);
                 emit(&Out::SecretStatus {
                     llm_key,
                     stt_key,
@@ -224,7 +226,7 @@ async fn serve(shared: Arc<Shared>) {
             }
             In::EnrollSample { index } => {
                 let dir = shared.data_dir.clone();
-                // Saying "Hello Janice" for a sample must not wake her.
+                // Saying the wake phrase for a sample must not wake her.
                 let guard = wake::Busy::new(&busy);
                 tokio::spawn(async move {
                     let saved =
@@ -239,7 +241,10 @@ async fn serve(shared: Arc<Shared>) {
                     }
                 });
             }
-            In::EnrollBuild => match wake::build(&shared.data_dir) {
+            In::EnrollBuild => match wake::build(
+                &shared.data_dir,
+                &config::Config::load(&shared.settings_path).name,
+            ) {
                 Ok(()) => {
                     // A running listener switches to the new voice.
                     if wake.listener.is_some() {
@@ -315,7 +320,7 @@ impl WakeState {
     }
 
     /// Ends a wake request still recording and frees the microphone at once
-    /// by restarting the listener, so "Hello Janice" works again right away.
+    /// by restarting the listener, so the wake phrase works again right away.
     fn abort_request(&mut self, announce: bool) {
         if self.end_request(announce) && self.listener.is_some() {
             self.start();

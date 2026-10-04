@@ -74,7 +74,7 @@ pub async fn run(task: u64, text: String, shared: Arc<Shared>) -> Result<String,
 pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
     let tools = tools::schema();
     let mut messages = vec![
-        json!({ "role": "system", "content": system_prompt() }),
+        json!({ "role": "system", "content": system_prompt(&ctx.cfg.name) }),
         json!({ "role": "user", "content": text }),
     ];
     for _ in 0..MAX_STEPS {
@@ -112,10 +112,10 @@ pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, St
     Err("Stopped after too many steps without finishing.".into())
 }
 
-fn system_prompt() -> String {
+fn system_prompt(name: &str) -> String {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     format!(
-        "You are Janice, the assistant built into Bloom, a Windows desktop shell. You act on the \
+        "You are {name}, the assistant built into Bloom, a Windows desktop shell. You act on the \
          user's PC through tools. The user's profile folder is {home}.\n\
          Use write_file to create files, send_email for email, bloom_control for volume, \
          brightness, media, Wi-Fi and Bluetooth, and open for installed apps, web links, \

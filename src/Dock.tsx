@@ -10,6 +10,7 @@ import { InfoLeft, InfoPanel, InfoProvider, InfoRight, type InfoTab } from "./In
 import { useGlass, useGlassEnabled } from "./hooks/useGlass";
 import { Sparkles } from "lucide-react";
 import { AiPanel } from "./ai/AiPanel";
+import { useAiName } from "./ai/aiName";
 import { useAi } from "./ai/useAi";
 
 interface AppInfo {
@@ -166,6 +167,7 @@ const Dock = memo(function Dock() {
 	// panel's place. In notch mode Bloom sends `ai-open` to the notch instead.
 	const [aiOpen, setAiOpen] = useState(false);
 	const [aiFocus, setAiFocus] = useState(false);
+	const aiName = useAiName();
 	const ai = useAi((recording) => {
 		if (!infoCentre) return;
 		setInfoTab(null);
@@ -1327,7 +1329,7 @@ const Dock = memo(function Dock() {
 								{ai.enabled && (
 									<button
 										className="dock-ai-btn"
-										title="Janice"
+										title={aiName}
 										onClick={(e) => {
 											e.stopPropagation();
 											invoke("ai_open").catch(() => {});

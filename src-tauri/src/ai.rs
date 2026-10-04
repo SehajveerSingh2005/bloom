@@ -34,10 +34,10 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 /// deliver its release before its press.
 static HOTKEY_TX: OnceLock<Sender<bool>> = OnceLock::new();
 static NEXT_TASK: AtomicU64 = AtomicU64::new(0);
-/// "Hello Janice" is on: the agent was told `wake_on`, and is told again
+/// "Hey <name>" is on: the agent was told `wake_on`, and is told again
 /// whenever it is restarted.
 static WAKE: AtomicBool = AtomicBool::new(false);
-/// When the agent died on its own while "Hello Janice" was on (last minute).
+/// When the agent died on its own while "Hey <name>" was on (last minute).
 static CRASHES: Mutex<Vec<Instant>> = Mutex::new(Vec::new());
 
 fn ai_dir(app: &AppHandle) -> Option<PathBuf> {
@@ -48,9 +48,30 @@ fn exe_path(app: &AppHandle) -> Option<PathBuf> {
     ai_dir(app).map(|d| d.join("bloom-ai.exe"))
 }
 
-/// Written by the agent once the user has taught it "Hello Janice".
-fn wake_model(app: &AppHandle) -> Option<PathBuf> {
-    ai_dir(app).map(|d| d.join("wake").join("hello-janice.rpw"))
+/// The assistant's name: trimmed, 1-24 letters, spaces, hyphens or
+/// apostrophes; anything else gives "Janice". Same rule as the agent's.
+fn clean_name(raw: &str) -> String {
+    let name = raw.trim();
+    let ok = (1..=24).contains(&name.chars().count())
+        && name
+            .chars()
+            .all(|c| c.is_alphabetic() || matches!(c, ' ' | '-' | '\'' | '’'));
+    if ok { name } else { "Janice" }.to_string()
+}
+
+/// True when the agent built a wake model (`wake/wake.rpw`) and wrote the name
+/// it was trained on (`wake/name.txt`), and that name is `name` in any case.
+/// An old model without name.txt is untrained.
+fn trained_for(dir: &std::path::Path, name: &str) -> bool {
+    dir.join("wake").join("wake.rpw").exists()
+        && std::fs::read_to_string(dir.join("wake").join("name.txt"))
+            .is_ok_and(|t| t.trim().to_lowercase() == name.trim().to_lowercase())
+}
+
+/// Trained for the name currently in Settings.
+fn wake_trained(app: &AppHandle) -> bool {
+    let name = clean_name(&crate::utils::get_setting_str(app, "bloom-ai-name").unwrap_or_default());
+    ai_dir(app).is_some_and(|d| trained_for(&d, &name))
 }
 
 fn deleted_flag(app: &AppHandle) -> Option<PathBuf> {
@@ -102,11 +123,11 @@ pub fn init(app: &AppHandle) {
         }
     });
     let _ = HOTKEY_TX.set(tx);
-    // Off the setup thread: with "Hello Janice" on this starts the agent.
+    // Off the setup thread: with "Hey <name>" on this starts the agent.
     std::thread::spawn(sync_from_settings);
 }
 
-/// After any settings change: arms or disarms the hotkey, turns "Hello Janice"
+/// After any settings change: arms or disarms the hotkey, turns "Hey <name>"
 /// on or off, and stops the agent when AI is turned off. Must be called
 /// without the settings lock held.
 pub fn sync_from_settings() {
@@ -121,7 +142,10 @@ pub fn sync_from_settings() {
         0
     };
     HOTKEY_VK.store(vk, Ordering::Relaxed);
-    let wake = on && crate::utils::get_setting_str(app, "bloom-ai-wake").as_deref() == Some("true");
+    // A renamed assistant (or an old model) is untrained: the listener stays off.
+    let wake = on
+        && crate::utils::get_setting_str(app, "bloom-ai-wake").as_deref() == Some("true")
+        && wake_trained(app);
     if wake != WAKE.load(Ordering::Relaxed) {
         // Sent before the flag flips, so a fresh agent isn't told twice.
         let _ = if wake {
@@ -190,18 +214,23 @@ fn relay(app: AppHandle, stdout: ChildStdout, pid: u32) {
                 let _ = send_if_running(json!({ "type": "bloom_result", "id": message["id"], "ok": ok, "detail": detail }));
             });
         } else {
-            // "Hello Janice": open the panel the way the hotkey does.
+            // "Hey <name>": open the panel the way the hotkey does.
             if message["type"] == "wake" {
                 let _ = app.emit_to(surface(&app), "ai-open", json!({ "recording": true }));
             }
+            let built = message["type"] == "enroll_done";
             let _ = app.emit("ai-event", message);
+            // A freshly trained model may let a "true" wake setting start listening.
+            if built {
+                std::thread::spawn(sync_from_settings);
+            }
         }
     }
     let _ = app.emit("ai-event", json!({ "type": "exited" }));
     rearm_after_crash(&app, pid);
 }
 
-/// The agent died on its own while "Hello Janice" was on: start it again so
+/// The agent died on its own while "Hey <name>" was on: start it again so
 /// the wake word keeps working, unless it keeps crashing.
 fn rearm_after_crash(app: &AppHandle, pid: u32) {
     // stop() (AI off, Delete AI) or a replacement leaves the slot without this pid.
@@ -216,7 +245,7 @@ fn rearm_after_crash(app: &AppHandle, pid: u32) {
         crashes.len() >= 3
     };
     if gave_up {
-        let message = "Hello Janice stopped: the AI agent keeps crashing.";
+        let message = "The wake word stopped: the AI agent keeps crashing.";
         let _ = app.emit("ai-event", json!({ "type": "error", "task": null, "message": message }));
         return;
     }
@@ -238,7 +267,7 @@ fn send(app: &AppHandle, message: Value) -> Result<(), String> {
     write_line(&mut slot, message)
 }
 
-/// Starts the agent unless it is running, and re-arms "Hello Janice" on a
+/// Starts the agent unless it is running, and re-arms "Hey <name>" on a
 /// fresh one.
 fn ensure_running(app: &AppHandle, slot: &mut Option<Sidecar>) -> Result<(), String> {
     // An agent that exited on its own is replaced.
@@ -399,7 +428,7 @@ pub fn ai_status(app: AppHandle) -> Value {
             .lock()
             .map(|mut slot| slot.as_mut().is_some_and(|s| matches!(s.child.try_wait(), Ok(None))))
             .unwrap_or(false),
-        "wake_trained": wake_model(&app).is_some_and(|p| p.exists()),
+        "wake_trained": wake_trained(&app),
     })
 }
 
@@ -438,7 +467,7 @@ pub fn ai_outlook_login(app: AppHandle) -> Result<(), String> {
     send(&app, json!({ "type": "outlook_login" }))
 }
 
-/// Records "Hello Janice" sample `index` (1 starts over); `enroll_saved` follows.
+/// Records "Hey <name>" sample `index` (1 starts over); `enroll_saved` follows.
 #[tauri::command]
 pub fn ai_enroll_sample(app: AppHandle, index: u32) -> Result<(), String> {
     send(&app, json!({ "type": "enroll_sample", "index": index }))
@@ -509,6 +538,32 @@ mod tests {
             executable: None,
             all_hwnds: None,
         }
+    }
+
+    #[test]
+    fn names_are_validated() {
+        assert_eq!(clean_name(" Mina "), "Mina");
+        assert_eq!(clean_name("R2D2"), "Janice");
+        assert_eq!(clean_name(""), "Janice");
+        assert_eq!(clean_name(&"x".repeat(25)), "Janice");
+    }
+
+    #[test]
+    fn trained_name_must_match() {
+        let dir = std::env::temp_dir().join(format!("bloom-wake-{}", std::process::id()));
+        let wake = dir.join("wake");
+        std::fs::create_dir_all(&wake).unwrap();
+        assert!(!trained_for(&dir, "Janice"));
+        std::fs::write(wake.join("wake.rpw"), b"").unwrap();
+        assert!(!trained_for(&dir, "Janice"), "no name.txt");
+        std::fs::write(wake.join("name.txt"), "Janice").unwrap();
+        assert!(trained_for(&dir, "janice"));
+        assert!(!trained_for(&dir, "Mina"));
+        // The pre-rename model never counts.
+        std::fs::remove_file(wake.join("name.txt")).unwrap();
+        std::fs::write(wake.join("hello-janice.rpw"), b"").unwrap();
+        assert!(!trained_for(&dir, "Janice"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

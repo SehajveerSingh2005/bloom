@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowUp, Square, X } from "lucide-react";
 import type { AiControls } from "./useAi";
+import { useAiName } from "./aiName";
 import "./ai.css";
 
 const STATUS: Record<string, string> = {
-	idle: "Janice",
 	recording: "Listening",
 	transcribing: "Transcribing",
 	working: "Working",
@@ -33,6 +33,7 @@ interface Props {
 
 export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 	const { state, send, stop, answer } = ai;
+	const name = useAiName();
 	const [text, setText] = useState("");
 	const [approveDisabled, setApproveDisabled] = useState(false);
 	const rootRef = useRef<HTMLDivElement>(null);
@@ -100,7 +101,7 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 				<span className="ai-orb-wrap">
 					<span className="ai-orb" />
 				</span>
-				{STATUS[state.phase]}
+				{state.phase === "idle" ? name : STATUS[state.phase]}
 			</div>
 			<div className="ai-body">
 				{state.heard && <p className="ai-heard">{state.heard}</p>}
@@ -127,7 +128,7 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 					value={text}
 					onChange={(e) => setText(e.target.value)}
 					onMouseDown={() => takeKeyboard(inputRef.current)}
-					placeholder="Ask Janice"
+					placeholder={`Ask ${name}`}
 				/>
 				{busy ? (
 					<button type="button" title="Stop" onClick={stop}>
