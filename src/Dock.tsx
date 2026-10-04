@@ -1556,6 +1556,8 @@ function TrayPopup({
 	scale: number;
 }) {
 	const [apps, setApps] = useState<TrayApp[]>([]);
+	const [menuApp, setMenuApp] = useState<TrayApp | null>(null);
+	const [hoveredApp, setHoveredApp] = useState<TrayApp | null>(null);
 	const [loading, setLoading] = useState(true);
 
 	useEffect(() => {
@@ -1600,21 +1602,15 @@ function TrayPopup({
 		};
 	}, [onClose, containerRef, toggleRef]);
 
-	// Apps read from the legacy tray toolbars carry a callback window that can receive
-	// the real click. On Windows 11 the icons are only known by their executable, so
-	// the native tray is revealed and the app's own icon handles the interaction.
-	const activate = (app: TrayApp, right: boolean) => {
+	const openApp = (app: TrayApp) => {
 		onClose();
-		if (app.hwnd === 0) {
-			invoke("open_system_tray").catch(console.error);
-			return;
-		}
-		invoke("click_tray_app", {
-			hwnd: app.hwnd,
-			uid: app.uid,
-			callbackMessage: app.callback_message,
-			right
-		}).catch(console.error);
+		invoke("open_tray_app", { path: app.path }).catch(console.error);
+	};
+
+	const closeApp = (app: TrayApp) => {
+		setMenuApp(null);
+		setApps((prev) => prev.filter((a) => a.id !== app.id));
+		invoke("close_tray_app", { path: app.path }).catch(console.error);
 	};
 
 	return (
@@ -1630,42 +1626,59 @@ function TrayPopup({
 					opacity: { duration: 0.15 },
 					scaleY: { type: "spring", stiffness: 500, damping: 30, mass: 0.8 }
 				}}
-				onClick={(e) => e.stopPropagation()}
+				onClick={(e) => {
+					e.stopPropagation();
+					setMenuApp(null);
+				}}
 			>
-				<div className="popup-header-row">Background Apps</div>
+				<div className="popup-header-row">
+					{(hoveredApp ?? menuApp)?.name || "Background Apps"}
+				</div>
 				<div className="popup-apps-scroll">
 					{loading ? (
 						<div className="popup-loading">
 							<div className="popup-spinner" />
 						</div>
 					) : apps.length > 0 ? (
-						apps.map((app) => (
-							<div
-								key={app.id}
-								className="popup-app-row"
-								title={app.path}
-								onClick={() => activate(app, false)}
-								onContextMenu={(e) => {
-									e.preventDefault();
-									e.stopPropagation();
-									activate(app, true);
-								}}
-							>
-								<div className="popup-app-icon">
+						<div className="tray-grid">
+							{apps.map((app) => (
+								<div
+									key={app.id}
+									className={`tray-icon${menuApp?.id === app.id ? " selected" : ""}`}
+									onMouseEnter={() => setHoveredApp(app)}
+									onMouseLeave={() => setHoveredApp(null)}
+									onClick={(e) => {
+										e.stopPropagation();
+										openApp(app);
+									}}
+									onContextMenu={(e) => {
+										e.preventDefault();
+										e.stopPropagation();
+										setMenuApp(app);
+									}}
+								>
 									{app.icon ? (
-										<img src={app.icon} alt="" draggable={false} />
+										<img src={app.icon} alt={app.name} draggable={false} />
 									) : (
 										<span className="popup-app-initial">{(app.name || "?")[0]}</span>
 									)}
 								</div>
-								<span className="popup-app-name">{app.tooltip || app.name}</span>
-								{app.overflow && <span className="popup-app-pin">hidden</span>}
-							</div>
-						))
+							))}
+						</div>
 					) : (
 						<div className="popup-empty">No background apps</div>
 					)}
 				</div>
+				{menuApp && (
+					<div className="tray-actions" onClick={(e) => e.stopPropagation()}>
+						<div className="menu-item" onClick={() => openApp(menuApp)}>
+							Open
+						</div>
+						<div className="menu-item quit" onClick={() => closeApp(menuApp)}>
+							Quit
+						</div>
+					</div>
+				)}
 			</motion.div>
 		</div>
 	);

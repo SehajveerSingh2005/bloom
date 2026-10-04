@@ -563,7 +563,7 @@ body {
 /* Background apps (tray) popup */
 .add-app-popup.tray-popup {
 	height: auto;
-	min-height: 120px;
+	min-height: 0;
 	max-height: 420px;
 }
 
@@ -636,7 +636,7 @@ body {
 }
 
 .tray-anchor .add-app-popup {
-	width: 300px;
+	width: 252px;
 	border-radius: 18px;
 	border-bottom: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.12));
 	transform-origin: bottom right;
@@ -911,4 +911,48 @@ body {
 	pointer-events: none;
 	white-space: nowrap;
 	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* Compact tray icon grid */
+.tray-grid {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.tray-icon {
+	width: 40px;
+	height: 40px;
+	border-radius: 10px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	overflow: hidden;
+	transition: background 0.15s ease;
+}
+
+.tray-icon:hover,
+.tray-icon.selected {
+	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.08));
+}
+
+.tray-icon img {
+	width: 24px;
+	height: 24px;
+	object-fit: contain;
+	pointer-events: none;
+	user-select: none;
+}
+
+.tray-actions {
+	display: flex;
+	gap: 4px;
+	padding: 6px;
+	border-top: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.08));
+}
+
+.tray-actions .menu-item {
+	flex: 1;
+	text-align: center;
 }
