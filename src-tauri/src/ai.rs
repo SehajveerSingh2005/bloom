@@ -74,6 +74,10 @@ pub fn init(app: &AppHandle) {
     // An install after "Delete AI" may have put the agent back: remove it again.
     if is_deleted(app) {
         if let Some(dir) = ai_dir(app).filter(|d| d.exists()) {
+            // Finish a delete that failed halfway: wipe the keys, then the files.
+            if let Some(exe) = exe_path(app).filter(|p| p.exists()) {
+                let _ = wipe(&exe);
+            }
             let _ = std::fs::remove_dir_all(dir);
         }
     }
@@ -113,6 +117,14 @@ pub fn stop() {
     if let Some(mut sidecar) = taken {
         let _ = sidecar.child.kill();
         let _ = sidecar.child.wait();
+    }
+}
+
+/// The agent removes its own Credential Manager entries.
+fn wipe(exe: &std::path::Path) -> Result<(), String> {
+    match Command::new(exe).arg("--wipe").creation_flags(CREATE_NO_WINDOW).status() {
+        Ok(status) if status.success() => Ok(()),
+        _ => Err("Couldn't remove the AI's saved keys; nothing was deleted. Try again.".into()),
     }
 }
 
@@ -231,11 +243,12 @@ fn number(value: &Value) -> Option<f64> {
     value
         .as_f64()
         .or_else(|| value.as_str()?.trim().trim_end_matches('%').trim().parse().ok())
+        .filter(|v| v.is_finite())
 }
 
 /// true/false or "on"/"off".
 fn flag(value: &Value) -> Option<bool> {
-    value.as_bool().or_else(|| match value.as_str()?.trim() {
+    value.as_bool().or_else(|| match value.as_str()?.trim().to_ascii_lowercase().as_str() {
         "on" | "true" => Some(true),
         "off" | "false" => Some(false),
         _ => None,
@@ -314,7 +327,10 @@ pub fn ai_status(app: AppHandle) -> Value {
         "installed": exe_path(&app).is_some_and(|p| p.exists()),
         "deleted": is_deleted(&app),
         "enabled": enabled(&app),
-        "running": SIDECAR.lock().map(|slot| slot.is_some()).unwrap_or(false),
+        "running": SIDECAR
+            .lock()
+            .map(|mut slot| slot.as_mut().is_some_and(|s| matches!(s.child.try_wait(), Ok(None))))
+            .unwrap_or(false),
     })
 }
 
@@ -354,21 +370,27 @@ pub fn ai_open(app: AppHandle) {
     }
 }
 
-/// "Delete AI altogether".
+/// "Delete AI altogether". Blocking work runs off the main thread.
 #[tauri::command]
-pub fn ai_delete(app: AppHandle) -> Result<(), String> {
+pub async fn ai_delete(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || delete_blocking(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn delete_blocking(app: &AppHandle) -> Result<(), String> {
+    // The marker first: AI now counts as off, so nothing can respawn the agent,
+    // and if removing files fails halfway init() finishes the job on next start.
+    let flag_path = deleted_flag(app).ok_or("Can't find Bloom's settings folder.")?;
+    std::fs::write(&flag_path, "Bloom AI was deleted in Settings. Delete this file to allow installing it again.
+")
+        .map_err(|e| e.to_string())?;
     stop();
     HOTKEY_VK.store(0, Ordering::Relaxed);
-    // The marker first: if removing files fails halfway, AI stays deleted and
-    // init() finishes the job on the next start.
-    let flag_path = deleted_flag(&app).ok_or("Can't find Bloom's settings folder.")?;
-    std::fs::write(&flag_path, "Bloom AI was deleted in Settings. Delete this file to allow installing it again.\n")
-        .map_err(|e| e.to_string())?;
-    if let Some(exe) = exe_path(&app).filter(|p| p.exists()) {
-        // The agent wipes its own Credential Manager entries.
-        let _ = Command::new(&exe).arg("--wipe").creation_flags(CREATE_NO_WINDOW).status();
+    if let Some(exe) = exe_path(app).filter(|p| p.exists()) {
+        wipe(&exe)?;
     }
-    if let Some(dir) = ai_dir(&app).filter(|d| d.exists()) {
+    if let Some(dir) = ai_dir(app).filter(|d| d.exists()) {
         // The exe can stay locked for a moment after its process exits.
         let mut removed = std::fs::remove_dir_all(&dir);
         for _ in 0..5 {
@@ -380,7 +402,7 @@ pub fn ai_delete(app: AppHandle) -> Result<(), String> {
         }
         removed.map_err(|e| format!("Couldn't remove {}: {e}", dir.display()))?;
     }
-    remove_ai_settings(&app)?;
+    remove_ai_settings(app)?;
     let _ = app.emit("ai-event", json!({ "type": "deleted" }));
     Ok(())
 }
@@ -419,6 +441,10 @@ mod tests {
         assert_eq!(flag(&json!(true)), Some(true));
         assert_eq!(flag(&json!("off")), Some(false));
         assert_eq!(flag(&json!("maybe")), None);
+        assert_eq!(number(&json!("NaN")), None);
+        assert_eq!(number(&json!("inf")), None);
+        assert_eq!(flag(&json!("On")), Some(true));
+        assert_eq!(flag(&json!("OFF")), Some(false));
     }
 
     #[test]
