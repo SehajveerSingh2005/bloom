@@ -5,7 +5,7 @@ pub mod files;
 use crate::agent::Ctx;
 use crate::protocol::ConfirmKind;
 use crate::{
-    email, facts, imap_lookup, journal, outlook, policy, powershell, secrets, skills, weather, web,
+    email, facts, imap_lookup, journal, outlook, phones, policy, powershell, secrets, skills, weather, web,
 };
 use serde_json::{json, Value};
 
@@ -73,8 +73,8 @@ pub fn schema() -> Value {
         ),
         tool(
             "find_contact",
-            "Look up a person by name in the user's contacts and return their email address. Call \
-             this whenever a person is mentioned, and before send_email.",
+            "Look up a person by name in the user's contacts and return their email address and phone \
+             number. Call this whenever a person is mentioned, and before send_email.",
             json!({ "name": { "type": "string" } }),
             &["name"],
         ),
@@ -83,6 +83,12 @@ pub fn schema() -> Value {
             "Remember a person's email address the user just gave you.",
             json!({ "name": { "type": "string" }, "email": { "type": "string" } }),
             &["name", "email"],
+        ),
+        tool(
+            "save_phone",
+            "Remember a person's phone number the user just gave you.",
+            json!({ "name": { "type": "string" }, "phone": { "type": "string" } }),
+            &["name", "phone"],
         ),
         tool(
             "send_email",
@@ -161,6 +167,7 @@ pub fn describe(name: &str, args: &Value) -> String {
         "get_weather" => "Checking the weather".into(),
         "find_contact" => format!("Looking up {}", arg("name")),
         "save_contact" => format!("Saving {}", arg("name")),
+        "save_phone" => format!("Saving {}'s number", arg("name")),
         "send_email" => format!("Emailing {}", arg("to")),
         "run_powershell" => "Running a PowerShell script".into(),
         "remember" => "Remembering that".into(),
@@ -213,6 +220,7 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         "get_weather" => weather::get(ctx, args["city"].as_str()).await,
         "find_contact" => find_contact(ctx, str_arg(args, "name")?).await,
         "save_contact" => save_contact(ctx, args).await,
+        "save_phone" => save_phone(ctx, args).await,
         "send_email" => send_email(ctx, args).await,
         "remember" => remember(ctx, str_arg(args, "text")?).await,
         "recall" => {
@@ -416,8 +424,16 @@ fn list(matches: &[(String, String)]) -> String {
 
 async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
     let matches = email::find(&email::load_contacts(&ctx.shared.data_dir), name);
-    if !matches.is_empty() {
-        return Ok(list(&matches));
+    let numbers = phones::find(&ctx.shared.data_dir, name);
+    if !matches.is_empty() || !numbers.is_empty() {
+        let mut out = list(&matches);
+        for (n, p) in &numbers {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&format!("{n} phone: {p}"));
+        }
+        return Ok(out);
     }
     // Not saved yet: look through mail the user sent before. Any failure here
     // (no email set up, offline) just falls through to asking the user.
@@ -472,6 +488,28 @@ async fn save_contact(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
     email::save_contact(&ctx.shared.data_dir, name, address)?;
     ctx.saved_this_task.insert(trimmed_address);
     Ok(format!("Saved {name} <{}>.", address.trim()))
+}
+
+async fn save_phone(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
+    let name = str_arg(args, "name")?;
+    let number = phones::normalize(str_arg(args, "phone")?)?;
+    if let Some(old) = phones::needs_confirm(&ctx.shared.data_dir, name, &number) {
+        if !ctx
+            .shared
+            .bridge
+            .confirm(
+                ctx.task,
+                ConfirmKind::Email,
+                format!("Change {name}'s number to {number}?"),
+                format!("Saved number: {old}\nNew number: {number}"),
+            )
+            .await
+        {
+            return Ok("The user kept the saved number.".into());
+        }
+    }
+    phones::save(&ctx.shared.data_dir, name, &number)?;
+    Ok(format!("Saved {name} {number}."))
 }
 
 /// The password or token SMTP needs for the sender's account.
@@ -936,6 +974,60 @@ mod tests {
             .await
             .unwrap();
         assert!(out.contains("save_contact"));
+    }
+
+    #[tokio::test]
+    async fn find_contact_returns_emails_and_phones() {
+        let mut ctx = ctx();
+        let dir = ctx.shared.data_dir.clone();
+        email::save_contact(&dir, "Neha", "neha@example.com").unwrap();
+        phones::save(&dir, "Neha", "+919876543210").unwrap();
+        phones::save(&dir, "Sam", "+14155550100").unwrap();
+        let out = call(&mut ctx, "find_contact", &json!({ "name": "neha" }))
+            .await
+            .unwrap();
+        assert!(out.contains("neha@example.com") && out.contains("+919876543210"));
+        let out = call(&mut ctx, "find_contact", &json!({ "name": "Sam" }))
+            .await
+            .unwrap();
+        assert!(out.contains("+14155550100"));
+    }
+
+    #[tokio::test]
+    async fn changing_a_saved_number_asks_first() {
+        let mut ctx = ctx();
+        let dir = ctx.shared.data_dir.clone();
+        phones::save(&dir, "Neha", "+919876543210").unwrap();
+        let shared = ctx.shared.clone();
+        let args = json!({ "name": "Neha", "phone": "+49 170 1234567" });
+        let running = tokio::spawn(async move { call(&mut ctx, "save_phone", &args).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(false));
+        assert_eq!(
+            running.await.unwrap(),
+            Ok("The user kept the saved number.".into())
+        );
+        assert_eq!(phones::load(&dir).get("Neha").unwrap(), "+919876543210");
+
+        let mut ctx = crate::testutil::ctx();
+        let dir = ctx.shared.data_dir.clone();
+        phones::save(&dir, "Neha", "+919876543210").unwrap();
+        let shared = ctx.shared.clone();
+        let args = json!({ "name": "Neha", "phone": "+49 170 1234567" });
+        let running = tokio::spawn(async move { call(&mut ctx, "save_phone", &args).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(true));
+        assert!(running.await.unwrap().is_ok());
+        assert_eq!(phones::load(&dir).get("Neha").unwrap(), "+491701234567");
+    }
+
+    #[tokio::test]
+    async fn saving_a_new_number_does_not_ask() {
+        let mut ctx = ctx();
+        let dir = ctx.shared.data_dir.clone();
+        let args = json!({ "name": "Bob", "phone": "+1 (415) 555-0100" });
+        assert!(call(&mut ctx, "save_phone", &args).await.is_ok());
+        assert_eq!(phones::load(&dir).get("Bob").unwrap(), "+14155550100");
     }
 
     #[tokio::test]

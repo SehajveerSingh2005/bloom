@@ -24,6 +24,7 @@ half = ">=2.4.1, <2.5"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
 	"Win32_Foundation",
+	"Win32_Globalization",
 	"Win32_Media_Audio",
 	"Win32_Security",
 	"Win32_Storage_FileSystem",

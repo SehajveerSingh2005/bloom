@@ -14,6 +14,7 @@ mod journal;
 mod llm;
 mod mcp;
 mod outlook;
+mod phones;
 mod policy;
 mod powershell;
 mod protocol;
