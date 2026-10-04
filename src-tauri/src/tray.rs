@@ -428,36 +428,85 @@ unsafe fn list_registry_tray_apps() -> Vec<TrayApp> {
     apps
 }
 
-/// Replays a mouse click on the icon's callback window, the same message pair the
-/// shell sends when the icon is clicked in the real tray.
-pub unsafe fn click_tray_app(hwnd: isize, uid: u32, callback_message: u32, right: bool) {
+unsafe extern "system" fn collect_app_windows(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
     use windows::Win32::UI::WindowsAndMessaging::{
-        AllowSetForegroundWindow, PostMessageW, SetForegroundWindow, WM_LBUTTONDOWN,
-        WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP,
+        GetWindow, GetWindowLongW, GetWindowTextLengthW, IsIconic, IsWindowVisible, GWL_EXSTYLE,
+        GW_OWNER, WS_EX_TOOLWINDOW,
     };
 
-    let owner = HWND(hwnd as *mut _);
-    if callback_message == 0 {
+    let (target, found) = &mut *(lparam.0 as *mut (String, Option<HWND>));
+    let shown = IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool();
+    let top_level = GetWindow(hwnd, GW_OWNER).map(|o| o.0.is_null()).unwrap_or(true);
+    let tool = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0;
+    if shown && top_level && !tool && GetWindowTextLengthW(hwnd) > 0 {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if crate::commands::process_image_path(pid)
+            .map(|p| p.to_lowercase() == *target)
+            .unwrap_or(false)
+        {
+            *found = Some(hwnd);
+            return false.into();
+        }
+    }
+    true.into()
+}
+
+/// Brings the app window to the front. When it has none on screen (it only lives in
+/// the tray) the executable is launched again, which single-instance apps use to
+/// reveal their existing window.
+pub unsafe fn open_tray_app(path: &str) {
+    use windows::core::w;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    };
+
+    let mut state: (String, Option<HWND>) = (path.to_lowercase(), None);
+    let _ = EnumWindows(
+        Some(collect_app_windows),
+        LPARAM(&mut state as *mut _ as isize),
+    );
+
+    if let Some(window) = state.1 {
+        if IsIconic(window).as_bool() {
+            let _ = ShowWindow(window, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(window);
+    } else {
+        let file = wide(path);
+        ShellExecuteW(None, w!("open"), PCWSTR(file.as_ptr()), None, None, SW_SHOW);
+    }
+}
+
+/// Terminates every process running the given executable.
+pub unsafe fn close_tray_app(path: &str) {
+    use windows::Win32::System::ProcessStatus::EnumProcesses;
+    use windows::Win32::System::Threading::{TerminateProcess, PROCESS_TERMINATE};
+
+    let target = path.to_lowercase();
+    let mut pids = vec![0u32; 4096];
+    let mut needed = 0u32;
+    if EnumProcesses(
+        pids.as_mut_ptr(),
+        (pids.len() * std::mem::size_of::<u32>()) as u32,
+        &mut needed,
+    )
+    .is_err()
+    {
         return;
     }
-    let mut pid = 0u32;
-    GetWindowThreadProcessId(owner, Some(&mut pid));
-    if pid != 0 {
-        let _ = AllowSetForegroundWindow(pid);
-    }
-    let _ = SetForegroundWindow(owner);
-
-    let (down, up) = if right {
-        (WM_RBUTTONDOWN, WM_RBUTTONUP)
-    } else {
-        (WM_LBUTTONDOWN, WM_LBUTTONUP)
-    };
-    for msg in [down, up] {
-        let _ = PostMessageW(
-            Some(owner),
-            callback_message,
-            WPARAM(uid as usize),
-            LPARAM(msg as isize),
-        );
+    let count = needed as usize / std::mem::size_of::<u32>();
+    for &pid in pids[..count.min(pids.len())].iter().filter(|&&p| p != 0) {
+        let matches = crate::commands::process_image_path(pid)
+            .map(|p| p.to_lowercase() == target)
+            .unwrap_or(false);
+        if !matches {
+            continue;
+        }
+        if let Ok(process) = OpenProcess(PROCESS_TERMINATE, false, pid) {
+            let _ = TerminateProcess(process, 0);
+            let _ = CloseHandle(process);
+        }
     }
 }
