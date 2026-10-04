@@ -114,7 +114,6 @@ const Dock = memo(function Dock() {
 	const [isOverlapped, setIsOverlapped] = useState(false);
 	const [isVisible, setIsVisible] = useState(true);
 	const [showAddPopup, setShowAddPopup] = useState(false);
-	const [showTrayPopup, setShowTrayPopup] = useState(false);
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
 		y: number;
@@ -149,8 +148,7 @@ const Dock = memo(function Dock() {
 
 	const isCurrentlyHovered = isDockHovered || isEdgeHovered;
 	const [interactionState, setInteractionState] = useState<"active" | "grace" | "none">("none");
-	const isAnyInteraction =
-		isCurrentlyHovered || !!contextMenu || showAddPopup || showTrayPopup;
+	const isAnyInteraction = isCurrentlyHovered || !!contextMenu || showAddPopup;
 
 	const previewTimerRef = useRef<any>(null);
 	const isPreviewHoveredRef = useRef(false);
@@ -524,7 +522,6 @@ const Dock = memo(function Dock() {
 
 	const menuRef = useRef<HTMLDivElement>(null);
 	const popupRef = useRef<HTMLDivElement>(null);
-	const trayButtonRef = useRef<HTMLDivElement>(null);
 
 	const handleContextMenu = (e: React.MouseEvent, app: AppInfo | null) => {
 		e.stopPropagation();
@@ -557,7 +554,6 @@ const Dock = memo(function Dock() {
 
 	const closePopup = () => {
 		setShowAddPopup(false);
-		setShowTrayPopup(false);
 		invoke("set_menu_open", { open: false, rect: null }).catch(() => {});
 	};
 
@@ -574,7 +570,7 @@ const Dock = memo(function Dock() {
 				height: Math.round(r.height)
 			};
 			open = true;
-		} else if ((showAddPopup || showTrayPopup) && popupRef.current) {
+		} else if (showAddPopup && popupRef.current) {
 			const r = popupRef.current.getBoundingClientRect();
 			rect = {
 				x: Math.round(r.x),
@@ -586,36 +582,7 @@ const Dock = memo(function Dock() {
 		}
 
 		invoke("set_menu_open", { open, rect }).catch(() => {});
-	}, [contextMenu, menuPos, showAddPopup, showTrayPopup, pinnedApps, activeApps, activeSubmenu, scale]);
-
-	// The tray button lives in the screen corner, outside the dock's own hit area, so
-	// the backend needs its rect to stop treating it as click-through.
-	useEffect(() => {
-		const visible = isReady && isVisible && !isHidden;
-		const report = () => {
-			const el = trayButtonRef.current;
-			if (!visible || !el) {
-				invoke("update_tray_button_rect", { rect: null }).catch(() => {});
-				return;
-			}
-			const r = el.getBoundingClientRect();
-			invoke("update_tray_button_rect", {
-				rect: {
-					x: Math.round(r.x),
-					y: Math.round(r.y),
-					width: Math.round(r.width),
-					height: Math.round(r.height)
-				}
-			}).catch(() => {});
-		};
-		// Wait for the slide-in spring to settle before measuring.
-		const timer = setTimeout(report, 450);
-		window.addEventListener("resize", report);
-		return () => {
-			clearTimeout(timer);
-			window.removeEventListener("resize", report);
-		};
-	}, [isReady, isVisible, isHidden, scale]);
+	}, [contextMenu, menuPos, showAddPopup, pinnedApps, activeApps, activeSubmenu, scale]);
 
 	const dockItems = useMemo(() => {
 		const runningMap = new Map();
@@ -1261,39 +1228,6 @@ const Dock = memo(function Dock() {
 				</motion.div>
 			</div>
 
-			<motion.div
-				ref={trayButtonRef}
-				className={`dock-tray-corner ${showTrayPopup ? "active" : ""}`}
-				style={{ zoom: scale }}
-				initial={{ y: -800, opacity: 1 }}
-				animate={{
-					y: !isReady ? -800 : isVisible ? (isHidden ? 100 : 0) : 150,
-					opacity: isVisible ? 1 : 0
-				}}
-				transition={{
-					y: { type: "spring", stiffness: 400, damping: 35, mass: 0.8 },
-					opacity: { type: "tween", duration: 0.2 }
-				}}
-				onClick={(e) => {
-					e.stopPropagation();
-					closeMenu();
-					setShowAddPopup(false);
-					setShowTrayPopup((open) => !open);
-				}}
-			>
-				<div className="tooltip">Background Apps</div>
-				<svg
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					strokeWidth="2"
-					strokeLinecap="round"
-					strokeLinejoin="round"
-				>
-					<polyline points="6 15 12 9 18 15" />
-				</svg>
-			</motion.div>
-
 			{contextMenu && (
 				<div
 					ref={menuRef}
@@ -1368,7 +1302,6 @@ const Dock = memo(function Dock() {
 								className="menu-item"
 								onClick={() => {
 									setShowAddPopup(true);
-									setShowTrayPopup(false);
 									closeMenu();
 								}}
 							>
@@ -1435,7 +1368,6 @@ const Dock = memo(function Dock() {
 								className="menu-item"
 								onClick={() => {
 									setShowAddPopup(true);
-									setShowTrayPopup(false);
 									closeMenu();
 								}}
 							>
@@ -1504,17 +1436,6 @@ const Dock = memo(function Dock() {
 			</AnimatePresence>
 
 			<AnimatePresence>
-				{showTrayPopup && (
-					<TrayPopup
-						containerRef={popupRef}
-						toggleRef={trayButtonRef}
-						onClose={closePopup}
-						scale={scale}
-					/>
-				)}
-			</AnimatePresence>
-
-			<AnimatePresence>
 				{toast && (
 					<motion.div
 						className="dock-toast"
@@ -1531,152 +1452,6 @@ const Dock = memo(function Dock() {
 		</div>
 	);
 });
-
-interface TrayApp {
-	id: string;
-	name: string;
-	tooltip: string;
-	path: string;
-	icon: string | null;
-	hwnd: number;
-	uid: number;
-	callback_message: number;
-	overflow: boolean;
-}
-
-function TrayPopup({
-	onClose,
-	containerRef,
-	toggleRef,
-	scale
-}: {
-	onClose: () => void;
-	containerRef: React.RefObject<HTMLDivElement | null>;
-	toggleRef: React.RefObject<HTMLDivElement | null>;
-	scale: number;
-}) {
-	const [apps, setApps] = useState<TrayApp[]>([]);
-	const [menuApp, setMenuApp] = useState<TrayApp | null>(null);
-	const [loading, setLoading] = useState(true);
-
-	useEffect(() => {
-		let active = true;
-		const load = () =>
-			invoke<TrayApp[]>("get_tray_apps")
-				.then((res) => {
-					if (active) setApps(res);
-				})
-				.catch(console.error)
-				.finally(() => {
-					if (active) setLoading(false);
-				});
-		load();
-		const timer = setInterval(load, 3000);
-		return () => {
-			active = false;
-			clearInterval(timer);
-		};
-	}, []);
-
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onClose();
-		};
-		const handleMouseDown = (e: MouseEvent) => {
-			const target = e.target as Node;
-			// The toggle button closes the popup through its own click; closing here
-			// as well would make that click reopen it.
-			if (toggleRef.current?.contains(target)) return;
-			const popup = containerRef.current;
-			if (popup && !popup.contains(target)) onClose();
-		};
-		const handleBlur = () => onClose();
-		window.addEventListener("keydown", handleKeyDown);
-		window.addEventListener("blur", handleBlur);
-		document.addEventListener("mousedown", handleMouseDown, true);
-		return () => {
-			window.removeEventListener("keydown", handleKeyDown);
-			window.removeEventListener("blur", handleBlur);
-			document.removeEventListener("mousedown", handleMouseDown, true);
-		};
-	}, [onClose, containerRef, toggleRef]);
-
-	const openApp = (app: TrayApp) => {
-		onClose();
-		invoke("open_tray_app", { path: app.path }).catch(console.error);
-	};
-
-	const closeApp = (app: TrayApp) => {
-		setMenuApp(null);
-		setApps((prev) => prev.filter((a) => a.id !== app.id));
-		invoke("close_tray_app", { path: app.path }).catch(console.error);
-	};
-
-	return (
-		<div className="add-popup-anchor tray-anchor" style={{ zoom: scale }}>
-			<motion.div
-				ref={containerRef}
-				className="add-app-popup tray-popup"
-				style={{ transformOrigin: "bottom center" }}
-				initial={{ opacity: 0, scaleY: 0 }}
-				animate={{ opacity: 1, scaleY: 1 }}
-				exit={{ opacity: 0, scaleY: 0 }}
-				transition={{
-					opacity: { duration: 0.15 },
-					scaleY: { type: "spring", stiffness: 500, damping: 30, mass: 0.8 }
-				}}
-				onClick={(e) => {
-					e.stopPropagation();
-					setMenuApp(null);
-				}}
-			>
-				<div className="popup-apps-scroll">
-					{loading ? (
-						<div className="popup-loading">
-							<div className="popup-spinner" />
-						</div>
-					) : apps.length > 0 ? (
-						<div className="tray-grid">
-							{apps.map((app) => (
-								<div
-									key={app.id}
-									className={`tray-icon${menuApp?.id === app.id ? " selected" : ""}`}
-									onClick={(e) => {
-										e.stopPropagation();
-										openApp(app);
-									}}
-									onContextMenu={(e) => {
-										e.preventDefault();
-										e.stopPropagation();
-										setMenuApp(app);
-									}}
-								>
-									{app.icon ? (
-										<img src={app.icon} alt={app.name} draggable={false} />
-									) : (
-										<span className="popup-app-initial">{(app.name || "?")[0]}</span>
-									)}
-								</div>
-							))}
-						</div>
-					) : (
-						<div className="popup-empty">No background apps</div>
-					)}
-				</div>
-				{menuApp && (
-					<div className="tray-actions" onClick={(e) => e.stopPropagation()}>
-						<div className="menu-item" onClick={() => openApp(menuApp)}>
-							Open
-						</div>
-						<div className="menu-item quit" onClick={() => closeApp(menuApp)}>
-							Quit
-						</div>
-					</div>
-				)}
-			</motion.div>
-		</div>
-	);
-}
 
 function AddAppPopup({
 	onClose,
