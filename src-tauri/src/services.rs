@@ -1421,10 +1421,17 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                 std::thread::sleep(std::time::Duration::from_millis(150));
                 continue;
             }
-            // Interacting with the background-apps popup can move the foreground
-            // window; keep the current overlap state so the dock does not re-evaluate
-            // (and slide up) underneath it.
-            if TRAY_POPUP_OPEN.load(Ordering::Relaxed) {
+            // Clicking Bloom's own overlay (e.g. the background-apps popup) makes it the
+            // foreground window. The scan below walks the z-order past Bloom windows
+            // with a short cap and can miss the real foreground app, which would report
+            // "no overlap" and slide the dock up. Keep the previous state instead.
+            let overlay_is_foreground = handle_visibility
+                .get_webview_window("overlay")
+                .and_then(|w| w.hwnd().ok())
+                .is_some_and(|overlay| unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() == overlay
+                });
+            if overlay_is_foreground {
                 std::thread::sleep(std::time::Duration::from_millis(150));
                 continue;
             }
