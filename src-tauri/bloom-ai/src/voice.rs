@@ -194,6 +194,43 @@ pub fn wav(samples: &[i16], rate: u32) -> Vec<u8> {
     out
 }
 
+/// A 16-bit PCM or 32-bit float WAV as mono 16-bit samples and their rate.
+pub fn read_wav(bytes: &[u8]) -> Result<(Vec<i16>, u32), String> {
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err("not a WAV file".into());
+    }
+    let (mut channels, mut rate, mut bits, mut pos) = (0usize, 0u32, 0u16, 12);
+    while pos + 8 <= bytes.len() {
+        let len = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
+        let body = &bytes[pos + 8..(pos + 8 + len).min(bytes.len())];
+        match &bytes[pos..pos + 4] {
+            b"fmt " if body.len() >= 16 => {
+                let tag = u16::from_le_bytes([body[0], body[1]]);
+                channels = u16::from_le_bytes([body[2], body[3]]) as usize;
+                rate = u32::from_le_bytes(body[4..8].try_into().unwrap());
+                bits = u16::from_le_bytes([body[14], body[15]]);
+                // PCM, IEEE float or WAVE_FORMAT_EXTENSIBLE.
+                if !matches!((tag, bits), (1 | 0xFFFE, 16) | (3 | 0xFFFE, 32)) {
+                    return Err(format!("unsupported WAV format {tag}/{bits}-bit"));
+                }
+            }
+            // Our own samples: 16-bit mono, taken as is.
+            b"data" if channels == 1 && bits == 16 => {
+                let clip = body
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|b| i16::from_le_bytes(*b));
+                return Ok((clip.collect(), rate));
+            }
+            b"data" if rate > 0 => return Ok((to_mono(body, channels, bits), rate)),
+            _ => {}
+        }
+        pos += 8 + len + (len & 1);
+    }
+    Err("WAV file has no audio".into())
+}
+
 /// OpenAI-compatible `/audio/transcriptions` (OpenAI, Groq, local Whisper servers).
 pub async fn transcribe(
     http: &reqwest::Client,
@@ -273,6 +310,21 @@ mod tests {
         assert_eq!(&file[8..12], b"WAVE");
         assert_eq!(u32::from_le_bytes(file[24..28].try_into().unwrap()), 48000);
         assert_eq!(u32::from_le_bytes(file[40..44].try_into().unwrap()), 6);
+    }
+
+    #[test]
+    fn reads_back_our_own_wav() {
+        let (clip, rate) = read_wav(&wav(&[1, -2, 3], 48_000)).unwrap();
+        assert_eq!((clip, rate), (vec![1, -2, 3], 48_000));
+        assert!(read_wav(b"nope").is_err());
+        // Float stereo, as other tools save it, comes out mono.
+        let mut file = wav(&[], 48_000);
+        file[20..22].copy_from_slice(&3u16.to_le_bytes()); // IEEE float
+        file[22..24].copy_from_slice(&2u16.to_le_bytes()); // stereo
+        file[34..36].copy_from_slice(&32u16.to_le_bytes());
+        file[40..44].copy_from_slice(&16u32.to_le_bytes());
+        file.extend(f32s(&[0.5, -0.5, 1.0, 1.0]));
+        assert_eq!(read_wav(&file).unwrap(), (vec![0, 32767], 48_000));
     }
 
     #[tokio::test]

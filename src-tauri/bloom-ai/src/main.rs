@@ -18,6 +18,7 @@ mod secrets;
 mod tools;
 mod voice;
 mod wake;
+mod wake_score;
 
 #[cfg(test)]
 mod testutil;
@@ -36,6 +37,20 @@ fn main() {
     // removing the folder, so stored keys and passwords go too.
     if args.iter().any(|a| a == "--wipe") {
         secrets::wipe();
+        return;
+    }
+    // Diagnostics: `--wake-score <wake dir> [wav...]` prints how well
+    // recordings match the trained wake word. Reads only.
+    if let Some(i) = args.iter().position(|a| a == "--wake-score") {
+        let dir = PathBuf::from(args.get(i + 1).map_or("", String::as_str));
+        let wavs: Vec<PathBuf> = args.iter().skip(i + 2).map(PathBuf::from).collect();
+        match wake_score::report(&dir, &wavs) {
+            Ok(text) => print!("{text}"),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
     let settings_path = args

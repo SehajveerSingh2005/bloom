@@ -6,10 +6,10 @@
 
 use crate::voice;
 use rustpotter::{
-    Rustpotter, RustpotterConfig, SampleFormat, VADMode, WakewordLoad, WakewordRef,
-    WakewordRefBuildFromFiles, WakewordSave,
+    Rustpotter, RustpotterConfig, RustpotterDetection, SampleFormat, WakewordLoad, WakewordRef,
+    WakewordRefBuildFromBuffers, WakewordSave,
 };
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -19,7 +19,9 @@ use tokio::sync::mpsc::UnboundedSender;
 /// Task ids for wake requests start here, far above Bloom's own counter.
 pub const FIRST_TASK: u64 = 1_000_000_000;
 /// Rustpotter's label for the model; the spoken name lives in name.txt.
-const NAME: &str = "wake";
+const NAME: &str = "wake-2";
+/// The label of models built before `trim` was fixed; `load` rebuilds them.
+const OLD_NAME: &str = "wake";
 /// MFCC coefficients per frame, Rustpotter's usual value.
 const MFCC_SIZE: u16 = 16;
 const SAMPLE_MS: usize = 2500;
@@ -35,6 +37,8 @@ const WINDOW_MS: usize = 30;
 const LEARN_WINDOWS: usize = 10;
 /// Speech is louder than this whatever the floor (about -40 dBFS).
 const MIN_RMS: f32 = 330.0;
+/// A pause this short inside the wake phrase does not split it.
+const GAP_MS: usize = 300;
 const END_SILENCE_MS: usize = 900;
 const MAX_REQUEST_MS: usize = 12_000;
 const NO_SPEECH_MS: usize = 4_000;
@@ -52,7 +56,12 @@ fn sample_path(dir: &Path, index: u32) -> PathBuf {
 }
 
 fn samples(dir: &Path) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = std::fs::read_dir(dir.join("wake"))
+    samples_in(&dir.join("wake"))
+}
+
+/// The `sample-*.wav` files in a wake folder, sorted.
+pub(crate) fn samples_in(wake_dir: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(wake_dir)
         .into_iter()
         .flatten()
         .flatten()
@@ -89,18 +98,51 @@ pub fn enroll_sample(dir: &Path, index: u32) -> Result<PathBuf, String> {
 
 /// Turns the saved samples into the wake word file.
 pub fn build(dir: &Path, name: &str) -> Result<(), String> {
-    let files: Vec<String> = samples(dir)
-        .iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
+    let files = samples(dir);
     if files.len() < MIN_SAMPLES {
         return Err(format!(
             "Record at least {MIN_SAMPLES} samples of \"Hey {name}\" first."
         ));
     }
-    let wakeword = WakewordRef::new_from_sample_files(NAME.into(), None, None, files, MFCC_SIZE)?;
+    let wakeword = train(&files.iter().collect::<Vec<_>>(), false)?;
     wakeword.save_to_file(&model_path(dir).to_string_lossy())?;
     std::fs::write(name_path(dir), name).map_err(|e| e.to_string())
+}
+
+/// A wake word from sample files, each trimmed first if `retrim`.
+pub(crate) fn train(files: &[&PathBuf], retrim: bool) -> Result<WakewordRef, String> {
+    let mut buffers = HashMap::new();
+    for path in files {
+        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let (clip, rate) = voice::read_wav(&bytes)?;
+        let clip = match retrim {
+            true => trim(&clip, rate).unwrap_or(&clip),
+            false => &clip,
+        };
+        let key = path.file_name().unwrap_or_default().to_string_lossy();
+        buffers.insert(key.into_owned(), voice::wav(clip, rate));
+    }
+    WakewordRef::new_from_sample_buffers(NAME.into(), None, None, buffers, MFCC_SIZE)
+}
+
+/// The trained wake word. One built before `trim` was fixed is rebuilt once
+/// from its saved samples, trimmed now: those samples are ~2.2 s with only
+/// ~0.7 s of voice, so the old model scored the user's voice at about the
+/// threshold and quiet room noise above it.
+fn load(dir: &Path, name: &str) -> Result<WakewordRef, String> {
+    let path = model_path(dir).to_string_lossy().into_owned();
+    let untrained = || format!("Teach {name} your voice first in Settings > AI.");
+    let model = WakewordRef::load_from_file(&path).map_err(|_| untrained())?;
+    if model.name != OLD_NAME {
+        return Ok(model);
+    }
+    let files = samples(dir);
+    if files.len() < MIN_SAMPLES {
+        return Err(untrained());
+    }
+    let model = train(&files.iter().collect::<Vec<_>>(), true)?;
+    model.save_to_file(&path)?;
+    Ok(model)
 }
 
 /// Counts running or recording requests while alive. The Listener ignores
@@ -146,8 +188,7 @@ impl Listener {
         busy: Arc<AtomicUsize>,
         events: UnboundedSender<Event>,
     ) -> Result<Listener, String> {
-        let model = WakewordRef::load_from_file(&model_path(dir).to_string_lossy())
-            .map_err(|_| format!("Teach {name} your voice first in Settings > AI."))?;
+        let model = load(dir, name)?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         let thread = std::thread::spawn(move || {
@@ -174,16 +215,47 @@ impl Drop for Listener {
     }
 }
 
-fn detector(model: WakewordRef, rate: u32) -> Result<Rustpotter, String> {
+/// The live detector settings for a microphone at `rate`.
+pub(crate) fn settings(rate: u32) -> RustpotterConfig {
     let mut config = RustpotterConfig::default();
     config.fmt.sample_rate = rate as usize;
     config.fmt.sample_format = SampleFormat::I16;
-    // Scores only while there is sound well above the room's quiet level:
-    // about 1-2% of a core in a noisy room instead of ~3%.
-    config.detector.vad_mode = Some(VADMode::Hard);
-    let mut detector = Rustpotter::new(&config)?;
+    // No VAD: Rustpotter's VAD (a cepstrum level against the last 0.5 s)
+    // took steady background noise and quieter voices for silence and
+    // skipped scoring, so the phrase often went unheard. --wake-score shows it.
+    config.detector.vad_mode = None;
+    config
+}
+
+pub(crate) fn detector_with(
+    model: WakewordRef,
+    config: &RustpotterConfig,
+) -> Result<Rustpotter, String> {
+    let mut detector = Rustpotter::new(config)?;
     detector.add_wakeword_ref(NAME, model)?;
     Ok(detector)
+}
+
+fn detector(model: WakewordRef, rate: u32) -> Result<Rustpotter, String> {
+    detector_with(model, &settings(rate))
+}
+
+/// Hands the detector the microphone's samples in the frame size it wants;
+/// `frame` keeps the leftover between calls. The live listener and
+/// `--wake-score` both feed audio through here.
+pub(crate) fn feed(
+    detector: &mut Rustpotter,
+    frame: &mut Vec<i16>,
+    chunk: &[i16],
+) -> Option<RustpotterDetection> {
+    frame.extend_from_slice(chunk);
+    let size = detector.get_samples_per_frame();
+    let mut heard = None;
+    while frame.len() >= size {
+        let samples: Vec<i16> = frame.drain(..size).collect();
+        heard = detector.process_samples(samples).or(heard);
+    }
+    heard
 }
 
 fn listen(
@@ -243,13 +315,7 @@ fn listen(
         if recent.len() > keep {
             recent.drain(..recent.len() - keep);
         }
-        frame.extend_from_slice(chunk);
-        let size = detector.get_samples_per_frame();
-        let mut heard = false;
-        while frame.len() >= size {
-            let samples: Vec<i16> = frame.drain(..size).collect();
-            heard |= detector.process_samples(samples).is_some();
-        }
+        let heard = feed(detector, &mut frame, chunk).is_some();
         if heard && last_wake.is_none_or(|t| t.elapsed() >= COOLDOWN) {
             last_wake = Some(Instant::now());
             request = Some((
@@ -298,14 +364,36 @@ impl Vad {
     }
 }
 
-/// The part of a clip from its first to its last speech window, with 90 ms
-/// either side. None if nobody spoke.
-fn trim(samples: &[i16], rate: u32) -> Option<&[i16]> {
+/// The loudest stretch of speech in an enrollment clip (pauses up to
+/// GAP_MS bridged), with 90 ms either side. None if nobody spoke.
+///
+/// Speech is judged against the clip's own quiet level (its 20th percentile
+/// window), not the first 300 ms: mics ramp up after opening and rooms get
+/// louder, and with a first-300-ms floor that later noise counted as speech,
+/// so samples kept 1-1.5 s of noise around a 0.7 s phrase. Taking the
+/// loudest stretch also drops a click or a cough away from the phrase.
+pub(crate) fn trim(samples: &[i16], rate: u32) -> Option<&[i16]> {
     let win = window_len(rate);
-    let mut vad = Vad::default();
-    let speech: Vec<bool> = samples.chunks(win).map(|w| vad.is_speech(w)).collect();
-    let first = speech.iter().position(|&s| s)?;
-    let last = speech.iter().rposition(|&s| s)?;
+    let levels: Vec<f32> = samples.chunks(win).map(rms).collect();
+    let mut sorted = levels.clone();
+    sorted.sort_by(f32::total_cmp);
+    let loud = (sorted.get(sorted.len() / 5)? * 3.0).max(MIN_RMS);
+    let gap = GAP_MS / WINDOW_MS;
+    // (first, last, energy) of each stretch.
+    let mut stretches: Vec<(usize, usize, f32)> = Vec::new();
+    for (i, &level) in levels.iter().enumerate() {
+        if level <= loud {
+            continue;
+        }
+        match stretches.last_mut() {
+            Some((_, last, energy)) if i - *last <= gap => {
+                *last = i;
+                *energy += level * level;
+            }
+            _ => stretches.push((i, i, level * level)),
+        }
+    }
+    let (first, last, _) = stretches.into_iter().max_by(|a, b| a.2.total_cmp(&b.2))?;
     let pad = 3;
     Some(&samples[first.saturating_sub(pad) * win..((last + 1 + pad) * win).min(samples.len())])
 }
@@ -370,6 +458,7 @@ impl Endpoint {
 mod tests {
     use super::*;
     use crate::testutil::temp_dir;
+    use rustpotter::VADMode;
 
     const RATE: u32 = 16_000;
 
@@ -451,6 +540,41 @@ mod tests {
         assert!(trim(&quiet(2500), RATE).is_none());
     }
 
+    fn ms_of(clip: &[i16]) -> usize {
+        clip.len() * 1000 / RATE as usize
+    }
+
+    #[test]
+    fn trim_keeps_the_phrase_not_the_room() {
+        // The mic starts near silent, the room is louder once it has warmed
+        // up, and a click follows the phrase: only the phrase is kept. (The
+        // old trim learned the floor from the first 300 ms and kept it all.)
+        let scale = |clip: Vec<i16>, by: i16| -> Vec<i16> { clip.iter().map(|s| s * by).collect() };
+        let ramp: Vec<i16> = quiet(300).iter().map(|s| s / 4).collect();
+        let room = |ms| scale(quiet(ms), 15);
+        let audio = [ramp, room(200), loud(700), room(600), loud(60), room(500)].concat();
+        let phrase = ms_of(trim(&audio, RATE).unwrap());
+        assert!((700..=900).contains(&phrase), "{phrase}");
+    }
+
+    #[test]
+    fn trim_keeps_a_short_pause_inside_the_phrase() {
+        let room = || -> Vec<i16> { quiet(200).iter().map(|s| s * 15).collect() };
+        let audio = [
+            room(),
+            room(),
+            loud(300),
+            room(),
+            loud(300),
+            room(),
+            room(),
+            room(),
+        ]
+        .concat();
+        let phrase = ms_of(trim(&audio, RATE).unwrap());
+        assert!((800..=1000).contains(&phrase), "{phrase}");
+    }
+
     #[test]
     fn busy_counts_live_guards() {
         let count = Arc::new(AtomicUsize::new(0));
@@ -490,6 +614,125 @@ mod tests {
                 (tone * 6000.0 + (noise >> 20) as f32 - 2048.0) as i16
             })
             .collect()
+    }
+
+    /// Steady hiss at about `level` RMS, like a fan or a laptop's mic floor.
+    fn hiss(ms: usize, level: f32, seed: u32) -> Vec<i16> {
+        let mut noise = seed;
+        (0..RATE as usize * ms / 1000)
+            .map(|_| {
+                noise = noise.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                (((noise >> 16) as f32 / 65_535.0 - 0.5) * level * 3.46) as i16
+            })
+            .collect()
+    }
+
+    fn with_hiss(clip: &[i16], level: f32) -> Vec<i16> {
+        let mix = clip
+            .iter()
+            .zip(hiss(clip.len() * 1000 / RATE as usize + 1, level, 9));
+        mix.map(|(s, n)| s.saturating_add(n)).collect()
+    }
+
+    /// A wake word trained (trimmed, like enrollment) on `fake_voice` seeds 1-3.
+    fn fake_model() -> Vec<u8> {
+        let dir = temp_dir();
+        std::fs::create_dir_all(dir.join("wake")).unwrap();
+        let files: Vec<PathBuf> = (1..=3)
+            .map(|i| {
+                let take = [quiet(400), fake_voice(i), quiet(800)].concat();
+                std::fs::write(sample_path(&dir, i), voice::wav(&take, RATE)).unwrap();
+                sample_path(&dir, i)
+            })
+            .collect();
+        crate::wake_score::build(&files.iter().collect::<Vec<_>>(), true).unwrap()
+    }
+
+    #[test]
+    fn live_settings_hear_the_phrase_over_steady_noise() {
+        // Rustpotter's VAD (Hard, and Easy too) judged steady background
+        // noise "no voice" and never scored the phrase; live has it off.
+        let model = fake_model();
+        let room = |ms| hiss(ms, 700.0, 5);
+        let audio = [room(1000), with_hiss(&fake_voice(7), 700.0), room(3000)].concat();
+        let run = |config| crate::wake_score::run(&model, &audio, &config).unwrap();
+        assert!(!run(settings(RATE)).detections.is_empty());
+        let mut hard = settings(RATE);
+        hard.detector.vad_mode = Some(VADMode::Hard);
+        assert!(
+            run(hard).detections.is_empty(),
+            "VAD case no longer reproduces"
+        );
+        // The noise alone never wakes her.
+        let noise = crate::wake_score::run(&model, &room(8000), &settings(RATE)).unwrap();
+        assert!(noise.detections.is_empty());
+    }
+
+    /// The user's own "Hey <name>" recordings, when this PC has them (read
+    /// only): each one, in quiet room noise, wakes a wake word trained on the
+    /// others, with margin over the threshold.
+    #[test]
+    fn own_samples_wake_a_model_trained_on_the_others() {
+        let Some(local) = dirs::data_local_dir() else {
+            return;
+        };
+        let samples = samples_in(&local.join("com.sehaz.bloom").join("ai").join("wake"));
+        if samples.len() <= MIN_SAMPLES {
+            return;
+        }
+        for sample in &samples {
+            let others: Vec<&PathBuf> = samples.iter().filter(|s| *s != sample).collect();
+            let model = crate::wake_score::build(&others, true).unwrap();
+            let bytes = std::fs::read(sample).unwrap();
+            let (clip, rate) = voice::read_wav(&bytes).unwrap();
+            let audio = crate::wake_score::padded(&clip, rate);
+            let run = crate::wake_score::run(&model, &audio, &settings(rate)).unwrap();
+            assert!(
+                !run.detections.is_empty(),
+                "{} did not wake",
+                sample.display()
+            );
+            let best = crate::wake_score::best(&model, &audio, rate).unwrap().best;
+            let threshold = settings(rate).detector.threshold;
+            assert!(best >= threshold + 0.05, "{}: {best}", sample.display());
+        }
+    }
+
+    #[test]
+    fn old_models_are_rebuilt_from_trimmed_samples_once() {
+        use rustpotter::WakewordRefBuildFromFiles;
+        let dir = temp_dir();
+        std::fs::create_dir_all(dir.join("wake")).unwrap();
+        let model_file = model_path(&dir).to_string_lossy().into_owned();
+        // Saved by the old enrollment: the phrase with ~1.3 s of room after it.
+        let room = |ms| -> Vec<i16> { quiet(ms).iter().map(|s| s * 15).collect() };
+        let files: Vec<String> = (1..=3)
+            .map(|i| {
+                let take = [room(150), fake_voice(i), room(1300)].concat();
+                std::fs::write(sample_path(&dir, i), voice::wav(&take, RATE)).unwrap();
+                sample_path(&dir, i).to_string_lossy().into_owned()
+            })
+            .collect();
+        let old = WakewordRef::new_from_sample_files(OLD_NAME.into(), None, None, files, MFCC_SIZE)
+            .unwrap();
+        let old_frames = old.samples_features["sample-1.wav"].len();
+        old.save_to_file(&model_file).unwrap();
+
+        let model = load(&dir, "Mina").unwrap();
+        assert_eq!(model.name, NAME);
+        let frames = model.samples_features["sample-1.wav"].len();
+        assert!(frames * 2 < old_frames, "{frames} vs {old_frames}");
+        // Saved, so the next start loads it as it is.
+        let mut saved = WakewordRef::load_from_file(&model_file).unwrap();
+        assert_eq!(saved.name, NAME);
+
+        // An old model with no samples left to rebuild from: train again.
+        saved.name = OLD_NAME.into();
+        saved.save_to_file(&model_file).unwrap();
+        for i in 1..=3 {
+            std::fs::remove_file(sample_path(&dir, i)).unwrap();
+        }
+        assert!(load(&dir, "Mina").is_err_and(|e| e.contains("Teach Mina")));
     }
 
     #[test]
