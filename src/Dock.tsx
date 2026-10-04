@@ -1327,7 +1327,7 @@ const Dock = memo(function Dock() {
 								{ai.enabled && (
 									<button
 										className="dock-ai-btn"
-										title="Bloom AI"
+										title="Janice"
 										onClick={(e) => {
 											e.stopPropagation();
 											invoke("ai_open").catch(() => {});

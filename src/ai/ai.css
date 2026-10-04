@@ -1,5 +1,6 @@
-/* Bloom AI panel: shared by the notch (App.tsx) and the merged dock (Dock.tsx).
-   Only the recording dot animates, and only while recording. */
+/* Janice panel: shared by the notch (App.tsx) and the merged dock (Dock.tsx).
+   Styled like the control centre pills. The orb animates only while Janice is
+   listening, transcribing, working or asking; transform/opacity only. */
 .ai-panel {
 	display: flex;
 	flex-direction: column;
@@ -14,22 +15,81 @@
 .ai-status {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 8px;
+	flex-shrink: 0;
+	font-size: 12px;
 	font-weight: 600;
+}
+
+.ai-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	flex: 1;
+	min-height: 0;
+	max-height: 220px;
+	overflow-y: auto;
+}
+
+/* Orb: blurred multi-colour conic gradient. */
+.ai-orb {
+	flex-shrink: 0;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: conic-gradient(from 0deg, #ff5fa2, #ffb340, #5ee0a0, #4cc3ff, #8f6bff, #ff5fa2);
+	filter: blur(1.5px) saturate(1.3);
+	opacity: 0.45;
+	will-change: auto;
+}
+
+.ai-panel[data-phase="recording"] .ai-orb,
+.ai-panel[data-phase="transcribing"] .ai-orb,
+.ai-panel[data-phase="working"] .ai-orb {
+	opacity: 0.9;
+	will-change: transform;
+	animation: ai-orb-spin 4s linear infinite;
+}
+
+.ai-panel[data-phase="recording"] .ai-orb {
+	opacity: 1;
+	animation: ai-orb-spin 1.6s linear infinite;
+}
+
+.ai-panel[data-phase="confirm"] .ai-orb {
+	will-change: transform;
+	animation: ai-orb-pulse 1.8s ease-in-out infinite;
+}
+
+.ai-panel[data-phase="error"] .ai-orb {
+	background: conic-gradient(from 0deg, #ff453a, #ff7a66, #c4251c, #ff453a);
 	opacity: 0.85;
 }
 
-.ai-dot {
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: #ff453a;
-	animation: ai-pulse 1s ease-in-out infinite;
+@keyframes ai-orb-spin {
+	0% {
+		transform: rotate(0deg) scale(1);
+	}
+	50% {
+		transform: rotate(180deg) scale(1.18);
+	}
+	100% {
+		transform: rotate(360deg) scale(1);
+	}
 }
 
-@keyframes ai-pulse {
+@keyframes ai-orb-pulse {
 	50% {
-		opacity: 0.3;
+		transform: scale(1.15);
+		opacity: 0.6;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ai-panel .ai-orb {
+		animation: none;
+		will-change: auto;
+		box-shadow: 0 0 8px rgba(143, 107, 255, 0.6);
 	}
 }
 
@@ -40,12 +100,12 @@
 	line-height: 1.4;
 }
 
-.ai-heard {
-	opacity: 0.6;
+.ai-heard,
+.ai-activity {
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.6));
 }
 
 .ai-activity {
-	opacity: 0.75;
 	font-style: italic;
 }
 
@@ -59,7 +119,8 @@
 	gap: 6px;
 	padding: 8px;
 	border-radius: 10px;
-	background: rgba(255, 255, 255, 0.08);
+	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.04));
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.02));
 }
 
 .ai-confirm-title {
@@ -68,11 +129,11 @@
 
 .ai-confirm-body {
 	margin: 0;
-	max-height: 140px;
+	max-height: 70px;
 	overflow: auto;
 	white-space: pre-wrap;
 	font: 11px/1.4 ui-monospace, Consolas, monospace;
-	opacity: 0.85;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.7));
 }
 
 .ai-row {
@@ -83,49 +144,108 @@
 
 .ai-row button,
 .ai-input button {
-	border: none;
-	border-radius: 8px;
-	padding: 4px 10px;
-	background: rgba(255, 255, 255, 0.12);
+	display: grid;
+	place-items: center;
+	height: 34px;
+	box-sizing: border-box;
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.02));
+	border-radius: 10px;
+	padding: 0 12px;
+	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.04));
 	color: inherit;
-	font-size: 12px;
+	font-size: 11px;
+	font-weight: 600;
 	cursor: pointer;
+	transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.ai-row button {
+	height: 28px;
+}
+
+.ai-row button:hover:not(:disabled),
+.ai-input button:hover {
+	background: var(--bloom-border, rgba(255, 255, 255, 0.08));
+	transform: translateY(-0.5px);
+}
+
+.ai-row button:active:not(:disabled),
+.ai-input button:active {
+	transform: scale(0.98);
+}
+
+/* Like an active control-centre pill. */
 .ai-row button.primary {
-	background: var(--bloom-accent, #0a84ff);
+	background: var(--bloom-text, rgba(255, 255, 255, 0.95));
+	border-color: var(--bloom-text, rgba(255, 255, 255, 0.95));
+	color: var(--bloom-bg-expanded, #000);
+}
+
+.ai-row button.primary:hover:not(:disabled) {
+	background: var(--bloom-text, rgba(255, 255, 255, 0.95));
+	opacity: 0.85;
+}
+
+.ai-row button:disabled {
+	opacity: 0.5;
+	cursor: default;
 }
 
 .ai-input {
 	display: flex;
 	align-items: center;
+	flex-shrink: 0;
 	gap: 6px;
 }
 
 .ai-input input {
 	flex: 1;
 	min-width: 0;
-	border: none;
-	border-radius: 8px;
-	padding: 6px 10px;
-	background: rgba(255, 255, 255, 0.08);
+	height: 34px;
+	box-sizing: border-box;
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.02));
+	border-radius: 10px;
+	padding: 5px 10px;
+	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.04));
 	color: inherit;
 	font-size: 12px;
 	outline: none;
 }
 
-.ai-input button {
-	display: grid;
-	place-items: center;
-	padding: 5px;
+.ai-input input::placeholder {
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.4));
 }
 
-/* In the notch: below the 36px status row, like the calendar view. */
+.ai-input input:focus {
+	background: var(--bloom-border, rgba(255, 255, 255, 0.08));
+}
+
+.ai-input button {
+	padding: 0;
+	width: 34px;
+}
+
+/* In the notch: same box as .command-center-content-minimal. The notch picks a
+   stable height per phase; long content scrolls inside .ai-body. */
 .ai-notch-content {
 	position: absolute;
 	top: 36px;
 	left: 0;
 	width: 100%;
+	height: calc(100% - 36px);
 	box-sizing: border-box;
 	z-index: 2;
+	padding: 12px 14px 12px 14px;
+	color: var(--bloom-text, white);
+	border-radius: 0 0 18px 18px;
+	overflow: hidden;
+}
+
+.ai-notch-content .ai-panel {
+	height: 100%;
+	padding: 0;
+}
+
+.ai-notch-content .ai-body {
+	max-height: none;
 }

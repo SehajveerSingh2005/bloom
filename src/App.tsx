@@ -1022,7 +1022,6 @@ function App() {
 	// Bloom AI: Bloom opens the panel here (hotkey or dock button) unless the
 	// notch is merged into the dock, where Dock.tsx shows it instead.
 	const [aiFocus, setAiFocus] = useState(false);
-	const [aiHeight, setAiHeight] = useState(96);
 	const ai = useAi((recording) => {
 		if (infoCentreRef.current) return;
 		setAiFocus(!recording);
@@ -1881,7 +1880,14 @@ function App() {
 			return isImpacted ? 28.9 : 44.2;
 		}
 		// The 36px status row plus the panel, which reports its own height.
-		if (bloomMode === "ai") return 36 + aiHeight;
+		if (bloomMode === "ai") {
+			// Stable height per phase: the notch spring animates between them.
+			const { phase, confirm, heard } = ai.state;
+			if (confirm) return 240;
+			if (phase === "done" || phase === "error") return 180;
+			if (phase === "working" || heard) return 156;
+			return 132;
+		}
 		// Announcement card: body is line-clamped, so a fixed size fits both cases.
 		if (bloomMode === "announcement" && announcement && !announcementDismissed) {
 			return announcement.url ? 168 : 148;
@@ -2856,10 +2862,10 @@ function App() {
 											onClick={(e) => e.stopPropagation()}
 											initial={{ opacity: 0 }}
 											animate={{ opacity: 1 }}
-											exit={{ opacity: 0, transition: { duration: 0.1 } }}
-											transition={{ duration: 0.15 }}
+											exit={{ opacity: 0, filter: "blur(4px)", transition: { duration: 0.1 } }}
+											transition={{ type: "spring", stiffness: 400, damping: 30 }}
 										>
-											<AiPanel ai={ai} onClose={closeAi} focusOnOpen={aiFocus} onHeight={setAiHeight} />
+											<AiPanel ai={ai} onClose={closeAi} focusOnOpen={aiFocus} />
 										</motion.div>
 									)}
 								</AnimatePresence>

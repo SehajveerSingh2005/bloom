@@ -5,7 +5,7 @@ import type { AiControls } from "./useAi";
 import "./ai.css";
 
 const STATUS: Record<string, string> = {
-	idle: "Bloom AI",
+	idle: "Janice",
 	recording: "Listening",
 	transcribing: "Transcribing",
 	working: "Working",
@@ -88,6 +88,7 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 		<div
 			ref={rootRef}
 			className="ai-panel"
+			data-phase={state.phase}
 			onClick={(e) => e.stopPropagation()}
 			onKeyDown={(e) => {
 				if (e.key !== "Escape") return;
@@ -96,33 +97,35 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 			}}
 		>
 			<div className="ai-status">
-				{state.phase === "recording" && <span className="ai-dot" />}
+				<span className="ai-orb" />
 				{STATUS[state.phase]}
 			</div>
-			{state.heard && <p className="ai-heard">{state.heard}</p>}
-			{state.phase === "working" && state.activity && <p className="ai-activity">{state.activity}</p>}
-			{state.confirm && (
-				<div className="ai-confirm">
-					<div className="ai-confirm-title">{state.confirm.title}</div>
-					<pre className="ai-confirm-body">{state.confirm.body}</pre>
-					<div className="ai-row">
-						<button onClick={() => answer(false)}>Cancel</button>
-						<button ref={approveRef} className="primary" disabled={approveDisabled} onClick={() => answer(true)}>
-							{state.confirm.kind === "email" ? "Send" : "Run"}
-						</button>
+			<div className="ai-body">
+				{state.heard && <p className="ai-heard">{state.heard}</p>}
+				{state.phase === "working" && state.activity && <p className="ai-activity">{state.activity}</p>}
+				{state.confirm && (
+					<div className="ai-confirm">
+						<div className="ai-confirm-title">{state.confirm.title}</div>
+						<pre className="ai-confirm-body">{state.confirm.body}</pre>
+						<div className="ai-row">
+							<button onClick={() => answer(false)}>Cancel</button>
+							<button ref={approveRef} className="primary" disabled={approveDisabled} onClick={() => answer(true)}>
+								{state.confirm.kind === "email" ? "Send" : "Run"}
+							</button>
+						</div>
 					</div>
-				</div>
-			)}
-			{(state.phase === "done" || state.phase === "error") && (
-				<p className={`ai-reply ${state.phase}`}>{state.reply}</p>
-			)}
+				)}
+				{(state.phase === "done" || state.phase === "error") && (
+					<p className={`ai-reply ${state.phase}`}>{state.reply}</p>
+				)}
+			</div>
 			<form className="ai-input" onSubmit={submit}>
 				<input
 					ref={inputRef}
 					value={text}
 					onChange={(e) => setText(e.target.value)}
 					onMouseDown={() => takeKeyboard(inputRef.current)}
-					placeholder="Ask Bloom to do something"
+					placeholder="Ask Janice"
 				/>
 				{busy ? (
 					<button type="button" title="Stop" onClick={stop}>
