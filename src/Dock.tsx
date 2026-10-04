@@ -114,6 +114,7 @@ const Dock = memo(function Dock() {
 	const [isOverlapped, setIsOverlapped] = useState(false);
 	const [isVisible, setIsVisible] = useState(true);
 	const [showAddPopup, setShowAddPopup] = useState(false);
+	const [showTrayPopup, setShowTrayPopup] = useState(false);
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
 		y: number;
@@ -148,7 +149,8 @@ const Dock = memo(function Dock() {
 
 	const isCurrentlyHovered = isDockHovered || isEdgeHovered;
 	const [interactionState, setInteractionState] = useState<"active" | "grace" | "none">("none");
-	const isAnyInteraction = isCurrentlyHovered || !!contextMenu || showAddPopup;
+	const isAnyInteraction =
+		isCurrentlyHovered || !!contextMenu || showAddPopup || showTrayPopup;
 
 	const previewTimerRef = useRef<any>(null);
 	const isPreviewHoveredRef = useRef(false);
@@ -554,6 +556,7 @@ const Dock = memo(function Dock() {
 
 	const closePopup = () => {
 		setShowAddPopup(false);
+		setShowTrayPopup(false);
 		invoke("set_menu_open", { open: false, rect: null }).catch(() => {});
 	};
 
@@ -570,7 +573,7 @@ const Dock = memo(function Dock() {
 				height: Math.round(r.height)
 			};
 			open = true;
-		} else if (showAddPopup && popupRef.current) {
+		} else if ((showAddPopup || showTrayPopup) && popupRef.current) {
 			const r = popupRef.current.getBoundingClientRect();
 			rect = {
 				x: Math.round(r.x),
@@ -582,7 +585,7 @@ const Dock = memo(function Dock() {
 		}
 
 		invoke("set_menu_open", { open, rect }).catch(() => {});
-	}, [contextMenu, menuPos, showAddPopup, pinnedApps, activeApps, activeSubmenu, scale]);
+	}, [contextMenu, menuPos, showAddPopup, showTrayPopup, pinnedApps, activeApps, activeSubmenu, scale]);
 
 	const dockItems = useMemo(() => {
 		const runningMap = new Map();
@@ -1222,6 +1225,45 @@ const Dock = memo(function Dock() {
 										{app.is_running && <WindowDots count={app.all_hwnds?.length ?? 1} />}
 									</motion.div>
 								))}
+
+								<motion.div
+									key="dock-tray-button"
+									layout
+									initial={ITEM_INITIAL}
+									animate={ITEM_ANIMATE}
+									exit={ITEM_EXIT}
+									className="dock-icon-wrapper"
+									onMouseEnter={() => setHoveredApp("tray")}
+									onMouseLeave={() => {
+										setHoveredApp(null);
+										setPressedApp(null);
+									}}
+									onClick={(e) => {
+										e.stopPropagation();
+										closeMenu();
+										setShowAddPopup(false);
+										setShowTrayPopup((open) => !open);
+									}}
+								>
+									<div className="tooltip">Background Apps</div>
+									<motion.div
+										className="dock-icon"
+										animate={{ scale: pressedApp === "tray" ? 0.9 : 1 }}
+										onPointerDown={() => setPressedApp("tray")}
+										onPointerUp={() => setPressedApp(null)}
+										onPointerCancel={() => setPressedApp(null)}
+									>
+										<svg
+											viewBox="0 0 24 24"
+											fill="none"
+											strokeWidth="2"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+										>
+											<polyline points="6 15 12 9 18 15" />
+										</svg>
+									</motion.div>
+								</motion.div>
 							</motion.div>
 						)}
 					</AnimatePresence>
@@ -1302,6 +1344,7 @@ const Dock = memo(function Dock() {
 								className="menu-item"
 								onClick={() => {
 									setShowAddPopup(true);
+									setShowTrayPopup(false);
 									closeMenu();
 								}}
 							>
@@ -1368,6 +1411,7 @@ const Dock = memo(function Dock() {
 								className="menu-item"
 								onClick={() => {
 									setShowAddPopup(true);
+									setShowTrayPopup(false);
 									closeMenu();
 								}}
 							>
@@ -1436,6 +1480,12 @@ const Dock = memo(function Dock() {
 			</AnimatePresence>
 
 			<AnimatePresence>
+				{showTrayPopup && (
+					<TrayPopup containerRef={popupRef} onClose={closePopup} scale={scale} />
+				)}
+			</AnimatePresence>
+
+			<AnimatePresence>
 				{toast && (
 					<motion.div
 						className="dock-toast"
@@ -1452,6 +1502,132 @@ const Dock = memo(function Dock() {
 		</div>
 	);
 });
+
+interface TrayApp {
+	id: string;
+	name: string;
+	tooltip: string;
+	path: string;
+	icon: string | null;
+	hwnd: number;
+	uid: number;
+	callback_message: number;
+	overflow: boolean;
+}
+
+function TrayPopup({
+	onClose,
+	containerRef,
+	scale
+}: {
+	onClose: () => void;
+	containerRef: React.RefObject<HTMLDivElement | null>;
+	scale: number;
+}) {
+	const [apps, setApps] = useState<TrayApp[]>([]);
+	const [loading, setLoading] = useState(true);
+
+	useEffect(() => {
+		let active = true;
+		const load = () =>
+			invoke<TrayApp[]>("get_tray_apps")
+				.then((res) => {
+					if (active) setApps(res);
+				})
+				.catch(console.error)
+				.finally(() => {
+					if (active) setLoading(false);
+				});
+		load();
+		const timer = setInterval(load, 3000);
+		return () => {
+			active = false;
+			clearInterval(timer);
+		};
+	}, []);
+
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") onClose();
+		};
+		const handleMouseDown = (e: MouseEvent) => {
+			const popup = containerRef.current;
+			if (popup && !popup.contains(e.target as Node)) onClose();
+		};
+		const handleBlur = () => onClose();
+		window.addEventListener("keydown", handleKeyDown);
+		window.addEventListener("blur", handleBlur);
+		document.addEventListener("mousedown", handleMouseDown, true);
+		return () => {
+			window.removeEventListener("keydown", handleKeyDown);
+			window.removeEventListener("blur", handleBlur);
+			document.removeEventListener("mousedown", handleMouseDown, true);
+		};
+	}, [onClose, containerRef]);
+
+	const activate = (app: TrayApp, right: boolean) => {
+		onClose();
+		invoke("click_tray_app", {
+			hwnd: app.hwnd,
+			uid: app.uid,
+			callbackMessage: app.callback_message,
+			right
+		}).catch(console.error);
+	};
+
+	return (
+		<div className="add-popup-anchor" style={{ zoom: scale }}>
+			<motion.div
+				ref={containerRef}
+				className="add-app-popup tray-popup"
+				style={{ transformOrigin: "bottom center" }}
+				initial={{ opacity: 0, scaleY: 0 }}
+				animate={{ opacity: 1, scaleY: 1 }}
+				exit={{ opacity: 0, scaleY: 0 }}
+				transition={{
+					opacity: { duration: 0.15 },
+					scaleY: { type: "spring", stiffness: 500, damping: 30, mass: 0.8 }
+				}}
+				onClick={(e) => e.stopPropagation()}
+			>
+				<div className="popup-header-row">Background Apps</div>
+				<div className="popup-apps-scroll">
+					{loading ? (
+						<div className="popup-loading">
+							<div className="popup-spinner" />
+						</div>
+					) : apps.length > 0 ? (
+						apps.map((app) => (
+							<div
+								key={app.id}
+								className="popup-app-row"
+								title="Left click to open, right click for its menu"
+								onClick={() => activate(app, false)}
+								onContextMenu={(e) => {
+									e.preventDefault();
+									e.stopPropagation();
+									activate(app, true);
+								}}
+							>
+								<div className="popup-app-icon">
+									{app.icon ? (
+										<img src={app.icon} alt="" draggable={false} />
+									) : (
+										<span className="popup-app-initial">{(app.name || "?")[0]}</span>
+									)}
+								</div>
+								<span className="popup-app-name">{app.tooltip || app.name}</span>
+								{app.overflow && <span className="popup-app-pin">hidden</span>}
+							</div>
+						))
+					) : (
+						<div className="popup-empty">No background apps</div>
+					)}
+				</div>
+			</motion.div>
+		</div>
+	);
+}
 
 function AddAppPopup({
 	onClose,

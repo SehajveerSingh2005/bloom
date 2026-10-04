@@ -560,6 +560,26 @@ body {
 		var(--bloom-bg-expanded, rgba(30, 30, 30, 0.95));
 }
 
+/* Background apps (tray) popup */
+.add-app-popup.tray-popup {
+	height: auto;
+	min-height: 120px;
+	max-height: 420px;
+}
+
+.popup-header-row {
+	padding: 14px 16px;
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	color: var(--bloom-text, white);
+	border-bottom: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.08));
+}
+
+.light-mode .popup-header-row {
+	color: var(--bloom-text);
+}
+
 .popup-search-row {
 	display: flex;
 	align-items: center;
