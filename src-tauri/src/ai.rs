@@ -545,6 +545,9 @@ pub fn ai_whatsapp_status(app: AppHandle) -> Result<(), String> {
 /// "Show a new QR" / "Try again": reconnects from scratch.
 #[tauri::command]
 pub fn ai_whatsapp_restart(app: AppHandle) -> Result<(), String> {
+    if !WHATSAPP.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     send(&app, json!({ "type": "whatsapp_off" }))?;
     send(&app, json!({ "type": "whatsapp_on" }))
 }

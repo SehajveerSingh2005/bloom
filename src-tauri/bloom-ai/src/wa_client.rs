@@ -375,6 +375,8 @@ async fn supervise(
     let mut wait = None;
     let mut idle = logged_out;
     let mut paired = false;
+    // "+<number>" while a linked session exists: Settings offers Unlink.
+    let mut number: Option<String>;
     if logged_out {
         let _ = events.send(Event::Status(Status {
             state: "not_linked",
@@ -405,6 +407,8 @@ async fn supervise(
         };
         let client = bot.client();
         paired = client.pn().is_some();
+        number = client.pn().map(|j| format!("+{}", j.user_base()));
+        conn.status(|s| s.number = number.clone());
         // Reconnects follow our own backoff below.
         client
             .enable_auto_reconnect
@@ -485,14 +489,20 @@ async fn supervise(
             continue;
         }
         if seen.stopped {
-            conn.status(|s| s.state = "not_linked");
+            conn.status(|s| {
+                s.state = "not_linked";
+                s.number = number.clone();
+            });
             idle = true;
             continue;
         }
         if seen.connected {
             attempt = 0;
         }
-        conn.status(|s| s.state = "connecting");
+        conn.status(|s| {
+            s.state = "connecting";
+            s.number = number.clone();
+        });
         wait = Some(backoff(attempt));
         attempt += 1;
     }
@@ -516,6 +526,13 @@ async fn build(dir: &Path, conn: &Arc<Conn>, pair: Option<String>) -> Result<Bot
         .with_backend(store)
         // Old chats stay on the phone: only new messages are kept, in RAM.
         .skip_history_sync()
+        // Sent messages are kept in session.db only for retry receipts, which
+        // come within seconds; 120 s (swept every few minutes) instead of the
+        // default 2 h keeps message text off the disk as far as possible.
+        .with_cache_config(whatsapp_rust::CacheConfig {
+            sent_message_ttl_secs: 120,
+            ..Default::default()
+        })
         .with_device_props(DevicePropsOverride::new().with_os("Bloom"))
         .on_event(move |event, client| {
             let c = c.clone();

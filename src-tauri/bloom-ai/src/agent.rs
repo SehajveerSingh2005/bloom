@@ -185,11 +185,8 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
         }
         let whatsapp = ctx.cfg.whatsapp;
         list.retain(|t| {
-            whatsapp
-                || !t["function"]["name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .contains("whatsapp")
+            let name = t["function"]["name"].as_str().unwrap_or_default();
+            whatsapp || !crate::whatsapp::TOOLS.contains(&name)
         });
     }
     let prompt = system_prompt(&ctx.cfg.name, &ctx.shared.data_dir, ctx.cfg.whatsapp);
@@ -233,7 +230,7 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
             if ctx.cfg.debug {
                 let dir = &ctx.shared.data_dir;
                 let mut line = debug::call(name, &args);
-                if name.contains("whatsapp") {
+                if crate::whatsapp::TOOLS.contains(&name) {
                     // Message text is logged short.
                     line = debug::cut(&line, debug::RESULT_CHARS);
                 }

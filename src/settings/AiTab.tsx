@@ -360,11 +360,12 @@ export function AiTab() {
 	const on = enabled === "true";
 	const waOn = whatsapp === "true";
 	const waLabel =
-		wa?.state === "linked"
+		wa?.error ??
+		(wa?.state === "linked"
 			? `Linked as ${wa.number ?? "your number"}`
 			: wa?.state === "not_linked"
 				? "Not linked"
-				: "Connecting";
+				: "Connecting");
 	const waPairing = wa?.state === "not_linked" && (!!wa.qr || !!wa.code || useCode);
 	const waRun = (command: string, args?: Record<string, unknown>) =>
 		invoke(command, args).catch((e) => setMessage(String(e)));
@@ -598,16 +599,20 @@ export function AiTab() {
 							</label>
 						</SettingRow>
 						{waOn && (
-							<SettingRow icon={MessageCircle} label={waLabel} desc={wa?.error ?? undefined} divider={waPairing}>
-								{wa?.state === "linked" ? (
-									<button className="ai-btn" onClick={() => waRun("ai_whatsapp_unlink")}>
-										Unlink
-									</button>
-								) : wa?.state === "not_linked" && !wa.qr && !wa.code ? (
-									<button className="ai-btn" onClick={() => waRun("ai_whatsapp_restart")}>
-										{wa.error ? "Try again" : "Show QR"}
-									</button>
-								) : null}
+							<SettingRow icon={MessageCircle} label={waLabel} divider={waPairing}>
+								<div className="ai-secret">
+									{wa?.state === "not_linked" && !wa.qr && !wa.code && (
+										<button className="ai-btn" onClick={() => waRun("ai_whatsapp_restart")}>
+											{wa.error || wa.number ? "Try again" : "Show QR"}
+										</button>
+									)}
+									{/* A linked session exists (even offline or stopped): it can be removed. */}
+									{wa?.number && (
+										<button className="ai-btn" onClick={() => waRun("ai_whatsapp_unlink")}>
+											Unlink
+										</button>
+									)}
+								</div>
 							</SettingRow>
 						)}
 						{waOn && waPairing && wa && (

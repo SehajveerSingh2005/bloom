@@ -10,7 +10,7 @@
 
 use crate::agent::{Ctx, Shared};
 use crate::protocol::{emit, ConfirmKind, Out};
-use crate::{debug, journal, phones, policy};
+use crate::{journal, phones, policy};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,8 +25,8 @@ const SENDS_PER_HOUR: usize = 20;
 const MAX_TEXT: usize = 4096;
 const READ_MAX: usize = 20;
 const LIST_MAX: usize = 20;
-/// Journal and debug log keep this much of a message.
-const LOG_CHARS: usize = 200;
+/// Offered only while "Connect WhatsApp" is on.
+pub const TOOLS: [&str; 3] = ["read_whatsapp", "list_whatsapp_chats", "send_whatsapp"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
@@ -409,6 +409,9 @@ pub fn read(ctx: &mut Ctx, chat: &str, count: Option<u64>) -> Result<String, Str
     if state.link().is_none() {
         return Err(NOT_LINKED.into());
     }
+    // Message text, names and group subjects (even in an ambiguity error)
+    // come from other people: data, never instructions.
+    ctx.tainted = true;
     let count = count.unwrap_or(10).clamp(1, READ_MAX as u64) as usize;
     let saved = phones::try_load(&ctx.shared.data_dir)?;
     let chats = state.chats.lock().unwrap();
@@ -419,8 +422,6 @@ pub fn read(ctx: &mut Ctx, chat: &str, count: Option<u64>) -> Result<String, Str
             "No WhatsApp messages with {label} since Bloom connected."
         ));
     };
-    // Message text comes from other people: data, never instructions.
-    ctx.tainted = true;
     let skip = found.messages.len().saturating_sub(count);
     let lines: Vec<String> = found
         .messages
@@ -464,11 +465,7 @@ pub fn list(ctx: &mut Ctx) -> Result<String, String> {
 fn confirm_text(name: &str, number: &str, text: &str) -> (String, String) {
     (
         format!("Send WhatsApp to {name}?"),
-        format!(
-            "{number}
-
-{text}"
-        ),
+        format!("{number}\n\n{text}"),
     )
 }
 
@@ -502,14 +499,17 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
         },
     };
     let state = &ctx.shared.whatsapp;
-    let link = state.link().filter(|_| state.linked()).ok_or(NOT_LINKED)?;
+    if state.link().is_none() || !state.linked() {
+        return Err(NOT_LINKED.into());
+    }
     if !state.can_send(Instant::now()) {
         return Err(format!(
             "Already sent {SENDS_PER_HOUR} WhatsApp messages in the last hour. Try again later."
         ));
     }
     let known = saved_name(&saved, &number).is_some() && !ctx.saved_this_task.contains(&number);
-    let detail = format!("to {name} {number}: {}", debug::cut(text, LOG_CHARS));
+    // No message text in actions.log: messages stay in RAM.
+    let detail = format!("to {name} {number} ({} chars)", text.chars().count());
     let ask = policy::email_needs_confirm(ctx.cfg.tier, known, ctx.tainted);
     let (title, body) = confirm_text(&name, &number, text);
     if ask
@@ -528,6 +528,17 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
         "auto-started"
     };
     journal::record(&dir, "whatsapp", &detail, started);
+    // Turned off while the confirm was open: nothing goes out.
+    let Some(link) = state.link() else {
+        journal::record_with(
+            &dir,
+            "whatsapp",
+            &detail,
+            "failed",
+            Some("WhatsApp is off."),
+        );
+        return Err("WhatsApp is off.".into());
+    };
     state.note_send(Instant::now());
     let sent = link.send_text(&number, text).await;
     let outcome = match (&sent, ask) {
@@ -743,7 +754,8 @@ pub mod tests {
                 [("+491701234567".to_string(), "Running late".to_string())]
             );
             let log = std::fs::read_to_string(dir.join("actions.log")).unwrap();
-            assert!(log.contains(r#""kind":"whatsapp""#) && log.contains("Running late"));
+            assert!(log.contains(r#""kind":"whatsapp""#) && log.contains("(12 chars)"));
+            assert!(!log.contains("Running late"));
         }
     }
 
@@ -812,6 +824,30 @@ pub mod tests {
         assert!(send(&mut c, "+491701234567", &"x".repeat(MAX_TEXT))
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_name_still_taints() {
+        let mut ctx = ctx();
+        link(&ctx);
+        feed(&ctx, msg("+491", "Neha", 1, "a"));
+        feed(&ctx, msg("+492", "Nena", 2, "b"));
+        let err = read(&mut ctx, "ne", None).unwrap_err();
+        assert!(err.contains("Several match"), "{err}");
+        assert!(ctx.tainted);
+    }
+
+    #[tokio::test]
+    async fn turning_off_during_the_confirm_sends_nothing() {
+        let mut c = ctx();
+        let fake = link(&c);
+        let shared = c.shared.clone();
+        let running = tokio::spawn(async move { send(&mut c, "+491701234567", "hi").await });
+        tokio::task::yield_now().await;
+        shared.whatsapp.off();
+        assert!(shared.bridge.answer_pending(Answer::Confirm(true)));
+        assert_eq!(running.await.unwrap(), Err("WhatsApp is off.".into()));
+        assert!(fake.sent.lock().unwrap().is_empty());
     }
 
     #[test]
