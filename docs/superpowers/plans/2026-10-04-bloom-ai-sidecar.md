@@ -98,6 +98,10 @@ Bloom to sidecar (stdin):
 | `bloom_result` | `id: u64`, `ok: bool`, `detail` | Answer to a `bloom` request |
 | `set_secret` | `name`, `value` | Save (or with `""` delete) a credential |
 | `outlook_login` | | Start Microsoft device-code sign-in |
+| `wake_on` | | Start listening for "Hello Janice" (round 2; restarts the listener if already on) |
+| `wake_off` | | Stop listening; the microphone closes |
+| `enroll_sample` | `index: u32` | Record wake word sample `index` (~2.5 s); index 1 discards older samples |
+| `enroll_build` | | Build `wake/hello-janice.rpw` from 3 or more samples |
 
 Sidecar to Bloom (stdout):
 
@@ -114,8 +118,11 @@ Sidecar to Bloom (stdout):
 | `secret_saved` | `name` | Credential stored |
 | `login_code` | `url`, `code` | Show this to the user for Outlook sign-in |
 | `login_done` | `ok`, `message` | Outlook sign-in finished |
+| `wake` | `task` | "Hello Janice" heard (round 2). `task` comes from the sidecar's own range (1000000001 and up). Then `recording{on:true}`, `recording{on:false}` when the user stops talking, `transcript`, `reply` as for push-to-talk, or `error{task, "Didn't catch that."}` if nothing was said |
+| `enroll_saved` | `index` | Sample saved |
+| `enroll_done` | | Wake word built |
 
-Bloom adds two events of its own to `ai-event`: `{"type":"exited"}` when the sidecar process ends and `{"type":"deleted"}` after Delete AI. It also emits `ai-open` (`{ recording: bool }`) to the window that should show the panel.
+Bloom adds two events of its own to `ai-event`: `{"type":"exited"}` when the sidecar process ends and `{"type":"deleted"}` after Delete AI. It also emits `ai-open` (`{ recording: bool }`) to the window that should show the panel, for the hotkey and for every `wake`.
 
 ## File Structure
 
@@ -140,6 +147,7 @@ New sidecar crate `bloom/src-tauri/bloom-ai/`:
 | `src/outlook.rs` | Microsoft device-code sign-in and token refresh |
 | `src/imap_lookup.rs` | Sent-folder address lookup |
 | `src/voice.rs` | Mic capture (WASAPI), WAV, transcription |
+| `src/wake.rs` | "Hello Janice": enrollment, Rustpotter listener, energy VAD (round 2) |
 | `src/testutil.rs` | Test-only mock HTTP server and temp dirs |
 | `tests/stdio.rs` | End-to-end test over real stdin/stdout |
 
