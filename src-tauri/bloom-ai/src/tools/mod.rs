@@ -428,8 +428,7 @@ async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
     let numbers = phones::find(&ctx.shared.data_dir, name)?;
     let phone_lines: String = numbers
         .iter()
-        .map(|(n, p)| format!("
-{n} phone: {p}"))
+        .map(|(n, p)| format!("\n{n} phone: {p}"))
         .collect();
     if !matches.is_empty() {
         return Ok(format!("{}{phone_lines}", list(&matches)));
