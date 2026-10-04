@@ -1505,7 +1505,12 @@ const Dock = memo(function Dock() {
 
 			<AnimatePresence>
 				{showTrayPopup && (
-					<TrayPopup containerRef={popupRef} onClose={closePopup} scale={scale} />
+					<TrayPopup
+						containerRef={popupRef}
+						toggleRef={trayButtonRef}
+						onClose={closePopup}
+						scale={scale}
+					/>
 				)}
 			</AnimatePresence>
 
@@ -1542,10 +1547,12 @@ interface TrayApp {
 function TrayPopup({
 	onClose,
 	containerRef,
+	toggleRef,
 	scale
 }: {
 	onClose: () => void;
 	containerRef: React.RefObject<HTMLDivElement | null>;
+	toggleRef: React.RefObject<HTMLDivElement | null>;
 	scale: number;
 }) {
 	const [apps, setApps] = useState<TrayApp[]>([]);
@@ -1575,8 +1582,12 @@ function TrayPopup({
 			if (e.key === "Escape") onClose();
 		};
 		const handleMouseDown = (e: MouseEvent) => {
+			const target = e.target as Node;
+			// The toggle button closes the popup through its own click; closing here
+			// as well would make that click reopen it.
+			if (toggleRef.current?.contains(target)) return;
 			const popup = containerRef.current;
-			if (popup && !popup.contains(e.target as Node)) onClose();
+			if (popup && !popup.contains(target)) onClose();
 		};
 		const handleBlur = () => onClose();
 		window.addEventListener("keydown", handleKeyDown);
@@ -1587,14 +1598,15 @@ function TrayPopup({
 			window.removeEventListener("blur", handleBlur);
 			document.removeEventListener("mousedown", handleMouseDown, true);
 		};
-	}, [onClose, containerRef]);
+	}, [onClose, containerRef, toggleRef]);
 
 	// Apps read from the legacy tray toolbars carry a callback window that can receive
-	// the click; the ones found through the registry (Windows 11) are opened instead.
+	// the real click. On Windows 11 the icons are only known by their executable, so
+	// the native tray is revealed and the app's own icon handles the interaction.
 	const activate = (app: TrayApp, right: boolean) => {
 		onClose();
 		if (app.hwnd === 0) {
-			invoke("open_tray_app", { path: app.path }).catch(console.error);
+			invoke("open_system_tray").catch(console.error);
 			return;
 		}
 		invoke("click_tray_app", {
@@ -1636,7 +1648,7 @@ function TrayPopup({
 								onContextMenu={(e) => {
 									e.preventDefault();
 									e.stopPropagation();
-									if (app.hwnd !== 0) activate(app, true);
+									activate(app, true);
 								}}
 							>
 								<div className="popup-app-icon">
