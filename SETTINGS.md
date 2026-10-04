@@ -91,8 +91,8 @@ Bloom AI is optional and off by default. Its agent (`bloom-ai.exe`) lives in `%L
 | `bloom-ai-hotkey`    | virtual-key code                                     | `"165"` (Right Alt)         | Hold to record, release to send. The key no longer reaches apps while AI is on. |
 | `bloom-ai-security`  | `"conservative"` / `"competent"` / `"carte-blanche"` | `"conservative"`            | When the agent asks before sending email or running PowerShell.            |
 | `bloom-ai-email`     | address                                              | `""`                        | Account the agent sends email from.                                         |
-| `bloom-ai-smtp-host` | host                                                 | `""`                        | Mail server for providers Bloom has no preset for.                          |
-| `bloom-ai-smtp-port` | number                                               | `""`                        | Port for `bloom-ai-smtp-host` (465 TLS, or 587 STARTTLS).                   |
+| `bloom-ai-smtp-host` | host                                                 | `""`                        | Mail server for providers Bloom has no preset for. Empty uses the preset for your address. |
+| `bloom-ai-smtp-port` | number                                               | `""`                        | Port for `bloom-ai-smtp-host` (465 TLS, or 587 STARTTLS). Empty uses the preset port. |
 
 ### Appearance
 
