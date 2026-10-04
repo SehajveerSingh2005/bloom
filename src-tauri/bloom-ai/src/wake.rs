@@ -139,13 +139,15 @@ pub struct Listener {
 }
 
 impl Listener {
+    /// `name` is the assistant's configured name, for the error message.
     pub fn start(
         dir: &Path,
+        name: &str,
         busy: Arc<AtomicUsize>,
         events: UnboundedSender<Event>,
     ) -> Result<Listener, String> {
         let model = WakewordRef::load_from_file(&model_path(dir).to_string_lossy())
-            .map_err(|_| "Teach Janice your voice first in Settings > AI.".to_string())?;
+            .map_err(|_| format!("Teach {name} your voice first in Settings > AI."))?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         let thread = std::thread::spawn(move || {

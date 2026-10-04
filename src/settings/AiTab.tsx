@@ -5,7 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Cpu, Keyboard, KeyRound, Mail, Mic, AudioLines, Server, Shield, Sparkles, Trash2 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 import { useSettingsSync } from "../hooks/useSettingsSync";
-import { cleanAiName } from "../ai/aiName";
+import { cleanAiName, isValidAiName } from "../ai/aiName";
 import "./AiTab.css";
 
 interface AiStatus {
@@ -36,8 +36,9 @@ function useAiSetting(key: string, fallback: string): [string, (value: string) =
 	return [value, save];
 }
 
-/** Saves on blur or Enter, not on every keystroke. */
-function Field(props: { value: string; onSave: (v: string) => void; placeholder: string }) {
+/** Saves on blur or Enter, not on every keystroke. `onSave` returning false
+ *  rejects the value and puts the saved one back. */
+function Field(props: { value: string; onSave: (v: string) => boolean | void; placeholder: string }) {
 	const [draft, setDraft] = useState(props.value);
 	useEffect(() => setDraft(props.value), [props.value]);
 	return (
@@ -46,7 +47,9 @@ function Field(props: { value: string; onSave: (v: string) => void; placeholder:
 			value={draft}
 			placeholder={props.placeholder}
 			onChange={(e) => setDraft(e.target.value)}
-			onBlur={() => draft.trim() !== props.value && props.onSave(draft.trim())}
+			onBlur={() => {
+				if (draft.trim() !== props.value && props.onSave(draft.trim()) === false) setDraft(props.value);
+			}}
 			onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
 		/>
 	);
@@ -188,6 +191,8 @@ export function AiTab() {
 				setMessage(payload.message);
 				setBusy("");
 			}
+			// The agent stopped mid-sample or mid-build: nothing more will come.
+			if (payload.type === "exited") setBusy("");
 		});
 		return () => {
 			off.then((f) => f());
@@ -204,6 +209,16 @@ export function AiTab() {
 			if (!ok) return;
 		}
 		setTier(next);
+	};
+
+	// An invalid name keeps the current one and says why.
+	const saveName = (v: string) => {
+		if (!isValidAiName(v)) {
+			setMessage("A name is 1-24 letters, spaces, hyphens or apostrophes.");
+			return false;
+		}
+		setMessage("");
+		setName(v.trim());
 	};
 
 	const record = () => {
@@ -302,7 +317,7 @@ export function AiTab() {
 					}
 					divider={false}
 				>
-					<Field value={aiName} onSave={(v) => setName(cleanAiName(v))} placeholder="Janice" />
+					<Field value={aiName} onSave={saveName} placeholder="Janice" />
 				</SettingRow>
 			</div>
 			{message && <p className="ai-warning">{message}</p>}
@@ -350,6 +365,18 @@ export function AiTab() {
 									{next > 3 && (
 										<button className="ai-btn" onClick={finish} disabled={busy !== ""}>
 											{busy === "building" ? "Building..." : "Finish"}
+										</button>
+									)}
+									{enrolling && status.wake_trained && (
+										<button
+											className="ai-btn"
+											onClick={() => {
+												setEnrolling(false);
+												setNext(1);
+											}}
+											disabled={busy !== ""}
+										>
+											Cancel
 										</button>
 									)}
 								</div>

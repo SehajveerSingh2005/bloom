@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { IDLE, reduceAiEvent } from "../src/ai/aiState";
-import { cleanAiName } from "../src/ai/aiName";
+import { cleanAiName, isValidAiName } from "../src/ai/aiName";
 
 test("a voice request: recording, transcribing, working, done", () => {
 	let s = reduceAiEvent(IDLE, { type: "recording", on: true });
@@ -57,6 +57,8 @@ test("the assistant's name is validated", () => {
 	expect(cleanAiName("  Mina ")).toBe("Mina");
 	expect(cleanAiName("Anne-Marie O'Neil")).toBe("Anne-Marie O'Neil");
 	for (const bad of ["", "  ", "R2D2", "a<b", "x".repeat(25), null, undefined]) expect(cleanAiName(bad)).toBe("Janice");
+	expect(isValidAiName("R2D2")).toBe(false);
+	expect(isValidAiName(" Mina ")).toBe(true);
 });
 
 test("a wake request keeps its task and wake flag through its own recording", () => {

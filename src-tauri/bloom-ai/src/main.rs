@@ -80,6 +80,7 @@ async fn serve(shared: Arc<Shared>) {
         listener: None,
         task: None,
         dir: shared.data_dir.clone(),
+        settings: shared.settings_path.clone(),
         busy: busy.clone(),
         events: wake_tx,
     };
@@ -284,6 +285,7 @@ struct WakeState {
     listener: Option<wake::Listener>,
     task: Option<u64>,
     dir: PathBuf,
+    settings: PathBuf,
     busy: Arc<AtomicUsize>,
     events: tokio::sync::mpsc::UnboundedSender<wake::Event>,
 }
@@ -293,7 +295,8 @@ impl WakeState {
     /// listener.
     fn start(&mut self) {
         self.listener = None;
-        match wake::Listener::start(&self.dir, self.busy.clone(), self.events.clone()) {
+        let name = config::Config::load(&self.settings).name;
+        match wake::Listener::start(&self.dir, &name, self.busy.clone(), self.events.clone()) {
             Ok(started) => self.listener = Some(started),
             Err(message) => emit(&Out::Error {
                 task: None,
