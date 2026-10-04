@@ -242,9 +242,9 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
 }
 
 /// Exfiltration guard, inverted: while tainted, `open` asks unless the target is
-/// an ms-settings: page, a URL the user or a search named, or a plain local file
-/// path. Everything else (any URL scheme, UNC and odd separators, quotes, mapped
-/// drives, network-reaching file types) confirms.
+/// an ms-settings: page, a URL the user or a search named, or a local folder or
+/// file of a plain data type on a local drive, judged on the canonical path
+/// Windows would really open. Everything else confirms.
 fn open_needs_confirm(ctx: &Ctx, target: &str) -> bool {
     if !ctx.tainted {
         return false;
@@ -257,39 +257,22 @@ fn open_needs_confirm(ctx: &Ctx, target: &str) -> bool {
     !safe
 }
 
-/// Extensions that reach the network (or run something) when opened.
-const NETWORK_EXTS: &[&str] = &[
-    "url", "website", "library-ms", "searchconnector-ms", "scf", "theme", "themepack", "rdp",
-    "settingcontent-ms", "appref-ms", "lnk", "application",
+/// File types that are plain data: opening one does not reach the network.
+const DATA_EXTS: &[&str] = &[
+    "txt", "md", "csv", "json", "log", "xml", "ics", "yaml", "yml", "pdf", "png", "jpg", "jpeg",
+    "gif", "webp", "bmp", "mp3", "wav", "mp4", "mov", "docx", "xlsx", "pptx",
 ];
 
-/// `X:\...` or `X:/...` on a fixed or removable drive, no quotes, no doubled
-/// separators after the prefix, and not a network-reaching file type.
 fn is_plain_local_path(t: &str) -> bool {
-    let b = t.as_bytes();
-    if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' || !matches!(b[2], b'\\' | b'/') {
+    let Ok(path) = files::resolve_local(t) else {
         return false;
-    }
-    let rest = &t[3..];
-    let sep = |c: char| c == '\\' || c == '/';
-    if t.contains(['"', '\'']) {
-        return false;
-    }
-    let mut prev = true; // the separator that ended the drive prefix
-    for c in rest.chars() {
-        if sep(c) && prev {
-            return false;
-        }
-        prev = sep(c);
-    }
-    let name = rest.rsplit(sep).next().unwrap_or("");
-    let name = name.trim_end_matches(['.', ' ']).to_ascii_lowercase();
-    if let Some((_, ext)) = name.rsplit_once('.') {
-        if NETWORK_EXTS.contains(&ext) {
-            return false;
-        }
-    }
-    is_local_drive(b[0] as char)
+    };
+    let p = std::path::Path::new(&path);
+    let ok = p.is_dir()
+        || p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| DATA_EXTS.contains(&e.to_ascii_lowercase().as_str()));
+    ok && is_local_drive(path.as_bytes()[0] as char)
 }
 
 #[cfg(windows)]
@@ -622,41 +605,45 @@ mod tests {
     }
 
     #[test]
-    fn open_confirms_unless_settings_allowed_url_or_plain_local_path_while_tainted() {
+    fn open_confirms_unless_settings_allowed_url_or_plain_local_data_while_tainted() {
         let mut c = ctx();
-        const BS: &str = "\\";
-        let q = |s: &str| s.to_string();
-        let risky = [
-            q("https://example.com/a"),
-            q("HTTP://x"),
-            q("ftp://x"),
-            q("mailto:a@b.c?body=x"),
-            q("steam://x"),
-            q("whatsapp:send"),
-            q("//host/share"),
-            q("file://host/f"),
-            [BS, BS, "host", BS, "share", BS, "f.txt"].concat(),
-            [BS, "/evil/share/x.txt"].concat(),
-            ["/", BS, "evil", BS, "share", BS, "x.txt"].concat(),
-            ["\"", BS, BS, "evil", BS, "share", BS, "x.txt\""].concat(),
-            q("\"HTTP://evil/?q=1\""),
-            ["'C:", BS, "x.txt'"].concat(),
-            [BS, BS, "?", BS, "UNC", BS, "h", BS, "s"].concat(),
-            ["C:", BS, "Users", BS, "x", BS, "a.url"].concat(),
-            ["C:", BS, "Users", BS, "x", BS, "a.LNK"].concat(),
-            ["C:", BS, "a", BS, BS, "b.txt"].concat(),
-            q("C://a/b.txt"),
+        let d = crate::testutil::temp_dir().canonicalize().unwrap();
+        let d = d.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+        let touch = |n: &str| {
+            let f = format!("{d}\\{n}");
+            std::fs::write(&f, "").unwrap();
+            f
+        };
+        let (txt, html, url, exe) = (touch("a.TXT"), touch("a.html"), touch("a.url"), touch("e.exe"));
+        let risky: Vec<String> = vec![
+            "https://example.com/a".into(),
+            "HTTP://x".into(),
+            "mailto:a@b.c?body=x".into(),
+            "steam://x".into(),
+            "//host/share".into(),
+            "file://host/f".into(),
+            r"\\host\share\f.txt".into(),
+            r"\/evil/share/x.txt".into(),
+            r"/\evil/share/x.txt".into(),
+            format!("\"{txt}\""),
+            "\"HTTP://evil/?q=1\"".into(),
+            format!("'{txt}'"),
+            r"\\?\UNC\h\s".into(),
+            url.clone(),
+            format!("{url}\u{0}"),
+            format!("{url}\\."),
+            format!("{url}."),
+            format!("{url}::$DATA"),
+            exe,
+            html,
+            format!("{d}\\missing.txt"),
         ];
         assert!(risky.iter().all(|t| !open_needs_confirm(&c, t)), "untainted");
         c.tainted = true;
         for t in &risky {
             assert!(open_needs_confirm(&c, t), "{t}");
         }
-        for ok in [
-            ["C:", BS, "Windows", BS, "win.ini"].concat(),
-            q("C:/Windows/win.ini"),
-            q("MS-SETTINGS:display"),
-        ] {
+        for ok in [txt.clone(), txt.replace('\\', "/"), d.clone(), "MS-SETTINGS:display".into()] {
             assert!(!open_needs_confirm(&c, &ok), "{ok}");
         }
         c.allowed_urls.insert("https://example.com/a".into());

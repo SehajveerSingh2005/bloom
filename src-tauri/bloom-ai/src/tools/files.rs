@@ -100,10 +100,33 @@ const RUNNABLE: [&str; 21] = [
     "msp", "scr", "pif", "cpl", "hta", "lnk", "reg", "jar",
 ];
 
+/// The path Windows would really open: it must exist, is canonical (trailing
+/// dots, `.`/`..`, 8.3 names, symlinks and separators resolved) and local: no UNC
+/// and no `:` past the drive prefix (alternate data streams). Checked == opened.
+pub fn resolve_local(target: &str) -> Result<String, String> {
+    if target.chars().any(char::is_control) {
+        return Err("that target has control characters".into());
+    }
+    let full = std::fs::canonicalize(target).map_err(|_| "No such file or folder.".to_string())?;
+    let full = full.to_string_lossy().into_owned();
+    let path = full.strip_prefix(r"\\?\").unwrap_or(&full);
+    let drive = path.len() >= 3
+        && path.as_bytes()[0].is_ascii_alphabetic()
+        && path[1..].starts_with(r":\")
+        && !path[2..].contains(':');
+    if !drive {
+        return Err("only files and folders on a local drive can be opened".into());
+    }
+    Ok(path.to_string())
+}
+
 pub fn classify_open(target: &str) -> Result<OpenTarget, String> {
     let target = target.trim();
     if target.is_empty() {
         return Err("nothing to open".into());
+    }
+    if target.chars().any(char::is_control) {
+        return Err("that target has control characters".into());
     }
     let lower = target.to_ascii_lowercase();
     if let Some((scheme, _)) = lower.split_once(':') {
@@ -123,14 +146,16 @@ pub fn classify_open(target: &str) -> Result<OpenTarget, String> {
         }
     }
     if target.contains('\\') || target.contains('/') {
-        let ext = Path::new(&lower)
+        let path = resolve_local(target)?;
+        let ext = Path::new(&path)
             .extension()
             .and_then(|e| e.to_str())
-            .unwrap_or("");
-        if RUNNABLE.contains(&ext) {
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if RUNNABLE.contains(&ext.as_str()) {
             return Err("programs and scripts can't be opened by path; use run_powershell".into());
         }
-        return Ok(OpenTarget::Shell(target.into()));
+        return Ok(OpenTarget::Shell(path));
     }
     Ok(OpenTarget::App(target.into()))
 }
@@ -213,6 +238,13 @@ mod tests {
     #[test]
     fn open_classification() {
         use OpenTarget::*;
+        let d = temp_dir().canonicalize().unwrap();
+        let d = d.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+        let touch = |n: &str| {
+            let f = format!("{d}\\{n}");
+            std::fs::write(&f, "").unwrap();
+            f
+        };
         assert_eq!(
             classify_open("https://example.com"),
             Ok(Shell("https://example.com".into()))
@@ -221,17 +253,26 @@ mod tests {
             classify_open("ms-settings:bluetooth"),
             Ok(Shell("ms-settings:bluetooth".into()))
         );
-        assert_eq!(
-            classify_open(r"C:\Users\me\notes.txt"),
-            Ok(Shell(r"C:\Users\me\notes.txt".into()))
-        );
-        assert_eq!(
-            classify_open(r"C:\Users\me"),
-            Ok(Shell(r"C:\Users\me".into()))
-        );
+        let txt = touch("notes.txt");
+        assert_eq!(classify_open(&txt), Ok(Shell(txt.clone())));
+        // Forward slashes and a ./ segment resolve to the same file.
+        assert_eq!(classify_open(&txt.replace('\\', "/")), Ok(Shell(txt.clone())));
+        assert_eq!(classify_open(&format!("{d}\\.\\notes.txt")), Ok(Shell(txt.clone())));
+        assert_eq!(classify_open(&d), Ok(Shell(d.clone())));
         assert_eq!(classify_open("Spotify"), Ok(App("Spotify".into())));
-        assert!(classify_open(r"C:\Users\me\Downloads\setup.exe").is_err());
-        assert!(classify_open(r"C:\x\run.PS1").is_err());
+        let exe = touch("evil.exe");
+        assert!(classify_open(&exe).is_err());
+        assert!(classify_open(&format!("{exe}.")).is_err());
+        assert!(classify_open(&format!("{exe}\\.")).is_err());
+        assert!(classify_open(&format!("{exe}\u{0}")).is_err());
+        assert!(classify_open(&touch("run.PS1")).is_err());
+        assert!(classify_open(&format!("{d}\\nope.txt")).unwrap_err().contains("No such"));
+        // The default stream resolves to the file itself; named streams are refused.
+        assert_eq!(classify_open(&format!("{txt}::$DATA")), Ok(Shell(txt.clone())));
+        assert!(classify_open(&format!("{txt}:evil")).is_err());
+        assert!(classify_open(r"\\host\share\f.txt").is_err());
+        assert!(classify_open(r"\\?\UNC\h\s").is_err());
+        assert!(classify_open(&format!("{d}\\a\u{7}.txt")).is_err());
         assert!(classify_open("file:///C:/x.txt").is_err());
         assert!(classify_open("ms-msdt:/id x").is_err());
         assert!(classify_open("  ").is_err());
