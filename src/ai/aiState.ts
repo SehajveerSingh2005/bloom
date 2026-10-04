@@ -38,8 +38,8 @@ function isStale(state: AiState, ev: AiEvent): boolean {
 
 export function reduceAiEvent(state: AiState, ev: AiEvent): AiState {
 	// A wake request knows its task from the start: another task's event means
-	// it was replaced (a typed request drops it silently).
-	if (state.wake && isStale(state, ev)) return IDLE;
+	// it was replaced (a typed request drops it silently, or a new wake).
+	if (state.wake && isStale(state, ev)) return reduceAiEvent(IDLE, ev);
 	switch (ev.type) {
 		case "wake":
 			return { ...IDLE, phase: "recording", task: ev.task, wake: true };

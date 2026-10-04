@@ -3012,8 +3012,11 @@ pub(crate) fn handle_mouse_move(app_handle: &AppHandle, cursor: Cursor, now: i64
             }
         } else {
             // The overlay applies `bloom-scale` as CSS zoom, so the cards
-            // are larger than 42x196 CSS px for non-default scales.
+            // are larger than 42x196 CSS px for non-default scales. The edge
+            // rects only count while a HUD card is up: the overlay also shows
+            // the AI orb, which must never catch clicks.
             let bloom_scale = crate::utils::get_bloom_scale(app_handle);
+            let hud_up = crate::state::OVERLAY_HUD_UP.load(Ordering::Relaxed);
             let over_left = in_mixer
                 || if let Ok(Some(m)) = ov_win.primary_monitor() {
                     let ms = m.size();
@@ -3047,7 +3050,7 @@ pub(crate) fn handle_mouse_move(app_handle: &AppHandle, cursor: Cursor, now: i64
                 false
             };
 
-            let should_ignore = !(over_left || over_right);
+            let should_ignore = !(in_mixer || (hud_up && (over_left || over_right)));
             let prev = MH_LAST_OV_IGNORE.load(Ordering::Relaxed);
             let new_val = if should_ignore { 1 } else { 0 };
             if prev != new_val {

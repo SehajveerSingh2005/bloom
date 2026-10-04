@@ -1,6 +1,6 @@
 import { StrictMode, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsSync } from "./hooks/useSettingsSync";
@@ -791,6 +791,13 @@ function OverlayApp() {
 		"bloom-info-centre": (v) => setMerged(v === true)
 	});
 
+	// Only a HUD card makes the overlay's edge rects clickable (services.rs);
+	// the orb never does.
+	const hudUp = mode === "volume" || mode === "brightness";
+	useEffect(() => {
+		invoke("set_overlay_hud", { up: hudUp }).catch(() => {});
+	}, [hudUp]);
+
 	// ── Bloom AI orb ──
 	// "Hey <name>" shows the orb here instead of opening the panel. A request
 	// that needs an OK moves to the panel (App.tsx / Dock.tsx open it on the
@@ -800,6 +807,7 @@ function OverlayApp() {
 	const orbShown = ai.enabled && wake && phase !== "idle" && phase !== "confirm";
 	const caption = phase === "done" || phase === "error" ? ai.state.reply : ai.state.heard;
 	const resetAi = ai.reset;
+	const reduceMotion = useReducedMotion();
 	useEffect(() => {
 		if (!wake) return;
 		if (phase === "confirm") {
@@ -838,9 +846,8 @@ function OverlayApp() {
 						await appWindow.hide();
 					}, 400);
 				} else {
-					// Position the window first, then show
-					await invoke("sync_overlay_position");
-					await appWindow.show();
+					// Position the window first, then show it without taking focus
+					await invoke("show_overlay");
 				}
 			} catch (e) {
 				console.error("Window management error:", e);
@@ -984,9 +991,9 @@ function OverlayApp() {
 					<div key="ai-orb" className={`ai-orb-float ${merged ? "dock" : "notch"}`} style={{ zoom: scale }}>
 						<motion.div
 							className="ai-orb-float-card"
-							initial={{ scale: 0.5, opacity: 0 }}
+							initial={{ scale: reduceMotion ? 1 : 0.5, opacity: 0 }}
 							animate={{ scale: 1, opacity: 1 }}
-							exit={{ scale: 0.8, opacity: 0, transition: { duration: 0.2, ease: [0.32, 0.72, 0, 1] } }}
+							exit={{ scale: reduceMotion ? 1 : 0.8, opacity: 0, transition: { duration: 0.2, ease: [0.32, 0.72, 0, 1] } }}
 							transition={{ type: "spring", stiffness: 450, damping: 25, mass: 0.7 }}
 						>
 							<AiOrb phase={phase} size={64} />

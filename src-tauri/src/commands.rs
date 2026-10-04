@@ -2062,9 +2062,29 @@ pub fn set_splash_fullscreen(app: AppHandle, fullscreen: bool) {
     }
 }
 
+/// The overlay reports when a volume or brightness HUD card is up.
 #[tauri::command]
-pub fn sync_overlay_position(app: AppHandle) {
+pub fn set_overlay_hud(up: bool) {
+    crate::state::OVERLAY_HUD_UP.store(up, Ordering::Relaxed);
+}
+
+/// Positions the overlay and shows it without activating it: a HUD or the AI
+/// orb popping up must never take focus from the app being typed in. Tauri's
+/// own show() uses SW_SHOW after the first time; once the window is visible
+/// that call is a no-op, so it only keeps Tauri's visible state in step.
+#[tauri::command]
+pub fn show_overlay(app: AppHandle) {
     crate::services::sync_overlays(&app);
+    if let Some(win) = app.get_webview_window("overlay") {
+        #[cfg(windows)]
+        if let Ok(hwnd) = win.hwnd() {
+            use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+        }
+        let _ = win.show();
+    }
 }
 
 #[cfg(windows)]

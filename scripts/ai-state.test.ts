@@ -72,8 +72,17 @@ test("a wake request keeps its task and wake flag through its own recording", ()
 test("a wake request replaced by another request is dropped", () => {
 	const recording = reduceAiEvent(IDLE, { type: "wake", task: 1000000001 });
 	// A typed request: its events carry another task.
-	expect(reduceAiEvent(recording, { type: "activity", task: 4, text: "Opening" })).toBe(IDLE);
+	expect(reduceAiEvent(recording, { type: "activity", task: 4, text: "Opening" })).toMatchObject({
+		phase: "working", activity: "Opening", task: 4, wake: false
+	});
 	// The hotkey: recording stops, then starts again for a panel request.
 	const s = reduceAiEvent(reduceAiEvent(recording, { type: "recording", on: false }), { type: "recording", on: true });
 	expect(s).toMatchObject({ phase: "recording", wake: false, task: null });
+});
+
+test("a second wake while the first is still showing starts a new wake request", () => {
+	let s = reduceAiEvent(IDLE, { type: "wake", task: 1000000001 });
+	s = reduceAiEvent(s, { type: "reply", task: 1000000001, text: "Done." });
+	s = reduceAiEvent(s, { type: "wake", task: 1000000002 });
+	expect(s).toMatchObject({ phase: "recording", task: 1000000002, wake: true });
 });
