@@ -1038,6 +1038,13 @@ function App() {
 	useEffect(() => {
 		if (!ai.enabled && bloomMode === "ai") closeAi();
 	}, [ai.enabled, bloomMode]);
+	// A request waiting for an OK opens the panel: "Hey <name>" requests run in
+	// the overlay's orb, but approving needs the panel.
+	useEffect(() => {
+		if (!ai.state.confirm || !ai.enabled || infoCentreRef.current) return;
+		setAiOpen(true);
+		setBloomMode("ai");
+	}, [ai.state.confirm?.id]);
 
 	// Open the notch on an unseen announcement; stays open until dismissed.
 	useEffect(() => {

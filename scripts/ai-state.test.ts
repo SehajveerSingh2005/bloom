@@ -58,3 +58,22 @@ test("the assistant's name is validated", () => {
 	expect(cleanAiName("Anne-Marie O'Neil")).toBe("Anne-Marie O'Neil");
 	for (const bad of ["", "  ", "R2D2", "a<b", "x".repeat(25), null, undefined]) expect(cleanAiName(bad)).toBe("Janice");
 });
+
+test("a wake request keeps its task and wake flag through its own recording", () => {
+	let s = reduceAiEvent(IDLE, { type: "wake", task: 1000000001 });
+	expect(s).toMatchObject({ phase: "recording", task: 1000000001, wake: true });
+	expect(reduceAiEvent(s, { type: "recording", on: true })).toBe(s);
+	s = reduceAiEvent(s, { type: "recording", on: false });
+	s = reduceAiEvent(s, { type: "transcript", task: 1000000001, text: "what time is it" });
+	s = reduceAiEvent(s, { type: "reply", task: 1000000001, text: "It's 5." });
+	expect(s).toMatchObject({ phase: "done", reply: "It's 5.", wake: true });
+});
+
+test("a wake request replaced by another request is dropped", () => {
+	const recording = reduceAiEvent(IDLE, { type: "wake", task: 1000000001 });
+	// A typed request: its events carry another task.
+	expect(reduceAiEvent(recording, { type: "activity", task: 4, text: "Opening" })).toBe(IDLE);
+	// The hotkey: recording stops, then starts again for a panel request.
+	const s = reduceAiEvent(reduceAiEvent(recording, { type: "recording", on: false }), { type: "recording", on: true });
+	expect(s).toMatchObject({ phase: "recording", wake: false, task: null });
+});

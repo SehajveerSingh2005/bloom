@@ -19,6 +19,8 @@ export interface AiState {
 	confirm: AiConfirm | null;
 	/** The request the panel is showing; events from older ones are ignored. */
 	task: number | null;
+	/** Started by "Hey <name>": the overlay shows it as the orb, not the panel. */
+	wake: boolean;
 }
 
 export interface AiEvent {
@@ -26,7 +28,7 @@ export interface AiEvent {
 	[field: string]: any;
 }
 
-export const IDLE: AiState = { phase: "idle", heard: "", activity: "", reply: "", confirm: null, task: null };
+export const IDLE: AiState = { phase: "idle", heard: "", activity: "", reply: "", confirm: null, task: null, wake: false };
 
 const ACTIVE: AiPhase[] = ["recording", "transcribing", "working", "confirm"];
 
@@ -35,9 +37,15 @@ function isStale(state: AiState, ev: AiEvent): boolean {
 }
 
 export function reduceAiEvent(state: AiState, ev: AiEvent): AiState {
+	// A wake request knows its task from the start: another task's event means
+	// it was replaced (a typed request drops it silently).
+	if (state.wake && isStale(state, ev)) return IDLE;
 	switch (ev.type) {
+		case "wake":
+			return { ...IDLE, phase: "recording", task: ev.task, wake: true };
 		case "recording":
-			if (ev.on) return { ...IDLE, phase: "recording" };
+			// The wake request's own recording follows its `wake`.
+			if (ev.on) return state.wake && state.phase === "recording" ? state : { ...IDLE, phase: "recording" };
 			return state.phase === "recording" ? { ...state, phase: "transcribing" } : state;
 		case "transcript":
 			if (state.phase === "done" || state.phase === "error") return state;

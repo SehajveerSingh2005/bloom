@@ -214,10 +214,8 @@ fn relay(app: AppHandle, stdout: ChildStdout, pid: u32) {
                 let _ = send_if_running(json!({ "type": "bloom_result", "id": message["id"], "ok": ok, "detail": detail }));
             });
         } else {
-            // "Hey <name>": open the panel the way the hotkey does.
-            if message["type"] == "wake" {
-                let _ = app.emit_to(surface(&app), "ai-open", json!({ "recording": true }));
-            }
+            // "Hey <name>" opens no panel: the overlay shows its orb from these
+            // events, and the panel opens itself if the request needs an OK.
             let built = message["type"] == "enroll_done";
             let _ = app.emit("ai-event", message);
             // A freshly trained model may let a "true" wake setting start listening.

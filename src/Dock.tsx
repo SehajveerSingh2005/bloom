@@ -180,9 +180,10 @@ const Dock = memo(function Dock() {
 		setInfoTab("ai");
 	});
 	// The dock hears every `ai-event`, the notch's too: it only owns a busy task
-	// that was running while merged, and keeps owning it until it ends.
+	// that was running while merged, and keeps owning it until it ends. A
+	// "Hey <name>" request belongs to the overlay's orb until it asks for an OK.
 	if (!["recording", "transcribing", "working", "confirm"].includes(ai.state.phase)) aiOwnRef.current = false;
-	else if (infoCentre) aiOwnRef.current = true;
+	else if (infoCentre && (!ai.state.wake || aiOpen)) aiOwnRef.current = true;
 	const closeAi = () => {
 		ai.stop();
 		ai.reset();
