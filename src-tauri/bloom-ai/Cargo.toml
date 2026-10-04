@@ -16,6 +16,7 @@ dirs = "6"
 lettre = "0.11"
 imap = "2.4"
 native-tls = "0.2"
+rustpotter = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [

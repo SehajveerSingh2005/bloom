@@ -17,6 +17,7 @@ mod protocol;
 mod secrets;
 mod tools;
 mod voice;
+mod wake;
 
 #[cfg(test)]
 mod testutil;
@@ -25,6 +26,7 @@ use agent::Shared;
 use bridge::Answer;
 use protocol::{emit, In, Out};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
@@ -70,8 +72,55 @@ async fn serve(shared: Arc<Shared>) {
     });
     emit(&Out::Ready);
     let mut current: Current = None;
-    let mut recorder: Option<voice::Recorder> = None;
-    while let Some(line) = rx.recv().await {
+    let mut recorder: Option<(voice::Recorder, wake::Busy)> = None;
+    // Requests recording or running; the wake word is ignored while any are.
+    let busy = Arc::new(AtomicUsize::new(0));
+    let (wake_tx, mut wake_rx) = tokio::sync::mpsc::unbounded_channel::<wake::Event>();
+    let mut listener: Option<wake::Listener> = None;
+    // The wake request being recorded, if any.
+    let mut wake_task: Option<u64> = None;
+    let mut next_wake = wake::FIRST_TASK;
+    loop {
+        let line = tokio::select! {
+            line = rx.recv() => match line {
+                Some(line) => line,
+                None => break,
+            },
+            Some(event) = wake_rx.recv() => {
+                match event {
+                    wake::Event::Wake => {
+                        next_wake += 1;
+                        wake_task = Some(next_wake);
+                        emit(&Out::Wake { task: next_wake });
+                        emit(&Out::Recording { on: true });
+                    }
+                    wake::Event::Clip { audio, busy } => {
+                        // None: stopped while recording.
+                        let Some(task) = wake_task.take() else { continue };
+                        emit(&Out::Recording { on: false });
+                        match audio {
+                            Ok((samples, rate)) => {
+                                cancel(&mut current, &shared, false);
+                                let s = shared.clone();
+                                current = Some((
+                                    task,
+                                    tokio::spawn(async move {
+                                        let _busy = busy;
+                                        let heard = voice::to_text(&samples, rate, &s).await;
+                                        run_voice(task, heard, s).await
+                                    }),
+                                ));
+                            }
+                            Err(message) => emit(&Out::Error {
+                                task: Some(task),
+                                message,
+                            }),
+                        }
+                    }
+                }
+                continue;
+            }
+        };
         let message = match protocol::parse(&line) {
             Ok(message) => message,
             Err(e) => {
@@ -86,12 +135,19 @@ async fn serve(shared: Arc<Shared>) {
             In::Prompt { task, text } => {
                 cancel(&mut current, &shared, false);
                 let s = shared.clone();
+                let guard = wake::Busy::new(&busy);
                 current = Some((
                     task,
-                    tokio::spawn(async move { finish(task, agent::run(task, text, s).await) }),
+                    tokio::spawn(async move {
+                        let _busy = guard;
+                        finish(task, agent::run(task, text, s).await)
+                    }),
                 ));
             }
-            In::Cancel => cancel(&mut current, &shared, true),
+            In::Cancel => {
+                stop_wake_request(&mut wake_task);
+                cancel(&mut current, &shared, true)
+            }
             In::ConfirmReply { id, approved } => {
                 shared.bridge.answer(id, Answer::Confirm(approved))
             }
@@ -119,37 +175,103 @@ async fn serve(shared: Arc<Shared>) {
             }
             In::RecordStart => {
                 // A key-up that never arrived leaves an old recorder: drop its clip.
-                if let Some(old) = recorder.take() {
+                if let Some((old, _)) = recorder.take() {
                     drop(tokio::task::spawn_blocking(move || old.finish()));
                 }
-                recorder = Some(voice::start());
+                recorder = Some((voice::start(), wake::Busy::new(&busy)));
                 emit(&Out::Recording { on: true });
             }
             In::RecordStop { task } => {
-                let Some(rec) = recorder.take() else { continue };
+                let Some((rec, guard)) = recorder.take() else {
+                    continue;
+                };
                 emit(&Out::Recording { on: false });
                 cancel(&mut current, &shared, false);
                 let s = shared.clone();
                 current = Some((
                     task,
                     tokio::spawn(async move {
-                        match voice::listen(rec, &s).await {
-                            Ok(text) => {
-                                emit(&Out::Transcript {
-                                    task,
-                                    text: text.clone(),
-                                });
-                                finish(task, agent::run(task, text, s).await);
-                            }
-                            Err(message) => emit(&Out::Error {
-                                task: Some(task),
-                                message,
-                            }),
-                        }
+                        let _busy = guard;
+                        run_voice(task, voice::listen(rec, &s).await, s).await
                     }),
                 ));
             }
+            In::WakeOn => {
+                listener = None;
+                match wake::Listener::start(&shared.data_dir, busy.clone(), wake_tx.clone()) {
+                    Ok(started) => listener = Some(started),
+                    Err(message) => emit(&Out::Error {
+                        task: None,
+                        message,
+                    }),
+                }
+            }
+            In::WakeOff => {
+                listener = None;
+                stop_wake_request(&mut wake_task);
+            }
+            In::EnrollSample { index } => {
+                let dir = shared.data_dir.clone();
+                // Saying "Hello Janice" for a sample must not wake her.
+                let guard = wake::Busy::new(&busy);
+                tokio::spawn(async move {
+                    let saved =
+                        tokio::task::spawn_blocking(move || wake::enroll_sample(&dir, index)).await;
+                    drop(guard);
+                    match saved.map_err(|e| e.to_string()).and_then(|r| r) {
+                        Ok(_) => emit(&Out::EnrollSaved { index }),
+                        Err(message) => emit(&Out::Error {
+                            task: None,
+                            message,
+                        }),
+                    }
+                });
+            }
+            In::EnrollBuild => match wake::build(&shared.data_dir) {
+                Ok(()) => {
+                    // A running listener switches to the new voice.
+                    if listener.take().is_some() {
+                        listener =
+                            wake::Listener::start(&shared.data_dir, busy.clone(), wake_tx.clone())
+                                .ok();
+                    }
+                    emit(&Out::EnrollDone);
+                }
+                Err(message) => emit(&Out::Error {
+                    task: None,
+                    message,
+                }),
+            },
         }
+    }
+}
+
+/// A spoken request: show what was heard, then run it.
+async fn run_voice(task: u64, heard: Result<String, String>, shared: Arc<Shared>) {
+    match heard {
+        Ok(text) => {
+            emit(&Out::Transcript {
+                task,
+                text: text.clone(),
+            });
+            finish(task, agent::run(task, text, shared).await);
+        }
+        Err(message) => emit(&Out::Error {
+            task: Some(task),
+            message,
+        }),
+    }
+}
+
+/// Ends the panel's view of a wake request that is still recording. Its clip
+/// is dropped when it arrives.
+fn stop_wake_request(wake_task: &mut Option<u64>) {
+    if let Some(task) = wake_task.take() {
+        emit(&Out::Recording { on: false });
+        emit(&Out::Error {
+            task: Some(task),
+            message: "Stopped.".into(),
+        });
     }
 }
 

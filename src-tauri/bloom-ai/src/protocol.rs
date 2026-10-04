@@ -15,6 +15,10 @@ pub enum In {
     BloomResult { id: u64, ok: bool, detail: String },
     SetSecret { name: String, value: String },
     OutlookLogin,
+    WakeOn,
+    WakeOff,
+    EnrollSample { index: u32 },
+    EnrollBuild,
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone, Copy)]
@@ -70,6 +74,14 @@ pub enum Out {
         ok: bool,
         message: String,
     },
+    /// "Hello Janice" heard; request `task` is being recorded.
+    Wake {
+        task: u64,
+    },
+    EnrollSaved {
+        index: u32,
+    },
+    EnrollDone,
 }
 
 /// Writes one message to Bloom. A failed write means Bloom is gone; the stdin
@@ -105,6 +117,34 @@ mod tests {
     fn parses_unit_messages() {
         assert_eq!(parse(r#"{"type":"record_start"}"#), Ok(In::RecordStart));
         assert_eq!(parse(r#"{"type":"cancel"}"#), Ok(In::Cancel));
+    }
+
+    #[test]
+    fn parses_wake_messages() {
+        assert_eq!(parse(r#"{"type":"wake_on"}"#), Ok(In::WakeOn));
+        assert_eq!(parse(r#"{"type":"wake_off"}"#), Ok(In::WakeOff));
+        assert_eq!(
+            parse(r#"{"type":"enroll_sample","index":2}"#),
+            Ok(In::EnrollSample { index: 2 })
+        );
+        assert_eq!(parse(r#"{"type":"enroll_build"}"#), Ok(In::EnrollBuild));
+        assert!(parse(r#"{"type":"enroll_sample"}"#).is_err());
+    }
+
+    #[test]
+    fn wake_events_serialize() {
+        let json = |out: Out| serde_json::to_string(&out).unwrap();
+        assert_eq!(
+            json(Out::Wake {
+                task: 1_000_000_001
+            }),
+            r#"{"type":"wake","task":1000000001}"#
+        );
+        assert_eq!(
+            json(Out::EnrollSaved { index: 3 }),
+            r#"{"type":"enroll_saved","index":3}"#
+        );
+        assert_eq!(json(Out::EnrollDone), r#"{"type":"enroll_done"}"#);
     }
 
     #[test]

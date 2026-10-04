@@ -43,6 +43,11 @@ pub async fn listen(recorder: Recorder, shared: &Shared) -> Result<String, Strin
     if samples.len() < rate as usize * 3 / 10 {
         return Err("Didn't catch that. Hold the key while you speak.".into());
     }
+    to_text(&samples, rate, shared).await
+}
+
+/// Sends a clip to the transcription endpoint.
+pub async fn to_text(samples: &[i16], rate: u32, shared: &Shared) -> Result<String, String> {
     let cfg = Config::load(&shared.settings_path);
     let key = secrets::get("stt-key")
         .or_else(|| secrets::get("llm-key"))
@@ -52,7 +57,7 @@ pub async fn listen(recorder: Recorder, shared: &Shared) -> Result<String, Strin
         &cfg.stt_url,
         &cfg.stt_model,
         &key,
-        wav(&samples, rate),
+        wav(samples, rate),
     )
     .await?;
     if text.is_empty() {
@@ -62,8 +67,20 @@ pub async fn listen(recorder: Recorder, shared: &Shared) -> Result<String, Strin
     }
 }
 
-#[cfg(windows)]
 fn capture(stop: &AtomicBool) -> Result<(Vec<i16>, u32), String> {
+    let mut mono: Vec<i16> = Vec::new();
+    let rate = stream(|rate, chunk| {
+        mono.extend_from_slice(chunk);
+        !stop.load(Ordering::Relaxed) && mono.len() < rate as usize * MAX_SECONDS
+    })?;
+    Ok((mono, rate))
+}
+
+/// Opens the default microphone and hands `feed` the mono 16-bit samples
+/// captured since the last call (often none), about every 30 ms, until it
+/// returns false. Returns the sample rate.
+#[cfg(windows)]
+pub fn stream(mut feed: impl FnMut(u32, &[i16]) -> bool) -> Result<u32, String> {
     use std::time::Duration;
     use windows::Win32::Media::Audio::{
         eCapture, eConsole, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator,
@@ -104,7 +121,8 @@ fn capture(stop: &AtomicBool) -> Result<(Vec<i16>, u32), String> {
 
         let frame_bytes = channels * (bits as usize / 8);
         let mut mono: Vec<i16> = Vec::new();
-        while !stop.load(Ordering::Relaxed) && mono.len() < rate as usize * MAX_SECONDS {
+        while feed(rate, &mono) {
+            mono.clear();
             std::thread::sleep(Duration::from_millis(30));
             while capture.GetNextPacketSize().map_err(|e| err("read", e))? > 0 {
                 let (mut data, mut frames, mut flags) = (std::ptr::null_mut(), 0u32, 0u32);
@@ -121,7 +139,7 @@ fn capture(stop: &AtomicBool) -> Result<(Vec<i16>, u32), String> {
             }
         }
         let _ = client.Stop();
-        Ok((mono, rate))
+        Ok(rate)
     }
 }
 

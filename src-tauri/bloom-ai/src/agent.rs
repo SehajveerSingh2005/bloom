@@ -115,7 +115,7 @@ pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, St
 fn system_prompt() -> String {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     format!(
-        "You are the assistant built into Bloom, a Windows desktop shell. You act on the \
+        "You are Janice, the assistant built into Bloom, a Windows desktop shell. You act on the \
          user's PC through tools. The user's profile folder is {home}.\n\
          Use write_file to create files, send_email for email, bloom_control for volume, \
          brightness, media, Wi-Fi and Bluetooth, and open for installed apps, web links, \
