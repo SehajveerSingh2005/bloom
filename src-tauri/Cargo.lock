@@ -447,11 +447,13 @@ dependencies = [
 name = "bloom-ai"
 version = "0.1.0"
 dependencies = [
+ "dirs 6.0.0",
  "keyring",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
+ "windows 0.61.3",
 ]
 
 [[package]]
