@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod ai;
 mod commands;
 mod connect;
 mod glass;
@@ -198,7 +200,23 @@ fn main() {
             write_settings_to_path,
             updater::check_for_updates,
             updater::install_update,
-            updater::get_update_state
+            updater::get_update_state,
+            #[cfg(windows)]
+            ai::ai_status,
+            #[cfg(windows)]
+            ai::ai_prompt,
+            #[cfg(windows)]
+            ai::ai_cancel,
+            #[cfg(windows)]
+            ai::ai_confirm,
+            #[cfg(windows)]
+            ai::ai_set_secret,
+            #[cfg(windows)]
+            ai::ai_outlook_login,
+            #[cfg(windows)]
+            ai::ai_open,
+            #[cfg(windows)]
+            ai::ai_delete
         ])
         .setup(|app| {
             init_taskbar_marker(app.handle());
@@ -206,6 +224,9 @@ fn main() {
             // invoke save_setting as soon as it loads, which happens before the
             // rest of this hook runs.
             crate::utils::init_settings_cache(app.handle());
+            // Bloom AI: arm the hotkey from settings; the agent itself starts on first use.
+            #[cfg(windows)]
+            crate::ai::init(app.handle());
             // Crash-recovery: if a previous session was force-killed while the native
             // taskbar was hidden, restore it now. Runs before the frontend re-hides it
             // (init_dock fires after a delay), so the flag must be removed first.

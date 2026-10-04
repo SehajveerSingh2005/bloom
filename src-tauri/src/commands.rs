@@ -4000,6 +4000,9 @@ pub(crate) fn reload_settings(app: &AppHandle, settings_path: &std::path::Path) 
                 *cache = new_settings.clone();
                 (changed, removed)
             };
+            // Bloom AI re-reads its keys (hotkey, on/off) from the new values.
+            #[cfg(windows)]
+            crate::ai::sync_from_settings();
             // Lock dropped — safe to emit without blocking save_setting
             for (key, value) in &changed {
                 let _ = app.emit(

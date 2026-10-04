@@ -756,6 +756,9 @@ pub fn replace_settings_cache(new_settings: std::collections::HashMap<String, se
     if let Ok(mut cache) = cache.lock() {
         *cache = new_settings;
     }
+    // Bloom AI re-reads its keys (hotkey, on/off) from the new values.
+    #[cfg(windows)]
+    crate::ai::sync_from_settings();
 }
 
 pub fn get_bloom_scale(_app: &tauri::AppHandle) -> f64 {
