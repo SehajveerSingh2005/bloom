@@ -81,12 +81,12 @@ const READ_COMMANDS: [&str; 18] = [
 pub fn is_read_only(script: &str) -> bool {
     let s = script.to_ascii_lowercase();
 
-    // Check for property assignment ($x.y = ...)
-    if has_property_assignment(&s) {
+    // Check for member assignment (any . or : on left side of =, +=, -=, etc.)
+    if has_member_assignment(&s) {
         return false;
     }
 
-    // Check for dynamic method calls (.'(...), ."(...), .(, )(...))
+    // Check for dynamic method calls (.'(...), ."(...), .(, )(...), .$(...))
     if has_dynamic_method_call(&s) {
         return false;
     }
@@ -117,41 +117,49 @@ pub fn is_read_only(script: &str) -> bool {
         })
 }
 
-/// Reject $x.y = ... (property assignment, not plain variable assignment).
-fn has_property_assignment(s: &str) -> bool {
+/// Reject assignments with . or : on the left side ($x.y = ..., $global:x = ..., etc.).
+/// Plain variable assignment like $files = ... is still allowed.
+fn has_member_assignment(s: &str) -> bool {
     let b = s.as_bytes();
+    let statement_boundaries = [b';', b'\n', b'\r', b'|', b'{', b'('];
+
     for i in 0..b.len() {
-        if b[i] == b'$' {
-            let mut j = i + 1;
-            while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
-                j += 1;
-            }
-            if j < b.len() && b[j] == b'.' {
-                // Found $x., check what follows before any =
-                let mut k = j + 1;
-                while k < b.len() {
-                    if b[k] == b'=' && (k + 1 >= b.len() || b[k + 1] != b'=') {
-                        return true;
-                    }
-                    if !(b[k].is_ascii_alphanumeric() || b[k] == b'_' || b[k].is_ascii_whitespace())
-                    {
-                        break;
-                    }
-                    k += 1;
+        // Check for =, +=, -=, *=, /=, %=
+        let is_assign = b[i] == b'=';
+        let is_compound = i > 0
+            && (b[i - 1] == b'+'
+                || b[i - 1] == b'-'
+                || b[i - 1] == b'*'
+                || b[i - 1] == b'/'
+                || b[i - 1] == b'%');
+
+        if is_assign && (is_compound || (i + 1 >= b.len() || b[i + 1] != b'=')) {
+            // Found an assignment operator. Check left side back to previous boundary.
+            let mut left_start = 0;
+            for j in (0..i).rev() {
+                if statement_boundaries.contains(&b[j]) {
+                    left_start = j + 1;
+                    break;
                 }
+            }
+            let left_side = std::str::from_utf8(&b[left_start..i]).unwrap_or("");
+            // If left side contains . or :, it's a member assignment.
+            if left_side.contains('.') || left_side.contains(':') {
+                return true;
             }
         }
     }
     false
 }
 
-/// Reject .(...), ."(...), .'(...) and )(...) (dynamic method calls).
+/// Reject .(...), ."(...), .'(...), .$(...), and )(...) (dynamic method calls).
 fn has_dynamic_method_call(s: &str) -> bool {
     let b = s.as_bytes();
     for i in 0..b.len() {
         if b[i] == b'.' && i + 1 < b.len() {
             let next = b[i + 1];
-            if next == b'(' || next == b'\'' || next == b'"' {
+            // .(, .'(...), ."(...), .$(...) are all dynamic calls.
+            if next == b'(' || next == b'\'' || next == b'"' || next == b'$' {
                 return true;
             }
         }
@@ -292,6 +300,10 @@ mod tests {
             "$p.'Kill'()",
             "$f.IsReadOnly = $true",
             "$f.LastWriteTime = Get-Date",
+            "$f = Get-Item x; $f.Parent.IsReadOnly = $true",
+            "$global:f.IsReadOnly = $true",
+            "$f.Attributes += 'ReadOnly'",
+            "$m = 'Kill'; $p = Get-Process x; $p.$m()",
         ] {
             assert!(!is_read_only(script), "should need a confirm: {script}");
         }
