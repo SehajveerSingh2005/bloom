@@ -3,8 +3,10 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
-/// The agent's answer to `{"type":"prompt","task":1,"text":"hi"}` with an empty settings file.
-const EXPECTED: &str = r#"{"type":"reply","task":1,"text":"echo: hi"}"#;
+/// With an empty settings file no model is set, so the request fails fast
+/// without touching the network or Credential Manager.
+const EXPECTED: &str =
+    r#"{"type":"error","task":1,"message":"Pick a model in Settings > AI first."}"#;
 
 #[test]
 fn answers_over_stdio_and_exits_when_stdin_closes() {
