@@ -202,6 +202,7 @@ export function AiTab() {
 	const [autoTo, setAutoTo] = useAiSetting("bloom-ai-whatsapp-auto", "[]");
 	const [style, setStyle] = useAiSetting("bloom-ai-whatsapp-style", DEFAULT_STYLE);
 	const [sign, setSign] = useAiSetting("bloom-ai-whatsapp-sign", "true");
+	const [selfChat, setSelfChat] = useAiSetting("bloom-ai-whatsapp-selfchat", "false");
 	const [contacts, setContacts] = useState<[string, string][]>([]);
 
 	const testEmail = () => {
@@ -631,7 +632,7 @@ export function AiTab() {
 							</label>
 						</SettingRow>
 						{waOn && (
-							<SettingRow icon={MessageCircle} label={waLabel} divider={waPairing}>
+							<SettingRow icon={MessageCircle} label={waLabel} divider={waPairing || linked}>
 								<div className="ai-secret">
 									{wa?.state === "not_linked" && !wa.qr && !wa.code && (
 										<button className="ai-btn" onClick={() => waRun("ai_whatsapp_restart")}>
@@ -686,6 +687,19 @@ export function AiTab() {
 										{useCode ? "Use the QR instead" : "Use a code instead"}
 									</button>
 								</div>
+							</SettingRow>
+						)}
+						{linked && (
+							<SettingRow
+								icon={MessageCircle}
+								label="Answer me in my own chat"
+								desc={`Write "${aiName}, ..." in your own WhatsApp chat (Message yourself) and ${aiName} does it on this PC and replies there. Up to 30 an hour; anything that needs your OK asks there too.`}
+								divider={false}
+							>
+								<label className="toggle-switch">
+									<input type="checkbox" checked={selfChat === "true"} onChange={() => setSelfChat(selfChat === "true" ? "false" : "true")} />
+									<span className="slider"></span>
+								</label>
 							</SettingRow>
 						)}
 					</div>

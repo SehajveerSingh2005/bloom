@@ -296,6 +296,10 @@ async fn run_with(shared: Arc<Shared>, writer: Writer) {
             Err(RecvError::Lagged(_)) => continue,
             Err(RecvError::Closed) => return,
         };
+        // The user's own chat is selfchat.rs's.
+        if shared.whatsapp.own_number().as_deref() == Some(m.chat.as_str()) {
+            continue;
+        }
         let now = Instant::now();
         if m.from_me {
             if m.group.is_none() {

@@ -140,7 +140,9 @@ pub async fn run(task: u64, text: String, shared: Arc<Shared>) -> Result<String,
         model: cfg.model.clone(),
         key: secrets::get("llm-key").unwrap_or_default(),
     };
-    if shared.mcp.ensure(&shared.data_dir, task).await {
+    // A request from the phone shows on the PC only when it asks there.
+    let shown = (!crate::selfchat::is_phone(task)).then_some(task);
+    if shared.mcp.ensure(&shared.data_dir, shown).await {
         crate::emit_library_status(&shared);
     }
     let mut ctx = Ctx {
@@ -219,10 +221,12 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
                 .as_str()
                 .and_then(|a| serde_json::from_str(a).ok())
                 .unwrap_or_else(|| json!({}));
-            emit(&Out::Activity {
-                task: ctx.task,
-                text: tools::describe(name, &args),
-            });
+            if !crate::selfchat::is_phone(ctx.task) {
+                emit(&Out::Activity {
+                    task: ctx.task,
+                    text: tools::describe(name, &args),
+                });
+            }
             let result = match tools::call(ctx, name, &args).await {
                 Ok(result) => result,
                 Err(e) => format!("Error: {e}"),

@@ -214,12 +214,14 @@ const Dock = memo(function Dock() {
 	useEffect(() => {
 		if (ai.state.confirm && ai.enabled && infoCentre) setInfoTab("ai");
 	}, [ai.state.confirm?.id]);
-	// Each automatic WhatsApp reply: "Janice replied to Neha".
+	// Each automatic WhatsApp reply: "Janice replied to Neha"; each request
+	// from the user's own WhatsApp chat: "Janice is working on a request from your phone".
 	const aiNameRef = useRef(aiName);
 	aiNameRef.current = aiName;
 	useEffect(() => {
 		const off = listen<{ type: string; name?: string }>("ai-event", ({ payload }) => {
 			if (payload.type === "whatsapp_auto_reply") showToast(`${aiNameRef.current} replied to ${payload.name}`, true);
+			if (payload.type === "whatsapp_request") showToast(`${aiNameRef.current} is working on a request from your phone`, true);
 		});
 		return () => {
 			off.then((f) => f());

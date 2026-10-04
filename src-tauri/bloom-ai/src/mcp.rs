@@ -453,12 +453,13 @@ impl State {
 
     /// Starts the servers if this is the first request since start or Reload.
     /// True when it started servers (or hit errors), so Settings should refresh.
-    pub async fn ensure(&self, data: &Path, task: u64) -> bool {
+    /// `task`: the request to show "Starting MCP servers" in, if any.
+    pub async fn ensure(&self, data: &Path, task: Option<u64>) -> bool {
         let _one = self.starting.lock().await;
         if self.get().is_some() {
             return false;
         }
-        let mcp = Mcp::start(data, Some(task)).await;
+        let mcp = Mcp::start(data, task).await;
         let started = !mcp.servers.is_empty() || !mcp.errors.is_empty();
         *self.current.lock().unwrap() = Some(Arc::new(mcp));
         started

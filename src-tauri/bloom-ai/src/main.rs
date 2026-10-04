@@ -20,6 +20,7 @@ mod policy;
 mod powershell;
 mod protocol;
 mod secrets;
+mod selfchat;
 mod skills;
 mod tools;
 mod voice;
@@ -98,6 +99,7 @@ async fn serve(shared: Arc<Shared>) {
     emit(&Out::Ready);
     // Waits on incoming WhatsApp messages; idle while none arrive.
     tokio::spawn(autoreply::run(shared.clone()));
+    tokio::spawn(selfchat::run(shared.clone()));
     let mut current: Current = None;
     let mut recorder: Option<voice::Recorder> = None;
     // Requests recording or running; the wake word is ignored while any are.

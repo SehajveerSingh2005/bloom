@@ -130,6 +130,8 @@ pub enum Out {
     WhatsappAutoReply {
         name: String,
     },
+    /// A request from the user's phone started (a toast, no message text).
+    WhatsappRequest,
 }
 
 /// Writes one message to Bloom. A failed write means Bloom is gone; the stdin
@@ -272,6 +274,10 @@ mod tests {
             })
             .unwrap(),
             r#"{"type":"whatsapp_auto_reply","name":"Neha"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Out::WhatsappRequest).unwrap(),
+            r#"{"type":"whatsapp_request"}"#
         );
     }
 

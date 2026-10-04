@@ -47,6 +47,8 @@ pub struct Config {
     pub auto_style: String,
     /// Replies say they come from the assistant.
     pub auto_sign: bool,
+    /// "Answer me in my own chat" (selfchat.rs).
+    pub self_chat: bool,
 }
 
 pub const DEFAULT_STYLE: &str = "Let them know I'll get back to them soon. Be brief and friendly.";
@@ -117,6 +119,7 @@ impl Config {
             },
             auto_style: get("bloom-ai-whatsapp-style", DEFAULT_STYLE),
             auto_sign: get("bloom-ai-whatsapp-sign", "true") == "true",
+            self_chat: get("bloom-ai-whatsapp-selfchat", "false") == "true",
         }
     }
 
@@ -160,7 +163,8 @@ mod tests {
     #[test]
     fn auto_reply_settings() {
         let d = Config::from_map(&HashMap::new());
-        assert!(!d.enabled && !d.auto_reply && d.auto_sign);
+        assert!(!d.enabled && !d.auto_reply && d.auto_sign && !d.self_chat);
+        assert!(Config::from_map(&map(&[("bloom-ai-whatsapp-selfchat", "true")])).self_chat);
         assert!(d.auto_to.is_empty());
         assert_eq!(d.auto_style, DEFAULT_STYLE);
         let c = Config::from_map(&map(&[

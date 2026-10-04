@@ -241,6 +241,9 @@ pub struct State {
     chats: Mutex<Chats>,
     status: Mutex<Status>,
     sends: Mutex<VecDeque<Instant>>,
+    /// Texts this PC sent to the user's own chat: if WhatsApp hands them
+    /// back, they are not the user writing (selfchat.rs).
+    echoes: Mutex<VecDeque<String>>,
     pub incoming: broadcast::Sender<Message>,
 }
 
@@ -252,6 +255,7 @@ impl Default for State {
             chats: Mutex::default(),
             status: Mutex::default(),
             sends: Mutex::default(),
+            echoes: Mutex::default(),
             incoming: broadcast::channel(64).0,
         }
     }
@@ -324,7 +328,8 @@ impl State {
 
     /// A message sent from this PC (on request or automatically): kept and
     /// broadcast like one from the user's other devices, so automatic replies
-    /// see it. The library does not report our own sends back.
+    /// see it. The library does not report our own sends back. In the user's
+    /// own chat it is only kept, and noted as an echo: it is never a request.
     pub fn record_sent(&self, chat: &str, text: &str) {
         let m = Message {
             chat: chat.into(),
@@ -335,7 +340,35 @@ impl State {
             text: text.into(),
         };
         self.chats.lock().unwrap().push(m.clone());
+        if self.own_number().as_deref() == Some(chat) {
+            self.expect_echo(text);
+            return;
+        }
         let _ = self.incoming.send(m);
+    }
+
+    /// `text` is about to go to the user's own chat from this PC.
+    pub fn expect_echo(&self, text: &str) {
+        let mut echoes = self.echoes.lock().unwrap();
+        if !echoes.iter().any(|t| t == text) {
+            echoes.push_back(text.into());
+            if echoes.len() > 10 {
+                echoes.pop_front();
+            }
+        }
+    }
+
+    /// True once for each text this PC sent to the user's own chat.
+    pub fn is_echo(&self, text: &str) -> bool {
+        let mut echoes = self.echoes.lock().unwrap();
+        let found = echoes.iter().position(|t| t == text);
+        found.and_then(|i| echoes.remove(i)).is_some()
+    }
+
+    /// The linked account's own chat ("Message yourself"), "+<number>".
+    pub fn own_number(&self) -> Option<String> {
+        let status = self.status.lock().unwrap();
+        status.number.clone().filter(|_| status.state == "linked")
     }
 
     /// The linked account's WhatsApp name, once known.
@@ -641,6 +674,9 @@ pub mod tests {
         link_state(&ctx.shared.whatsapp)
     }
 
+    /// The linked account's own number in tests.
+    pub const ME: &str = "+4915550000001";
+
     pub fn link_state(state: &State) -> Arc<Fake> {
         let fake = Arc::new(Fake::default());
         let generation = state.attach(fake.clone());
@@ -648,6 +684,7 @@ pub mod tests {
             generation,
             Event::Status(Status {
                 state: "linked",
+                number: Some(ME.into()),
                 name: Some("Arnav Aggarwal".into()),
                 ..Status::default()
             }),

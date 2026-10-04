@@ -286,6 +286,12 @@ async fn chat_key(client: &Arc<Client>, jid: &Jid, alt: Option<&Jid>) -> Option<
     if !jid.is_lid() {
         return None;
     }
+    // The user's own chat may come by their LID.
+    if let (Some(lid), Some(pn)) = (client.lid(), client.pn()) {
+        if jid.user_base() == lid.user_base() {
+            return Some(format!("+{}", pn.user_base()));
+        }
+    }
     if let Some(alt) = alt.filter(|a| a.is_pn()) {
         return Some(format!("+{}", alt.user_base()));
     }

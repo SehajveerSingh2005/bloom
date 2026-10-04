@@ -1,12 +1,14 @@
 //! Requests that wait for Bloom: "may I send/run this?" and "set the volume".
 //! Each gets an id; Bloom's answer (confirm_reply / bloom_result) wakes it.
+//! A request from the user's phone also asks in their own WhatsApp chat
+//! (selfchat.rs), which answers by the same id.
 
 use crate::protocol::{emit, ConfirmKind, Out};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 pub enum Answer {
     Confirm(bool),
@@ -16,36 +18,48 @@ pub enum Answer {
 #[derive(Default)]
 pub struct Bridge {
     next: AtomicU64,
-    pending: Mutex<HashMap<u64, oneshot::Sender<Answer>>>,
+    /// Open questions by id, with their request's task.
+    pending: Mutex<HashMap<u64, (u64, oneshot::Sender<Answer>)>>,
+    /// Confirms of requests from the phone, as (id, question), for selfchat.rs.
+    pub phone: Mutex<Option<mpsc::UnboundedSender<(u64, String)>>>,
 }
 
 impl Bridge {
-    fn ask(&self, message: impl FnOnce(u64) -> Out) -> oneshot::Receiver<Answer> {
+    fn ask(&self, task: u64, message: impl FnOnce(u64) -> Out) -> (u64, oneshot::Receiver<Answer>) {
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending.lock().unwrap().insert(id, (task, tx));
         emit(&message(id));
-        rx
+        (id, rx)
     }
 
     /// True only on an explicit yes. A cancel or a dropped request is a no.
     pub async fn confirm(&self, task: u64, kind: ConfirmKind, title: String, body: String) -> bool {
-        matches!(
-            self.ask(|id| Out::Confirm {
-                task,
-                id,
-                kind,
-                title,
-                body
-            })
-            .await,
-            Ok(Answer::Confirm(true))
-        )
+        let question = format!("{title}\n{body}");
+        let (id, rx) = self.ask(task, |id| Out::Confirm {
+            task,
+            id,
+            kind,
+            title,
+            body,
+        });
+        if crate::selfchat::is_phone(task) {
+            if let Some(tx) = &*self.phone.lock().unwrap() {
+                let _ = tx.send((id, question));
+            }
+        }
+        matches!(rx.await, Ok(Answer::Confirm(true)))
+    }
+
+    /// The question is still waiting for its answer.
+    pub fn is_open(&self, id: u64) -> bool {
+        self.pending.lock().unwrap().contains_key(&id)
     }
 
     pub async fn bloom(&self, action: &str, value: Value) -> Result<String, String> {
         let action = action.to_string();
-        match self.ask(|id| Out::Bloom { id, action, value }).await {
+        // Not a request's question: task 0 is never one from the phone.
+        match self.ask(0, |id| Out::Bloom { id, action, value }).1.await {
             Ok(Answer::Bloom { ok: true, detail }) => Ok(detail),
             Ok(Answer::Bloom { detail, .. }) => Err(detail),
             _ => Err("Bloom did not answer.".into()),
@@ -53,14 +67,18 @@ impl Bridge {
     }
 
     pub fn answer(&self, id: u64, answer: Answer) {
-        if let Some(tx) = self.pending.lock().unwrap().remove(&id) {
+        if let Some((_, tx)) = self.pending.lock().unwrap().remove(&id) {
             let _ = tx.send(answer);
         }
     }
 
-    /// On cancel: every open question resolves as "no".
+    /// On cancel: every open question resolves as "no", except those of a
+    /// request from the phone, which the phone or its 5 minutes settle.
     pub fn drop_all(&self) {
-        self.pending.lock().unwrap().clear();
+        self.pending
+            .lock()
+            .unwrap()
+            .retain(|_, (task, _)| crate::selfchat::is_phone(*task));
     }
 }
 
