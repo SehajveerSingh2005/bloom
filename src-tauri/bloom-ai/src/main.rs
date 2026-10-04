@@ -7,6 +7,7 @@ mod agent;
 mod bridge;
 mod config;
 mod llm;
+mod policy;
 mod protocol;
 mod secrets;
 mod tools;
