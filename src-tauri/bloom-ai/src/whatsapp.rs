@@ -25,6 +25,8 @@ const SENDS_PER_HOUR: usize = 20;
 const MAX_TEXT: usize = 4096;
 const READ_MAX: usize = 20;
 const LIST_MAX: usize = 20;
+/// How long a text sent to the user's own chat counts as an echo.
+const ECHO_FOR: Duration = Duration::from_secs(60);
 /// Offered only while "Connect WhatsApp" is on.
 pub const TOOLS: [&str; 3] = ["read_whatsapp", "list_whatsapp_chats", "send_whatsapp"];
 
@@ -41,6 +43,8 @@ pub struct Message {
     pub at: i64,
     /// The text, or "[photo] caption" and the like.
     pub text: String,
+    /// Forwarded from somewhere else: someone else's words.
+    pub forwarded: bool,
 }
 
 /// The link as Settings shows it. `qr` and `code` are pairing credentials:
@@ -241,9 +245,10 @@ pub struct State {
     chats: Mutex<Chats>,
     status: Mutex<Status>,
     sends: Mutex<VecDeque<Instant>>,
-    /// Texts this PC sent to the user's own chat: if WhatsApp hands them
-    /// back, they are not the user writing (selfchat.rs).
-    echoes: Mutex<VecDeque<String>>,
+    /// Texts this PC sent to the user's own chat, and when: if WhatsApp
+    /// hands them back within a minute, they are not the user writing
+    /// (selfchat.rs).
+    echoes: Mutex<VecDeque<(String, Instant)>>,
     pub incoming: broadcast::Sender<Message>,
 }
 
@@ -338,6 +343,7 @@ impl State {
             from_me: true,
             at: chrono::Utc::now().timestamp(),
             text: text.into(),
+            forwarded: false,
         };
         self.chats.lock().unwrap().push(m.clone());
         if self.own_number().as_deref() == Some(chat) {
@@ -350,18 +356,25 @@ impl State {
     /// `text` is about to go to the user's own chat from this PC.
     pub fn expect_echo(&self, text: &str) {
         let mut echoes = self.echoes.lock().unwrap();
-        if !echoes.iter().any(|t| t == text) {
-            echoes.push_back(text.into());
+        if !echoes.iter().any(|(t, _)| t == text) {
+            echoes.push_back((text.into(), Instant::now()));
             if echoes.len() > 10 {
                 echoes.pop_front();
             }
         }
     }
 
-    /// True once for each text this PC sent to the user's own chat.
+    /// True once for each text this PC sent to the user's own chat in the
+    /// last minute. Older ones are forgotten: the same words later are the
+    /// user's.
     pub fn is_echo(&self, text: &str) -> bool {
+        self.is_echo_at(text, Instant::now())
+    }
+
+    fn is_echo_at(&self, text: &str, now: Instant) -> bool {
         let mut echoes = self.echoes.lock().unwrap();
-        let found = echoes.iter().position(|t| t == text);
+        echoes.retain(|(_, at)| now.duration_since(*at) < ECHO_FOR);
+        let found = echoes.iter().position(|(t, _)| t == text);
         found.and_then(|i| echoes.remove(i)).is_some()
     }
 
@@ -666,6 +679,7 @@ pub mod tests {
             from_me: sender == "me",
             at,
             text: text.into(),
+            forwarded: false,
         }
     }
 
@@ -953,6 +967,18 @@ pub mod tests {
         assert!(shared.bridge.answer_pending(Answer::Confirm(true)));
         assert_eq!(running.await.unwrap(), Err("WhatsApp is off.".into()));
         assert!(fake.sent.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn echoes_count_once_and_only_for_a_minute() {
+        let state = State::default();
+        state.expect_echo("Done.");
+        state.expect_echo("Done.");
+        assert!(state.is_echo("Done."));
+        assert!(!state.is_echo("Done."), "once");
+        state.expect_echo("Sent.");
+        let later = Instant::now() + ECHO_FOR;
+        assert!(!state.is_echo_at("Sent.", later), "expired");
     }
 
     #[test]

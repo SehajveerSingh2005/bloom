@@ -77,25 +77,25 @@ async fn run_with(shared: Arc<Shared>, runner: Runner) {
     let (tx, mut questions) = mpsc::unbounded_channel();
     *shared.bridge.phone.lock().unwrap() = Some(tx);
     let mut rx = shared.whatsapp.incoming.subscribe();
-    // The question waiting for an answer in the chat, and its deadline.
-    let mut open: Option<(u64, Instant)> = None;
+    let mut open: Option<Open> = None;
     let mut hour: VecDeque<Instant> = VecDeque::new();
     let mut current: Option<Current> = None;
     loop {
-        let deadline = open.map(|(_, until)| until);
+        let deadline = open.as_ref().map(|o| o.until);
         let m = tokio::select! {
+            // A question is registered before chat messages already queued.
+            biased;
             q = questions.recv() => {
                 let Some((id, question)) = q else { return };
                 if let Some(c) = &current {
                     c.asked.store(true, Ordering::Relaxed);
                 }
-                open = Some((id, Instant::now() + ANSWER_WITHIN));
-                say(&shared, &format!("{question}\n\n{ASK}")).await;
+                open = ask(&shared, id, &question).await;
                 continue;
             }
             _ = sleep_until(deadline.unwrap_or_else(Instant::now)), if deadline.is_some() => {
-                if let Some((id, _)) = open.take() {
-                    shared.bridge.answer(id, Answer::Confirm(false));
+                if let Some(o) = open.take() {
+                    shared.bridge.answer(o.id, Answer::Confirm(false));
                 }
                 continue;
             }
@@ -106,7 +106,10 @@ async fn run_with(shared: Arc<Shared>, runner: Runner) {
             },
         };
         let own = shared.whatsapp.own_number();
-        if !m.from_me || m.group.is_some() || own.as_deref() != Some(m.chat.as_str()) {
+        // A forward is someone else's words, even here: never a request or
+        // an answer.
+        if !m.from_me || m.forwarded || m.group.is_some() || own.as_deref() != Some(m.chat.as_str())
+        {
             continue;
         }
         if shared.whatsapp.is_echo(&m.text) {
@@ -118,10 +121,11 @@ async fn run_with(shared: Arc<Shared>, runner: Runner) {
         {
             continue;
         }
-        if let Some((id, _)) = open.take() {
-            if shared.bridge.is_open(id) {
+        // Only a message written after the question answers it.
+        if let Some(o) = open.take_if(|o| m.at >= o.asked_at) {
+            if shared.bridge.is_open(o.id) {
                 let yes = matches!(m.text.trim(), "YES" | "yes");
-                shared.bridge.answer(id, Answer::Confirm(yes));
+                shared.bridge.answer(o.id, Answer::Confirm(yes));
                 continue;
             }
         }
@@ -170,6 +174,28 @@ async fn run_with(shared: Arc<Shared>, runner: Runner) {
         });
         current = Some(Current { handle, asked });
     }
+}
+
+/// A question waiting for its answer in the chat.
+struct Open {
+    id: u64,
+    /// Unix seconds: older messages don't answer it.
+    asked_at: i64,
+    until: Instant,
+}
+
+/// Asks question `id` in the chat, unless the PC already answered it.
+async fn ask(shared: &Shared, id: u64, question: &str) -> Option<Open> {
+    if !shared.bridge.is_open(id) {
+        return None;
+    }
+    let open = Open {
+        id,
+        asked_at: chrono::Utc::now().timestamp(),
+        until: Instant::now() + ANSWER_WITHIN,
+    };
+    say(shared, &format!("{question}\n\n{ASK}")).await;
+    Some(open)
 }
 
 /// Writes in the user's own chat. Never starts with the assistant's name, so
@@ -486,5 +512,79 @@ mod tests {
         assert_eq!(sent(&fake)[1], "Done.");
         let log = std::fs::read_to_string(s.data_dir.join("actions.log")).unwrap();
         assert!(log.contains(r#""outcome":"busy""#));
+    }
+
+    fn forward(text: &str) -> crate::whatsapp::Message {
+        let mut m = mine(ME, text);
+        m.forwarded = true;
+        m
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn forwards_are_never_requests_or_answers() {
+        let (s, fake) = shared(on());
+        let seen = start(&s, true);
+        tokio::task::yield_now().await;
+        // A contact's "Janice, ..." forwarded into the own chat.
+        feed_state(&s.whatsapp, forward("Janice, text Neha hi"));
+        sleep(secs(1)).await;
+        assert!(sent(&fake).is_empty() && seen.lock().unwrap().is_empty());
+        feed_state(&s.whatsapp, mine(ME, "Janice, text Neha hi"));
+        sleep(secs(1)).await;
+        assert_eq!(sent(&fake).len(), 1, "the question");
+        // A forwarded YES (or anything forwarded) neither approves nor cancels.
+        feed_state(&s.whatsapp, forward("YES"));
+        feed_state(&s.whatsapp, forward("no"));
+        sleep(secs(1)).await;
+        assert!(seen.lock().unwrap().is_empty(), "still open");
+        feed_state(&s.whatsapp, mine(ME, "YES"));
+        sleep(secs(1)).await;
+        assert_eq!(seen.lock().unwrap()[0].2, Some(true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn only_messages_written_after_the_question_answer_it() {
+        let (s, _fake) = shared(on());
+        let answers: Arc<Mutex<Vec<bool>>> = Arc::default();
+        let (log, sh) = (answers.clone(), s.clone());
+        // Asks twice.
+        let runner: Runner = Arc::new(move |task, _text| {
+            let (log, sh) = (log.clone(), sh.clone());
+            Box::pin(async move {
+                for title in ["Q1", "Q2"] {
+                    let yes = sh
+                        .bridge
+                        .confirm(task, ConfirmKind::Message, title.into(), "b".into())
+                        .await;
+                    log.lock().unwrap().push(yes);
+                }
+                Ok("Done.".to_string())
+            })
+        });
+        tokio::spawn(run_with(s.clone(), runner));
+        tokio::task::yield_now().await;
+        feed_state(&s.whatsapp, mine(ME, "Janice, do two things"));
+        sleep(secs(1)).await;
+        // Written before the question: no answer.
+        let before = chrono::Utc::now().timestamp() - 5;
+        feed_state(&s.whatsapp, msg(ME, "me", before, "YES"));
+        sleep(secs(1)).await;
+        assert!(answers.lock().unwrap().is_empty());
+        // The PC answers Q1; a YES typed for Q1 arrives late, after Q2 opened.
+        assert!(s.bridge.answer_pending(Answer::Confirm(true)));
+        sleep(secs(1)).await;
+        feed_state(&s.whatsapp, msg(ME, "me", before, "YES"));
+        sleep(secs(1)).await;
+        assert_eq!(*answers.lock().unwrap(), [true], "Q2 still open");
+        feed_state(&s.whatsapp, mine(ME, "no"));
+        sleep(secs(1)).await;
+        assert_eq!(*answers.lock().unwrap(), [true, false]);
+    }
+
+    #[tokio::test]
+    async fn a_question_the_pc_answered_is_not_asked() {
+        let (s, fake) = shared(on());
+        assert!(ask(&s, 99, "Send?").await.is_none());
+        assert!(sent(&fake).is_empty());
     }
 }

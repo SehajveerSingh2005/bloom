@@ -254,6 +254,7 @@ impl Conn {
             from_me: src.is_from_me,
             at: info.timestamp.timestamp(),
             text,
+            forwarded: forwarded(msg),
         })
     }
 
@@ -280,25 +281,62 @@ async fn offline(client: &Arc<Client>) {
 /// "+<number>" for a person (LIDs looked up), None for status updates,
 /// channels and the like.
 async fn chat_key(client: &Arc<Client>, jid: &Jid, alt: Option<&Jid>) -> Option<String> {
-    if jid.is_pn() {
-        return Some(format!("+{}", jid.user_base()));
-    }
-    if !jid.is_lid() {
+    if !jid.is_pn() && !jid.is_lid() {
         return None;
     }
-    // The user's own chat may come by their LID.
-    if let (Some(lid), Some(pn)) = (client.lid(), client.pn()) {
-        if jid.user_base() == lid.user_base() {
-            return Some(format!("+{}", pn.user_base()));
-        }
-    }
-    if let Some(alt) = alt.filter(|a| a.is_pn()) {
-        return Some(format!("+{}", alt.user_base()));
+    if let Some(key) = direct_key(jid, alt, client.lid().as_ref(), client.pn().as_ref()) {
+        return Some(key);
     }
     match client.get_lid_pn_entry(jid).await {
         Ok(Some(entry)) => Some(format!("+{}", entry.phone_number)),
         _ => Some(jid.to_non_ad_string()),
     }
+}
+
+/// "+<number>" when no lookup is needed: a phone-number JID, the user's own
+/// LID (their own chat may come by it), or a phone-number `alt`.
+fn direct_key(
+    jid: &Jid,
+    alt: Option<&Jid>,
+    own_lid: Option<&Jid>,
+    own_pn: Option<&Jid>,
+) -> Option<String> {
+    let number = |j: &Jid| format!("+{}", j.user_base());
+    if jid.is_pn() {
+        return Some(number(jid));
+    }
+    if let (Some(lid), Some(pn)) = (own_lid, own_pn) {
+        if jid.is_lid() && jid.user_base() == lid.user_base() {
+            return Some(number(pn));
+        }
+    }
+    alt.filter(|a| a.is_pn()).map(number)
+}
+
+/// Forwarded (marked so by WhatsApp): someone else's words, even in the
+/// user's own chat. Plain `conversation` text can't carry the mark: a
+/// forward always comes as extended text or media.
+fn forwarded(msg: &wa::Message) -> bool {
+    let m = msg.get_base_message();
+    let infos = [
+        m.extended_text_message.as_option().map(|x| &x.context_info),
+        m.image_message.as_option().map(|x| &x.context_info),
+        m.video_message.as_option().map(|x| &x.context_info),
+        m.audio_message.as_option().map(|x| &x.context_info),
+        m.document_message.as_option().map(|x| &x.context_info),
+        m.sticker_message.as_option().map(|x| &x.context_info),
+        m.location_message.as_option().map(|x| &x.context_info),
+        m.live_location_message.as_option().map(|x| &x.context_info),
+        m.contact_message.as_option().map(|x| &x.context_info),
+        m.contacts_array_message
+            .as_option()
+            .map(|x| &x.context_info),
+    ];
+    infos
+        .into_iter()
+        .flatten()
+        .filter_map(|c| c.as_option())
+        .any(|c| c.is_forwarded == Some(true) || c.forwarding_score.unwrap_or(0) > 0)
 }
 
 /// The text, or "[photo] caption" and the like; None for reactions, edits
@@ -590,5 +628,65 @@ mod tests {
         };
         assert_eq!(describe(&photo).as_deref(), Some("[photo] look"));
         assert_eq!(describe(&wa::Message::default()), None);
+    }
+
+    #[test]
+    fn forwards_are_marked() {
+        let typed = wa::Message::text("Janice, hi");
+        assert!(!forwarded(&typed));
+        let forward = typed.prepare_for_forward();
+        assert_eq!(describe(&forward).as_deref(), Some("Janice, hi"));
+        assert!(forwarded(&forward));
+        let photo = wa::Message {
+            image_message: MessageField::some(wa::message::ImageMessage {
+                caption: Some("Janice, hi".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!forwarded(&photo));
+        assert!(forwarded(&photo.prepare_for_forward()));
+        // Only the score set (no flag) still counts.
+        let mut scored = photo.clone();
+        scored.image_message.as_option_mut().unwrap().context_info =
+            MessageField::some(wa::ContextInfo {
+                forwarding_score: Some(2),
+                ..Default::default()
+            });
+        assert!(forwarded(&scored));
+        // A reply quoting a forward: the user's own text, not a forward.
+        let quoting = wa::Message {
+            extended_text_message: MessageField::some(wa::message::ExtendedTextMessage {
+                text: Some("YES".into()),
+                context_info: MessageField::some(wa::ContextInfo {
+                    quoted_message: MessageField::some(*forward),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(describe(&quoting).as_deref(), Some("YES"));
+        assert!(!forwarded(&quoting));
+    }
+
+    #[test]
+    fn the_own_lid_is_the_own_number() {
+        let (lid, pn) = (Jid::lid("98765"), Jid::pn("4915550000001"));
+        let own = |j: &Jid| direct_key(j, None, Some(&lid), Some(&pn));
+        assert_eq!(own(&Jid::lid("98765")).as_deref(), Some("+4915550000001"));
+        assert_eq!(own(&pn).as_deref(), Some("+4915550000001"));
+        // Someone else's LID needs a lookup, and its fallback key is never
+        // the own number.
+        let other = Jid::lid("12345");
+        assert_eq!(own(&other), None);
+        assert!(other.to_non_ad_string().ends_with("@lid"));
+        let alt = Jid::pn("491701234567");
+        assert_eq!(
+            direct_key(&other, Some(&alt), Some(&lid), Some(&pn)).as_deref(),
+            Some("+491701234567")
+        );
+        // Not linked yet: no own LID to match.
+        assert_eq!(direct_key(&Jid::lid("98765"), None, None, None), None);
     }
 }

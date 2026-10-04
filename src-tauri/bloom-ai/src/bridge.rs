@@ -36,6 +36,14 @@ impl Bridge {
     /// True only on an explicit yes. A cancel or a dropped request is a no.
     pub async fn confirm(&self, task: u64, kind: ConfirmKind, title: String, body: String) -> bool {
         let question = format!("{title}\n{body}");
+        // A request from the phone with nobody there to ask: no.
+        let phone = match crate::selfchat::is_phone(task) {
+            false => None,
+            true => match self.phone.lock().unwrap().clone() {
+                Some(tx) if !tx.is_closed() => Some(tx),
+                _ => return false,
+            },
+        };
         let (id, rx) = self.ask(task, |id| Out::Confirm {
             task,
             id,
@@ -43,10 +51,8 @@ impl Bridge {
             title,
             body,
         });
-        if crate::selfchat::is_phone(task) {
-            if let Some(tx) = &*self.phone.lock().unwrap() {
-                let _ = tx.send((id, question));
-            }
+        if phone.is_some_and(|tx| tx.send((id, question)).is_err()) {
+            self.answer(id, Answer::Confirm(false));
         }
         matches!(rx.await, Ok(Answer::Confirm(true)))
     }
@@ -107,6 +113,26 @@ mod tests {
         tokio::task::yield_now().await; // lets the request register as id 1
         bridge.answer(1, Answer::Confirm(true));
         assert!(waiting.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_phone_question_with_nobody_to_ask_is_no_at_once() {
+        let phone = 2_000_000_000;
+        let bridge = Bridge::default();
+        assert!(
+            !bridge
+                .confirm(phone, ConfirmKind::Email, "t".into(), "b".into())
+                .await
+        );
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        *bridge.phone.lock().unwrap() = Some(tx);
+        drop(rx);
+        assert!(
+            !bridge
+                .confirm(phone, ConfirmKind::Email, "t".into(), "b".into())
+                .await
+        );
+        assert!(bridge.pending.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
