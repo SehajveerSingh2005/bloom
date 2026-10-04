@@ -45,13 +45,24 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 	}, [focusOnOpen]);
 
 	// Enter approves (the focused button), Escape declines (handler below).
+	// Focus approve only once enabled; while disabled, keep focus on Cancel so Escape works.
 	useEffect(() => {
-		if (state.phase === "confirm") takeKeyboard(approveRef.current);
-	}, [state.phase]);
+		if (state.phase !== "confirm") return;
+		if (!approveDisabled) {
+			takeKeyboard(approveRef.current);
+		} else {
+			// Focus Cancel button (first button in .ai-row) to keep focus on the panel.
+			const cancelBtn = rootRef.current?.querySelector(".ai-row button:first-child");
+			takeKeyboard(cancelBtn as HTMLElement);
+		}
+	}, [state.phase, approveDisabled]);
 
 	// Disable approve button for 600ms after confirm card appears to prevent accidental approval.
 	useEffect(() => {
-		if (!state.confirm) return;
+		if (!state.confirm) {
+			setApproveDisabled(false);
+			return;
+		}
 		setApproveDisabled(true);
 		const timer = setTimeout(() => setApproveDisabled(false), 600);
 		return () => clearTimeout(timer);
