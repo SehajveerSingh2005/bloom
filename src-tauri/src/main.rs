@@ -1,6 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod connect;
+mod glass;
+#[cfg(target_os = "linux")]
+mod linux;
 mod services;
 mod state;
 mod types;
@@ -9,15 +13,21 @@ mod utils;
 
 use std::sync::atomic::Ordering;
 use tauri::Manager;
+#[cfg(windows)]
 use windows::core::BOOL;
+#[cfg(windows)]
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
+#[cfg(windows)]
 use windows::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT};
 
 use crate::commands::*;
 use crate::services::*;
 use crate::state::*;
 use crate::utils::*;
+#[cfg(target_os = "linux")]
+use crate::linux::WindowHandleExt;
 
+#[cfg(windows)]
 unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     if ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT {
         set_taskbar_visibility(true, true);
@@ -28,11 +38,18 @@ unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
 }
 
 fn main() {
+    #[cfg(windows)]
     unsafe {
         let _ = SetConsoleCtrlHandler(Some(ctrl_handler), true);
     }
 
+    #[cfg(target_os = "linux")]
+    if !crate::linux::prepare_process() {
+        return;
+    }
+
     // Single-instance enforcement
+    #[cfg(windows)]
     unsafe {
         use windows::Win32::Foundation::{CloseHandle, GetLastError};
         use windows::Win32::System::Threading::{
@@ -98,6 +115,8 @@ fn main() {
             open_system_tray,
             set_ignore_cursor_events,
             set_window_height,
+            #[cfg(target_os = "linux")]
+            get_battery,
             resize_settings_window,
             hide_overlay,
             set_splash_fullscreen,
@@ -115,6 +134,7 @@ fn main() {
             open_app,
             launch_new_instance,
             update_dock_rect,
+            glass::set_glass,
             update_notch_rect,
             set_dock_hovered,
             set_notch_hovered,
@@ -151,11 +171,21 @@ fn main() {
             set_wifi_state,
             get_bluetooth_state,
             set_bluetooth_state,
+            connect::wifi_networks,
+            connect::wifi_connect,
+            connect::wifi_disconnect,
+            connect::bt_watch,
+            connect::bt_unwatch,
+            connect::bt_pair,
+            connect::bt_pair_answer,
+            connect::bt_connect,
+            connect::bt_forget,
+            connect::take_keyboard,
             open_bluetooth_settings,
             open_airplane_mode_settings,
             set_brightness,
-            get_battery_saver_state,
-            open_battery_saver_settings,
+            get_power_mode,
+            cycle_power_mode,
             get_system_accent_color,
             get_cpu_usage,
             get_ram_usage,
@@ -196,6 +226,8 @@ fn main() {
 
             let window = app.get_webview_window("main").unwrap();
             let dock_win = app.get_webview_window("dock").unwrap();
+            #[cfg(target_os = "linux")]
+            crate::linux::mark_dock_windows(app.handle());
 
             // Sync window rects initially and on event
             let win_clone = window.clone();
@@ -290,6 +322,7 @@ fn main() {
                 });
             }
 
+            #[cfg(windows)]
             watch_webview_processes(app.handle());
             setup_mouse_hook(app.handle().clone());
             setup_display_change_monitor(app.handle().clone());
@@ -306,12 +339,16 @@ fn main() {
             trigger_app_scan();
             let tx = setup_system_worker(app.handle().clone());
             let _ = COMMAND_SENDER.set(tx.clone());
+            #[cfg_attr(target_os = "linux", allow(clippy::let_unit_value))]
             let _hook = services::setup_keyboard_hook(app.handle().clone());
             setup_taskbar_hook();
             setup_audio_visualization(app.handle().clone());
             setup_settings_watcher(app.handle().clone());
 
             // Listen for second-instance signal to open settings
+            #[cfg(target_os = "linux")]
+            crate::linux::listen_second_instance(app.handle().clone());
+            #[cfg(windows)]
             if let Some(&h_event) = SINGLE_INSTANCE_EVENT_HANDLE.get() {
                 if h_event != 0 {
                     let app_handle = app.handle().clone();

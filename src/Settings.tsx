@@ -147,6 +147,8 @@ function SettingsApp() {
 							handleThemeColorChange={settings.handleThemeColorChange}
 							themeOpacity={settings.themeOpacity}
 							handleOpacityChange={settings.handleOpacityChange}
+							glassEnabled={settings.glassEnabled}
+							toggleGlass={settings.toggleGlass}
 							themeSaturation={settings.themeSaturation}
 							handleSaturationChange={settings.handleSaturationChange}
 							themeBrightness={settings.themeBrightness}
@@ -161,6 +163,8 @@ function SettingsApp() {
 						<NotchTab
 							notchMode={settings.notchMode}
 							setNotchModeValue={settings.setNotchModeValue}
+							infoCentre={settings.infoCentre}
+							toggleInfoCentre={settings.toggleInfoCentre}
 							notchEdgeDelay={settings.notchEdgeDelay}
 							handleNotchEdgeDelayChange={settings.handleNotchEdgeDelayChange}
 							calendarEnabled={settings.calendarEnabled}
