@@ -63,7 +63,7 @@ pub fn normalize_in(raw: &str, region: Option<&str>) -> Result<String, String> {
                 )
             })?;
         let region = region.unwrap_or_default();
-        if digits.starts_with(code) && digits.len() >= code.len() + 7 {
+        if digits.starts_with(code) && digits.len() >= 11 {
             // Already carries the country code, just without the plus.
             digits
         } else {
@@ -158,6 +158,14 @@ mod tests {
         assert_eq!(
             normalize_in("1 415 555 0100", Some("US")).unwrap(),
             "+14155550100"
+        );
+        assert_eq!(
+            normalize_in("91234 56789", Some("IN")).unwrap(),
+            "+919123456789"
+        );
+        assert_eq!(
+            normalize_in("91 98765 43210", Some("IN")).unwrap(),
+            "+919876543210"
         );
         assert_eq!(
             normalize_in("415 555 0100", Some("US")).unwrap(),
