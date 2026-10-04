@@ -170,10 +170,13 @@ export function AiTab() {
 		setTier(next);
 	};
 
-	const runDelete = () =>
-		invoke("ai_delete")
+	const runDelete = () => {
+		setMessage("");
+		return invoke("ai_delete")
+			.then(() => setMessage("Bloom AI was removed from this PC."))
 			.catch((e) => setMessage(String(e)))
 			.then(refresh);
+	};
 
 	const deleteAi = async () => {
 		const { ask } = await import("@tauri-apps/plugin-dialog");
@@ -271,7 +274,7 @@ export function AiTab() {
 								onClick={() => setCapturing(true)}
 								onBlur={() => setCapturing(false)}
 								onKeyDown={(e) => {
-									if (!capturing) return;
+									if (!capturing || e.repeat) return;
 									e.preventDefault();
 									if (e.key !== "Escape") setHotkey(String(toVirtualKey(e)));
 									setCapturing(false);
