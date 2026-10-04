@@ -69,8 +69,12 @@ pub fn wipe() {
 mod tests {
     use super::*;
 
+    /// Tests share one Credential Manager service and call `wipe()`.
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn set_get_wipe_round_trip() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         set("stt-key", "abc").unwrap();
         assert_eq!(get("stt-key").as_deref(), Some("abc"));
         set("stt-key", "").unwrap();
@@ -82,6 +86,7 @@ mod tests {
 
     #[test]
     fn long_values_are_chunked_and_leave_no_stale_parts() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let long: String = (0..3500)
             .map(|i| char::from(b'a' + (i % 26) as u8))
             .collect();
@@ -99,6 +104,7 @@ mod tests {
 
     #[test]
     fn unknown_names_are_refused() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert!(set("anything", "x").is_err());
     }
 }
