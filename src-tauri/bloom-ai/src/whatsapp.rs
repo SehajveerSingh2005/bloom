@@ -322,6 +322,22 @@ impl State {
             .collect()
     }
 
+    /// A message sent from this PC (on request or automatically): kept and
+    /// broadcast like one from the user's other devices, so automatic replies
+    /// see it. The library does not report our own sends back.
+    pub fn record_sent(&self, chat: &str, text: &str) {
+        let m = Message {
+            chat: chat.into(),
+            group: None,
+            sender: "me".into(),
+            from_me: true,
+            at: chrono::Utc::now().timestamp(),
+            text: text.into(),
+        };
+        self.chats.lock().unwrap().push(m.clone());
+        let _ = self.incoming.send(m);
+    }
+
     /// The linked account's WhatsApp name, once known.
     pub fn own_name(&self) -> Option<String> {
         self.status.lock().unwrap().name.clone()
@@ -567,6 +583,10 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
     };
     let reason = sent.as_ref().err().map(String::as_str);
     journal::record_with(&dir, "whatsapp", &detail, outcome, reason);
+    if sent.is_ok() {
+        // The user wrote in this chat: automatic replies pause there.
+        state.record_sent(&number, text);
+    }
     sent.map(|()| format!("Sent to {name}."))
 }
 
@@ -821,10 +841,17 @@ pub mod tests {
         let c = ctx();
         phones::save(&c.shared.data_dir, "Neha", "+491701234567").unwrap();
         let fake = link(&c);
+        let shared = c.shared.clone();
+        let mut rx = shared.whatsapp.incoming.subscribe();
         let (out, asked) = send_with(c, "neha", Some(true)).await;
         assert!(asked);
         assert_eq!(out.unwrap(), "Sent to Neha.");
         assert_eq!(fake.sent.lock().unwrap()[0].0, "+491701234567");
+        // Kept in the chat and broadcast as the user's own message.
+        let kept = shared.whatsapp.recent("+491701234567", 5);
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0].from_me && kept[0].sender == "me" && kept[0].text == "Running late");
+        assert_eq!(rx.recv().await.unwrap(), kept[0]);
         assert_eq!(
             confirm_text("Neha", "+491701234567", "hi"),
             (

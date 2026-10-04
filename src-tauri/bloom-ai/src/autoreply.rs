@@ -35,6 +35,8 @@ const LOOP_MAX: usize = 5;
 const LOOP_WINDOW: Duration = Duration::from_secs(10 * 60);
 const CONTEXT: usize = 10;
 const MAX_REPLY: usize = 600;
+/// Older messages are a backlog from being offline: not answered.
+const MAX_AGE_SECS: i64 = 5 * 60;
 /// Media without a caption: nothing to answer.
 const BARE: [&str; 7] = [
     "[photo]",
@@ -58,6 +60,8 @@ struct Chat {
     busy: bool,
     /// Replies in the last 10 minutes.
     replies: VecDeque<Instant>,
+    /// The last model call (a reply, a SKIP or an error): 2 minutes apart.
+    last_try: Option<Instant>,
     paused_until: Option<Instant>,
     /// The loop guard tripped: no replies until the user writes here.
     stopped: bool,
@@ -89,6 +93,7 @@ impl Pacer {
             c.busy
                 || c.stopped
                 || c.paused_until.is_some_and(|t| t > now)
+                || c.last_try.is_some_and(|t| now.duration_since(t) < GAP)
                 || c.replies
                     .back()
                     .is_some_and(|t| now.duration_since(*t) < LOOP_WINDOW)
@@ -144,17 +149,32 @@ impl Pacer {
             c.busy = false;
             return Step::Done;
         };
-        let due = match c.replies.back() {
-            Some(reply) => (last_in + BATCH).max(*reply + GAP),
-            None => last_in + BATCH,
-        };
+        let due = [c.last_try, c.replies.back().copied()]
+            .into_iter()
+            .flatten()
+            .map(|t| t + GAP)
+            .fold(last_in + BATCH, Instant::max);
         if due > now {
             return Step::Wait(due);
         }
         c.waiting = None;
         match self.hold(chat, now) {
             Some(why) => Step::Blocked(why),
-            None => Step::Go,
+            None => {
+                self.chats.entry(chat.into()).or_default().last_try = Some(now);
+                Step::Go
+            }
+        }
+    }
+
+    /// Checks the limits and counts the reply in one step.
+    fn try_send(&mut self, chat: &str, text: &str, now: Instant) -> Result<(), &'static str> {
+        match self.hold(chat, now) {
+            Some(why) => Err(why),
+            None => {
+                self.sent(chat, text, now);
+                Ok(())
+            }
         }
     }
 
@@ -171,9 +191,11 @@ impl Pacer {
     }
 }
 
-/// Someone else's text (or captioned media) in a 1:1 chat.
-fn triggers(m: &Message) -> bool {
-    !m.from_me
+/// Someone else's recent text (or captioned media) in a 1:1 chat. `now`:
+/// Unix seconds.
+fn triggers(m: &Message, now: i64) -> bool {
+    now - m.at <= MAX_AGE_SECS
+        && !m.from_me
         && m.group.is_none()
         && m.chat.starts_with('+')
         && !m.text.trim().is_empty()
@@ -227,20 +249,14 @@ async fn ask(llm: &Llm, messages: &[Value]) -> Result<String, String> {
     Ok(message["content"].as_str().unwrap_or_default().to_string())
 }
 
-/// The reply to send: None for nothing or SKIP; at most 600 characters.
-fn clean(out: &str) -> Option<String> {
+/// The reply to send: None for nothing or SKIP; at most `max` characters.
+fn clean(out: &str, max: usize) -> Option<String> {
     let text = out.trim();
     let word = text.trim_matches(|c: char| !c.is_alphanumeric());
     if word.is_empty() || word.eq_ignore_ascii_case("skip") {
         return None;
     }
-    Some(
-        text.chars()
-            .take(MAX_REPLY)
-            .collect::<String>()
-            .trim_end()
-            .into(),
-    )
+    Some(text.chars().take(max).collect::<String>().trim_end().into())
 }
 
 /// 2 s plus 40 ms per character, at most 8 s.
@@ -287,7 +303,8 @@ async fn run_with(shared: Arc<Shared>, writer: Writer) {
             }
             continue;
         }
-        if !triggers(&m) || allowed(&shared, &m.chat).is_none() {
+        let now_unix = chrono::Utc::now().timestamp();
+        if !triggers(&m, now_unix) || allowed(&shared, &m.chat).is_none() {
             continue;
         }
         if pacer.lock().unwrap().incoming(&m.chat, now) {
@@ -361,18 +378,29 @@ async fn reply(
         .format("%A %-d %B %Y, %H:%M")
         .to_string();
     let out = writer(&cfg, prompt(&cfg.name, &cfg.auto_style, &now, &history)).await?;
-    let Some(mut text) = clean(&out) else {
+    let sig = match cfg.auto_sign {
+        true => signature(&cfg.name, shared.whatsapp.own_name()),
+        false => String::new(),
+    };
+    let Some(text) = clean(&out, MAX_REPLY.saturating_sub(sig.chars().count())) else {
         log("auto-reply", format!("{chat}: skipped"));
         return Ok(());
     };
-    if cfg.auto_sign {
-        text += &signature(&cfg.name, shared.whatsapp.own_name());
+    let text = text + &sig;
+    // The user may have written while the model was answering.
+    let held = pacer.lock().unwrap().hold(chat, Instant::now());
+    if let Some(why) = held {
+        log("auto-reply", format!("{chat}: not sent, {why}"));
+        return Ok(());
     }
     let _ = link.typing(chat, true).await;
     sleep(typing_delay(&text)).await;
     // The user may have written, or turned this off, while "typing".
-    let held = pacer.lock().unwrap().hold(chat, Instant::now());
-    if let Some(why) = held.or_else(|| allowed(shared, chat).is_none().then_some("turned off")) {
+    let ready = match allowed(shared, chat) {
+        None => Err("turned off"),
+        Some(_) => pacer.lock().unwrap().try_send(chat, &text, Instant::now()),
+    };
+    if let Err(why) = ready {
         let _ = link.typing(chat, false).await;
         log("auto-reply", format!("{chat}: not sent, {why}"));
         return Ok(());
@@ -382,12 +410,14 @@ async fn reply(
         text.chars().count()
     );
     journal::record(dir, "whatsapp", &detail, "auto-started");
-    pacer.lock().unwrap().sent(chat, &text, Instant::now());
     let sent = link.send_text(chat, &text).await;
     let outcome = if sent.is_ok() { "auto" } else { "failed" };
     let reason = sent.as_ref().err().map(String::as_str);
     journal::record_with(dir, "whatsapp", &detail, outcome, reason);
     sent?;
+    // Into the chat, so the next reply sees it; `echoes` keeps it from
+    // pausing the chat.
+    shared.whatsapp.record_sent(chat, &text);
     log("auto-reply out", format!("{chat}: {text}"));
     emit(&Out::WhatsappAutoReply { name });
     Ok(())
@@ -406,6 +436,11 @@ mod tests {
         Duration::from_secs(n)
     }
 
+    /// A message in `chat` sent just now.
+    fn fresh(chat: &str, sender: &str, text: &str) -> Message {
+        msg(chat, sender, chrono::Utc::now().timestamp(), text)
+    }
+
     #[test]
     fn bursts_are_batched_and_replies_spaced_2_minutes() {
         let t = Instant::now();
@@ -421,6 +456,41 @@ mod tests {
         assert_eq!(p.next(NEHA, t + secs(150)), Step::Go);
         assert_eq!(p.next(NEHA, t + secs(151)), Step::Done);
         assert!(p.incoming(NEHA, t + secs(200)), "a new worker after Done");
+    }
+
+    #[test]
+    fn a_skip_or_an_error_also_waits_2_minutes() {
+        let t = Instant::now();
+        let mut p = Pacer::default();
+        p.incoming(NEHA, t);
+        assert_eq!(p.next(NEHA, t + secs(15)), Step::Go);
+        // The model said SKIP (nothing sent); Neha keeps writing.
+        assert!(!p.incoming(NEHA, t + secs(20)));
+        assert_eq!(p.next(NEHA, t + secs(35)), Step::Wait(t + secs(135)));
+        assert_eq!(p.next(NEHA, t + secs(135)), Step::Go);
+        // The worker ended; a new one still keeps the gap.
+        assert_eq!(p.next(NEHA, t + secs(136)), Step::Done);
+        assert!(p.incoming(NEHA, t + secs(140)));
+        assert_eq!(p.next(NEHA, t + secs(155)), Step::Wait(t + secs(255)));
+    }
+
+    #[test]
+    fn the_hourly_cap_is_checked_and_counted_at_once() {
+        let t = Instant::now();
+        let mut p = Pacer::default();
+        for i in 0..PER_HOUR - 1 {
+            p.sent(&format!("+4917000000{i:02}"), "x", t);
+        }
+        // Several chats ready at the same moment: only one fits.
+        let results: Vec<_> = ["+491", "+492", "+493"]
+            .iter()
+            .map(|c| p.try_send(c, "y", t + secs(1)))
+            .collect();
+        assert_eq!(results[0], Ok(()));
+        assert!(results[1..]
+            .iter()
+            .all(|r| r.is_err_and(|w| w.contains("30 replies"))));
+        assert_eq!(p.hour.len(), PER_HOUR);
     }
 
     #[test]
@@ -499,6 +569,7 @@ mod tests {
 
     #[test]
     fn skip_and_empty_send_nothing_and_long_is_cut() {
+        let clean = |s: &str| super::clean(s, MAX_REPLY);
         assert_eq!(clean(""), None);
         assert_eq!(clean("  \n"), None);
         assert_eq!(clean("SKIP"), None);
@@ -506,6 +577,10 @@ mod tests {
         assert_eq!(clean("\"SKIP\""), None);
         assert_eq!(clean(" Back at 6! ").as_deref(), Some("Back at 6!"));
         assert_eq!(clean(&"é".repeat(700)).unwrap().chars().count(), MAX_REPLY);
+        assert_eq!(
+            super::clean(&"é".repeat(700), 10).unwrap().chars().count(),
+            10
+        );
         assert_eq!(typing_delay("hi"), Duration::from_millis(2080));
         assert_eq!(typing_delay(&"x".repeat(500)), secs(8));
         assert_eq!(signature("Janice", Some("Arnav Aggarwal".into())), SIG);
@@ -513,16 +588,24 @@ mod tests {
     }
 
     #[test]
-    fn only_others_texts_in_1_to_1_chats_trigger() {
-        assert!(triggers(&msg(NEHA, "Neha", 1, "are you free?")));
-        assert!(triggers(&msg(NEHA, "Neha", 1, "[photo] look")));
-        assert!(!triggers(&msg(NEHA, "Neha", 1, "[photo]")));
-        assert!(!triggers(&msg(NEHA, "Neha", 1, "[voice message]")));
-        assert!(!triggers(&msg(NEHA, "me", 1, "hi")), "own message");
-        let mut group = msg("1203630@g.us", "Neha", 1, "hi");
+    fn only_others_recent_texts_in_1_to_1_chats_trigger() {
+        let now = 1_800_000_000;
+        let triggers = |m: &Message| super::triggers(m, now);
+        assert!(triggers(&msg(NEHA, "Neha", now, "are you free?")));
+        assert!(triggers(&msg(NEHA, "Neha", now, "[photo] look")));
+        assert!(!triggers(&msg(NEHA, "Neha", now, "[photo]")));
+        assert!(!triggers(&msg(NEHA, "Neha", now, "[voice message]")));
+        assert!(!triggers(&msg(NEHA, "me", now, "hi")), "own message");
+        let mut group = msg("1203630@g.us", "Neha", now, "hi");
         group.group = Some("Family".into());
         assert!(!triggers(&group));
-        assert!(!triggers(&msg("12345@lid", "Neha", 1, "hi")));
+        assert!(!triggers(&msg("12345@lid", "Neha", now, "hi")));
+        // A backlog delivered after sleep or a reconnect.
+        assert!(triggers(&msg(NEHA, "Neha", now - 300, "hi")));
+        assert!(
+            !triggers(&msg(NEHA, "Neha", now - 301, "hi")),
+            "older than 5 minutes"
+        );
     }
 
     /// A Shared with these settings, Neha and Bob saved, a fact and a skill.
@@ -666,9 +749,9 @@ mod tests {
         let (fake, prompts) = start(&s, "Back at 6!");
         tokio::task::yield_now().await;
         let t0 = Instant::now();
-        feed_state(&s.whatsapp, msg(NEHA, "Neha", 1, "are you free?"));
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "are you free?"));
         sleep(secs(5)).await;
-        feed_state(&s.whatsapp, msg(NEHA, "Neha", 2, "call me"));
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "call me"));
         sleep(secs(60)).await;
 
         let text = format!("Back at 6!{SIG}");
@@ -677,7 +760,10 @@ mod tests {
             events(&fake, t0),
             [("typing on", 20_000), ("send", 20_000 + typing)]
         );
-        assert_eq!(*fake.sent.lock().unwrap(), [(NEHA.to_string(), text)]);
+        assert_eq!(
+            *fake.sent.lock().unwrap(),
+            [(NEHA.to_string(), text.clone())]
+        );
         let asked = {
             let prompts = prompts.lock().unwrap();
             assert_eq!(prompts.len(), 1, "one reply for the burst");
@@ -700,15 +786,60 @@ mod tests {
             "no text in actions.log"
         );
 
-        // A follow-up waits for the 2-minute gap.
-        feed_state(&s.whatsapp, msg(NEHA, "Neha", 3, "ok?"));
+        // The reply is in the chat now, and did not pause it.
+        let last = s.whatsapp.recent(NEHA, 1).remove(0);
+        assert!(last.from_me && last.text == text);
+
+        // A follow-up waits for the 2-minute gap, and the model sees the reply.
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "ok thanks"));
         sleep(secs(300)).await;
         let sends: Vec<u64> = events(&fake, t0)
             .into_iter()
             .filter(|(w, _)| *w == "send")
             .map(|(_, at)| at)
             .collect();
-        assert_eq!(sends, [20_000 + typing, 20_000 + typing + 120_000 + typing]);
+        assert_eq!(sends, [20_000 + typing, 140_000 + typing + typing]);
+        let second = serde_json::to_string(&prompts.lock().unwrap()[1]).unwrap();
+        assert!(
+            second.contains(&format!("me: {text}")) && second.contains("ok thanks"),
+            "{second}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_send_from_the_pc_pauses_the_chat() {
+        let s = shared(on(json!([NEHA])));
+        let (fake, prompts) = start(&s, "Back at 6!");
+        tokio::task::yield_now().await;
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "are you free?"));
+        sleep(secs(5)).await;
+        let mut c = ctx();
+        c.shared = s.clone();
+        c.cfg.tier = crate::config::Tier::CarteBlanche;
+        crate::whatsapp::send(&mut c, NEHA, "Calling you now")
+            .await
+            .unwrap();
+        sleep(secs(60)).await;
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "ok"));
+        sleep(secs(60)).await;
+        assert!(prompts.lock().unwrap().is_empty(), "paused");
+        assert_eq!(
+            fake.sent.lock().unwrap().len(),
+            1,
+            "only the user's own send"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_long_reply_with_the_signature_stays_within_600() {
+        let s = shared(on(json!([NEHA])));
+        let (fake, _) = start(&s, &"x".repeat(700));
+        tokio::task::yield_now().await;
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "tell me everything"));
+        sleep(secs(60)).await;
+        let sent = fake.sent.lock().unwrap()[0].1.clone();
+        assert_eq!(sent.chars().count(), MAX_REPLY);
+        assert!(sent.ends_with(SIG));
     }
 
     #[tokio::test(start_paused = true)]
@@ -716,14 +847,15 @@ mod tests {
         let s = shared(on(json!([NEHA])));
         let (fake, prompts) = start(&s, "SKIP");
         tokio::task::yield_now().await;
-        let mut group = msg("1203630@g.us", "Neha", 1, "hi all");
+        let mut group = fresh("1203630@g.us", "Neha", "hi all");
         group.group = Some("Family".into());
         feed_state(&s.whatsapp, group);
-        feed_state(&s.whatsapp, msg("+4917099999999", "Bob", 1, "hi"));
-        feed_state(&s.whatsapp, msg(NEHA, "Neha", 1, "[sticker]"));
+        feed_state(&s.whatsapp, fresh("+4917099999999", "Bob", "hi"));
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "[sticker]"));
+        feed_state(&s.whatsapp, msg(NEHA, "Neha", 1, "from the backlog"));
         sleep(secs(60)).await;
         assert!(prompts.lock().unwrap().is_empty());
-        feed_state(&s.whatsapp, msg(NEHA, "Neha", 2, "thanks, bye"));
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "thanks, bye"));
         sleep(secs(60)).await;
         assert_eq!(prompts.lock().unwrap().len(), 1, "asked once");
         assert!(
@@ -738,9 +870,9 @@ mod tests {
         let (fake, _) = start(&s, "Back at 6!");
         tokio::task::yield_now().await;
         let t0 = Instant::now();
-        feed_state(&s.whatsapp, msg(NEHA, "Neha", 1, "are you free?"));
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "are you free?"));
         sleep(secs(16)).await;
-        feed_state(&s.whatsapp, msg(NEHA, "me", 2, "yes, calling"));
+        feed_state(&s.whatsapp, fresh(NEHA, "me", "yes, calling"));
         sleep(secs(60)).await;
         assert_eq!(
             events(&fake, t0),
@@ -754,8 +886,28 @@ mod tests {
         );
         assert!(fake.sent.lock().unwrap().is_empty());
         // Still paused a minute later.
-        feed_state(&s.whatsapp, msg(NEHA, "Neha", 3, "ok"));
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "ok"));
         sleep(secs(60)).await;
         assert!(fake.sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_user_writing_while_the_model_answers_means_no_typing() {
+        let s = shared(on(json!([NEHA])));
+        let fake = link_state(&s.whatsapp);
+        // A model that takes 10 s; the user writes meanwhile.
+        let writer: Writer = Arc::new(|_cfg: &Config, _m: Vec<Value>| -> Reply {
+            Box::pin(async {
+                sleep(secs(10)).await;
+                Ok("Back at 6!".to_string())
+            })
+        });
+        tokio::spawn(run_with(s.clone(), writer));
+        tokio::task::yield_now().await;
+        feed_state(&s.whatsapp, fresh(NEHA, "Neha", "are you free?"));
+        sleep(secs(20)).await;
+        feed_state(&s.whatsapp, fresh(NEHA, "me", "yes"));
+        sleep(secs(60)).await;
+        assert!(fake.log.lock().unwrap().is_empty(), "no typing, no send");
     }
 }

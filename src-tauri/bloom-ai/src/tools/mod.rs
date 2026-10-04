@@ -530,19 +530,35 @@ async fn save_phone(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
         return Err("name is empty".into());
     }
     let number = phones::normalize(str_arg(args, "phone")?)?;
-    if let Some(old) = phones::needs_confirm(&ctx.shared.data_dir, name, &number) {
+    let dir = &ctx.shared.data_dir;
+    let already = phones::load(dir)
+        .iter()
+        .any(|(k, n)| k.eq_ignore_ascii_case(name) && *n == number);
+    let ask = if let Some(old) = phones::needs_confirm(dir, name, &number) {
+        Some((
+            format!("Change {name}'s number to {number}?"),
+            format!("Saved number: {old}\nNew number: {number}"),
+            "The user kept the saved number.",
+        ))
+    } else if ctx.tainted && !already && ctx.cfg.tier != crate::config::Tier::CarteBlanche {
+        // Outside text (a WhatsApp chat, say) may be asking: saved numbers can
+        // get automatic WhatsApp replies.
+        Some((
+            format!("Save {name}'s number {number}?"),
+            format!("{name}\n{number}"),
+            "The user chose not to save it.",
+        ))
+    } else {
+        None
+    };
+    if let Some((title, body, declined)) = ask {
         if !ctx
             .shared
             .bridge
-            .confirm(
-                ctx.task,
-                ConfirmKind::Message,
-                format!("Change {name}'s number to {number}?"),
-                format!("Saved number: {old}\nNew number: {number}"),
-            )
+            .confirm(ctx.task, ConfirmKind::Message, title, body)
             .await
         {
-            return Ok("The user kept the saved number.".into());
+            return Ok(declined.into());
         }
     }
     phones::save(&ctx.shared.data_dir, name, &number)?;
@@ -1083,6 +1099,32 @@ mod tests {
         shared.bridge.answer(1, Answer::Confirm(true));
         assert!(running.await.unwrap().is_ok());
         assert_eq!(phones::load(&dir).get("Neha").unwrap(), "+491701234567");
+    }
+
+    #[tokio::test]
+    async fn saving_a_new_number_while_tainted_asks_unless_carte_blanche() {
+        use crate::config::Tier;
+        for (tier, approve, asks) in [
+            (Tier::Competent, false, true),
+            (Tier::Conservative, true, true),
+            (Tier::CarteBlanche, false, false),
+        ] {
+            let mut ctx = ctx();
+            ctx.cfg.tier = tier;
+            ctx.tainted = true;
+            let (dir, shared) = (ctx.shared.data_dir.clone(), ctx.shared.clone());
+            let args = json!({ "name": "Eve", "phone": "+14155550100" });
+            let running = tokio::spawn(async move { call(&mut ctx, "save_phone", &args).await });
+            tokio::task::yield_now().await;
+            let asked = shared.bridge.answer_pending(Answer::Confirm(approve));
+            let out = running.await.unwrap().unwrap();
+            assert_eq!(asked, asks, "{tier:?}");
+            let saved = phones::load(&dir).contains_key("Eve");
+            assert_eq!(saved, !asks || approve, "{tier:?}: {out}");
+            if asks && !approve {
+                assert_eq!(out, "The user chose not to save it.");
+            }
+        }
     }
 
     #[tokio::test]
