@@ -95,17 +95,28 @@ pub enum OpenTarget {
 
 /// Extensions that run code. `open` refuses them: programs and scripts go
 /// through run_powershell, which the security level guards.
-const RUNNABLE: [&str; 21] = [
+const RUNNABLE: &[&str] = &[
     "exe", "com", "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "msi",
-    "msp", "scr", "pif", "cpl", "hta", "lnk", "reg", "jar",
+    "msp", "scr", "pif", "cpl", "hta", "lnk", "reg", "jar", "py", "pyw", "chm", "msc",
+    "appref-ms", "application", "xll", "url", "website", "settingcontent-ms", "search-ms",
+    "library-ms", "searchconnector-ms",
 ];
+
+/// Control characters and invisible Unicode format characters (bidi overrides,
+/// zero-width marks, BOM, soft hyphen) can disguise what is being opened.
+fn is_sneaky(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{ad}' | '\u{61c}' | '\u{180e}' | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}'
+            | '\u{feff}' | '\u{fff9}'..='\u{fffb}')
+}
 
 /// The path Windows would really open: it must exist, is canonical (trailing
 /// dots, `.`/`..`, 8.3 names, symlinks and separators resolved) and local: no UNC
 /// and no `:` past the drive prefix (alternate data streams). Checked == opened.
 pub fn resolve_local(target: &str) -> Result<String, String> {
-    if target.chars().any(char::is_control) {
-        return Err("that target has control characters".into());
+    if target.chars().any(is_sneaky) {
+        return Err("that target has control or invisible characters".into());
     }
     let full = std::fs::canonicalize(target).map_err(|_| "No such file or folder.".to_string())?;
     let full = full.to_string_lossy().into_owned();
@@ -125,8 +136,8 @@ pub fn classify_open(target: &str) -> Result<OpenTarget, String> {
     if target.is_empty() {
         return Err("nothing to open".into());
     }
-    if target.chars().any(char::is_control) {
-        return Err("that target has control characters".into());
+    if target.chars().any(is_sneaky) {
+        return Err("that target has control or invisible characters".into());
     }
     let lower = target.to_ascii_lowercase();
     if let Some((scheme, _)) = lower.split_once(':') {
@@ -136,7 +147,11 @@ pub fn classify_open(target: &str) -> Result<OpenTarget, String> {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
         if is_scheme {
-            return if matches!(scheme, "http" | "https" | "ms-settings") {
+            return if matches!(scheme, "http" | "https") {
+                // The normalised form is what gets checked and opened.
+                let u = reqwest::Url::parse(target).map_err(|_| "That is not a valid URL.")?;
+                Ok(OpenTarget::Shell(u.as_str().into()))
+            } else if scheme == "ms-settings" {
                 Ok(OpenTarget::Shell(target.into()))
             } else {
                 Err(format!(
@@ -247,7 +262,7 @@ mod tests {
         };
         assert_eq!(
             classify_open("https://example.com"),
-            Ok(Shell("https://example.com".into()))
+            Ok(Shell("https://example.com/".into()))
         );
         assert_eq!(
             classify_open("ms-settings:bluetooth"),
@@ -273,6 +288,20 @@ mod tests {
         assert!(classify_open(r"\\host\share\f.txt").is_err());
         assert!(classify_open(r"\\?\UNC\h\s").is_err());
         assert!(classify_open(&format!("{d}\\a\u{7}.txt")).is_err());
+        for ext in [
+            "py", "pyw", "chm", "msc", "appref-ms", "application", "xll", "url", "website",
+            "settingcontent-ms", "search-ms", "library-ms", "searchconnector-ms", "LNK",
+        ] {
+            assert!(classify_open(&touch(&format!("x.{ext}"))).is_err(), "{ext}");
+        }
+        assert_eq!(
+            classify_open("HTTPS://Example.COM"),
+            Ok(Shell("https://example.com/".into()))
+        );
+        for bad in ['\u{202e}', '\u{200e}', '\u{2066}', '\u{feff}', '\u{ad}'] {
+            assert!(classify_open(&format!("https://a.test/{bad}x")).is_err(), "{bad:?}");
+            assert!(classify_open(&format!("{d}/a{bad}.txt")).is_err(), "{bad:?}");
+        }
         assert!(classify_open("file:///C:/x.txt").is_err());
         assert!(classify_open("ms-msdt:/id x").is_err());
         assert!(classify_open("  ").is_err());

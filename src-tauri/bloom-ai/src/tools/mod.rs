@@ -190,7 +190,14 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
             files::OpenTarget::App(app) => ctx.shared.bridge.bloom("open_app", json!(app)).await,
             files::OpenTarget::Shell(target) => {
                 let ask = open_needs_confirm(ctx, &target);
-                if !confirm_persist(ctx, ConfirmKind::Web, ask, "Open this page?", &target).await {
+                let title = if target.starts_with("http") || target.starts_with("ms-settings") {
+                    "Open this page?"
+                } else if std::path::Path::new(&target).is_dir() {
+                    "Open this folder?"
+                } else {
+                    "Open this file?"
+                };
+                if !confirm_persist(ctx, ConfirmKind::Web, ask, title, &target).await {
                     return Ok("The user chose not to open it.".into());
                 }
                 files::shell_open(&target).map(|()| format!("Opened {target}"))
@@ -257,10 +264,11 @@ fn open_needs_confirm(ctx: &Ctx, target: &str) -> bool {
     !safe
 }
 
-/// File types that are plain data: opening one does not reach the network.
+/// File types whose handlers cannot fetch anything, and that write_file (text
+/// only) cannot disguise markup or formulas in: no xml, csv, md, json, ics.
 const DATA_EXTS: &[&str] = &[
-    "txt", "md", "csv", "json", "log", "xml", "ics", "yaml", "yml", "pdf", "png", "jpg", "jpeg",
-    "gif", "webp", "bmp", "mp3", "wav", "mp4", "mov", "docx", "xlsx", "pptx",
+    "txt", "log", "pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "mp3", "wav", "mp4", "mov",
+    "docx", "xlsx", "pptx",
 ];
 
 fn is_plain_local_path(t: &str) -> bool {
@@ -636,6 +644,12 @@ mod tests {
             format!("{url}::$DATA"),
             exe,
             html,
+            touch("a.xml"),
+            touch("a.csv"),
+            touch("a.md"),
+            touch("a.json"),
+            touch("a.ics"),
+            touch("a.yaml"),
             format!("{d}\\missing.txt"),
         ];
         assert!(risky.iter().all(|t| !open_needs_confirm(&c, t)), "untainted");
