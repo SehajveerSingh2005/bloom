@@ -241,10 +241,25 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
     }
 }
 
-/// Exfiltration guard: a tainted request asks before opening a web page nobody named.
+/// Exfiltration guard: while tainted, anything that could send data off the PC
+/// asks first: any URL scheme (any case, custom handlers included) and UNC paths
+/// (SMB leaks credentials). Only ms-settings: and local paths are exempt, and so
+/// are URLs the user or a search result named.
 fn open_needs_confirm(ctx: &Ctx, target: &str) -> bool {
-    let is_web = target.starts_with("http://") || target.starts_with("https://");
-    is_web && ctx.tainted && !ctx.allowed_urls.contains(target)
+    if !ctx.tainted {
+        return false;
+    }
+    let t = target.trim();
+    let lower = t.to_ascii_lowercase();
+    if lower.starts_with("ms-settings:") {
+        return false;
+    }
+    let norm = |s: &str| reqwest::Url::parse(s).map_or_else(|_| s.to_ascii_lowercase(), String::from);
+    let scheme = lower.split_once(':').is_some_and(|(s, _)| {
+        s.len() > 1 && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    });
+    let unc = t.starts_with("\\\\") || t.starts_with("//");
+    (scheme || unc) && !ctx.allowed_urls.iter().any(|a| norm(a) == norm(t))
 }
 
 /// Poisoned memory would persist, so a tainted request asks before writing it.
@@ -560,16 +575,32 @@ mod tests {
     }
 
     #[test]
-    fn open_confirms_only_tainted_unnamed_web_pages() {
+    fn open_confirms_anything_that_could_leave_the_pc_while_tainted() {
         let mut c = ctx();
-        let url = "https://example.com/a";
-        assert!(!open_needs_confirm(&c, url)); // untainted
+        let local = crate::testutil::temp_dir().join("f.txt");
+        std::fs::write(&local, "x").unwrap();
+        let local = local.to_string_lossy().to_string();
+        let risky = [
+            "https://example.com/a",
+            "HTTP://x",
+            "Https://x",
+            "ftp://x",
+            "mailto:a@b.c?body=x",
+            "steam://x",
+            "whatsapp:send",
+            r"\\host\share\f.txt",
+            "//host/share",
+            "file://host/f",
+        ];
+        assert!(risky.iter().all(|t| !open_needs_confirm(&c, t)), "untainted");
         c.tainted = true;
-        assert!(open_needs_confirm(&c, url));
+        for t in risky {
+            assert!(open_needs_confirm(&c, t), "{t}");
+        }
+        assert!(!open_needs_confirm(&c, &local));
         assert!(!open_needs_confirm(&c, "ms-settings:display"));
-        assert!(!open_needs_confirm(&c, r"C:/Users/a/x.txt"));
-        c.allowed_urls.insert(url.into());
-        assert!(!open_needs_confirm(&c, url)); // user or search named it
+        c.allowed_urls.insert("https://example.com/a".into());
+        assert!(!open_needs_confirm(&c, "HTTPS://EXAMPLE.com/a"));
     }
 
     #[tokio::test]
