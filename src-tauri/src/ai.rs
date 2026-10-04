@@ -6,7 +6,6 @@
 use crate::types::AppInfo;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
-use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -15,12 +14,6 @@ use std::sync::mpsc::Sender;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
-use windows::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// VK_RMENU: Right Alt.
@@ -33,41 +26,6 @@ pub static HOTKEY_VK: AtomicU32 = AtomicU32::new(0);
 struct Sidecar {
     child: Child,
     stdin: ChildStdin,
-    /// Closing it kills the agent and everything it started (its PowerShell).
-    _job: Option<KillOnClose>,
-}
-
-/// A Job object that kills its processes when the last handle closes, so
-/// Bloom exiting takes the agent's whole tree with it.
-struct KillOnClose(HANDLE);
-// The handle is only ever closed, from whichever thread drops the sidecar.
-unsafe impl Send for KillOnClose {}
-impl Drop for KillOnClose {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = CloseHandle(self.0);
-        }
-    }
-}
-
-/// Puts `child` in a new kill-on-close job. None if any step fails: the
-/// agent then runs as before, only its children can outlive a kill.
-fn job_for(child: &Child) -> Option<KillOnClose> {
-    unsafe {
-        let job = CreateJobObjectW(None, PCWSTR::null()).ok()?;
-        let job = KillOnClose(job);
-        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        SetInformationJobObject(
-            job.0,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as *const std::ffi::c_void,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        )
-        .ok()?;
-        AssignProcessToJobObject(job.0, HANDLE(child.as_raw_handle())).ok()?;
-        Some(job)
-    }
 }
 
 static SIDECAR: Mutex<Option<Sidecar>> = Mutex::new(None);
@@ -156,8 +114,7 @@ pub fn sync_from_settings() {
     }
 }
 
-/// Kills the agent and its children (the job closes when the sidecar drops).
-/// Nothing of it keeps running or holds memory afterwards.
+/// Kills the agent. Nothing of it keeps running or holds memory afterwards.
 pub fn stop() {
     let taken = SIDECAR.lock().ok().and_then(|mut slot| slot.take());
     if let Some(mut sidecar) = taken {
@@ -190,8 +147,7 @@ fn spawn(app: &AppHandle) -> Result<Sidecar, String> {
     let stdout = child.stdout.take().ok_or("The AI agent has no output pipe.")?;
     let handle = app.clone();
     std::thread::spawn(move || relay(handle, stdout));
-    let _job = job_for(&child);
-    Ok(Sidecar { child, stdin, _job })
+    Ok(Sidecar { child, stdin })
 }
 
 /// The agent's output: `bloom` requests are carried out here, everything else
