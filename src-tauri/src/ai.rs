@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -34,6 +34,9 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 /// deliver its release before its press.
 static HOTKEY_TX: OnceLock<Sender<bool>> = OnceLock::new();
 static NEXT_TASK: AtomicU64 = AtomicU64::new(0);
+/// "Hello Janice" is on: the agent was told `wake_on`, and is told again
+/// whenever it is restarted.
+static WAKE: AtomicBool = AtomicBool::new(false);
 
 fn ai_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_local_data_dir().ok().map(|d| d.join("ai"))
@@ -41,6 +44,11 @@ fn ai_dir(app: &AppHandle) -> Option<PathBuf> {
 
 fn exe_path(app: &AppHandle) -> Option<PathBuf> {
     ai_dir(app).map(|d| d.join("bloom-ai.exe"))
+}
+
+/// Written by the agent once the user has taught it "Hello Janice".
+fn wake_model(app: &AppHandle) -> Option<PathBuf> {
+    ai_dir(app).map(|d| d.join("wake").join("hello-janice.rpw"))
 }
 
 fn deleted_flag(app: &AppHandle) -> Option<PathBuf> {
@@ -95,8 +103,9 @@ pub fn init(app: &AppHandle) {
     sync_from_settings();
 }
 
-/// After any settings change: arms or disarms the hotkey, and stops the agent
-/// when AI is turned off. Must be called without the settings lock held.
+/// After any settings change: arms or disarms the hotkey, turns "Hello Janice"
+/// on or off, and stops the agent when AI is turned off. Must be called
+/// without the settings lock held.
 pub fn sync_from_settings() {
     let Some(app) = APP.get() else { return };
     let on = enabled(app);
@@ -109,6 +118,16 @@ pub fn sync_from_settings() {
         0
     };
     HOTKEY_VK.store(vk, Ordering::Relaxed);
+    let wake = on && crate::utils::get_setting_str(app, "bloom-ai-wake").as_deref() == Some("true");
+    if wake != WAKE.load(Ordering::Relaxed) {
+        // Sent before the flag flips, so a fresh agent isn't told twice.
+        let _ = if wake {
+            send(app, json!({ "type": "wake_on" }))
+        } else {
+            send_if_running(json!({ "type": "wake_off" }))
+        };
+        WAKE.store(wake, Ordering::Relaxed);
+    }
     if !on {
         stop();
     }
@@ -167,6 +186,10 @@ fn relay(app: AppHandle, stdout: ChildStdout) {
                 let _ = send_if_running(json!({ "type": "bloom_result", "id": message["id"], "ok": ok, "detail": detail }));
             });
         } else {
+            // "Hello Janice": open the panel the way the hotkey does.
+            if message["type"] == "wake" {
+                let _ = app.emit_to(surface(&app), "ai-open", json!({ "recording": true }));
+            }
             let _ = app.emit("ai-event", message);
         }
     }
@@ -185,6 +208,9 @@ fn send(app: &AppHandle, message: Value) -> Result<(), String> {
     }
     if slot.is_none() {
         *slot = Some(spawn(app)?);
+        if WAKE.load(Ordering::Relaxed) {
+            write_line(&mut slot, json!({ "type": "wake_on" }))?;
+        }
     }
     write_line(&mut slot, message)
 }
@@ -334,6 +360,7 @@ pub fn ai_status(app: AppHandle) -> Value {
             .lock()
             .map(|mut slot| slot.as_mut().is_some_and(|s| matches!(s.child.try_wait(), Ok(None))))
             .unwrap_or(false),
+        "wake_trained": wake_model(&app).is_some_and(|p| p.exists()),
     })
 }
 
@@ -363,6 +390,18 @@ pub fn ai_set_secret(app: AppHandle, name: String, value: String) -> Result<(), 
 #[tauri::command]
 pub fn ai_outlook_login(app: AppHandle) -> Result<(), String> {
     send(&app, json!({ "type": "outlook_login" }))
+}
+
+/// Records "Hello Janice" sample `index` (1 starts over); `enroll_saved` follows.
+#[tauri::command]
+pub fn ai_enroll_sample(app: AppHandle, index: u32) -> Result<(), String> {
+    send(&app, json!({ "type": "enroll_sample", "index": index }))
+}
+
+/// Builds the wake word from the samples; `enroll_done` follows.
+#[tauri::command]
+pub fn ai_enroll_build(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "enroll_build" }))
 }
 
 /// The dock's AI button: show the panel with its text box.

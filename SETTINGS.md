@@ -89,6 +89,7 @@ Bloom AI is optional and off by default. Its agent (`bloom-ai.exe`) lives in `%L
 | `bloom-ai-stt-url`   | URL                                                  | same as `bloom-ai-base-url` | OpenAI-compatible transcription endpoint (cloud or a local Whisper server). |
 | `bloom-ai-stt-model` | string                                               | `"whisper-1"`               | Transcription model id.                                                     |
 | `bloom-ai-hotkey`    | virtual-key code                                     | `"165"` (Right Alt)         | Hold to record, release to send. The key no longer reaches apps while AI is on. |
+| `bloom-ai-wake`      | `"true"` / `"false"`                                 | `"false"`                   | "Hello Janice" wake word. While on, the microphone is open and the wake word is checked locally; only the request said after it is sent for transcription. Needs training first (`ai\wake\`). |
 | `bloom-ai-security`  | `"conservative"` / `"competent"` / `"carte-blanche"` | `"conservative"`            | When the agent asks before sending email or running PowerShell.            |
 | `bloom-ai-email`     | address                                              | `""`                        | Account the agent sends email from.                                         |
 | `bloom-ai-smtp-host` | host                                                 | `""`                        | Mail server for providers Bloom has no preset for. Empty uses the preset for your address. |

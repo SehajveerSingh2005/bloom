@@ -214,6 +214,10 @@ fn main() {
             #[cfg(windows)]
             ai::ai_outlook_login,
             #[cfg(windows)]
+            ai::ai_enroll_sample,
+            #[cfg(windows)]
+            ai::ai_enroll_build,
+            #[cfg(windows)]
             ai::ai_open,
             #[cfg(windows)]
             ai::ai_delete
