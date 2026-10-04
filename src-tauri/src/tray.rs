@@ -428,57 +428,6 @@ unsafe fn list_registry_tray_apps() -> Vec<TrayApp> {
     apps
 }
 
-unsafe extern "system" fn collect_app_windows(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindow, GetWindowLongW, GetWindowTextLengthW, IsIconic, IsWindowVisible, GWL_EXSTYLE,
-        GW_OWNER, WS_EX_TOOLWINDOW,
-    };
-
-    let (target, found) = &mut *(lparam.0 as *mut (String, Option<HWND>));
-    let shown = IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool();
-    let top_level = GetWindow(hwnd, GW_OWNER).map(|o| o.0.is_null()).unwrap_or(true);
-    let tool = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0;
-    if shown && top_level && !tool && GetWindowTextLengthW(hwnd) > 0 {
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if crate::commands::process_image_path(pid)
-            .map(|p| p.to_lowercase() == *target)
-            .unwrap_or(false)
-        {
-            *found = Some(hwnd);
-            return false.into();
-        }
-    }
-    true.into()
-}
-
-/// Brings the app's window to the front; when it has none on screen (it is only in
-/// the tray) launches its executable, which single-instance apps use to reveal
-/// their existing window.
-pub unsafe fn open_tray_app(path: &str) {
-    use windows::core::w;
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
-    };
-
-    let mut state: (String, Option<HWND>) = (path.to_lowercase(), None);
-    let _ = EnumWindows(
-        Some(collect_app_windows),
-        LPARAM(&mut state as *mut _ as isize),
-    );
-
-    if let Some(window) = state.1 {
-        if IsIconic(window).as_bool() {
-            let _ = ShowWindow(window, SW_RESTORE);
-        }
-        let _ = SetForegroundWindow(window);
-    } else {
-        let file = wide(path);
-        ShellExecuteW(None, w!("open"), PCWSTR(file.as_ptr()), None, None, SW_SHOW);
-    }
-}
-
 /// Replays a mouse click on the icon's callback window, the same message pair the
 /// shell sends when the icon is clicked in the real tray.
 pub unsafe fn click_tray_app(hwnd: isize, uid: u32, callback_message: u32, right: bool) {

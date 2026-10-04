@@ -2014,14 +2014,6 @@ pub async fn get_tray_apps() -> Vec<crate::types::TrayApp> {
 }
 
 #[tauri::command]
-pub async fn open_tray_app(path: String) {
-    let _ = tauri::async_runtime::spawn_blocking(move || unsafe {
-        crate::tray::open_tray_app(&path);
-    })
-    .await;
-}
-
-#[tauri::command]
 pub async fn click_tray_app(hwnd: isize, uid: u32, callback_message: u32, right: bool) {
     let _ = tauri::async_runtime::spawn_blocking(move || unsafe {
         crate::tray::click_tray_app(hwnd, uid, callback_message, right);
