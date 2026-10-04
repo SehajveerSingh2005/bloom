@@ -6,7 +6,7 @@ export type AiPhase = "idle" | "recording" | "transcribing" | "working" | "confi
 
 export interface AiConfirm {
 	id: number;
-	kind: "email" | "script" | "memory" | "skill" | "web" | "tool";
+	kind: "email" | "script" | "memory" | "skill" | "web" | "tool" | "message";
 	title: string;
 	body: string;
 }

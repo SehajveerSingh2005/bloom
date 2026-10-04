@@ -92,6 +92,7 @@ pub fn ctx() -> Ctx {
         endpoints: Default::default(),
         web: crate::web::WebCfg::new(),
         mcp: Default::default(),
+        whatsapp: Default::default(),
     };
     Ctx {
         task: 1,

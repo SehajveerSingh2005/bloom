@@ -231,6 +231,14 @@ fn main() {
             #[cfg(windows)]
             ai::ai_enroll_build,
             #[cfg(windows)]
+            ai::ai_whatsapp_status,
+            #[cfg(windows)]
+            ai::ai_whatsapp_restart,
+            #[cfg(windows)]
+            ai::ai_whatsapp_pair_code,
+            #[cfg(windows)]
+            ai::ai_whatsapp_unlink,
+            #[cfg(windows)]
             ai::ai_open,
             #[cfg(windows)]
             ai::ai_delete

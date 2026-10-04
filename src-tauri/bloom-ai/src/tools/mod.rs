@@ -6,7 +6,7 @@ use crate::agent::Ctx;
 use crate::protocol::ConfirmKind;
 use crate::{
     email, facts, imap_lookup, journal, outlook, phones, policy, powershell, secrets, skills,
-    weather, web,
+    weather, web, whatsapp,
 };
 use serde_json::{json, Value};
 
@@ -155,6 +155,31 @@ pub fn schema() -> Value {
             }),
             &["name", "description", "instructions"],
         ),
+        tool(
+            "read_whatsapp",
+            "Read the latest WhatsApp messages in a chat, oldest first. Only messages that \
+             arrived while Bloom was linked are available.",
+            json!({
+                "chat": { "type": "string", "description": "Saved name, phone number or group name" },
+                "count": { "type": "integer", "description": "How many, up to 20 (default 10)" }
+            }),
+            &["chat"],
+        ),
+        tool(
+            "list_whatsapp_chats",
+            "List recent WhatsApp chats, newest first, with unread counts.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "send_whatsapp",
+            "Send a WhatsApp text message as the user to a saved name or a phone number.",
+            json!({
+                "to": { "type": "string", "description": "Saved name or phone number" },
+                "text": { "type": "string" }
+            }),
+            &["to", "text"],
+        ),
     ])
 }
 
@@ -179,6 +204,9 @@ pub fn describe(name: &str, args: &Value) -> String {
         "use_skill" => format!("Using skill {}", arg("name")),
         "read_skill_file" => format!("Reading {}", arg("file")),
         "save_skill" => format!("Saving skill {}", arg("name")),
+        "read_whatsapp" => format!("Reading WhatsApp with {}", arg("chat")),
+        "list_whatsapp_chats" => "Checking WhatsApp".into(),
+        "send_whatsapp" => format!("Messaging {} on WhatsApp", arg("to")),
         _ if name.starts_with("mcp_") => format!("Using {}", &name[4..]),
         _ => format!("Working ({name})"),
     }
@@ -252,6 +280,9 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
             )
         }
         "save_skill" => save_skill(ctx, args).await,
+        "read_whatsapp" => whatsapp::read(ctx, str_arg(args, "chat")?, args["count"].as_u64()),
+        "list_whatsapp_chats" => whatsapp::list(ctx),
+        "send_whatsapp" => whatsapp::send(ctx, str_arg(args, "to")?, str_arg(args, "text")?).await,
         _ if name.starts_with("mcp_") => crate::mcp::call(ctx, name, args).await,
         _ => Err(format!("unknown tool {name}")),
     }
@@ -505,7 +536,7 @@ async fn save_phone(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
             .bridge
             .confirm(
                 ctx.task,
-                ConfirmKind::Email,
+                ConfirmKind::Message,
                 format!("Change {name}'s number to {number}?"),
                 format!("Saved number: {old}\nNew number: {number}"),
             )
@@ -515,6 +546,8 @@ async fn save_phone(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
         }
     }
     phones::save(&ctx.shared.data_dir, name, &number)?;
+    // Not a known number for send_whatsapp until the next request.
+    ctx.saved_this_task.insert(number.clone());
     Ok(format!("Saved {name} {number}."))
 }
 

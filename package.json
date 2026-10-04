@@ -27,6 +27,7 @@
     "framer-motion": "^12.43.0",
     "katex": "^0.16.0",
     "lucide-react": "^1.47.0",
+    "qrcode-generator": "^2.0.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",

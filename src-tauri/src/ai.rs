@@ -37,7 +37,10 @@ static NEXT_TASK: AtomicU64 = AtomicU64::new(0);
 /// "Hey <name>" is on: the agent was told `wake_on`, and is told again
 /// whenever it is restarted.
 static WAKE: AtomicBool = AtomicBool::new(false);
-/// When the agent died on its own while "Hey <name>" was on (last minute).
+/// "Connect WhatsApp" is on: like WAKE, the agent keeps running and is told
+/// `whatsapp_on` again whenever it is restarted.
+static WHATSAPP: AtomicBool = AtomicBool::new(false);
+/// When the agent died on its own while it had to keep running (last minute).
 static CRASHES: Mutex<Vec<Instant>> = Mutex::new(Vec::new());
 
 fn ai_dir(app: &AppHandle) -> Option<PathBuf> {
@@ -155,6 +158,15 @@ pub fn sync_from_settings() {
         };
         WAKE.store(wake, Ordering::Relaxed);
     }
+    let whatsapp = on && crate::utils::get_setting_str(app, "bloom-ai-whatsapp").as_deref() == Some("true");
+    if whatsapp != WHATSAPP.load(Ordering::Relaxed) {
+        let _ = if whatsapp {
+            send(app, json!({ "type": "whatsapp_on" }))
+        } else {
+            send_if_running(json!({ "type": "whatsapp_off" }))
+        };
+        WHATSAPP.store(whatsapp, Ordering::Relaxed);
+    }
     if !on {
         stop();
     }
@@ -217,7 +229,14 @@ fn relay(app: AppHandle, stdout: ChildStdout, pid: u32) {
             // "Hey <name>" opens no panel: the overlay shows its orb from these
             // events, and the panel opens itself if the request needs an OK.
             let built = message["type"] == "enroll_done";
-            let _ = app.emit("ai-event", message);
+            // The WhatsApp QR and link code are credentials: Settings only, on
+            // an event no other window listens to (an `ai-event` sent to one
+            // window still reaches every window's catch-all listener).
+            let _ = if message["type"] == "whatsapp_status" {
+                app.emit_to("settings", "ai-whatsapp", message)
+            } else {
+                app.emit("ai-event", message)
+            };
             // A freshly trained model may let a "true" wake setting start listening.
             if built {
                 std::thread::spawn(sync_from_settings);
@@ -228,12 +247,12 @@ fn relay(app: AppHandle, stdout: ChildStdout, pid: u32) {
     rearm_after_crash(&app, pid);
 }
 
-/// The agent died on its own while "Hey <name>" was on: start it again so
-/// the wake word keeps working, unless it keeps crashing.
+/// The agent died on its own while "Hey <name>" or WhatsApp was on: start
+/// it again so they keep working, unless it keeps crashing.
 fn rearm_after_crash(app: &AppHandle, pid: u32) {
     // stop() (AI off, Delete AI) or a replacement leaves the slot without this pid.
     let crashed = SIDECAR.lock().is_ok_and(|slot| slot.as_ref().is_some_and(|s| s.child.id() == pid));
-    if !crashed || !WAKE.load(Ordering::Relaxed) {
+    if !crashed || !keep_running() {
         return;
     }
     let gave_up = {
@@ -243,16 +262,20 @@ fn rearm_after_crash(app: &AppHandle, pid: u32) {
         crashes.len() >= 3
     };
     if gave_up {
-        let message = "The wake word stopped: the AI agent keeps crashing.";
+        let message = "The AI agent keeps crashing, so the wake word and WhatsApp stopped.";
         let _ = app.emit("ai-event", json!({ "type": "error", "task": null, "message": message }));
         return;
     }
     std::thread::sleep(Duration::from_secs(2));
-    if WAKE.load(Ordering::Relaxed) && enabled(app) {
+    if keep_running() && enabled(app) {
         if let Ok(mut slot) = SIDECAR.lock() {
             let _ = ensure_running(app, &mut slot);
         }
     }
+}
+
+fn keep_running() -> bool {
+    WAKE.load(Ordering::Relaxed) || WHATSAPP.load(Ordering::Relaxed)
 }
 
 /// Sends one message, starting the agent first if needed.
@@ -265,8 +288,8 @@ fn send(app: &AppHandle, message: Value) -> Result<(), String> {
     write_line(&mut slot, message)
 }
 
-/// Starts the agent unless it is running, and re-arms "Hey <name>" on a
-/// fresh one.
+/// Starts the agent unless it is running, and re-arms "Hey <name>" and
+/// WhatsApp on a fresh one.
 fn ensure_running(app: &AppHandle, slot: &mut Option<Sidecar>) -> Result<(), String> {
     // An agent that exited on its own is replaced.
     if slot.as_mut().is_some_and(|s| !matches!(s.child.try_wait(), Ok(None))) {
@@ -276,6 +299,9 @@ fn ensure_running(app: &AppHandle, slot: &mut Option<Sidecar>) -> Result<(), Str
         *slot = Some(spawn(app)?);
         if WAKE.load(Ordering::Relaxed) {
             write_line(slot, json!({ "type": "wake_on" }))?;
+        }
+        if WHATSAPP.load(Ordering::Relaxed) {
+            write_line(slot, json!({ "type": "whatsapp_on" }))?;
         }
     }
     Ok(())
@@ -505,6 +531,34 @@ pub fn ai_enroll_sample(app: AppHandle, index: u32) -> Result<(), String> {
 #[tauri::command]
 pub fn ai_enroll_build(app: AppHandle) -> Result<(), String> {
     send(&app, json!({ "type": "enroll_build" }))
+}
+
+/// Settings > WhatsApp opened: a `whatsapp_status` follows (Settings only).
+#[tauri::command]
+pub fn ai_whatsapp_status(app: AppHandle) -> Result<(), String> {
+    if !WHATSAPP.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    send(&app, json!({ "type": "whatsapp_on" }))
+}
+
+/// "Show a new QR" / "Try again": reconnects from scratch.
+#[tauri::command]
+pub fn ai_whatsapp_restart(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "whatsapp_off" }))?;
+    send(&app, json!({ "type": "whatsapp_on" }))
+}
+
+/// Link with a phone number instead of the QR; the code comes in `whatsapp_status`.
+#[tauri::command]
+pub fn ai_whatsapp_pair_code(app: AppHandle, phone: String) -> Result<(), String> {
+    send(&app, json!({ "type": "whatsapp_pair_code", "phone": phone }))
+}
+
+/// Logs Bloom out of WhatsApp and deletes the session.
+#[tauri::command]
+pub fn ai_whatsapp_unlink(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "whatsapp_unlink" }))
 }
 
 /// The dock's AI button: show the panel with its text box.

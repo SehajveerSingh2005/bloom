@@ -65,6 +65,15 @@ impl Bridge {
 }
 
 #[cfg(test)]
+impl Bridge {
+    /// Answers the oldest open question; false if there was none.
+    pub fn answer_pending(&self, answer: Answer) -> bool {
+        let id = self.pending.lock().unwrap().keys().min().copied();
+        id.map(|id| self.answer(id, answer)).is_some()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;

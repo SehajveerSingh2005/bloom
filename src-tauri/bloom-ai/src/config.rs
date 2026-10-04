@@ -35,6 +35,8 @@ pub struct Config {
     pub weather_lon: Option<f64>,
     pub weather_city: String,
     pub fahrenheit: bool,
+    /// "Connect WhatsApp": the WhatsApp tools are offered.
+    pub whatsapp: bool,
 }
 
 pub const DEFAULT_NAME: &str = "Janice";
@@ -92,6 +94,7 @@ impl Config {
             smtp_host: get("bloom-ai-smtp-host", ""),
             smtp_port: get("bloom-ai-smtp-port", "0").parse().unwrap_or(0),
             debug: get("bloom-ai-debug", "false") == "true",
+            whatsapp: get("bloom-ai-whatsapp", "false") == "true",
         }
     }
 
@@ -127,6 +130,8 @@ mod tests {
         assert_eq!(c.tier, Tier::Conservative);
         assert_eq!(c.smtp_port, 0);
         assert!(!c.debug);
+        assert!(!c.whatsapp);
+        assert!(Config::from_map(&map(&[("bloom-ai-whatsapp", "true")])).whatsapp);
         assert!(Config::from_map(&map(&[("bloom-ai-debug", "true")])).debug);
     }
 

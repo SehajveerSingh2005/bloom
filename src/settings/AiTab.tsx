@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { BookOpen, Cpu, Keyboard, KeyRound, Mail, Mic, AudioLines, Plug, Server, Shield, Sparkles, Trash2 } from "lucide-react";
+import { BookOpen, Cpu, Keyboard, KeyRound, Mail, MessageCircle, Mic, AudioLines, Plug, QrCode, Server, Shield, Sparkles, Trash2 } from "lucide-react";
+import qrcode from "qrcode-generator";
 import { SettingRow } from "./SettingRow";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import { cleanAiName, isValidAiName } from "../ai/aiName";
@@ -23,6 +24,31 @@ const TIERS: Record<string, string> = {
 };
 
 const OUTLOOK = /@(outlook|hotmail|live|msn)\.com$/i;
+
+/** The agent's `whatsapp_status`. `qr` and `code` are pairing credentials. */
+interface WaStatus {
+	state: "off" | "connecting" | "not_linked" | "linked";
+	number: string | null;
+	qr: string | null;
+	code: string | null;
+	error: string | null;
+}
+
+/** The pairing string as a QR code, drawn here: it never leaves the PC. */
+function Qr({ text }: { text: string }) {
+	const qr = qrcode(0, "L");
+	qr.addData(text);
+	qr.make();
+	const n = qr.getModuleCount();
+	let d = "";
+	for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) d += `M${c} ${r}h1v1h-1z`;
+	return (
+		<svg className="ai-qr" viewBox={`-3 -3 ${n + 6} ${n + 6}`} shapeRendering="crispEdges" role="img" aria-label="WhatsApp link QR code">
+			<rect x={-3} y={-3} width={n + 6} height={n + 6} fill="#fff" />
+			<path d={d} fill="#000" />
+		</svg>
+	);
+}
 
 /** One bloom-ai-* setting: localStorage for first paint, settings.json as the truth. */
 function useAiSetting(key: string, fallback: string): [string, (value: string) => void] {
@@ -150,6 +176,10 @@ export function AiTab() {
 	const [clearing, setClearing] = useState(false);
 	const [reloading, setReloading] = useState(false);
 	const [busy, setBusy] = useState<"" | "recording" | "building">("");
+	const [whatsapp, setWhatsapp] = useAiSetting("bloom-ai-whatsapp", "false");
+	const [wa, setWa] = useState<WaStatus | null>(null);
+	const [useCode, setUseCode] = useState(false);
+	const [waPhone, setWaPhone] = useState("");
 
 	const testEmail = () => {
 		setTesting(true);
@@ -173,6 +203,12 @@ export function AiTab() {
 			invoke("ai_library_status").catch(() => {});
 		}
 	}, [enabled]);
+
+	// Asks for the link state; turning the toggle on connects by itself.
+	useEffect(() => {
+		if (enabled === "true" && whatsapp === "true") invoke("ai_whatsapp_status").catch(() => {});
+		else setWa(null);
+	}, [enabled, whatsapp]);
 
 	// The name decides whether the wake word counts as trained; let the save land first.
 	useEffect(() => {
@@ -224,10 +260,14 @@ export function AiTab() {
 			if (payload.type === "exited") {
 				setBusy("");
 				setTesting(false);
+				setWa(null);
 			}
 		});
+		// Only Settings gets this event: it carries the QR and link code.
+		const offWa = listen<WaStatus>("ai-whatsapp", ({ payload }) => setWa(payload));
 		return () => {
 			off.then((f) => f());
+			offWa.then((f) => f());
 		};
 	}, []);
 
@@ -318,6 +358,16 @@ export function AiTab() {
 	}
 
 	const on = enabled === "true";
+	const waOn = whatsapp === "true";
+	const waLabel =
+		wa?.state === "linked"
+			? `Linked as ${wa.number ?? "your number"}`
+			: wa?.state === "not_linked"
+				? "Not linked"
+				: "Connecting";
+	const waPairing = wa?.state === "not_linked" && (!!wa.qr || !!wa.code || useCode);
+	const waRun = (command: string, args?: Record<string, unknown>) =>
+		invoke(command, args).catch((e) => setMessage(String(e)));
 	const vk = Number(hotkey) || 165;
 	const typingKey = vk === 0x20 || (vk >= 0x30 && vk <= 0x5a);
 
@@ -532,6 +582,75 @@ export function AiTab() {
 								</button>
 							</div>
 						</SettingRow>
+					</div>
+
+					<div className="setting-group-label">WhatsApp</div>
+					<div className="setting-group">
+						<SettingRow
+							icon={MessageCircle}
+							label="Connect WhatsApp"
+							desc={`Links ${aiName} as a device on your WhatsApp. Unofficial connection: WhatsApp may restrict accounts it flags.`}
+							divider={waOn}
+						>
+							<label className="toggle-switch">
+								<input type="checkbox" checked={waOn} onChange={() => setWhatsapp(waOn ? "false" : "true")} />
+								<span className="slider"></span>
+							</label>
+						</SettingRow>
+						{waOn && (
+							<SettingRow icon={MessageCircle} label={waLabel} desc={wa?.error ?? undefined} divider={waPairing}>
+								{wa?.state === "linked" ? (
+									<button className="ai-btn" onClick={() => waRun("ai_whatsapp_unlink")}>
+										Unlink
+									</button>
+								) : wa?.state === "not_linked" && !wa.qr && !wa.code ? (
+									<button className="ai-btn" onClick={() => waRun("ai_whatsapp_restart")}>
+										{wa.error ? "Try again" : "Show QR"}
+									</button>
+								) : null}
+							</SettingRow>
+						)}
+						{waOn && waPairing && wa && (
+							<SettingRow
+								icon={QrCode}
+								label={useCode ? "Link with a code" : "Scan with your phone"}
+								desc={
+									useCode
+										? "On your phone: WhatsApp > Linked devices > Link a device > Link with phone number instead, then type this code."
+										: "On your phone: WhatsApp > Linked devices > Link a device."
+								}
+								divider={false}
+							>
+								<div className="ai-pair">
+									{useCode ? (
+										wa.code ? (
+											<span className="ai-code">{wa.code.slice(0, 4) + "-" + wa.code.slice(4)}</span>
+										) : (
+											<div className="ai-secret">
+												<input
+													className="ai-field"
+													value={waPhone}
+													placeholder="+49 170 1234567"
+													onChange={(e) => setWaPhone(e.target.value)}
+												/>
+												<button
+													className="ai-btn"
+													disabled={!waPhone.trim()}
+													onClick={() => waRun("ai_whatsapp_pair_code", { phone: waPhone.trim() })}
+												>
+													Get code
+												</button>
+											</div>
+										)
+									) : (
+										wa.qr && <Qr text={wa.qr} />
+									)}
+									<button className="ai-btn" onClick={() => setUseCode(!useCode)}>
+										{useCode ? "Use the QR instead" : "Use a code instead"}
+									</button>
+								</div>
+							</SettingRow>
+						)}
 					</div>
 
 					<div className="setting-group-label">Safety</div>

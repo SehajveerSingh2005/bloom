@@ -25,6 +25,10 @@ pub enum In {
     Reveal { what: String },
     ForgetAll,
     McpReload,
+    WhatsappOn,
+    WhatsappOff,
+    WhatsappPairCode { phone: String },
+    WhatsappUnlink,
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone, Copy)]
@@ -37,6 +41,8 @@ pub enum ConfirmKind {
     Web,
     /// An MCP server's tool.
     Tool,
+    /// A WhatsApp message, or a saved phone number change.
+    Message,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -109,6 +115,16 @@ pub enum Out {
         mcp_servers: usize,
         mcp_tools: usize,
         mcp_errors: Vec<String>,
+    },
+    /// The WhatsApp link, for Settings only. `state`: "off", "connecting",
+    /// "not_linked" or "linked". `qr` and `code` are pairing credentials:
+    /// never logged.
+    WhatsappStatus {
+        state: String,
+        number: Option<String>,
+        qr: Option<String>,
+        code: Option<String>,
+        error: Option<String>,
     },
 }
 
@@ -214,6 +230,37 @@ mod tests {
             })
             .unwrap(),
             r#"{"type":"library_status","memory":2,"skills":0,"mcp_servers":0,"mcp_tools":0,"mcp_errors":[]}"#
+        );
+    }
+
+    #[test]
+    fn whatsapp_messages() {
+        assert_eq!(parse(r#"{"type":"whatsapp_on"}"#), Ok(In::WhatsappOn));
+        assert_eq!(parse(r#"{"type":"whatsapp_off"}"#), Ok(In::WhatsappOff));
+        assert_eq!(
+            parse(r#"{"type":"whatsapp_unlink"}"#),
+            Ok(In::WhatsappUnlink)
+        );
+        assert_eq!(
+            parse(r#"{"type":"whatsapp_pair_code","phone":"+491701234567"}"#),
+            Ok(In::WhatsappPairCode {
+                phone: "+491701234567".into()
+            })
+        );
+        assert_eq!(
+            serde_json::to_string(&ConfirmKind::Message).unwrap(),
+            r#""message""#
+        );
+        assert_eq!(
+            serde_json::to_string(&Out::WhatsappStatus {
+                state: "linked".into(),
+                number: Some("+491701234567".into()),
+                qr: None,
+                code: None,
+                error: None
+            })
+            .unwrap(),
+            r#"{"type":"whatsapp_status","state":"linked","number":"+491701234567","qr":null,"code":null,"error":null}"#
         );
     }
 

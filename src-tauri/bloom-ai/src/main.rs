@@ -23,9 +23,11 @@ mod skills;
 mod tools;
 mod voice;
 mod web;
+mod wa_client;
 mod wake;
 mod wake_score;
 mod weather;
+mod whatsapp;
 
 #[cfg(test)]
 mod testutil;
@@ -310,6 +312,13 @@ async fn serve(shared: Arc<Shared>) {
                         }),
                     }
                 });
+            }
+            In::WhatsappOn => whatsapp::on(&shared),
+            In::WhatsappOff => shared.whatsapp.off(),
+            In::WhatsappPairCode { phone } => whatsapp::pair_code(&shared, &phone),
+            In::WhatsappUnlink => {
+                let s = shared.clone();
+                tokio::spawn(async move { whatsapp::unlink(&s).await });
             }
             In::EnrollBuild => match wake::build(
                 &shared.data_dir,

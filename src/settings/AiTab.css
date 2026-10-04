@@ -78,3 +78,18 @@
 	font-size: 11px;
 	color: #ffb340;
 }
+
+.ai-pair {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 8px;
+	margin-left: 10px;
+}
+
+/* Always dark on white, whatever the theme, so phones can read it. */
+.ai-qr {
+	width: 180px;
+	height: 180px;
+	border-radius: 6px;
+}

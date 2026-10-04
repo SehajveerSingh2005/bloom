@@ -1,0 +1,566 @@
+//! The real WhatsApp connection (whatsapp-rust), on its own thread with its
+//! own current-thread runtime, so decrypting and the session store never
+//! hold up a request. Commands go in over a channel, events come out over
+//! another. Lost connections retry after 5 s, 30 s, then every 5 minutes.
+//! Nothing here logs: QR and link codes go to Settings only.
+
+use crate::whatsapp::{remove_session, Event, Link, Message, Status};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
+use tokio::sync::{mpsc, oneshot};
+use whatsapp_rust::pair_code::PairCodeOptions;
+use whatsapp_rust::prelude::*;
+use whatsapp_rust::wacore::store::DevicePropsOverride;
+
+enum Cmd {
+    Send(String, String, oneshot::Sender<Result<(), String>>),
+    #[allow(dead_code)] // Sent by Link::typing, for automatic replies.
+    Typing(String, bool, oneshot::Sender<Result<(), String>>),
+    PairCode(String),
+    Unlink(oneshot::Sender<Result<bool, String>>),
+}
+
+struct Real(mpsc::UnboundedSender<Cmd>);
+
+const GONE: &str = "The WhatsApp connection stopped.";
+
+impl Real {
+    async fn ask<T>(&self, cmd: impl FnOnce(oneshot::Sender<T>) -> Cmd) -> Option<T> {
+        let (tx, rx) = oneshot::channel();
+        self.0.send(cmd(tx)).ok()?;
+        rx.await.ok()
+    }
+}
+
+#[async_trait::async_trait]
+impl Link for Real {
+    async fn send_text(&self, chat: &str, text: &str) -> Result<(), String> {
+        let (chat, text) = (chat.to_string(), text.to_string());
+        self.ask(|tx| Cmd::Send(chat, text, tx))
+            .await
+            .unwrap_or(Err(GONE.into()))
+    }
+
+    async fn typing(&self, chat: &str, on: bool) -> Result<(), String> {
+        let chat = chat.to_string();
+        self.ask(|tx| Cmd::Typing(chat, on, tx))
+            .await
+            .unwrap_or(Err(GONE.into()))
+    }
+
+    fn pair_code(&self, phone: &str) {
+        let _ = self.0.send(Cmd::PairCode(phone.into()));
+    }
+
+    async fn unlink(&self) -> Result<bool, String> {
+        self.ask(Cmd::Unlink).await.unwrap_or(Err(GONE.into()))
+    }
+}
+
+/// The previous connection's thread: a new one waits for it to end, so two
+/// never use the session at once.
+static LAST: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+
+/// Connects with the session in `dir` (created on first link). Dropping
+/// every returned `Link` disconnects and ends the thread.
+pub fn start(dir: PathBuf, events: mpsc::UnboundedSender<Event>) -> Arc<dyn Link> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let mut last = LAST.lock().unwrap();
+    let previous = last.take();
+    *last = Some(std::thread::spawn(move || {
+        if let Some(previous) = previous {
+            let _ = previous.join();
+        }
+        run(&dir, &events, rx);
+    }));
+    Arc::new(Real(tx))
+}
+
+/// How a connection's supervisor ended.
+enum Exit {
+    Quit,
+    /// `bool`: nothing stays linked on WhatsApp's side.
+    Unlink(oneshot::Sender<Result<bool, String>>, bool),
+    /// WhatsApp logged this device out (removed on the phone).
+    LoggedOut,
+}
+
+fn run(dir: &Path, events: &mpsc::UnboundedSender<Event>, mut cmds: mpsc::UnboundedReceiver<Cmd>) {
+    let mut logged_out = false;
+    loop {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        let exit = rt.block_on(supervise(dir, events, &mut cmds, logged_out));
+        // Ends every task still holding the session store, so it can be deleted.
+        drop(rt);
+        match exit {
+            Exit::Quit => return,
+            Exit::Unlink(done, told) => {
+                let _ = done.send(remove_session(dir).map(|()| told));
+                return;
+            }
+            Exit::LoggedOut => {
+                let _ = remove_session(dir);
+                logged_out = true;
+            }
+        }
+    }
+}
+
+/// 5 s, 30 s, then every 5 minutes.
+fn backoff(attempt: usize) -> Duration {
+    Duration::from_secs([5, 30, 300][attempt.min(2)])
+}
+
+/// What one connection saw, written by its event handler.
+#[derive(Default)]
+struct Seen {
+    status: Status,
+    connected: bool,
+    paired: bool,
+    logged_out: bool,
+    /// The QR codes ran out (or WhatsApp refused us): wait for the user.
+    stopped: bool,
+    groups: HashMap<String, String>,
+}
+
+struct Conn {
+    seen: Mutex<Seen>,
+    events: mpsc::UnboundedSender<Event>,
+}
+
+impl Conn {
+    fn status(&self, change: impl FnOnce(&mut Status)) {
+        let mut seen = self.seen.lock().unwrap();
+        change(&mut seen.status);
+        let _ = self.events.send(Event::Status(seen.status.clone()));
+    }
+
+    async fn handle(&self, event: &whatsapp_rust::prelude::Event, client: &Arc<Client>) {
+        use whatsapp_rust::prelude::Event as E;
+        match event {
+            E::PairingQrCode(qr) => self.status(|s| {
+                s.state = "not_linked";
+                s.qr = Some(qr.code.clone());
+            }),
+            E::PairingCode(pc) => self.status(|s| s.code = Some(pc.code.clone())),
+            E::PairingCodeError(_) => self.status(|s| {
+                s.error =
+                    Some("WhatsApp didn't give a link code. Wait a minute and try again.".into())
+            }),
+            E::PairSuccess(_) => {
+                self.seen.lock().unwrap().paired = true;
+                self.status(|s| {
+                    s.state = "connecting";
+                    s.qr = None;
+                    s.code = None;
+                    s.error = None;
+                });
+            }
+            E::PairError(_) => self.status(|s| s.error = Some("Linking failed. Try again.".into())),
+            E::Connected(_) => {
+                self.seen.lock().unwrap().connected = true;
+                let number = client.pn().map(|j| format!("+{}", j.user_base()));
+                self.status(|s| {
+                    *s = Status {
+                        state: "linked",
+                        number,
+                        ..Status::default()
+                    }
+                });
+                offline(client).await;
+            }
+            // The library goes "online" once it learns the user's name, too.
+            E::SelfPushNameUpdated(_) => offline(client).await,
+            E::LoggedOut(_) => self.seen.lock().unwrap().logged_out = true,
+            E::PairingQrCodesExhausted(x) if x.disconnected => self.stopped(None),
+            E::StreamReplaced(_) => {
+                self.stopped(Some("WhatsApp was opened by another copy of Bloom.".into()))
+            }
+            E::ClientOutdated(_) => self.stopped(Some(
+                "WhatsApp says this version of Bloom is too old.".into(),
+            )),
+            E::Messages(batch) => {
+                for m in batch.iter() {
+                    if let Some(m) = self.convert(client, &m.message, &m.info).await {
+                        let _ = self.events.send(Event::Message(m));
+                    }
+                }
+            }
+            E::MarkChatAsReadUpdate(u) if u.action.read == Some(true) => {
+                if let Some(chat) = chat_key(client, &u.jid, None).await {
+                    let _ = self.events.send(Event::Read(chat));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn stopped(&self, error: Option<String>) {
+        self.seen.lock().unwrap().stopped = true;
+        self.status(|s| {
+            s.qr = None;
+            s.error = error;
+        });
+    }
+
+    async fn convert(
+        &self,
+        client: &Arc<Client>,
+        msg: &wa::Message,
+        info: &MessageInfo,
+    ) -> Option<Message> {
+        let text = describe(msg)?;
+        let src = &info.source;
+        let group = if src.is_group {
+            Some(self.group_name(client, &src.chat).await)
+        } else {
+            None
+        };
+        let alt = if src.is_from_me {
+            src.recipient_alt.as_ref()
+        } else {
+            src.sender_alt.as_ref()
+        };
+        let chat = match &group {
+            Some(_) => src.chat.to_non_ad_string(),
+            None => chat_key(client, &src.chat, alt).await?,
+        };
+        let sender = if src.is_from_me {
+            "me".to_string()
+        } else if !info.push_name.is_empty() {
+            info.push_name.clone()
+        } else {
+            chat_key(client, &src.sender, src.sender_alt.as_ref())
+                .await
+                .unwrap_or_default()
+        };
+        Some(Message {
+            chat,
+            group,
+            sender,
+            from_me: src.is_from_me,
+            at: info.timestamp.timestamp(),
+            text,
+        })
+    }
+
+    /// The group's subject, asked once per group.
+    async fn group_name(&self, client: &Arc<Client>, jid: &Jid) -> String {
+        let key = jid.to_non_ad_string();
+        if let Some(name) = self.seen.lock().unwrap().groups.get(&key) {
+            return name.clone();
+        }
+        let name = match client.groups().get_metadata(jid).await {
+            Ok(meta) => meta.subject,
+            Err(_) => return "Group".into(),
+        };
+        self.seen.lock().unwrap().groups.insert(key, name.clone());
+        name
+    }
+}
+
+/// Without this the phone stops showing notifications while Bloom is linked.
+async fn offline(client: &Arc<Client>) {
+    let _ = client.presence().set_unavailable().await;
+}
+
+/// "+<number>" for a person (LIDs looked up), None for status updates,
+/// channels and the like.
+async fn chat_key(client: &Arc<Client>, jid: &Jid, alt: Option<&Jid>) -> Option<String> {
+    if jid.is_pn() {
+        return Some(format!("+{}", jid.user_base()));
+    }
+    if !jid.is_lid() {
+        return None;
+    }
+    if let Some(alt) = alt.filter(|a| a.is_pn()) {
+        return Some(format!("+{}", alt.user_base()));
+    }
+    match client.get_lid_pn_entry(jid).await {
+        Ok(Some(entry)) => Some(format!("+{}", entry.phone_number)),
+        _ => Some(jid.to_non_ad_string()),
+    }
+}
+
+/// The text, or "[photo] caption" and the like; None for reactions, edits
+/// and other protocol messages.
+fn describe(msg: &wa::Message) -> Option<String> {
+    if let Some(text) = msg.text_content() {
+        return Some(text.to_string());
+    }
+    let m = msg.get_base_message();
+    let kind = if m.image_message.is_set() {
+        "[photo]"
+    } else if m.video_message.is_set() {
+        "[video]"
+    } else if m.audio_message.is_set() {
+        "[voice message]"
+    } else if m.document_message.is_set() {
+        "[document]"
+    } else if m.sticker_message.is_set() {
+        "[sticker]"
+    } else if m.location_message.is_set() || m.live_location_message.is_set() {
+        "[location]"
+    } else if m.contact_message.is_set() || m.contacts_array_message.is_set() {
+        "[contact]"
+    } else {
+        return None;
+    };
+    Some(match msg.get_caption().filter(|c| !c.is_empty()) {
+        Some(caption) => format!("{kind} {caption}"),
+        None => kind.to_string(),
+    })
+}
+
+/// A person's "+<number>" or a group id as a JID.
+fn jid(chat: &str) -> Result<Jid, String> {
+    match chat.strip_prefix('+') {
+        Some(digits) => Ok(Jid::pn(digits)),
+        None => chat
+            .parse()
+            .map_err(|_| format!("{chat} is not a WhatsApp chat")),
+    }
+}
+
+/// Between connections: waits out `wait` (forever if None) while answering
+/// commands. Returns the exit, or None to connect. `paired`: the session
+/// is linked on the phone.
+async fn between(
+    cmds: &mut mpsc::UnboundedReceiver<Cmd>,
+    wait: Option<Duration>,
+    pair: &mut Option<String>,
+    paired: bool,
+) -> Option<Exit> {
+    let sleep = async {
+        match wait {
+            Some(d) => tokio::time::sleep(d).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(sleep);
+    loop {
+        tokio::select! {
+            _ = &mut sleep => return None,
+            cmd = cmds.recv() => match cmd {
+                None => return Some(Exit::Quit),
+                Some(Cmd::Unlink(done)) => return Some(Exit::Unlink(done, !paired)),
+                Some(Cmd::PairCode(phone)) => {
+                    *pair = Some(phone);
+                    return None;
+                }
+                Some(Cmd::Send(_, _, done) | Cmd::Typing(_, _, done)) => {
+                    let _ = done.send(Err("WhatsApp isn't connected right now.".into()));
+                }
+            }
+        }
+    }
+}
+
+async fn supervise(
+    dir: &Path,
+    events: &mpsc::UnboundedSender<Event>,
+    cmds: &mut mpsc::UnboundedReceiver<Cmd>,
+    logged_out: bool,
+) -> Exit {
+    let mut attempt = 0;
+    let mut pair = None;
+    let mut wait = None;
+    let mut idle = logged_out;
+    let mut paired = false;
+    if logged_out {
+        let _ = events.send(Event::Status(Status {
+            state: "not_linked",
+            error: Some("WhatsApp unlinked Bloom. Link it again to keep using WhatsApp.".into()),
+            ..Status::default()
+        }));
+    }
+    loop {
+        if idle || wait.is_some() {
+            if let Some(exit) = between(cmds, wait.take(), &mut pair, paired).await {
+                return exit;
+            }
+            idle = false;
+        }
+        let conn = Arc::new(Conn {
+            seen: Mutex::default(),
+            events: events.clone(),
+        });
+        conn.status(|s| s.state = "connecting");
+        let bot = match build(dir, &conn, pair.take()).await {
+            Ok(bot) => bot,
+            Err(e) => {
+                conn.status(|s| s.error = Some(e));
+                wait = Some(backoff(attempt));
+                attempt += 1;
+                continue;
+            }
+        };
+        let client = bot.client();
+        paired = client.pn().is_some();
+        // Reconnects follow our own backoff below.
+        client
+            .enable_auto_reconnect
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let mut handle = bot.spawn();
+        let end = loop {
+            tokio::select! {
+                _ = &mut handle => break None,
+                cmd = cmds.recv() => match cmd {
+                    None => break Some(Exit::Quit),
+                    Some(Cmd::Unlink(done)) => {
+                        let told = client.pn().is_none()
+                            || (client.is_connected() && client.is_logged_in());
+                        break Some(Exit::Unlink(done, told));
+                    }
+                    Some(Cmd::PairCode(phone)) if !client.is_logged_in() => {
+                        if client.is_connected() {
+                            let c = client.clone();
+                            tokio::spawn(async move {
+                                // Failures arrive as PairingCodeError.
+                                let _ = c.pair_with_code(code_options(phone)).await;
+                            });
+                        } else {
+                            pair = Some(phone);
+                            break None;
+                        }
+                    }
+                    Some(Cmd::PairCode(_)) => {}
+                    Some(Cmd::Send(chat, text, done)) => {
+                        let c = client.clone();
+                        tokio::spawn(async move {
+                            let sent = match jid(&chat) {
+                                Ok(to) => c.send_text(to, text).await.map(drop).map_err(|e| e.to_string()),
+                                Err(e) => Err(e),
+                            };
+                            let _ = done.send(sent);
+                        });
+                    }
+                    Some(Cmd::Typing(chat, on, done)) => {
+                        let c = client.clone();
+                        tokio::spawn(async move {
+                            let typed = match jid(&chat) {
+                                Ok(to) if on => c.chatstate().send_composing(&to).await.map_err(|e| e.to_string()),
+                                Ok(to) => c.chatstate().send_paused(&to).await.map_err(|e| e.to_string()),
+                                Err(e) => Err(e),
+                            };
+                            let _ = done.send(typed);
+                        });
+                    }
+                }
+            }
+        };
+        match end {
+            Some(Exit::Unlink(done, told)) => {
+                client.logout().await;
+                let _ = (&mut handle).await;
+                return Exit::Unlink(done, told);
+            }
+            Some(exit) => {
+                handle.shutdown().await;
+                return exit;
+            }
+            None if pair.is_some() => {
+                // A link code was asked for while offline: start over with it.
+                handle.shutdown().await;
+                continue;
+            }
+            None => {}
+        }
+        drop(client);
+        let seen = std::mem::take(&mut *conn.seen.lock().unwrap());
+        if seen.logged_out {
+            return Exit::LoggedOut;
+        }
+        if seen.paired {
+            // WhatsApp drops the socket right after linking; reconnect at once.
+            attempt = 0;
+            continue;
+        }
+        if seen.stopped {
+            conn.status(|s| s.state = "not_linked");
+            idle = true;
+            continue;
+        }
+        if seen.connected {
+            attempt = 0;
+        }
+        conn.status(|s| s.state = "connecting");
+        wait = Some(backoff(attempt));
+        attempt += 1;
+    }
+}
+
+fn code_options(phone: String) -> PairCodeOptions {
+    PairCodeOptions {
+        phone_number: phone,
+        ..Default::default()
+    }
+}
+
+async fn build(dir: &Path, conn: &Arc<Conn>, pair: Option<String>) -> Result<Bot, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("Couldn't create {}: {e}", dir.display()))?;
+    let db = dir.join("session.db");
+    let store = SqliteStore::new(&db.to_string_lossy())
+        .await
+        .map_err(|e| format!("Couldn't open the WhatsApp session: {e}"))?;
+    let c = conn.clone();
+    let mut builder = Bot::builder()
+        .with_backend(store)
+        // Old chats stay on the phone: only new messages are kept, in RAM.
+        .skip_history_sync()
+        .with_device_props(DevicePropsOverride::new().with_os("Bloom"))
+        .on_event(move |event, client| {
+            let c = c.clone();
+            async move { c.handle(&event, &client).await }
+        });
+    if let Some(phone) = pair {
+        builder = builder.with_pair_code(code_options(phone));
+    }
+    builder
+        .build()
+        .await
+        .map_err(|e| format!("Couldn't start WhatsApp: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_is_5s_30s_then_5min() {
+        let secs: Vec<u64> = (0..5).map(|a| backoff(a).as_secs()).collect();
+        assert_eq!(secs, [5, 30, 300, 300, 300]);
+    }
+
+    #[test]
+    fn chats_parse_as_jids() {
+        assert_eq!(
+            jid("+491701234567").unwrap().to_string(),
+            "491701234567@s.whatsapp.net"
+        );
+        assert_eq!(jid("1203630@g.us").unwrap().to_string(), "1203630@g.us");
+    }
+
+    #[test]
+    fn media_is_described() {
+        let text = wa::Message::text("hi");
+        assert_eq!(describe(&text).as_deref(), Some("hi"));
+        let photo = wa::Message {
+            image_message: MessageField::some(wa::message::ImageMessage {
+                caption: Some("look".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(describe(&photo).as_deref(), Some("[photo] look"));
+        assert_eq!(describe(&wa::Message::default()), None);
+    }
+}
