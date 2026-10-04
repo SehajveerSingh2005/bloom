@@ -97,28 +97,30 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 			}}
 		>
 			<div className="ai-status">
-				<span className="ai-orb" />
+				<span className="ai-orb-wrap">
+					<span className="ai-orb" />
+				</span>
 				{STATUS[state.phase]}
 			</div>
 			<div className="ai-body">
 				{state.heard && <p className="ai-heard">{state.heard}</p>}
 				{state.phase === "working" && state.activity && <p className="ai-activity">{state.activity}</p>}
-				{state.confirm && (
-					<div className="ai-confirm">
-						<div className="ai-confirm-title">{state.confirm.title}</div>
-						<pre className="ai-confirm-body">{state.confirm.body}</pre>
-						<div className="ai-row">
-							<button onClick={() => answer(false)}>Cancel</button>
-							<button ref={approveRef} className="primary" disabled={approveDisabled} onClick={() => answer(true)}>
-								{state.confirm.kind === "email" ? "Send" : "Run"}
-							</button>
-						</div>
-					</div>
-				)}
 				{(state.phase === "done" || state.phase === "error") && (
 					<p className={`ai-reply ${state.phase}`}>{state.reply}</p>
 				)}
 			</div>
+			{state.confirm && (
+				<div className="ai-confirm">
+					<div className="ai-confirm-title">{state.confirm.title}</div>
+					<pre className="ai-confirm-body">{state.confirm.body}</pre>
+					<div className="ai-row">
+						<button onClick={() => answer(false)}>Cancel</button>
+						<button ref={approveRef} className="primary" disabled={approveDisabled} onClick={() => answer(true)}>
+							{state.confirm.kind === "email" ? "Send" : "Run"}
+						</button>
+					</div>
+				</div>
+			)}
 			<form className="ai-input" onSubmit={submit}>
 				<input
 					ref={inputRef}

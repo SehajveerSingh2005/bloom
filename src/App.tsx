@@ -1883,7 +1883,7 @@ function App() {
 		if (bloomMode === "ai") {
 			// Stable height per phase: the notch spring animates between them.
 			const { phase, confirm, heard } = ai.state;
-			if (confirm) return 240;
+			if (confirm) return 270;
 			if (phase === "done" || phase === "error") return 180;
 			if (phase === "working" || heard) return 156;
 			return 132;

@@ -25,20 +25,28 @@
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-	flex: 1;
+	flex: 0 1 auto;
 	min-height: 0;
 	max-height: 220px;
 	overflow-y: auto;
 }
 
-/* Orb: blurred multi-colour conic gradient. */
-.ai-orb {
+/* Orb: blurred multi-colour conic gradient. The wrapper holds the static blur
+   so the animated layer only changes transform/opacity. */
+.ai-orb-wrap {
 	flex-shrink: 0;
+	display: block;
 	width: 16px;
 	height: 16px;
+	filter: blur(1.5px) saturate(1.3);
+}
+
+.ai-orb {
+	display: block;
+	width: 100%;
+	height: 100%;
 	border-radius: 50%;
 	background: conic-gradient(from 0deg, #ff5fa2, #ffb340, #5ee0a0, #4cc3ff, #8f6bff, #ff5fa2);
-	filter: blur(1.5px) saturate(1.3);
 	opacity: 0.45;
 	will-change: auto;
 }
@@ -86,7 +94,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.ai-panel .ai-orb {
+	.ai-panel[data-phase] .ai-orb {
 		animation: none;
 		will-change: auto;
 		box-shadow: 0 0 8px rgba(143, 107, 255, 0.6);
@@ -114,6 +122,8 @@
 }
 
 .ai-confirm {
+	flex: 1 1 auto;
+	min-height: 0;
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
@@ -129,7 +139,9 @@
 
 .ai-confirm-body {
 	margin: 0;
-	max-height: 70px;
+	flex: 1 1 auto;
+	min-height: 0;
+	max-height: 140px;
 	overflow: auto;
 	white-space: pre-wrap;
 	font: 11px/1.4 ui-monospace, Consolas, monospace;
@@ -137,6 +149,7 @@
 }
 
 .ai-row {
+	flex-shrink: 0;
 	display: flex;
 	justify-content: flex-end;
 	gap: 6px;
