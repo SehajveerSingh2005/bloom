@@ -53,7 +53,8 @@ function TileMore({ title, onOpen }: { title: string; onOpen: () => void }) {
 	);
 }
 
-export type InfoTab = "media" | "calendar" | "timer" | "controls";
+/** "ai" is Bloom AI's view: a tab of this panel when AI is on (Dock.tsx). */
+export type InfoTab = "media" | "calendar" | "timer" | "controls" | "ai";
 
 const TABS: [InfoTab, string][] = [
 	["media", "Now playing"],
@@ -375,9 +376,12 @@ interface PanelProps {
 	setTab: (tab: InfoTab) => void;
 	/** Called whenever the panel's box changes, so the dock's click area follows. */
 	onResize: () => void;
+	/** Bloom AI's tab, last in the row; absent while AI is off. */
+	ai?: { label: string; view: ReactNode };
 }
 
-export function InfoPanel({ tab, setTab, onResize }: PanelProps) {
+export function InfoPanel({ tab, setTab, onResize, ai }: PanelProps) {
+	const tabs: [InfoTab, string][] = ai ? [...TABS, ["ai", ai.label]] : TABS;
 	const ref = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		if (!ref.current) return;
@@ -391,19 +395,26 @@ export function InfoPanel({ tab, setTab, onResize }: PanelProps) {
 	}, []);
 
 	// Direction of the last switch (+1 forward, -1 back), read by the slide variants.
+	// A switch made outside (the AI hotkey) gets its direction here too.
 	const dir = useRef(1);
+	const shown = useRef(tab);
+	const index = (t: InfoTab) => tabs.findIndex(([id]) => id === t);
+	if (shown.current !== tab) {
+		dir.current = Math.sign(index(tab) - index(shown.current)) || 1;
+		shown.current = tab;
+	}
 	const go = (next: InfoTab, d?: number) => {
 		if (next === tab) return;
-		const from = TABS.findIndex(([t]) => t === tab);
-		const to = TABS.findIndex(([t]) => t === next);
-		dir.current = d ?? Math.sign(to - from);
+		dir.current = d ?? Math.sign(index(next) - index(tab));
+		shown.current = next;
 		setTab(next);
 	};
 
 	// Scrolling over the panel cycles tabs, as it cycles modes on the notch.
+	// Like the notch, the AI view is left with its close button, not a scroll.
 	const lastWheel = useRef(0);
 	const onWheel = (e: React.WheelEvent) => {
-		if ((e.target as HTMLElement).closest("input")) return;
+		if (tab === "ai" || (e.target as HTMLElement).closest("input")) return;
 		const now = Date.now();
 		const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
 		if (now - lastWheel.current < 250 || Math.abs(delta) < 5) return;
@@ -427,7 +438,7 @@ export function InfoPanel({ tab, setTab, onResize }: PanelProps) {
 			onContextMenu={(e) => e.stopPropagation()}
 		>
 			<div className="ic-tabs">
-				{TABS.map(([id, label]) => (
+				{tabs.map(([id, label]) => (
 					<button key={id} className={`ic-tab ${tab === id ? "on" : ""}`} onClick={() => go(id)}>
 						{tab === id && (
 							<motion.span
@@ -456,6 +467,7 @@ export function InfoPanel({ tab, setTab, onResize }: PanelProps) {
 						{tab === "calendar" && <CalendarView />}
 						{tab === "timer" && <TimerView />}
 						{tab === "controls" && <ControlsView />}
+						{tab === "ai" && ai?.view}
 					</motion.div>
 				</AnimatePresence>
 			</div>

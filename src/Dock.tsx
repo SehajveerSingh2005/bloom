@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, memo } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, memo } from "react";
 import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -158,30 +158,41 @@ const Dock = memo(function Dock() {
 		if (infoCloseTimer.current) clearTimeout(infoCloseTimer.current);
 		setInfoTab((cur) => tab ?? cur);
 	};
+	// Leaving the dock closes the panel, except on the AI tab: that one stays
+	// until it is closed, as in the notch.
+	const keepAi = (t: InfoTab | null) => (t === "ai" ? t : null);
 	const scheduleInfoClose = () => {
 		if (infoCloseTimer.current) clearTimeout(infoCloseTimer.current);
-		infoCloseTimer.current = setTimeout(() => setInfoTab(null), 350);
+		infoCloseTimer.current = setTimeout(() => setInfoTab(keepAi), 350);
 	};
 
-	// Bloom AI in merged mode: its panel opens above the dock, in the info
-	// panel's place. In notch mode Bloom sends `ai-open` to the notch instead.
-	const [aiOpen, setAiOpen] = useState(false);
+	// Bloom AI in merged mode: a tab of the info panel, so it unrolls from the
+	// bar like the others. In notch mode Bloom sends `ai-open` to the notch instead.
+	const aiOpen = infoTab === "ai";
 	const [aiFocus, setAiFocus] = useState(false);
 	const aiName = useAiName();
 	const ai = useAi((recording) => {
 		if (!infoCentre) return;
-		setInfoTab(null);
 		setAiFocus(!recording);
-		setAiOpen(true);
+		setInfoTab("ai");
 	});
 	const closeAi = () => {
 		ai.stop();
 		ai.reset();
-		setAiOpen(false);
+		setInfoTab(null);
+	};
+	// Picking a tab: the AI tab focuses its text box, as the dock button does.
+	const pickTab = (t: InfoTab) => {
+		setAiFocus(t === "ai");
+		setInfoTab(t);
 	};
 	useEffect(() => {
 		if ((!ai.enabled || !infoCentre) && aiOpen) closeAi();
 	}, [ai.enabled, infoCentre, aiOpen]);
+	// A request waiting for an OK brings the AI tab back if another tab is showing.
+	useEffect(() => {
+		if (ai.state.confirm && ai.enabled && infoCentre) setInfoTab("ai");
+	}, [ai.state.confirm?.id]);
 	// A preview already showing when the panel opens would overlap it.
 	useEffect(() => {
 		if (aiOpen) setPreviewData(null);
@@ -390,12 +401,10 @@ const Dock = memo(function Dock() {
 		"bloom-info-centre": (v) => setInfoCentre(v === true || v === "true")
 	});
 	const infoOpen = infoCentre && !!infoTab && isExpanded && !isHidden && isVisible;
-	const aiPanelOpen = infoCentre && aiOpen && isVisible;
-	const onAiHeight = useCallback(() => updateRectRef.current(), []);
 	// One glass sheet: the open info panel and the dock under it share it.
 	const glass = useGlassEnabled();
 	const infoOpenRef = useRef(infoOpen);
-	infoOpenRef.current = infoOpen || aiPanelOpen;
+	infoOpenRef.current = infoOpen;
 	// A closing panel stops counting as glass at once, not when its exit
 	// animation ends.
 	useGlass(
@@ -405,7 +414,7 @@ const Dock = memo(function Dock() {
 
 	// Window previews float where the panel is: an app hover closes the panel.
 	useEffect(() => {
-		if (hoveredApp) setInfoTab(null);
+		if (hoveredApp) setInfoTab(keepAi);
 	}, [hoveredApp]);
 
 	// Once the panel's exit animation is over, shrink the click area back to the
@@ -413,7 +422,7 @@ const Dock = memo(function Dock() {
 	useEffect(() => {
 		const t = setTimeout(() => updateRectRef.current(), 450);
 		return () => clearTimeout(t);
-	}, [infoOpen, aiPanelOpen]);
+	}, [infoOpen]);
 
 	useEffect(() => {
 		let pollSeq = 0;
@@ -971,7 +980,7 @@ const Dock = memo(function Dock() {
 								className="dock-reorder-container"
 							>
 								{infoCentre && (
-									<InfoLeft active={infoTab !== null && infoTab !== "controls"} onOpen={() => openInfo(infoTab && infoTab !== "controls" ? infoTab : "media")} />
+									<InfoLeft active={infoTab !== null && infoTab !== "controls" && infoTab !== "ai"} onOpen={() => openInfo(infoTab && infoTab !== "controls" ? infoTab : "media")} />
 								)}
 								{startItem && (
 									<motion.div
@@ -1342,24 +1351,21 @@ const Dock = memo(function Dock() {
 						)}
 					</AnimatePresence>
 					<AnimatePresence>
-						{(infoOpen || aiPanelOpen) && (
+						{infoOpen && (
 							<div ref={infoPanelRef} className="ic-panel-anchor" key="info-panel">
-								{aiPanelOpen ? (
-									<div className="ic-panel ai-dock-panel">
-										<AiPanel
-											ai={ai}
-											onClose={closeAi}
-											focusOnOpen={aiFocus}
-											onHeight={onAiHeight}
-										/>
-									</div>
-								) : (
-									<InfoPanel
-										tab={infoTab!}
-										setTab={setInfoTab}
-										onResize={() => updateRectRef.current()}
-									/>
-								)}
+								<InfoPanel
+									tab={infoTab!}
+									setTab={pickTab}
+									onResize={() => updateRectRef.current()}
+									ai={
+										ai.enabled
+											? {
+													label: aiName,
+													view: <AiPanel ai={ai} onClose={closeAi} focusOnOpen={aiFocus} />
+												}
+											: undefined
+									}
+								/>
 							</div>
 						)}
 					</AnimatePresence>

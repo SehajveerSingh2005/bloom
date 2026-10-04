@@ -27,11 +27,9 @@ interface Props {
 	onClose: () => void;
 	/** Opened from the dock button: focus the text box. */
 	focusOnOpen: boolean;
-	/** Reports the panel's height so the notch can size itself. */
-	onHeight?: (height: number) => void;
 }
 
-export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
+export function AiPanel({ ai, onClose, focusOnOpen }: Props) {
 	const { state, send, stop, answer } = ai;
 	const name = useAiName();
 	const [text, setText] = useState("");
@@ -68,14 +66,6 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 		const timer = setTimeout(() => setApproveDisabled(false), 600);
 		return () => clearTimeout(timer);
 	}, [state.confirm?.id]);
-
-	useEffect(() => {
-		const el = rootRef.current;
-		if (!el || !onHeight) return;
-		const observer = new ResizeObserver(() => onHeight(el.offsetHeight));
-		observer.observe(el);
-		return () => observer.disconnect();
-	}, [onHeight]);
 
 	const submit = (e: React.FormEvent) => {
 		e.preventDefault();

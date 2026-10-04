@@ -1046,7 +1046,9 @@ body {
 .ic-pill,
 .ic-tile,
 .ic-tab,
-.ic-controls button {
+.ic-controls button,
+.ic-slide .ai-row button,
+.ic-slide .ai-input button {
 	transition:
 		transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1),
 		background 0.2s,
@@ -1055,7 +1057,9 @@ body {
 .ic-pill:active,
 .ic-tile:active,
 .ic-tab:active,
-.ic-controls button:active {
+.ic-controls button:active,
+.ic-slide .ai-row button:active,
+.ic-slide .ai-input button:active {
 	transform: scale(0.92);
 }
 
@@ -1125,7 +1129,8 @@ body {
 	gap: 22px;
 	margin-top: 6px;
 }
-.ic-controls button {
+.ic-controls button,
+.ic-slide .ai-input button {
 	border: 0;
 	background: none;
 	color: inherit;
@@ -1135,7 +1140,8 @@ body {
 	place-items: center;
 	cursor: pointer;
 }
-.ic-controls button:hover {
+.ic-controls button:hover,
+.ic-slide .ai-input button:hover {
 	background: rgba(127, 127, 127, 0.2);
 }
 .ic-controls .ic-play {
@@ -1240,7 +1246,8 @@ body {
 	flex-wrap: wrap;
 	justify-content: center;
 }
-.ic-pill {
+.ic-pill,
+.ic-slide .ai-row button {
 	border: 0;
 	font: inherit;
 	font-size: 12px;
@@ -1250,10 +1257,12 @@ body {
 	color: inherit;
 	cursor: pointer;
 }
-.ic-pill:hover {
+.ic-pill:hover,
+.ic-slide .ai-row button:hover {
 	background: rgba(127, 127, 127, 0.3);
 }
-.ic-pill.primary {
+.ic-pill.primary,
+.ic-slide .ai-row button.primary {
 	background: var(--bloom-text, white);
 	color: var(--bloom-bg-expanded, #000);
 	font-weight: 600;
@@ -1332,7 +1341,8 @@ body {
 	flex-direction: column;
 	gap: 10px;
 }
-.ic-slider {
+.ic-slider,
+.ic-slide .ai-confirm {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -1393,6 +1403,31 @@ body {
 	font-variant-numeric: tabular-nums;
 }
 
+/* Bloom AI view (the panel's "ai" tab): the panel's own blocks and controls.
+   The confirm card is an .ic-slider block, the text box the same surface
+   (hover shade of .ic-tile when focused), text buttons .ic-pill, icon buttons
+   .ic-controls; text at the tiles' 13px. The reply scrolls, the box stays down. */
+.ic-slide > .ai-panel {
+	padding: 0;
+	font-size: 13px;
+}
+.ic-slide .ai-body {
+	flex: 1 1 auto;
+	max-height: none;
+}
+.ic-slide .ai-confirm {
+	flex: 0 1 auto;
+}
+.ic-slide .ai-input input {
+	padding: 10px 12px;
+	border: 0;
+	border-radius: 12px;
+	background: rgba(127, 127, 127, 0.16);
+}
+.ic-slide .ai-input input:focus {
+	background: rgba(127, 127, 127, 0.26);
+}
+
 /* ── Glass (Appearance → Glass, <html class="glass">) ──────────────────────
    The compositor frosts whatever is behind the dock (glass.rs, useGlass); this
    is the material on top, as on Apple's: a much lighter tint so the frost
@@ -1430,6 +1465,8 @@ html.glass:not(.no-blur) .dock.ic-open {
 
 html.glass:not(.no-blur) .ic-tile,
 html.glass:not(.no-blur) .ic-slider,
+html.glass:not(.no-blur) .ic-slide .ai-confirm,
+html.glass:not(.no-blur) .ic-slide .ai-input input,
 html.glass:not(.no-blur) .ic-stat,
 html.glass:not(.no-blur) .ic-tabs,
 html.glass:not(.no-blur) .ic-today-weather,
@@ -1439,11 +1476,13 @@ html.glass:not(.no-blur) .ic-zone.active {
 		inset 0 1px 0 rgba(255, 255, 255, 0.12),
 		inset 0 0 0 0.5px rgba(255, 255, 255, 0.07);
 }
-html.glass:not(.no-blur) .ic-tile:hover {
+html.glass:not(.no-blur) .ic-tile:hover,
+html.glass:not(.no-blur) .ic-slide .ai-input input:focus {
 	background: rgba(255, 255, 255, 0.12);
 }
 html.glass:not(.no-blur) .ic-tab-pill,
 html.glass:not(.no-blur) .ic-pill,
+html.glass:not(.no-blur) .ic-slide .ai-row button:not(.primary),
 html.glass:not(.no-blur) .ic-tile-icon {
 	background: rgba(255, 255, 255, 0.14);
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
@@ -1462,6 +1501,8 @@ html.glass:not(.no-blur) .ic-slider input {
 /* Light themes: frosted white instead of smoked glass. */
 html.glass:not(.no-blur).light-mode .ic-tile,
 html.glass:not(.no-blur).light-mode .ic-slider,
+html.glass:not(.no-blur).light-mode .ic-slide .ai-confirm,
+html.glass:not(.no-blur).light-mode .ic-slide .ai-input input,
 html.glass:not(.no-blur).light-mode .ic-stat,
 html.glass:not(.no-blur).light-mode .ic-tabs,
 html.glass:not(.no-blur).light-mode .ic-today-weather,
@@ -1490,10 +1531,4 @@ html.glass:not(.no-blur).light-mode .ic-zone.active {
 .dock-ai-btn:hover {
 	opacity: 1;
 	background: rgba(255, 255, 255, 0.1);
-}
-
-/* The AI panel takes the info panel glass sheet but sizes to its content. */
-.ic-panel.ai-dock-panel {
-	height: auto;
-	padding: 0;
 }

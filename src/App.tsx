@@ -2400,7 +2400,7 @@ function App() {
 																			</motion.div>
 																		)}
 																	</AnimatePresence>
-																) : !isMusicMode && bloomMode !== "ai" && isHovered && statusWidgets.left.length > 0 ? (
+																) : !isMusicMode && isHovered && statusWidgets.left.length > 0 ? (
 																	<motion.div
 																		key="left-widgets"
 																		className="passive-features-group"
@@ -2531,7 +2531,7 @@ function App() {
 																			</button>
 																		</motion.div>
 																	</AnimatePresence>
-																) : !isMusicMode && bloomMode !== "ai" && isHovered && statusWidgets.right.length > 0 ? (
+																) : !isMusicMode && isHovered && statusWidgets.right.length > 0 ? (
 																	<motion.div
 																		key="right-widgets"
 																		className="passive-features-group"

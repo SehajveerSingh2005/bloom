@@ -1,5 +1,5 @@
-/* Janice panel: shared by the notch (App.tsx) and the merged dock (Dock.tsx).
-   Styled like the control centre pills. The orb animates only while Janice is
+/* Janice panel: shared by the notch (App.tsx) and the merged dock, where it is
+   a tab of the info panel (InfoCentre.tsx). The orb animates only while Janice is
    listening, transcribing, working or asking; transform/opacity only. */
 .ai-panel {
 	display: flex;
@@ -127,10 +127,6 @@
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-	padding: 8px;
-	border-radius: 10px;
-	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.04));
-	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.02));
 }
 
 .ai-confirm-title {
@@ -155,55 +151,6 @@
 	gap: 6px;
 }
 
-.ai-row button,
-.ai-input button {
-	display: grid;
-	place-items: center;
-	height: 34px;
-	box-sizing: border-box;
-	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.02));
-	border-radius: 10px;
-	padding: 0 12px;
-	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.04));
-	color: inherit;
-	font-size: 11px;
-	font-weight: 600;
-	cursor: pointer;
-	transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.ai-row button {
-	height: 28px;
-}
-
-.ai-row button:hover:not(:disabled),
-.ai-input button:hover {
-	background: var(--bloom-border, rgba(255, 255, 255, 0.08));
-	transform: translateY(-0.5px);
-}
-
-.ai-row button:active:not(:disabled),
-.ai-input button:active {
-	transform: scale(0.98);
-}
-
-/* Like an active control-centre pill. */
-.ai-row button.primary {
-	background: var(--bloom-text, rgba(255, 255, 255, 0.95));
-	border-color: var(--bloom-text, rgba(255, 255, 255, 0.95));
-	color: var(--bloom-bg-expanded, #000);
-}
-
-.ai-row button.primary:hover:not(:disabled) {
-	background: var(--bloom-text, rgba(255, 255, 255, 0.95));
-	opacity: 0.85;
-}
-
-.ai-row button:disabled {
-	opacity: 0.5;
-	cursor: default;
-}
-
 .ai-input {
 	display: flex;
 	align-items: center;
@@ -211,17 +158,17 @@
 	gap: 6px;
 }
 
+.ai-row button,
+.ai-input input,
+.ai-input button {
+	font: inherit;
+	color: inherit;
+}
+
 .ai-input input {
 	flex: 1;
 	min-width: 0;
-	height: 34px;
 	box-sizing: border-box;
-	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.02));
-	border-radius: 10px;
-	padding: 5px 10px;
-	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.04));
-	color: inherit;
-	font-size: 12px;
 	outline: none;
 }
 
@@ -229,13 +176,96 @@
 	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.4));
 }
 
-.ai-input input:focus {
+.ai-input button {
+	flex-shrink: 0;
+}
+
+.ai-row button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* Controls take the surface's own: the control centre's in the notch (App.css
+   .cc-pill-tile and .cc-circular-btn), the info panel's in the dock (Dock.css). */
+.ai-notch-content .ai-confirm,
+.ai-notch-content .ai-row button,
+.ai-notch-content .ai-input input {
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.02));
+	border-radius: 10px;
+	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.04));
+}
+
+.ai-notch-content .ai-confirm {
+	padding: 8px;
+}
+
+.ai-notch-content .ai-row button,
+.ai-notch-content .ai-input input {
+	height: 34px;
+	box-sizing: border-box;
+}
+
+.ai-notch-content .ai-row button {
+	padding: 0 12px;
+	font-size: 11px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ai-notch-content .ai-row button:hover:not(:disabled) {
+	background: var(--bloom-border, rgba(255, 255, 255, 0.08));
+	transform: translateY(-0.5px);
+}
+
+.ai-notch-content .ai-row button:active:not(:disabled) {
+	transform: scale(0.98);
+}
+
+/* Like an active control-centre pill. */
+.ai-notch-content .ai-row button.primary {
+	background: var(--bloom-text, rgba(255, 255, 255, 0.95));
+	border-color: var(--bloom-text, rgba(255, 255, 255, 0.95));
+	color: var(--bloom-bg-expanded, #000);
+}
+
+.ai-notch-content .ai-row button.primary:hover:not(:disabled) {
+	background: var(--bloom-text, rgba(255, 255, 255, 0.95));
+	opacity: 0.85;
+}
+
+.ai-notch-content .ai-input input {
+	padding: 5px 10px;
+	font-size: 12px;
+}
+
+.ai-notch-content .ai-input input:focus {
 	background: var(--bloom-border, rgba(255, 255, 255, 0.08));
 }
 
-.ai-input button {
+/* Like .cc-circular-btn. */
+.ai-notch-content .ai-input button {
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
 	padding: 0;
-	width: 34px;
+	border-radius: 50%;
+	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.04));
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.02));
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.7));
+	cursor: pointer;
+	transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ai-notch-content .ai-input button:hover {
+	background: var(--bloom-border, rgba(255, 255, 255, 0.1));
+	color: var(--bloom-text, #fff);
+	transform: translateY(-1px);
+}
+
+.ai-notch-content .ai-input button:active {
+	transform: scale(0.95) translateY(0);
 }
 
 /* In the notch: same box as .command-center-content-minimal. The notch picks a
