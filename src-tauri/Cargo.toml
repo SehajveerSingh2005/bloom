@@ -87,3 +87,7 @@ zbus = "5"
 gtk = "0.18"
 raw-window-handle = "0.6"
 libc = "0.2"
+
+# Bloom's optional AI agent (see docs/superpowers/plans/2026-10-04-bloom-ai-sidecar.md).
+[workspace]
+members = ["bloom-ai"]
