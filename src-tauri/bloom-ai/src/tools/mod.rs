@@ -30,7 +30,7 @@ pub fn schema() -> Value {
              Never overwrites: an existing name gets a (2) suffix.",
             json!({
                 "folder": { "type": "string", "enum": ["downloads", "documents", "desktop"] },
-                "name": { "type": "string", "description": "File name with extension, e.g. groceries.txt" },
+                "name": { "type": "string", "description": "Text file name, e.g. groceries.txt (.txt, .md, .csv, .json, .log, .xml, .ics, .yaml, .yml; no extension means .txt)" },
                 "content": { "type": "string" }
             }),
             &["folder", "name", "content"],

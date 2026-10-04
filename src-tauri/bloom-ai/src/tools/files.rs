@@ -20,7 +20,22 @@ pub fn folder(name: &str) -> Result<PathBuf, String> {
 }
 
 pub fn write_file(folder_name: &str, name: &str, content: &str) -> Result<PathBuf, String> {
-    write_new(&folder(folder_name)?, &plain_name(name)?, content)
+    write_new(&folder(folder_name)?, &text_name(name)?, content)
+}
+
+/// Only plain-text extensions: anything else could be launched later by `open`.
+const TEXT: [&str; 9] = [
+    "txt", "md", "csv", "json", "log", "xml", "ics", "yaml", "yml",
+];
+
+/// A plain name with a text extension; a name without one gets `.txt`.
+fn text_name(name: &str) -> Result<String, String> {
+    let name = plain_name(name)?;
+    match Path::new(&name).extension().and_then(|e| e.to_str()) {
+        None => Ok(format!("{name}.txt")),
+        Some(ext) if TEXT.contains(&ext.to_ascii_lowercase().as_str()) => Ok(name),
+        Some(_) => Err("write_file only creates text files (.txt, .md, .csv, ...); use run_powershell for other files".into()),
+    }
 }
 
 /// A bare file name: no folders, drive or reserved characters.
@@ -153,6 +168,15 @@ pub fn shell_open(target: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::testutil::temp_dir;
+
+    #[test]
+    fn only_text_files_are_created() {
+        assert_eq!(text_name("notes").unwrap(), "notes.txt");
+        assert_eq!(text_name("a.MD").unwrap(), "a.MD");
+        for bad in ["run.bat", "x.url", "y.TXT.exe"] {
+            assert!(text_name(bad).is_err(), "{bad} should be refused");
+        }
+    }
 
     #[test]
     fn never_overwrites() {
