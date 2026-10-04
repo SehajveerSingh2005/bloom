@@ -45,7 +45,9 @@ pub fn set(name: &str, value: &str) -> Result<(), String> {
     if parts.len() > MAX_PARTS {
         return Err(format!("secret {name} is too long"));
     }
-    for (i, p) in parts.iter().enumerate() {
+    // Highest part first, `name` itself last: a failure partway never puts the
+    // new first part in front of stale later parts.
+    for (i, p) in parts.iter().enumerate().rev() {
         part(name, i + 1)
             .set_password(p)
             .map_err(|e| e.to_string())?;
