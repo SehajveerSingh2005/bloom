@@ -91,7 +91,7 @@ export function AiPanel({ ai, onClose, focusOnOpen }: Props) {
 				<span className="ai-orb-wrap">
 					<span className="ai-orb" />
 				</span>
-				{state.phase === "idle" ? name : STATUS[state.phase]}
+				<span className="ai-status-label">{state.phase === "idle" ? name : STATUS[state.phase]}</span>
 			</div>
 			<div className="ai-body">
 				{state.heard && <p className="ai-heard">{state.heard}</p>}

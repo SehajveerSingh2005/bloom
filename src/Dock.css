@@ -1058,7 +1058,7 @@ body {
 .ic-tile:active,
 .ic-tab:active,
 .ic-controls button:active,
-.ic-slide .ai-row button:active,
+.ic-slide .ai-row button:not(:disabled):active,
 .ic-slide .ai-input button:active {
 	transform: scale(0.92);
 }
@@ -1258,7 +1258,7 @@ body {
 	cursor: pointer;
 }
 .ic-pill:hover,
-.ic-slide .ai-row button:hover {
+.ic-slide .ai-row button:not(.primary):not(:disabled):hover {
 	background: rgba(127, 127, 127, 0.3);
 }
 .ic-pill.primary,
@@ -1426,6 +1426,10 @@ body {
 }
 .ic-slide .ai-input input:focus {
 	background: rgba(127, 127, 127, 0.26);
+}
+/* The selected tab already names her: idle shows just the orb. */
+.ic-slide .ai-panel[data-phase="idle"] .ai-status-label {
+	display: none;
 }
 
 /* ── Glass (Appearance → Glass, <html class="glass">) ──────────────────────

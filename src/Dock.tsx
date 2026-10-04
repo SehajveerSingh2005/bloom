@@ -158,9 +158,12 @@ const Dock = memo(function Dock() {
 		if (infoCloseTimer.current) clearTimeout(infoCloseTimer.current);
 		setInfoTab((cur) => tab ?? cur);
 	};
-	// Leaving the dock closes the panel, except on the AI tab: that one stays
-	// until it is closed, as in the notch.
-	const keepAi = (t: InfoTab | null) => (t === "ai" ? t : null);
+	// Leaving the dock (or hovering an app) closes the panel, except on the AI
+	// tab: that one stays until it is closed, as in the notch. While Janice is
+	// busy an open panel goes back to her tab instead of closing, so Stop and
+	// the confirm card stay in reach.
+	const aiBusyRef = useRef(false);
+	const keepAi = (t: InfoTab | null) => (t === "ai" || (t && aiBusyRef.current) ? "ai" : null);
 	const scheduleInfoClose = () => {
 		if (infoCloseTimer.current) clearTimeout(infoCloseTimer.current);
 		infoCloseTimer.current = setTimeout(() => setInfoTab(keepAi), 350);
@@ -176,6 +179,7 @@ const Dock = memo(function Dock() {
 		setAiFocus(!recording);
 		setInfoTab("ai");
 	});
+	aiBusyRef.current = ["recording", "transcribing", "working", "confirm"].includes(ai.state.phase);
 	const closeAi = () => {
 		ai.stop();
 		ai.reset();
@@ -186,8 +190,11 @@ const Dock = memo(function Dock() {
 		setAiFocus(t === "ai");
 		setInfoTab(t);
 	};
+	// AI off, Delete AI or unmerging stops Janice even if another tab is showing.
+	// (In notch mode the notch owns the task, so only a dock tab or a busy task
+	// that started here counts.)
 	useEffect(() => {
-		if ((!ai.enabled || !infoCentre) && aiOpen) closeAi();
+		if ((!ai.enabled || !infoCentre) && (aiOpen || aiBusyRef.current)) closeAi();
 	}, [ai.enabled, infoCentre, aiOpen]);
 	// A request waiting for an OK brings the AI tab back if another tab is showing.
 	useEffect(() => {
