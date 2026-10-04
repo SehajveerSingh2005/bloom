@@ -164,7 +164,9 @@ pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, St
 
 async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
     let tools = tools::schema();
-    let mut messages = vec![json!({ "role": "system", "content": system_prompt(&ctx.cfg.name, &ctx.shared.data_dir) })];
+    let mut messages = vec![
+        json!({ "role": "system", "content": system_prompt(&ctx.cfg.name, &ctx.shared.data_dir) }),
+    ];
     {
         let mut memory = ctx.shared.memory.lock().unwrap();
         messages.extend(memory.messages(Instant::now()));
@@ -319,6 +321,14 @@ mod tests {
         assert!(p.contains("explicitly asks to open"));
         assert!(p.contains("mentions a person by name"));
         assert!(p.contains("find_contact first"));
+        assert!(p.contains("Use remember for stable personal facts"));
+        assert!(p.contains("never store secrets"));
+        assert!(!p.contains("What you know about the user"));
+        let d = crate::testutil::temp_dir();
+        crate::facts::remember(&d, "my manager is Sam").unwrap();
+        let p = system_prompt("Janice", &d);
+        assert!(p.contains("What you know about the user"));
+        assert!(p.contains("[1] my manager is Sam"));
     }
 
     #[test]

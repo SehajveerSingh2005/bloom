@@ -172,33 +172,38 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
                     .join("\n")
             })
         }
-        "forget" => {
-            let id = args["id"].as_u64().ok_or("missing id")?;
-            Ok(if facts::forget(&ctx.shared.data_dir, id)? {
-                format!("Forgot {id}.")
-            } else {
-                format!("No fact with id {id}.")
-            })
-        }
+        "forget" => forget(ctx, args["id"].as_u64().ok_or("missing id")?).await,
         _ => Err(format!("unknown tool {name}")),
     }
 }
 
-/// Poisoned memory would persist, so a tainted request asks first.
-async fn remember(ctx: &mut Ctx, text: &str) -> Result<String, String> {
-    if ctx.tainted
-        && ctx.cfg.tier != crate::config::Tier::CarteBlanche
-        && !ctx
+/// Poisoned memory would persist, so a tainted request asks before writing it.
+async fn confirm_memory(ctx: &Ctx, title: &str, body: &str) -> bool {
+    !ctx.tainted
+        || ctx.cfg.tier == crate::config::Tier::CarteBlanche
+        || ctx
             .shared
             .bridge
-            .confirm(
-                ctx.task,
-                ConfirmKind::Memory,
-                "Remember this?".into(),
-                text.to_string(),
-            )
+            .confirm(ctx.task, ConfirmKind::Memory, title.into(), body.into())
             .await
-    {
+}
+
+async fn forget(ctx: &mut Ctx, id: u64) -> Result<String, String> {
+    let Some(fact) = facts::get(&ctx.shared.data_dir, id) else {
+        return Ok(format!("No fact with id {id}."));
+    };
+    if !confirm_memory(ctx, "Forget this?", &fact.text).await {
+        return Ok("The user chose to keep it.".into());
+    }
+    facts::forget(&ctx.shared.data_dir, id)?;
+    Ok(format!("Forgot {id}."))
+}
+
+async fn remember(ctx: &mut Ctx, text: &str) -> Result<String, String> {
+    if facts::has(&ctx.shared.data_dir, text) {
+        return Ok("Already remembered.".into());
+    }
+    if !confirm_memory(ctx, "Remember this?", text).await {
         return Ok("The user chose not to save it.".into());
     }
     Ok(match facts::remember(&ctx.shared.data_dir, text)? {
@@ -451,6 +456,54 @@ mod tests {
         shared.bridge.answer(1, Answer::Confirm(false));
         assert!(running.await.unwrap().unwrap().contains("not to save"));
         assert_eq!(facts::count(&shared.data_dir), 0);
+    }
+
+    #[tokio::test]
+    async fn tainted_duplicate_does_not_ask_and_carte_blanche_skips_confirm() {
+        let mut ctx = ctx();
+        call(&mut ctx, "remember", &json!({ "text": "tea" }))
+            .await
+            .unwrap();
+        ctx.tainted = true;
+        let out = call(&mut ctx, "remember", &json!({ "text": "TEA" })).await;
+        assert_eq!(out.unwrap(), "Already remembered.");
+        ctx.cfg.tier = crate::config::Tier::CarteBlanche;
+        let out = call(&mut ctx, "remember", &json!({ "text": "coffee" })).await;
+        assert!(out.unwrap().starts_with("Remembered"));
+        assert_eq!(facts::count(&ctx.shared.data_dir), 2);
+    }
+
+    #[tokio::test]
+    async fn tainted_forget_asks_with_the_fact_text() {
+        let mut ctx = ctx();
+        call(
+            &mut ctx,
+            "remember",
+            &json!({ "text": "my manager is Sam" }),
+        )
+        .await
+        .unwrap();
+        ctx.tainted = true;
+        let shared = ctx.shared.clone();
+        let running =
+            tokio::spawn(async move { call(&mut ctx, "forget", &json!({ "id": 1 })).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(false));
+        assert!(running.await.unwrap().unwrap().contains("keep it"));
+        assert_eq!(facts::count(&shared.data_dir), 1);
+    }
+
+    #[tokio::test]
+    async fn approved_tainted_remember_saves() {
+        let mut ctx = ctx();
+        ctx.tainted = true;
+        let shared = ctx.shared.clone();
+        let running = tokio::spawn(async move {
+            call(&mut ctx, "remember", &json!({ "text": "likes tea" })).await
+        });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(true));
+        assert!(running.await.unwrap().unwrap().starts_with("Remembered"));
     }
 
     #[tokio::test]

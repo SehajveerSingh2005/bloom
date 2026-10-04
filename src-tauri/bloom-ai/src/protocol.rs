@@ -228,6 +228,22 @@ mod tests {
     }
 
     #[test]
+    fn memory_confirm_kind_serializes() {
+        let out = Out::Confirm {
+            task: 1,
+            id: 2,
+            kind: ConfirmKind::Memory,
+            title: "Remember this?".into(),
+            body: "b".into(),
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(
+            json.contains(r#""kind":"memory","title":"Remember this?""#),
+            "{json}"
+        );
+    }
+
+    #[test]
     fn task_less_errors_serialize_null() {
         let out = Out::Error {
             task: None,

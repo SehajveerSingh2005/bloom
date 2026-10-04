@@ -19,11 +19,50 @@ pub fn path(dir: &Path) -> PathBuf {
     dir.join("memory.json")
 }
 
-pub fn load(dir: &Path) -> Vec<Fact> {
-    std::fs::read_to_string(path(dir))
+const CORRUPT: &str = "memory.json is not valid JSON; fix it or use Clear";
+
+/// Missing file = empty; a file that does not parse is an error, so a
+/// hand-edit mistake is never overwritten by the next save.
+pub fn load(dir: &Path) -> Result<Vec<Fact>, String> {
+    match std::fs::read_to_string(path(dir)) {
+        Ok(s) => serde_json::from_str(&s).map_err(|_| CORRUPT.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// For read-only uses (count, recall, prompt): unreadable counts as empty.
+fn load_lossy(dir: &Path) -> Vec<Fact> {
+    load(dir).unwrap_or_default()
+}
+
+/// Ids never repeat, even after forgetting the newest fact or Clear: the next
+/// id is kept in `memory.next` (the list file stays a plain array).
+fn take_id(dir: &Path, facts: &[Fact]) -> u64 {
+    let file = dir.join("memory.next");
+    let saved = std::fs::read_to_string(&file)
         .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(1);
+    let id = saved.max(facts.iter().map(|f| f.id).max().unwrap_or(0) + 1);
+    let _ = std::fs::write(&file, (id + 1).to_string());
+    id
+}
+
+fn clean(text: &str) -> String {
+    text.trim().chars().take(MAX_CHARS).collect()
+}
+
+/// Whether this fact is already stored (case-insensitive).
+pub fn has(dir: &Path, text: &str) -> bool {
+    let text = clean(text).to_lowercase();
+    load_lossy(dir)
+        .iter()
+        .any(|f| f.text.to_lowercase() == text)
+}
+
+pub fn get(dir: &Path, id: u64) -> Option<Fact> {
+    load_lossy(dir).into_iter().find(|f| f.id == id)
 }
 
 /// Temp file + rename, so a crash never leaves half a file.
@@ -36,7 +75,7 @@ fn save(dir: &Path, facts: &[Fact]) -> Result<(), String> {
 }
 
 pub fn count(dir: &Path) -> usize {
-    load(dir).len()
+    load_lossy(dir).len()
 }
 
 /// Empties the memory (an empty list stays on disk so Reveal has a file).
@@ -54,11 +93,11 @@ pub fn ensure(dir: &Path) -> Result<PathBuf, String> {
 
 /// Adds a fact. Returns None when it is already known (case-insensitive).
 pub fn remember(dir: &Path, text: &str) -> Result<Option<Fact>, String> {
-    let text: String = text.trim().chars().take(MAX_CHARS).collect();
+    let text = clean(text);
     if text.is_empty() {
         return Err("nothing to remember".into());
     }
-    let mut facts = load(dir);
+    let mut facts = load(dir)?;
     if facts
         .iter()
         .any(|f| f.text.to_lowercase() == text.to_lowercase())
@@ -69,7 +108,7 @@ pub fn remember(dir: &Path, text: &str) -> Result<Option<Fact>, String> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let id = facts.iter().map(|f| f.id).max().unwrap_or(0) + 1;
+    let id = take_id(dir, &facts);
     let fact = Fact { id, text, at };
     facts.push(fact.clone());
     if facts.len() > MAX_FACTS {
@@ -80,7 +119,7 @@ pub fn remember(dir: &Path, text: &str) -> Result<Option<Fact>, String> {
 }
 
 pub fn forget(dir: &Path, id: u64) -> Result<bool, String> {
-    let mut facts = load(dir);
+    let mut facts = load(dir)?;
     let before = facts.len();
     facts.retain(|f| f.id != id);
     if facts.len() == before {
@@ -102,7 +141,7 @@ fn words(s: &str) -> std::collections::HashSet<String> {
 pub fn recall(dir: &Path, query: &str) -> Vec<Fact> {
     let q = words(query);
     // ponytail: linear scan of at most 500 facts; move to SQLite FTS5 if memory outgrows that.
-    let mut hits: Vec<(usize, Fact)> = load(dir)
+    let mut hits: Vec<(usize, Fact)> = load_lossy(dir)
         .into_iter()
         .map(|f| (words(&f.text).intersection(&q).count(), f))
         .filter(|(score, _)| *score > 0)
@@ -113,7 +152,7 @@ pub fn recall(dir: &Path, query: &str) -> Vec<Fact> {
 
 /// The "What you know about the user" prompt section; empty when no facts.
 pub fn prompt_section(dir: &Path) -> String {
-    let facts = load(dir);
+    let facts = load_lossy(dir);
     if facts.is_empty() {
         return String::new();
     }
@@ -146,12 +185,36 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_file_is_never_overwritten() {
+        let d = temp_dir();
+        std::fs::write(path(&d), "[{ not json").unwrap();
+        let err = remember(&d, "x").unwrap_err();
+        assert!(err.contains("not valid JSON"));
+        assert!(forget(&d, 1).is_err());
+        assert_eq!(std::fs::read(path(&d)).unwrap(), b"[{ not json");
+        assert_eq!(count(&d), 0);
+        clear(&d).unwrap(); // Clear is the way out
+        assert!(remember(&d, "x").unwrap().is_some());
+    }
+
+    #[test]
+    fn ids_are_never_reused() {
+        let d = temp_dir();
+        let a = remember(&d, "a").unwrap().unwrap().id;
+        assert!(forget(&d, a).unwrap());
+        let b = remember(&d, "b").unwrap().unwrap().id;
+        assert!(b > a);
+        clear(&d).unwrap();
+        assert!(remember(&d, "c").unwrap().unwrap().id > b);
+    }
+
+    #[test]
     fn oldest_dropped_past_500() {
         let d = temp_dir();
         for i in 0..502 {
             remember(&d, &format!("fact {i}")).unwrap();
         }
-        let f = load(&d);
+        let f = load(&d).unwrap();
         assert_eq!(f.len(), MAX_FACTS);
         assert_eq!(f[0].text, "fact 2");
     }
