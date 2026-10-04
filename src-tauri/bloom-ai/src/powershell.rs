@@ -35,13 +35,18 @@ pub async fn run(script: &str) -> Result<String, String> {
     let child = cmd
         .spawn()
         .map_err(|e| format!("Couldn't start PowerShell: {e}"))?;
-    // Owned by this future: dropping it (Stop, timeout, sidecar exit) kills the script and its children.
+    // Owned by this future: dropping it while armed (Stop, timeout, sidecar exit) kills the script and its children.
     #[cfg(windows)]
-    let _job = job::KillOnClose::with(&child);
+    let job = job::KillOnClose::with(&child);
     let out = tokio::time::timeout(LIMIT, child.wait_with_output())
         .await
         .map_err(|_| "The script ran for 2 minutes and was stopped.".to_string())?
         .map_err(|e| format!("Couldn't start PowerShell: {e}"))?;
+    // A finished script leaves the apps it started running.
+    #[cfg(windows)]
+    if let Some(job) = &job {
+        job.disarm();
+    }
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
     let errors = String::from_utf8_lossy(&out.stderr);
     if !errors.trim().is_empty() {
@@ -83,6 +88,19 @@ mod job {
     }
 
     impl KillOnClose {
+        /// Stops the job killing on close, so processes the script started keep running.
+        pub fn disarm(&self) {
+            unsafe {
+                let info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+                let _ = SetInformationJobObject(
+                    self.0,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const std::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+            }
+        }
+
         /// Puts `child` in a new job. None if any step fails: the script then
         /// runs as before and only its children can outlive a kill.
         pub fn with(child: &tokio::process::Child) -> Option<Self> {
@@ -161,24 +179,54 @@ mod tests {
         assert!(!out.contains("CLIXML"));
     }
 
+    /// Waits up to ~5 s for the marker child to exist.
+    async fn wait_for_child(marker: &str) -> bool {
+        for _ in 0..10 {
+            if alive(marker).await != "0" {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        false
+    }
+
+    async fn kill_marked(marker: &str) {
+        let _ = run(&format!(
+            "Get-CimInstance Win32_Process | ? {{ $_.CommandLine -like '*{marker}*' -and $_.ProcessId -ne $PID }} | % {{ Stop-Process -Id $_.ProcessId -Force }}"
+        ))
+        .await;
+    }
+
     #[tokio::test]
     async fn dropping_the_run_kills_background_children() {
         let marker = format!("bloomjobtest{}", std::process::id());
         let script = format!(
-            "Start-Process powershell -WindowStyle Hidden -ArgumentList '-Command','Start-Sleep 30 # {marker}'; Start-Sleep 20"
+            "Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-Command','Start-Sleep 30 # {marker}'; Start-Sleep 20"
         );
-        // Cancel the run after the child has had time to start.
-        let _ = tokio::time::timeout(Duration::from_secs(4), run(&script)).await;
+        // Cancel the run once the child exists.
+        let task = tokio::spawn(async move { run(&script).await });
+        assert!(wait_for_child(&marker).await, "child never started");
+        task.abort();
+        let _ = task.await;
         tokio::time::sleep(Duration::from_millis(500)).await;
         let count = alive(&marker).await;
-        // Clean up if the test is about to fail.
         if count != "0" {
-            let _ = run(&format!(
-                "Get-CimInstance Win32_Process | ? {{ $_.CommandLine -like '*{marker}*' -and $_.ProcessId -ne $PID }} | % {{ Stop-Process -Id $_.ProcessId -Force }}"
-            ))
-            .await;
+            kill_marked(&marker).await;
         }
         assert_eq!(count, "0", "background child survived");
+    }
+
+    #[tokio::test]
+    async fn a_finished_script_leaves_started_apps_running() {
+        let marker = format!("bloomkeeptest{}", std::process::id());
+        let script = format!(
+            "Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-Command','Start-Sleep 15 # {marker}'"
+        );
+        run(&script).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let count = alive(&marker).await;
+        kill_marked(&marker).await;
+        assert_ne!(count, "0", "started app was killed with the script");
     }
 
     /// Number of processes whose command line contains `marker`, excluding the query itself.
