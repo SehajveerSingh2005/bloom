@@ -15,6 +15,7 @@ pub enum In {
     BloomResult { id: u64, ok: bool, detail: String },
     SetSecret { name: String, value: String },
     OutlookLogin,
+    SecretStatus,
     WakeOn,
     WakeOff,
     EnrollSample { index: u32 },
@@ -62,6 +63,12 @@ pub enum Out {
         id: u64,
         action: String,
         value: serde_json::Value,
+    },
+    SecretStatus {
+        llm_key: bool,
+        stt_key: bool,
+        email_password: bool,
+        outlook: bool,
     },
     SecretSaved {
         name: String,
@@ -121,6 +128,7 @@ mod tests {
 
     #[test]
     fn parses_wake_messages() {
+        assert_eq!(parse(r#"{"type":"secret_status"}"#), Ok(In::SecretStatus));
         assert_eq!(parse(r#"{"type":"wake_on"}"#), Ok(In::WakeOn));
         assert_eq!(parse(r#"{"type":"wake_off"}"#), Ok(In::WakeOff));
         assert_eq!(

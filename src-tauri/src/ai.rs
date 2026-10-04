@@ -426,6 +426,13 @@ pub fn ai_set_secret(app: AppHandle, name: String, value: String) -> Result<(), 
     send(&app, json!({ "type": "set_secret", "name": name, "value": value }))
 }
 
+/// Asks the agent which credentials exist; `secret_status` (booleans only)
+/// follows as an `ai-event`.
+#[tauri::command]
+pub fn ai_secret_status(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "secret_status" }))
+}
+
 #[tauri::command]
 pub fn ai_outlook_login(app: AppHandle) -> Result<(), String> {
     send(&app, json!({ "type": "outlook_login" }))

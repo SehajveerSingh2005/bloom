@@ -70,14 +70,14 @@ function SecretField(props: { name: string; saved: boolean; placeholder: string 
 				className="ai-field"
 				type="password"
 				value={draft}
-				placeholder={props.placeholder}
+				placeholder={props.saved ? "Saved in Windows Credential Manager" : props.placeholder}
 				onChange={(e) => setDraft(e.target.value)}
 				onKeyDown={(e) => e.key === "Enter" && save()}
 			/>
 			<button className="ai-btn" onClick={save} disabled={!draft}>
 				Save
 			</button>
-			{(error || props.saved) && <span className="ai-note">{error || "Saved"}</span>}
+			{(error || props.saved) && <span className="ai-note">{error || "✓ Saved"}</span>}
 		</div>
 	);
 }
@@ -146,10 +146,19 @@ export function AiTab() {
 
 	useEffect(() => {
 		refresh();
+		// The agent answers with a secret_status event (booleans only).
+		if (enabled) invoke("ai_secret_status").catch(() => {});
 	}, [enabled]);
 
 	useEffect(() => {
 		const off = listen<any>("ai-event", ({ payload }) => {
+			if (payload.type === "secret_status")
+				setSaved((s) => ({
+					...s,
+					"llm-key": payload.llm_key,
+					"stt-key": payload.stt_key,
+					"email-password": payload.email_password,
+				}));
 			if (payload.type === "secret_saved") setSaved((s) => ({ ...s, [payload.name]: true }));
 			if (payload.type === "login_code") setLogin({ url: payload.url, code: payload.code });
 			if (payload.type === "login_done") {

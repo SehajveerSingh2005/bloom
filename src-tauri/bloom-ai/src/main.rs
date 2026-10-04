@@ -167,6 +167,16 @@ async fn serve(shared: Arc<Shared>) {
                     message,
                 }),
             },
+            In::SecretStatus => {
+                let [llm_key, stt_key, email_password, outlook] =
+                    tokio::task::spawn_blocking(secrets::status).await.unwrap_or([false; 4]);
+                emit(&Out::SecretStatus {
+                    llm_key,
+                    stt_key,
+                    email_password,
+                    outlook,
+                });
+            }
             In::OutlookLogin => {
                 let s = shared.clone();
                 // Its own task: polling waits up to 15 minutes and must not

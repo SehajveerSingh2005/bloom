@@ -1,5 +1,10 @@
 //! Credentials in Windows Credential Manager. Only these names exist, so a
 //! wipe knows exactly what to delete.
+//!
+//! NEVER LOSE SAVED KEYS: `wipe()` is reachable only from the `--wipe` command
+//! line ("Delete AI altogether"), never from a protocol message, an update or
+//! a settings change. Do not change SERVICE, NAMES or the target format. A test
+//! below fails if anything else calls `wipe()`.
 
 /// Tests use their own service so they never touch real keys.
 #[cfg(not(test))]
@@ -59,6 +64,11 @@ pub fn set(name: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Which credentials exist, as booleans only: a value never leaves `get`.
+pub fn status() -> [bool; 4] {
+    NAMES.map(|name| part(name, 1).get_password().is_ok())
+}
+
 pub fn wipe() {
     for name in NAMES {
         for n in 1..=MAX_PARTS {
@@ -102,6 +112,40 @@ mod tests {
         assert_eq!(get("outlook-refresh"), None);
         assert!(part("outlook-refresh", 4).get_password().is_err());
         assert!(set("outlook-refresh", &"x".repeat(16 * 1000 + 1)).is_err());
+    }
+
+    #[test]
+    fn status_reports_existence_only() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        wipe();
+        assert_eq!(status(), [false; 4]);
+        set("stt-key", "abc").unwrap();
+        assert_eq!(status(), [false, true, false, false]);
+        wipe();
+    }
+
+    /// Saved keys are never lost: `wipe` is called only from `--wipe` in main().
+    #[test]
+    fn wipe_is_only_reachable_from_the_wipe_flag() {
+        let needle = concat!("secrets::", "wipe(");
+        let mut hits = Vec::new();
+        for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.file_name().is_some_and(|n| n == "secrets.rs")
+                || path.extension().is_none_or(|e| e != "rs")
+            {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).unwrap();
+            for (at, _) in src.match_indices(needle) {
+                hits.push((path.file_name().unwrap().to_owned(), src[..at].to_string()));
+            }
+        }
+        assert_eq!(hits.len(), 1, "wipe called from more than one place");
+        let (file, before) = &hits[0];
+        assert_eq!(file, "main.rs");
+        assert!(before.contains("fn main()") && !before.contains("async fn serve"));
+        assert!(before.trim_end().ends_with(r#"if args.iter().any(|a| a == "--wipe") {"#));
     }
 
     #[test]
