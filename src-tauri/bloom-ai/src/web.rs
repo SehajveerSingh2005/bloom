@@ -309,7 +309,7 @@ async fn read_capped(mut res: reqwest::Response) -> Result<Vec<u8>, String> {
 }
 
 pub async fn fetch(ctx: &mut Ctx, url: &str) -> Result<String, String> {
-    let mut u = parse_http(url)?;
+    let u = parse_http(url)?;
     // Exfiltration guard: once outside text is in play, only open pages the
     // user or a search result named, or ask.
     let unknown = ctx.tainted && !ctx.allowed_urls.contains(url);
@@ -317,6 +317,13 @@ pub async fn fetch(ctx: &mut Ctx, url: &str) -> Result<String, String> {
     {
         return Ok("The user chose not to open it.".into());
     }
+    // One budget for DNS lookups and every redirect hop.
+    tokio::time::timeout(Duration::from_secs(10), hops(ctx, u))
+        .await
+        .map_err(|_| "The page took too long to answer.".to_string())?
+}
+
+async fn hops(ctx: &mut Ctx, mut u: Url) -> Result<String, String> {
     for _ in 0..=MAX_HOPS {
         check_host(ctx, &u).await?;
         let res = ctx
@@ -341,11 +348,19 @@ pub async fn fetch(ctx: &mut Ctx, url: &str) -> Result<String, String> {
         if !res.status().is_success() {
             return Err(format!("The page answered {}", res.status()));
         }
-        let html = res
+        let ctype = res
             .headers()
             .get("content-type")
             .and_then(|v| v.to_str().ok())
-            .is_some_and(|t| t.contains("html"));
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !ctype.is_empty()
+            && !(ctype.starts_with("text/") || ctype.contains("json") || ctype.contains("xml"))
+        {
+            let kind = ctype.split(';').next().unwrap_or("").trim();
+            return Err(format!("Not a text page ({kind})."));
+        }
+        let html = ctype.contains("html");
         let body = String::from_utf8_lossy(&read_capped(res).await?).into_owned();
         ctx.tainted = true;
         let text = if html {
@@ -426,6 +441,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn non_text_content_is_refused() {
+        let (url, _rx) = mock_server_full(
+            "200 OK",
+            "Content-Type: image/png
+",
+            vec!["xx".into()],
+        );
+        let mut c = local_ctx();
+        let err = fetch(&mut c, &url).await.unwrap_err();
+        assert_eq!(err, "Not a text page (image/png).");
+    }
+
+    #[tokio::test]
     async fn body_is_capped_at_two_megabytes() {
         let (url, _rx) = mock_server_full("200 OK", "", vec!["a".repeat(3 * 1024 * 1024)]);
         let res = crate::testutil::http().get(&url).send().await.unwrap();
@@ -441,10 +469,11 @@ mod tests {
             "http://10.1.2.3/",
             "http://[::1]/",
             "http://printer.local/",
-            "ftp://example.com/",
         ] {
-            assert!(fetch(&mut c, u).await.is_err(), "{u}");
+            let err = fetch(&mut c, u).await.unwrap_err();
+            assert!(err.starts_with("Refused"), "{u}: {err}");
         }
+        assert!(fetch(&mut c, "ftp://example.com/").await.is_err());
         let (url, _rx) = mock_server_full(
             "302 Found",
             "Location: http://169.254.169.254/latest\r\n",

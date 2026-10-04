@@ -56,7 +56,7 @@ pub fn parse(text: &str) -> Option<(String, String, String)> {
         }
         if let Some((k, v)) = l.split_once(':') {
             match k.trim() {
-                "name" => name = unquote(v).to_string(),
+                "name" => name = unquote(v).chars().take(64).collect(),
                 "description" => desc = unquote(v).to_string(),
                 _ => {}
             }
@@ -285,6 +285,12 @@ mod tests {
         let f = dir(d).join(folder);
         std::fs::create_dir_all(&f).unwrap();
         std::fs::write(f.join("SKILL.md"), text).unwrap();
+    }
+
+    #[test]
+    fn name_is_capped_at_64_chars() {
+        let t = format!("---\nname: {}\ndescription: x\n---\nbody", "n".repeat(100));
+        assert_eq!(parse(&t).unwrap().0.len(), 64);
     }
 
     #[test]

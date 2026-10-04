@@ -320,6 +320,8 @@ fn command(program: &str, cfg: &ServerCfg) -> tokio::process::Command {
 
 /// Starts one server process and connects to it.
 pub async fn spawn(name: &str, cfg: &ServerCfg) -> Result<Server, String> {
+    // ponytail: on the .cmd fallback the child is spawned before it joins the kill-on-close
+    // job, so a crash in that gap can orphan it; use CREATE_SUSPENDED if it ever matters.
     let mut child = match command(&cfg.command, cfg).spawn() {
         // `npx` and friends are .cmd scripts that CreateProcess won't find by bare name.
         Err(e)
@@ -418,7 +420,10 @@ impl Mcp {
         for s in &self.servers {
             for t in &s.tools {
                 let parameters = if t.schema["type"] == "object" {
-                    t.schema.clone()
+                    // Some servers send `$schema`, which strict model APIs reject.
+                    let mut p = t.schema.clone();
+                    p.as_object_mut().map(|o| o.remove("$schema"));
+                    p
                 } else {
                     json!({ "type": "object", "properties": {} })
                 };
@@ -447,12 +452,16 @@ impl State {
     }
 
     /// Starts the servers if this is the first request since start or Reload.
-    pub async fn ensure(&self, data: &Path, task: u64) {
+    /// True when it started servers (or hit errors), so Settings should refresh.
+    pub async fn ensure(&self, data: &Path, task: u64) -> bool {
         let _one = self.starting.lock().await;
-        if self.get().is_none() {
-            let mcp = Mcp::start(data, Some(task)).await;
-            *self.current.lock().unwrap() = Some(Arc::new(mcp));
+        if self.get().is_some() {
+            return false;
         }
+        let mcp = Mcp::start(data, Some(task)).await;
+        let started = !mcp.servers.is_empty() || !mcp.errors.is_empty();
+        *self.current.lock().unwrap() = Some(Arc::new(mcp));
+        started
     }
 
     /// Kills the running servers and starts them again from mcp.json.
@@ -607,6 +616,14 @@ pub mod tests {
         assert!(seen[1].get("id").is_none());
         assert!(seen[2]["params"].get("cursor").is_none());
         assert_eq!(seen[3]["params"]["cursor"], "p2");
+    }
+
+    #[tokio::test]
+    async fn schema_drops_top_level_dollar_schema() {
+        let mut s = fake_server("s", false).await;
+        s.tools[0].schema = json!({ "$schema": "http://x", "type": "object", "properties": {} });
+        let schema = Mcp::new(vec![s], vec![]).schema();
+        assert!(schema[0]["function"]["parameters"].get("$schema").is_none());
     }
 
     #[tokio::test]

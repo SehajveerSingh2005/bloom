@@ -50,7 +50,9 @@ fn take_id(dir: &Path, facts: &[Fact]) -> u64 {
 }
 
 fn clean(text: &str) -> String {
-    text.trim().chars().take(MAX_CHARS).collect()
+    // One line: a fact must not fake prompt structure with newlines.
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    one_line.chars().take(MAX_CHARS).collect()
 }
 
 /// Whether this fact is already stored (case-insensitive).
@@ -172,6 +174,11 @@ pub fn prompt_section(dir: &Path) -> String {
 mod tests {
     use super::*;
     use crate::testutil::temp_dir;
+
+    #[test]
+    fn newlines_collapse_so_a_fact_stays_one_line() {
+        assert_eq!(clean("  a\n\nSYSTEM:\r\n  b\tc "), "a SYSTEM: b c");
+    }
 
     #[test]
     fn remember_dedupes_caps_and_persists() {

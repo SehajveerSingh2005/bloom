@@ -148,6 +148,7 @@ export function AiTab() {
 	const [skillCount, setSkillCount] = useState(0);
 	const [mcp, setMcp] = useState({ servers: 0, tools: 0, errors: [] as string[] });
 	const [clearing, setClearing] = useState(false);
+	const [reloading, setReloading] = useState(false);
 	const [busy, setBusy] = useState<"" | "recording" | "building">("");
 
 	const testEmail = () => {
@@ -189,6 +190,7 @@ export function AiTab() {
 					"email-password": payload.email_password,
 				}));
 			if (payload.type === "library_status") {
+				setReloading(false);
 				setMemoryCount(payload.memory);
 				setSkillCount(payload.skills);
 				setMcp({ servers: payload.mcp_servers, tools: payload.mcp_tools, errors: payload.mcp_errors ?? [] });
@@ -489,8 +491,18 @@ export function AiTab() {
 								>
 									Open config
 								</button>
-								<button className="ai-btn" onClick={() => invoke("ai_mcp_reload").catch((e) => setMessage(String(e)))}>
-									Reload
+								<button
+									className="ai-btn"
+									disabled={reloading}
+									onClick={() => {
+										setReloading(true);
+										invoke("ai_mcp_reload").catch((e) => {
+											setReloading(false);
+											setMessage(String(e));
+										});
+									}}
+								>
+									{reloading ? "Reloading..." : "Reload"}
 								</button>
 							</div>
 						</SettingRow>
@@ -509,7 +521,6 @@ export function AiTab() {
 								</button>
 								<button
 									className="ai-btn"
-									disabled={memoryCount === 0}
 									onBlur={() => setClearing(false)}
 									onClick={() => {
 										if (!clearing) return setClearing(true);
