@@ -580,6 +580,78 @@ body {
 	color: var(--bloom-text);
 }
 
+/* Tray button pinned to the right screen corner */
+.dock-tray-corner {
+	position: fixed;
+	right: 12px;
+	bottom: 0;
+	width: 36px;
+	height: 36px;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	border-radius: 14px 14px 0 0;
+	background: var(--bloom-bg, rgba(0, 0, 0, 0.8));
+	color: var(--bloom-text, white);
+	cursor: pointer;
+	pointer-events: auto;
+	z-index: 10001;
+	-webkit-app-region: no-drag;
+}
+
+.dock-tray-corner svg {
+	width: 20px;
+	height: 20px;
+	transition: transform 0.2s ease;
+}
+
+.dock-tray-corner:hover {
+	background: var(--bloom-bg-expanded, rgba(30, 30, 30, 0.95));
+}
+
+.dock-tray-corner.active svg {
+	transform: rotate(180deg);
+}
+
+.dock-tray-corner .tooltip {
+	left: auto;
+	right: 0;
+	transform: translate(0, 4px) scale(0.95);
+}
+
+.dock-tray-corner:hover .tooltip {
+	opacity: 1;
+	transform: translate(0, 0) scale(1);
+}
+
+.dock-tray-corner.active .tooltip {
+	opacity: 0;
+}
+
+.add-popup-anchor.tray-anchor {
+	justify-content: flex-end;
+	padding-right: 12px;
+	box-sizing: border-box;
+	bottom: 44px;
+}
+
+.tray-anchor .add-app-popup {
+	width: 300px;
+	border-radius: 18px;
+	border-bottom: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.12));
+	transform-origin: bottom right;
+}
+
+.tray-anchor .add-app-popup::before,
+.tray-anchor .add-app-popup::after {
+	display: none;
+}
+
+.light-mode .dock-tray-corner {
+	background: var(--bloom-bg);
+	color: var(--bloom-text);
+}
+
 .popup-search-row {
 	display: flex;
 	align-items: center;

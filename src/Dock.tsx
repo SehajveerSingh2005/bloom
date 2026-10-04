@@ -524,6 +524,7 @@ const Dock = memo(function Dock() {
 
 	const menuRef = useRef<HTMLDivElement>(null);
 	const popupRef = useRef<HTMLDivElement>(null);
+	const trayButtonRef = useRef<HTMLDivElement>(null);
 
 	const handleContextMenu = (e: React.MouseEvent, app: AppInfo | null) => {
 		e.stopPropagation();
@@ -586,6 +587,35 @@ const Dock = memo(function Dock() {
 
 		invoke("set_menu_open", { open, rect }).catch(() => {});
 	}, [contextMenu, menuPos, showAddPopup, showTrayPopup, pinnedApps, activeApps, activeSubmenu, scale]);
+
+	// The tray button lives in the screen corner, outside the dock's own hit area, so
+	// the backend needs its rect to stop treating it as click-through.
+	useEffect(() => {
+		const visible = isReady && isVisible && !isHidden;
+		const report = () => {
+			const el = trayButtonRef.current;
+			if (!visible || !el) {
+				invoke("update_tray_button_rect", { rect: null }).catch(() => {});
+				return;
+			}
+			const r = el.getBoundingClientRect();
+			invoke("update_tray_button_rect", {
+				rect: {
+					x: Math.round(r.x),
+					y: Math.round(r.y),
+					width: Math.round(r.width),
+					height: Math.round(r.height)
+				}
+			}).catch(() => {});
+		};
+		// Wait for the slide-in spring to settle before measuring.
+		const timer = setTimeout(report, 450);
+		window.addEventListener("resize", report);
+		return () => {
+			clearTimeout(timer);
+			window.removeEventListener("resize", report);
+		};
+	}, [isReady, isVisible, isHidden, scale]);
 
 	const dockItems = useMemo(() => {
 		const runningMap = new Map();
@@ -1225,50 +1255,44 @@ const Dock = memo(function Dock() {
 										{app.is_running && <WindowDots count={app.all_hwnds?.length ?? 1} />}
 									</motion.div>
 								))}
-
-								<motion.div
-									key="dock-tray-button"
-									layout
-									initial={ITEM_INITIAL}
-									animate={ITEM_ANIMATE}
-									exit={ITEM_EXIT}
-									className="dock-icon-wrapper"
-									onMouseEnter={() => setHoveredApp("tray")}
-									onMouseLeave={() => {
-										setHoveredApp(null);
-										setPressedApp(null);
-									}}
-									onClick={(e) => {
-										e.stopPropagation();
-										closeMenu();
-										setShowAddPopup(false);
-										setShowTrayPopup((open) => !open);
-									}}
-								>
-									<div className="tooltip">Background Apps</div>
-									<motion.div
-										className="dock-icon"
-										animate={{ scale: pressedApp === "tray" ? 0.9 : 1 }}
-										onPointerDown={() => setPressedApp("tray")}
-										onPointerUp={() => setPressedApp(null)}
-										onPointerCancel={() => setPressedApp(null)}
-									>
-										<svg
-											viewBox="0 0 24 24"
-											fill="none"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<polyline points="6 15 12 9 18 15" />
-										</svg>
-									</motion.div>
-								</motion.div>
 							</motion.div>
 						)}
 					</AnimatePresence>
 				</motion.div>
 			</div>
+
+			<motion.div
+				ref={trayButtonRef}
+				className={`dock-tray-corner ${showTrayPopup ? "active" : ""}`}
+				style={{ zoom: scale }}
+				initial={{ y: -800, opacity: 1 }}
+				animate={{
+					y: !isReady ? -800 : isVisible ? (isHidden ? 100 : 0) : 150,
+					opacity: isVisible ? 1 : 0
+				}}
+				transition={{
+					y: { type: "spring", stiffness: 400, damping: 35, mass: 0.8 },
+					opacity: { type: "tween", duration: 0.2 }
+				}}
+				onClick={(e) => {
+					e.stopPropagation();
+					closeMenu();
+					setShowAddPopup(false);
+					setShowTrayPopup((open) => !open);
+				}}
+			>
+				<div className="tooltip">Background Apps</div>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<polyline points="6 15 12 9 18 15" />
+				</svg>
+			</motion.div>
 
 			{contextMenu && (
 				<div
@@ -1565,8 +1589,14 @@ function TrayPopup({
 		};
 	}, [onClose, containerRef]);
 
+	// Apps read from the legacy tray toolbars carry a callback window that can receive
+	// the click; the ones found through the registry (Windows 11) are opened instead.
 	const activate = (app: TrayApp, right: boolean) => {
 		onClose();
+		if (app.hwnd === 0) {
+			invoke("open_tray_app", { path: app.path }).catch(console.error);
+			return;
+		}
 		invoke("click_tray_app", {
 			hwnd: app.hwnd,
 			uid: app.uid,
@@ -1576,7 +1606,7 @@ function TrayPopup({
 	};
 
 	return (
-		<div className="add-popup-anchor" style={{ zoom: scale }}>
+		<div className="add-popup-anchor tray-anchor" style={{ zoom: scale }}>
 			<motion.div
 				ref={containerRef}
 				className="add-app-popup tray-popup"
@@ -1601,12 +1631,12 @@ function TrayPopup({
 							<div
 								key={app.id}
 								className="popup-app-row"
-								title="Left click to open, right click for its menu"
+								title={app.path}
 								onClick={() => activate(app, false)}
 								onContextMenu={(e) => {
 									e.preventDefault();
 									e.stopPropagation();
-									activate(app, true);
+									if (app.hwnd !== 0) activate(app, true);
 								}}
 							>
 								<div className="popup-app-icon">
