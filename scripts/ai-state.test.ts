@@ -43,3 +43,11 @@ test("ignore stale activity event after reply", () => {
 	const done = { ...IDLE, phase: "done" as const, reply: "Saved." };
 	expect(reduceAiEvent(done, { type: "activity", task: 1, text: "Writing..." })).toBe(done);
 });
+
+test("an old task's error is ignored after a newer task starts; the current reply lands", () => {
+	let s = reduceAiEvent(IDLE, { type: "transcript", task: 2, text: "new" });
+	expect(reduceAiEvent(s, { type: "error", task: 1, message: "Stopped." })).toBe(s);
+	expect(reduceAiEvent(s, { type: "reply", task: 1, text: "old" })).toBe(s);
+	s = reduceAiEvent(s, { type: "reply", task: 2, text: "ok" });
+	expect(s).toMatchObject({ phase: "done", reply: "ok" });
+});

@@ -84,14 +84,14 @@ async fn serve(shared: Arc<Shared>) {
         };
         match message {
             In::Prompt { task, text } => {
-                cancel(&mut current, &shared);
+                cancel(&mut current, &shared, false);
                 let s = shared.clone();
                 current = Some((
                     task,
                     tokio::spawn(async move { finish(task, agent::run(task, text, s).await) }),
                 ));
             }
-            In::Cancel => cancel(&mut current, &shared),
+            In::Cancel => cancel(&mut current, &shared, true),
             In::ConfirmReply { id, approved } => {
                 shared.bridge.answer(id, Answer::Confirm(approved))
             }
@@ -128,7 +128,7 @@ async fn serve(shared: Arc<Shared>) {
             In::RecordStop { task } => {
                 let Some(rec) = recorder.take() else { continue };
                 emit(&Out::Recording { on: false });
-                cancel(&mut current, &shared);
+                cancel(&mut current, &shared, false);
                 let s = shared.clone();
                 current = Some((
                     task,
@@ -165,14 +165,17 @@ fn finish(task: u64, result: Result<String, String>) {
 
 /// Aborting the task drops its futures: an HTTP request is abandoned and a
 /// running PowerShell is killed (kill_on_drop). Open confirms resolve as "no".
-fn cancel(current: &mut Current, shared: &Shared) {
+fn cancel(current: &mut Current, shared: &Shared, announce: bool) {
     if let Some((task, handle)) = current.take() {
         if !handle.is_finished() {
             handle.abort();
-            emit(&Out::Error {
-                task: Some(task),
-                message: "Stopped.".into(),
-            });
+            // A replaced request stays silent: its "Stopped." would hide the new one.
+            if announce {
+                emit(&Out::Error {
+                    task: Some(task),
+                    message: "Stopped.".into(),
+                });
+            }
         }
     }
     shared.bridge.drop_all();
