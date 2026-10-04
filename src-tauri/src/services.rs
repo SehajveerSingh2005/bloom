@@ -2625,6 +2625,26 @@ unsafe extern "system" fn mouse_hook_proc(
                                 }
                             }
 
+                            if !is_click_interactive {
+                                if let Ok(rect) = TRAY_BUTTON_RECT.try_lock() {
+                                    if let Some(r) = *rect {
+                                        let scale = dock_win.scale_factor().unwrap_or(1.0);
+                                        let pad = (5.0 * scale) as i32;
+                                        let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad;
+                                        let ry = win_pos.y + (r.y as f64 * scale) as i32 - pad;
+                                        let rw = (r.width as f64 * scale) as i32 + pad * 2;
+                                        let rh = (r.height as f64 * scale) as i32 + pad * 2;
+                                        if cursor.x >= rx
+                                            && cursor.x <= (rx + rw)
+                                            && cursor.y >= ry
+                                            && cursor.y <= (ry + rh)
+                                        {
+                                            is_click_interactive = true;
+                                        }
+                                    }
+                                }
+                            }
+
                             if !is_click_interactive && MENU_IS_OPEN.load(Ordering::Relaxed) {
                                 if let Ok(rect) = MENU_RECT.try_lock() {
                                     if let Some(r) = *rect {

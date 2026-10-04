@@ -98,6 +98,8 @@ fn main() {
             open_notification_center,
             open_system_tray,
             get_tray_apps,
+            open_tray_app,
+            update_tray_button_rect,
             click_tray_app,
             set_ignore_cursor_events,
             set_window_height,

@@ -235,7 +235,248 @@ pub unsafe fn list_tray_apps() -> Vec<TrayApp> {
     for (toolbar, overflow) in tray_toolbars() {
         read_toolbar(toolbar, overflow, &mut apps, &mut seen);
     }
+    if apps.is_empty() {
+        apps = list_registry_tray_apps();
+    }
     apps
+}
+
+// ---------------------------------------------------------------------------
+// Windows 11 22H2+ renders the notification area with XAML, so the legacy toolbar
+// controls above are empty. The shell still records every app that has ever shown
+// a tray icon (with a PNG snapshot of the icon) under
+// `HKCU\Control Panel\NotifyIconSettings`; combined with the list of running
+// processes that gives the apps currently living in the background.
+// ---------------------------------------------------------------------------
+
+/// Replaces a leading `{KNOWNFOLDER-GUID}` segment (as stored by the shell) with the real path.
+unsafe fn resolve_known_folder_path(raw: &str) -> String {
+    use windows::core::GUID;
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+
+    let Some(rest) = raw.strip_prefix('{') else {
+        return raw.to_string();
+    };
+    let Some((guid, tail)) = rest.split_once('}') else {
+        return raw.to_string();
+    };
+    let Ok(guid) = GUID::try_from(guid) else {
+        return raw.to_string();
+    };
+    match SHGetKnownFolderPath(&guid, KF_FLAG_DEFAULT, None) {
+        Ok(folder) => {
+            let base = folder.to_string().unwrap_or_default();
+            CoTaskMemFree(Some(folder.0 as *const _));
+            format!("{}{}", base.trim_end_matches('\\'), tail)
+        }
+        Err(_) => raw.to_string(),
+    }
+}
+
+unsafe fn registry_value(
+    key: windows::Win32::System::Registry::HKEY,
+    name: &str,
+) -> Option<Vec<u8>> {
+    use windows::Win32::System::Registry::RegQueryValueExW;
+
+    let name = wide(name);
+    let name = PCWSTR(name.as_ptr());
+    let mut size = 0u32;
+    if RegQueryValueExW(key, name, None, None, None, Some(&mut size)).0 != 0 || size == 0 {
+        return None;
+    }
+    let mut data = vec![0u8; size as usize];
+    if RegQueryValueExW(key, name, None, None, Some(data.as_mut_ptr()), Some(&mut size)).0 != 0 {
+        return None;
+    }
+    data.truncate(size as usize);
+    Some(data)
+}
+
+fn registry_string(data: &[u8]) -> String {
+    let units: Vec<u16> = data
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16_lossy(&units)
+        .trim_matches(char::from(0))
+        .to_string()
+}
+
+/// Lower-cased image paths of every process we are allowed to inspect.
+unsafe fn running_image_paths() -> HashSet<String> {
+    use windows::Win32::System::ProcessStatus::EnumProcesses;
+
+    let mut pids = vec![0u32; 4096];
+    let mut needed = 0u32;
+    if EnumProcesses(
+        pids.as_mut_ptr(),
+        (pids.len() * std::mem::size_of::<u32>()) as u32,
+        &mut needed,
+    )
+    .is_err()
+    {
+        return HashSet::new();
+    }
+    let count = needed as usize / std::mem::size_of::<u32>();
+    pids[..count.min(pids.len())]
+        .iter()
+        .filter(|&&pid| pid != 0)
+        .filter_map(|&pid| crate::commands::process_image_path(pid))
+        .map(|p| p.to_lowercase())
+        .collect()
+}
+
+unsafe fn list_registry_tray_apps() -> Vec<TrayApp> {
+    use base64::Engine;
+    use windows::core::PWSTR;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
+    };
+
+    let subkey = wide("Control Panel\\NotifyIconSettings");
+    let mut root = HKEY::default();
+    if RegOpenKeyExW(
+        HKEY_CURRENT_USER,
+        PCWSTR(subkey.as_ptr()),
+        None,
+        KEY_READ,
+        &mut root,
+    )
+    .0 != 0
+    {
+        return Vec::new();
+    }
+
+    let running = running_image_paths();
+    let own_exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let mut seen = HashSet::new();
+    let mut apps = Vec::new();
+
+    let mut index = 0u32;
+    loop {
+        let mut name = [0u16; 256];
+        let mut name_len = name.len() as u32;
+        let status = RegEnumKeyExW(
+            root,
+            index,
+            Some(PWSTR(name.as_mut_ptr())),
+            &mut name_len,
+            None,
+            None,
+            None,
+            None,
+        );
+        if status.0 != 0 {
+            break;
+        }
+        index += 1;
+
+        let mut entry = HKEY::default();
+        let mut entry_wide = name[..name_len as usize].to_vec();
+        entry_wide.push(0);
+        if RegOpenKeyExW(root, PCWSTR(entry_wide.as_ptr()), None, KEY_READ, &mut entry).0 != 0 {
+            continue;
+        }
+
+        let raw_path = registry_value(entry, "ExecutablePath")
+            .map(|d| registry_string(&d))
+            .unwrap_or_default();
+        let snapshot = registry_value(entry, "IconSnapshot");
+        let _ = RegCloseKey(entry);
+        if raw_path.is_empty() {
+            continue;
+        }
+
+        let path = resolve_known_folder_path(&raw_path);
+        let lower = path.to_lowercase();
+        if lower.ends_with("\\explorer.exe") || lower == own_exe || !running.contains(&lower) {
+            continue;
+        }
+        if !seen.insert(lower) {
+            continue;
+        }
+
+        let icon = snapshot
+            .filter(|d| d.starts_with(&[0x89, 0x50, 0x4E, 0x47]))
+            .map(|d| {
+                format!(
+                    "data:image/png;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(d)
+                )
+            });
+        let name = crate::commands::friendly_process_name(&path);
+
+        apps.push(TrayApp {
+            id: path.clone(),
+            name: name.clone(),
+            tooltip: name,
+            path,
+            icon,
+            hwnd: 0,
+            uid: 0,
+            callback_message: 0,
+            overflow: false,
+        });
+    }
+    let _ = RegCloseKey(root);
+
+    apps.sort_by_key(|a| a.name.to_lowercase());
+    apps
+}
+
+unsafe extern "system" fn collect_app_windows(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindow, GetWindowLongW, GetWindowTextLengthW, IsIconic, IsWindowVisible, GWL_EXSTYLE,
+        GW_OWNER, WS_EX_TOOLWINDOW,
+    };
+
+    let (target, found) = &mut *(lparam.0 as *mut (String, Option<HWND>));
+    let shown = IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool();
+    let top_level = GetWindow(hwnd, GW_OWNER).map(|o| o.0.is_null()).unwrap_or(true);
+    let tool = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0;
+    if shown && top_level && !tool && GetWindowTextLengthW(hwnd) > 0 {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if crate::commands::process_image_path(pid)
+            .map(|p| p.to_lowercase() == *target)
+            .unwrap_or(false)
+        {
+            *found = Some(hwnd);
+            return false.into();
+        }
+    }
+    true.into()
+}
+
+/// Brings the app's window to the front; when it has none on screen (it is only in
+/// the tray) launches its executable, which single-instance apps use to reveal
+/// their existing window.
+pub unsafe fn open_tray_app(path: &str) {
+    use windows::core::w;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    };
+
+    let mut state: (String, Option<HWND>) = (path.to_lowercase(), None);
+    let _ = EnumWindows(
+        Some(collect_app_windows),
+        LPARAM(&mut state as *mut _ as isize),
+    );
+
+    if let Some(window) = state.1 {
+        if IsIconic(window).as_bool() {
+            let _ = ShowWindow(window, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(window);
+    } else {
+        let file = wide(path);
+        ShellExecuteW(None, w!("open"), PCWSTR(file.as_ptr()), None, None, SW_SHOW);
+    }
 }
 
 /// Replays a mouse click on the icon's callback window, the same message pair the

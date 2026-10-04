@@ -45,6 +45,13 @@ pub async fn update_dock_rect(rect: IntRect) {
 }
 
 #[tauri::command]
+pub async fn update_tray_button_rect(rect: Option<IntRect>) {
+    if let Ok(mut r) = TRAY_BUTTON_RECT.lock() {
+        *r = rect;
+    }
+}
+
+#[tauri::command]
 pub async fn update_notch_rect(rect: IntRect) {
     if let Ok(mut r) = NOTCH_RECT.lock() {
         *r = Some(rect);
@@ -2004,6 +2011,14 @@ pub async fn get_tray_apps() -> Vec<crate::types::TrayApp> {
     })
     .await
     .unwrap_or_default()
+}
+
+#[tauri::command]
+pub async fn open_tray_app(path: String) {
+    let _ = tauri::async_runtime::spawn_blocking(move || unsafe {
+        crate::tray::open_tray_app(&path);
+    })
+    .await;
 }
 
 #[tauri::command]
