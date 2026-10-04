@@ -34,8 +34,10 @@ export function reduceAiEvent(state: AiState, ev: AiEvent): AiState {
 			if (ev.on) return { ...IDLE, phase: "recording" };
 			return state.phase === "recording" ? { ...state, phase: "transcribing" } : state;
 		case "transcript":
+			if (state.phase === "done" || state.phase === "error") return state;
 			return { ...state, phase: "working", heard: ev.text };
 		case "activity":
+			if (state.phase === "done" || state.phase === "error") return state;
 			return { ...state, phase: "working", activity: ev.text };
 		case "confirm":
 			return {

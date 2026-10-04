@@ -38,3 +38,8 @@ test("a stray recording-off does not leave a finished request", () => {
 	const done = { ...IDLE, phase: "done" as const, reply: "ok" };
 	expect(reduceAiEvent(done, { type: "recording", on: false })).toBe(done);
 });
+
+test("ignore stale activity event after reply", () => {
+	const done = { ...IDLE, phase: "done" as const, reply: "Saved." };
+	expect(reduceAiEvent(done, { type: "activity", task: 1, text: "Writing..." })).toBe(done);
+});

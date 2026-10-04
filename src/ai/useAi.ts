@@ -54,7 +54,9 @@ export function useAi(onOpen: (recording: boolean) => void): AiControls {
 	const answer = useCallback((approved: boolean) => {
 		const confirm = stateRef.current.confirm;
 		if (!confirm) return;
-		invoke("ai_confirm", { id: confirm.id, approved }).catch(() => {});
+		invoke("ai_confirm", { id: confirm.id, approved }).catch((err) =>
+			setState((s) => ({ ...s, phase: "error", reply: String(err), confirm: null }))
+		);
 		setState((s) => ({ ...s, phase: "working", confirm: null }));
 	}, []);
 

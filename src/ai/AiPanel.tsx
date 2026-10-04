@@ -34,6 +34,7 @@ interface Props {
 export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 	const { state, send, stop, answer } = ai;
 	const [text, setText] = useState("");
+	const [approveDisabled, setApproveDisabled] = useState(false);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const approveRef = useRef<HTMLButtonElement>(null);
@@ -47,6 +48,14 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 	useEffect(() => {
 		if (state.phase === "confirm") takeKeyboard(approveRef.current);
 	}, [state.phase]);
+
+	// Disable approve button for 600ms after confirm card appears to prevent accidental approval.
+	useEffect(() => {
+		if (!state.confirm) return;
+		setApproveDisabled(true);
+		const timer = setTimeout(() => setApproveDisabled(false), 600);
+		return () => clearTimeout(timer);
+	}, [state.confirm?.id]);
 
 	useEffect(() => {
 		const el = rootRef.current;
@@ -87,7 +96,7 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 					<pre className="ai-confirm-body">{state.confirm.body}</pre>
 					<div className="ai-row">
 						<button onClick={() => answer(false)}>Cancel</button>
-						<button ref={approveRef} className="primary" onClick={() => answer(true)}>
+						<button ref={approveRef} className="primary" disabled={approveDisabled} onClick={() => answer(true)}>
 							{state.confirm.kind === "email" ? "Send" : "Run"}
 						</button>
 					</div>
