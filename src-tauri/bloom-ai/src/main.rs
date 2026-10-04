@@ -72,13 +72,17 @@ async fn serve(shared: Arc<Shared>) {
     });
     emit(&Out::Ready);
     let mut current: Current = None;
-    let mut recorder: Option<(voice::Recorder, wake::Busy)> = None;
+    let mut recorder: Option<voice::Recorder> = None;
     // Requests recording or running; the wake word is ignored while any are.
     let busy = Arc::new(AtomicUsize::new(0));
     let (wake_tx, mut wake_rx) = tokio::sync::mpsc::unbounded_channel::<wake::Event>();
-    let mut listener: Option<wake::Listener> = None;
-    // The wake request being recorded, if any.
-    let mut wake_task: Option<u64> = None;
+    let mut wake = WakeState {
+        listener: None,
+        task: None,
+        dir: shared.data_dir.clone(),
+        busy: busy.clone(),
+        events: wake_tx,
+    };
     let mut next_wake = wake::FIRST_TASK;
     loop {
         let line = tokio::select! {
@@ -90,13 +94,13 @@ async fn serve(shared: Arc<Shared>) {
                 match event {
                     wake::Event::Wake => {
                         next_wake += 1;
-                        wake_task = Some(next_wake);
+                        wake.task = Some(next_wake);
                         emit(&Out::Wake { task: next_wake });
                         emit(&Out::Recording { on: true });
                     }
                     wake::Event::Clip { audio, busy } => {
                         // None: stopped while recording.
-                        let Some(task) = wake_task.take() else { continue };
+                        let Some(task) = wake.task.take() else { continue };
                         emit(&Out::Recording { on: false });
                         match audio {
                             Ok((samples, rate)) => {
@@ -134,7 +138,7 @@ async fn serve(shared: Arc<Shared>) {
         match message {
             In::Prompt { task, text } => {
                 // Replaces a wake request still recording, silently like any other.
-                wake_task = None;
+                wake.abort_request(false);
                 cancel(&mut current, &shared, false);
                 let s = shared.clone();
                 let guard = wake::Busy::new(&busy);
@@ -147,7 +151,7 @@ async fn serve(shared: Arc<Shared>) {
                 ));
             }
             In::Cancel => {
-                stop_wake_request(&mut wake_task);
+                wake.abort_request(true);
                 cancel(&mut current, &shared, true)
             }
             In::ConfirmReply { id, approved } => {
@@ -176,21 +180,22 @@ async fn serve(shared: Arc<Shared>) {
                 });
             }
             In::RecordStart => {
-                wake_task = None;
+                wake.abort_request(false);
                 // A key-up that never arrived leaves an old recorder: drop its clip.
-                if let Some((old, _)) = recorder.take() {
+                if let Some(old) = recorder.take() {
                     drop(tokio::task::spawn_blocking(move || old.finish()));
                 }
-                recorder = Some((voice::start(), wake::Busy::new(&busy)));
+                // The recorder releases its guard when its capture ends, even
+                // if the key-up never arrives.
+                recorder = Some(voice::start(wake::Busy::new(&busy)));
                 emit(&Out::Recording { on: true });
             }
             In::RecordStop { task } => {
-                let Some((rec, guard)) = recorder.take() else {
-                    continue;
-                };
+                let Some(rec) = recorder.take() else { continue };
                 emit(&Out::Recording { on: false });
                 cancel(&mut current, &shared, false);
                 let s = shared.clone();
+                let guard = wake::Busy::new(&busy);
                 current = Some((
                     task,
                     tokio::spawn(async move {
@@ -200,19 +205,12 @@ async fn serve(shared: Arc<Shared>) {
                 ));
             }
             In::WakeOn => {
-                listener = None;
-                stop_wake_request(&mut wake_task);
-                match wake::Listener::start(&shared.data_dir, busy.clone(), wake_tx.clone()) {
-                    Ok(started) => listener = Some(started),
-                    Err(message) => emit(&Out::Error {
-                        task: None,
-                        message,
-                    }),
-                }
+                wake.end_request(true);
+                wake.start();
             }
             In::WakeOff => {
-                listener = None;
-                stop_wake_request(&mut wake_task);
+                wake.listener = None;
+                wake.end_request(true);
             }
             In::EnrollSample { index } => {
                 let dir = shared.data_dir.clone();
@@ -234,11 +232,9 @@ async fn serve(shared: Arc<Shared>) {
             In::EnrollBuild => match wake::build(&shared.data_dir) {
                 Ok(()) => {
                     // A running listener switches to the new voice.
-                    if listener.take().is_some() {
-                        stop_wake_request(&mut wake_task);
-                        listener =
-                            wake::Listener::start(&shared.data_dir, busy.clone(), wake_tx.clone())
-                                .ok();
+                    if wake.listener.is_some() {
+                        wake.end_request(true);
+                        wake.start();
                     }
                     emit(&Out::EnrollDone);
                 }
@@ -268,15 +264,52 @@ async fn run_voice(task: u64, heard: Result<String, String>, shared: Arc<Shared>
     }
 }
 
-/// Ends the panel's view of a wake request that is still recording. Its clip
-/// is dropped when it arrives.
-fn stop_wake_request(wake_task: &mut Option<u64>) {
-    if let Some(task) = wake_task.take() {
+/// The wake word listener and the wake request it may be recording.
+struct WakeState {
+    listener: Option<wake::Listener>,
+    task: Option<u64>,
+    dir: PathBuf,
+    busy: Arc<AtomicUsize>,
+    events: tokio::sync::mpsc::UnboundedSender<wake::Event>,
+}
+
+impl WakeState {
+    /// (Re)starts listening; a recording in progress is dropped with the old
+    /// listener.
+    fn start(&mut self) {
+        self.listener = None;
+        match wake::Listener::start(&self.dir, self.busy.clone(), self.events.clone()) {
+            Ok(started) => self.listener = Some(started),
+            Err(message) => emit(&Out::Error {
+                task: None,
+                message,
+            }),
+        }
+    }
+
+    /// Ends the panel's view of a wake request still recording ("Stopped."
+    /// if `announce`); a clip that arrives later is dropped. Returns whether
+    /// there was one.
+    fn end_request(&mut self, announce: bool) -> bool {
+        let Some(task) = self.task.take() else {
+            return false;
+        };
         emit(&Out::Recording { on: false });
-        emit(&Out::Error {
-            task: Some(task),
-            message: "Stopped.".into(),
-        });
+        if announce {
+            emit(&Out::Error {
+                task: Some(task),
+                message: "Stopped.".into(),
+            });
+        }
+        true
+    }
+
+    /// Ends a wake request still recording and frees the microphone at once
+    /// by restarting the listener, so "Hello Janice" works again right away.
+    fn abort_request(&mut self, announce: bool) {
+        if self.end_request(announce) && self.listener.is_some() {
+            self.start();
+        }
     }
 }
 

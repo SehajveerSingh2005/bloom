@@ -16,12 +16,16 @@ pub struct Recorder {
     thread: std::thread::JoinHandle<Result<(Vec<i16>, u32), String>>,
 }
 
-pub fn start() -> Recorder {
+/// `busy` is held until the capture ends (key-up or MAX_SECONDS).
+pub fn start(busy: crate::wake::Busy) -> Recorder {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
     Recorder {
         stop,
-        thread: std::thread::spawn(move || capture(&flag)),
+        thread: std::thread::spawn(move || {
+            let _busy = busy;
+            capture(&flag)
+        }),
     }
 }
 
