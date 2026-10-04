@@ -26,12 +26,27 @@ const MEMORY_TTL: Duration = Duration::from_secs(10 * 60);
 pub struct Memory {
     turns: VecDeque<(String, String)>,
     last: Option<Instant>,
+    /// Outside content (web, mail, command output) is in the remembered
+    /// turns: the next request starts tainted too. Sticky until cleared.
+    pub tainted: bool,
+}
+
+/// Longest stored user text or reply, in bytes.
+const MEMORY_TURN_BYTES: usize = 2048;
+
+fn clip(text: &str) -> String {
+    let mut end = text.len().min(MEMORY_TURN_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
 }
 
 impl Memory {
     pub fn clear(&mut self) {
         self.turns.clear();
         self.last = None;
+        self.tainted = false;
     }
 
     /// Chat messages for the next request; empty once the memory has expired.
@@ -53,9 +68,10 @@ impl Memory {
             .collect()
     }
 
-    pub fn remember(&mut self, now: Instant, user: &str, reply: &str) {
+    pub fn remember(&mut self, now: Instant, user: &str, reply: &str, tainted: bool) {
         self.messages(now); // drop expired turns first
-        self.turns.push_back((user.into(), reply.into()));
+        self.tainted |= tainted;
+        self.turns.push_back((clip(user), clip(reply)));
         while self.turns.len() > MEMORY_TURNS {
             self.turns.pop_front();
         }
@@ -139,7 +155,7 @@ pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, St
                 .memory
                 .lock()
                 .unwrap()
-                .remember(Instant::now(), text, reply);
+                .remember(Instant::now(), text, reply, ctx.tainted);
         }
         Err(e) => log("error", e),
     }
@@ -149,7 +165,11 @@ pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, St
 async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
     let tools = tools::schema();
     let mut messages = vec![json!({ "role": "system", "content": system_prompt(&ctx.cfg.name) })];
-    messages.extend(ctx.shared.memory.lock().unwrap().messages(Instant::now()));
+    {
+        let mut memory = ctx.shared.memory.lock().unwrap();
+        messages.extend(memory.messages(Instant::now()));
+        ctx.tainted |= memory.tainted;
+    }
     messages.push(json!({ "role": "user", "content": text }));
     for _ in 0..MAX_STEPS {
         let message = llm.chat(&messages, &tools).await?;
@@ -202,7 +222,8 @@ fn system_prompt(name: &str) -> String {
          and answer from it.\n\
          Whenever the user mentions a person by name (who is X, email X, call X, X's address), \
          call find_contact first and use what it returns; do not say you don't know someone \
-         before checking.\n\
+         before checking. If no contact matches and the question is general knowledge (a \
+         public figure, say), answer from what you know.\n\
          Use write_file to create files, send_email for email, bloom_control for volume, \
          brightness, media, Wi-Fi and Bluetooth, and open for installed apps, web links, \
          files and folders. Use run_powershell only when no other tool fits; keep scripts \
@@ -301,7 +322,7 @@ mod tests {
         let t0 = Instant::now();
         let mut m = Memory::default();
         for i in 0..8 {
-            m.remember(t0, &format!("q{i}"), &format!("a{i}"));
+            m.remember(t0, &format!("q{i}"), &format!("a{i}"), false);
         }
         let msgs = m.messages(t0);
         assert_eq!(msgs.len(), 12);
@@ -309,10 +330,11 @@ mod tests {
         assert_eq!(msgs[11]["content"], "a7");
         // Each new turn restarts the clock; idle past ten minutes forgets.
         let later = t0 + Duration::from_secs(9 * 60);
-        m.remember(later, "q8", "a8");
+        m.remember(later, "q8", "a8", false);
         assert_eq!(m.messages(later + Duration::from_secs(9 * 60)).len(), 12);
         assert!(m.messages(later + Duration::from_secs(11 * 60)).is_empty());
-        m.remember(later, "x", "y");
+        m.remember(later, "x", "y", true);
+        assert!(m.tainted);
         m.clear();
         assert!(m.messages(later).is_empty());
     }
@@ -335,6 +357,34 @@ mod tests {
         let second = requests.recv().unwrap();
         assert!(second.contains("who is Neha") && second.contains("Neha is neha@x.com."));
         assert!(second.contains("email her"));
+    }
+
+    #[test]
+    fn memory_clips_long_turns_on_a_char_boundary() {
+        let mut m = Memory::default();
+        m.remember(Instant::now(), &"é".repeat(5000), "ok", false);
+        let msgs = m.messages(Instant::now());
+        assert!(msgs[0]["content"].as_str().unwrap().len() <= MEMORY_TURN_BYTES);
+    }
+
+    #[tokio::test]
+    async fn taint_carries_into_the_next_request() {
+        let a = r#"{"choices":[{"message":{"role":"assistant","content":"Read it."}}]}"#;
+        let (url, _r) = mock_server(vec![a.into(), a.into()]);
+        let llm = Llm {
+            http: http(),
+            base_url: url,
+            model: "m".into(),
+            key: "k".into(),
+        };
+        let mut first = ctx();
+        first.tainted = true; // e.g. it read a web page
+        run_with(&llm, &mut first, "summarise").await.unwrap();
+        let mut second = ctx();
+        second.shared = first.shared.clone();
+        assert!(!second.tainted);
+        run_with(&llm, &mut second, "email her").await.unwrap();
+        assert!(second.tainted);
     }
 
     #[tokio::test]

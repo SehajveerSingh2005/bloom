@@ -66,7 +66,7 @@ pub fn schema() -> Value {
             "get_weather",
             "Current weather and the forecast for today and tomorrow. Defaults to the user's \
              location; pass city only when they ask about another place.",
-            json!({ "city": { "type": "string" } }),
+            json!({ "city": { "type": "string", "description": "City name only, e.g. Paris" } }),
             &[],
         ),
         tool(

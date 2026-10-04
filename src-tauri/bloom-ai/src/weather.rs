@@ -56,13 +56,16 @@ async fn json(ctx: &Ctx, url: &str, params: &[(&str, &str)]) -> Result<Value, St
         .shared
         .http
         .get(url)
+        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
         .map_err(|e| format!("Can't reach the weather service: {e}"))?;
     if !res.status().is_success() {
         return Err(format!("Weather service error ({})", res.status()));
     }
-    res.json().await.map_err(|e| e.to_string())
+    res.json()
+        .await
+        .map_err(|_| "The weather service sent something unreadable.".to_string())
 }
 
 async fn geocode(ctx: &Ctx, city: &str) -> Result<Place, String> {
@@ -98,15 +101,17 @@ async fn locate(ctx: &Ctx, city: Option<&str>) -> Result<Place, String> {
         });
     }
     if !cfg.weather_city.is_empty() {
-        return geocode(ctx, &cfg.weather_city).await;
+        // A saved name that won't geocode falls through to the IP lookup.
+        if let Ok(place) = geocode(ctx, &cfg.weather_city).await {
+            return Ok(place);
+        }
     }
     let e = &ctx.shared.endpoints;
-    for (url, lat, lon) in [
-        (&e.ip_primary, "latitude", "longitude"),
-        (&e.ip_fallback, "lat", "lon"),
-    ] {
+    for url in [&e.ip_primary, &e.ip_fallback] {
         if let Ok(d) = json(ctx, url, &[]).await {
-            if let (Some(la), Some(lo)) = (d[lat].as_f64(), d[lon].as_f64()) {
+            // ipapi.co says latitude/longitude, ip-api.com says lat/lon.
+            let coord = |a: &str, b: &str| d[a].as_f64().or_else(|| d[b].as_f64());
+            if let (Some(la), Some(lo)) = (coord("latitude", "lat"), coord("longitude", "lon")) {
                 let city = d["city"].as_str().unwrap_or_default().to_string();
                 return Ok(Place {
                     lat: la,
@@ -223,6 +228,40 @@ mod tests {
         let (url, _r) = mock_server(vec![first_fails.into(), second.into(), FORECAST.into()]);
         let ctx = ctx_with_endpoints(&url);
         assert!(get(&ctx, None).await.unwrap().starts_with("Mumbai. Now"));
+    }
+
+    #[tokio::test]
+    async fn unknown_saved_city_falls_through_to_ip_lookup() {
+        let none = r#"{}"#;
+        let ip = r#"{"lat":19.0,"lon":72.8,"city":"Mumbai"}"#;
+        let (url, _r) = mock_server(vec![none.into(), ip.into(), FORECAST.into()]);
+        let mut ctx = ctx_with_endpoints(&url);
+        ctx.cfg.weather_city = "Nowhereville".into();
+        assert!(get(&ctx, None).await.unwrap().starts_with("Mumbai. Now"));
+    }
+
+    #[tokio::test]
+    async fn service_errors_and_garbage_give_clean_messages() {
+        let (url, _r) =
+            crate::testutil::mock_server_status("500 Internal Server Error", vec!["x".into()]);
+        let mut ctx = ctx_with_endpoints(&url);
+        ctx.cfg.weather_lat = Some(1.0);
+        ctx.cfg.weather_lon = Some(1.0);
+        assert_eq!(
+            get(&ctx, None).await,
+            Err("Weather service error (500 Internal Server Error)".into())
+        );
+        let (url, _r) = mock_server(vec!["<html>nope".into()]);
+        let ctx = {
+            let mut c = ctx_with_endpoints(&url);
+            c.cfg.weather_lat = Some(1.0);
+            c.cfg.weather_lon = Some(1.0);
+            c
+        };
+        assert_eq!(
+            get(&ctx, None).await,
+            Err("The weather service sent something unreadable.".into())
+        );
     }
 
     #[tokio::test]

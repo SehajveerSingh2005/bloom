@@ -12,6 +12,14 @@ use std::sync::{mpsc, Arc};
 /// Answers each request with the next body (HTTP 200, JSON). Returns the base
 /// URL and a channel that yields each request body.
 pub fn mock_server(bodies: Vec<String>) -> (String, mpsc::Receiver<String>) {
+    mock_server_status("200 OK", bodies)
+}
+
+/// Like `mock_server`, answering with the given HTTP status line.
+pub fn mock_server_status(
+    status: &'static str,
+    bodies: Vec<String>,
+) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let (tx, rx) = mpsc::channel();
@@ -36,7 +44,8 @@ pub fn mock_server(bodies: Vec<String>) -> (String, mpsc::Receiver<String>) {
                 .unwrap();
             write!(
                 stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                status,
                 body.len(),
                 body
             )

@@ -169,7 +169,6 @@ async fn serve(shared: Arc<Shared>) {
                 ));
             }
             In::Cancel => {
-                shared.memory.lock().unwrap().clear();
                 wake.abort_request(true);
                 cancel(&mut current, &shared, true)
             }
@@ -381,4 +380,34 @@ fn cancel(current: &mut Current, shared: &Shared, announce: bool) {
         }
     }
     shared.bridge.drop_all();
+    // After the abort, so a finishing request can't remember itself again.
+    if announce {
+        shared.memory.lock().unwrap().clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_forgets_the_conversation() {
+        let shared = Shared::new(PathBuf::new(), PathBuf::new());
+        shared
+            .memory
+            .lock()
+            .unwrap()
+            .remember(std::time::Instant::now(), "q", "a", true);
+        cancel(&mut None, &shared, false);
+        assert!(!shared
+            .memory
+            .lock()
+            .unwrap()
+            .messages(std::time::Instant::now())
+            .is_empty());
+        cancel(&mut None, &shared, true);
+        let mut memory = shared.memory.lock().unwrap();
+        assert!(memory.messages(std::time::Instant::now()).is_empty());
+        assert!(!memory.tainted);
+    }
 }
