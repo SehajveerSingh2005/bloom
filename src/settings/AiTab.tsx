@@ -352,7 +352,7 @@ export function AiTab() {
 	const deleteAi = async () => {
 		const { ask } = await import("@tauri-apps/plugin-dialog");
 		const ok = await ask(
-			"This removes Bloom AI from this PC: the agent program, its saved keys and passwords, contacts, action log and AI settings. AI can't be turned back on from Settings afterwards.",
+			"This removes Bloom AI from this PC: the agent program, its saved keys and passwords, contacts, action log and AI settings. AI can't be turned back on from Settings afterwards. If you linked WhatsApp, also remove \"Bloom\" in WhatsApp > Linked devices on your phone.",
 			{ title: "Delete AI altogether", kind: "warning", okLabel: "Delete AI", cancelLabel: "Cancel" }
 		);
 		if (!ok) return;

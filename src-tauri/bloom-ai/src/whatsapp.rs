@@ -356,6 +356,9 @@ impl State {
     /// `text` is about to go to the user's own chat from this PC.
     pub fn expect_echo(&self, text: &str) {
         let mut echoes = self.echoes.lock().unwrap();
+        // An expired copy must not stop a fresh one.
+        let now = Instant::now();
+        echoes.retain(|(_, at)| now.duration_since(*at) < ECHO_FOR);
         if !echoes.iter().any(|(t, _)| t == text) {
             echoes.push_back((text.into(), Instant::now()));
             if echoes.len() > 10 {
@@ -369,6 +372,13 @@ impl State {
     /// user's.
     pub fn is_echo(&self, text: &str) -> bool {
         self.is_echo_at(text, Instant::now())
+    }
+
+    #[cfg(test)]
+    fn age_echoes(&self, by: Duration) {
+        for (_, at) in self.echoes.lock().unwrap().iter_mut() {
+            *at -= by;
+        }
     }
 
     fn is_echo_at(&self, text: &str, now: Instant) -> bool {
@@ -979,6 +989,11 @@ pub mod tests {
         state.expect_echo("Sent.");
         let later = Instant::now() + ECHO_FOR;
         assert!(!state.is_echo_at("Sent.", later), "expired");
+        // The same text sent again after the old copy expired counts afresh.
+        state.expect_echo("Again.");
+        state.age_echoes(ECHO_FOR);
+        state.expect_echo("Again.");
+        assert!(state.is_echo("Again."));
     }
 
     #[test]

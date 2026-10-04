@@ -158,9 +158,10 @@ pub async fn run(task: u64, text: String, shared: Arc<Shared>) -> Result<String,
 
 pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
     let dir = ctx.cfg.debug.then(|| ctx.shared.data_dir.clone());
+    // Requests and replies may quote messages or mail: logged short.
     let log = |event: &str, detail: &str| {
         if let Some(dir) = &dir {
-            debug::log(dir, event, detail);
+            debug::log(dir, event, &debug::cut(detail, debug::RESULT_CHARS));
         }
     };
     log("request", text);
@@ -360,6 +361,31 @@ mod tests {
                 ]
             );
         }
+    }
+
+    #[tokio::test]
+    async fn the_debug_log_cuts_long_requests_and_replies() {
+        let long = "r".repeat(1000);
+        let answer =
+            format!(r#"{{"choices":[{{"message":{{"role":"assistant","content":"{long}"}}}}]}}"#);
+        let (url, _requests) = mock_server(vec![answer]);
+        let llm = Llm {
+            http: http(),
+            base_url: url,
+            model: "m".into(),
+            key: "k".into(),
+        };
+        let mut ctx = ctx();
+        ctx.cfg.debug = true;
+        run_with(&llm, &mut ctx, &"q".repeat(1000)).await.unwrap();
+        let log = std::fs::read_to_string(ctx.shared.data_dir.join("debug.log")).unwrap();
+        for line in log.lines() {
+            let e: Value = serde_json::from_str(line).unwrap();
+            let detail = e["detail"].as_str().unwrap();
+            assert!(detail.chars().count() <= debug::RESULT_CHARS + 3, "{line}");
+        }
+        assert!(log.contains(&format!("{}...", "q".repeat(debug::RESULT_CHARS))));
+        assert!(log.contains(&format!("{}...", "r".repeat(debug::RESULT_CHARS))));
     }
 
     #[test]

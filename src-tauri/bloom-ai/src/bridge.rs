@@ -86,6 +86,11 @@ impl Bridge {
             .unwrap()
             .retain(|_, (task, _)| crate::selfchat::is_phone(*task));
     }
+
+    /// A stopped request: its open questions go (as "no").
+    pub fn drop_task(&self, task: u64) {
+        self.pending.lock().unwrap().retain(|_, (t, _)| *t != task);
+    }
 }
 
 #[cfg(test)]

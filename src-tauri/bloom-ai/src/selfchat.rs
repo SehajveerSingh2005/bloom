@@ -36,6 +36,7 @@ const ANSWER_WITHIN: Duration = Duration::from_secs(5 * 60);
 const MAX_AGE_SECS: i64 = 5 * 60;
 const MAX_TEXT: usize = 4096;
 const ASK: &str = "Reply YES to approve, anything else cancels.";
+const TOO_LONG: &str = "Too long to show here. Answer on the PC.";
 
 static NEXT: AtomicU64 = AtomicU64::new(FIRST_TASK);
 
@@ -44,15 +45,30 @@ pub fn is_phone(task: u64) -> bool {
     task >= FIRST_TASK
 }
 
-/// "Janice, ...", "janice: ..." or "JANICE ..." with something after it.
-fn is_request(text: &str, name: &str) -> bool {
+/// What follows "Janice, ", "janice: " or "JANICE ", if anything does.
+fn command<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     let text = text.trim();
     let head: String = text.chars().take(name.chars().count()).collect();
     let rest = &text[head.len()..];
     let sep = |c: char| c == ',' || c == ':' || c.is_whitespace();
-    head.to_lowercase() == name.to_lowercase()
-        && rest.starts_with(sep)
-        && !rest.trim_start_matches(sep).is_empty()
+    let ok = head.to_lowercase() == name.to_lowercase() && rest.starts_with(sep);
+    Some(rest.trim_start_matches(sep)).filter(|r| ok && !r.is_empty())
+}
+
+fn is_request(text: &str, name: &str) -> bool {
+    command(text, name).is_some()
+}
+
+/// "Janice, stop" (any case, a trailing "." or "!" is fine).
+fn is_stop(text: &str, name: &str) -> bool {
+    command(text, name).is_some_and(|c| c.trim_end_matches(['.', '!']).eq_ignore_ascii_case("stop"))
+}
+
+/// Settings allow requests from the own chat, and WhatsApp is linked.
+fn allowed(shared: &Shared) -> Option<Config> {
+    let cfg = Config::load(&shared.settings_path);
+    let on = cfg.enabled && cfg.whatsapp && cfg.self_chat;
+    (on && shared.whatsapp.own_number().is_some()).then_some(cfg)
 }
 
 type Job = Pin<Box<dyn Future<Output = Result<String, String>> + Send>>;
@@ -69,8 +85,25 @@ pub async fn run(shared: Arc<Shared>) {
 
 /// The request running, and whether it showed a question on the PC.
 struct Current {
+    task: u64,
+    detail: String,
     handle: JoinHandle<()>,
     asked: Arc<AtomicBool>,
+}
+
+/// Ends the running request, if any, and its open question. True if one ran.
+fn stop(current: &mut Option<Current>, open: &mut Option<Open>, shared: &Shared) -> bool {
+    let Some(c) = current.take().filter(|c| !c.handle.is_finished()) else {
+        return false;
+    };
+    c.handle.abort();
+    open.take();
+    shared.bridge.drop_task(c.task);
+    if c.asked.load(Ordering::Relaxed) {
+        crate::finish(c.task, Err("Stopped.".into()));
+    }
+    journal::record(&shared.data_dir, "whatsapp-request", &c.detail, "stopped");
+    true
 }
 
 async fn run_with(shared: Arc<Shared>, runner: Runner) {
@@ -87,6 +120,10 @@ async fn run_with(shared: Arc<Shared>, runner: Runner) {
             biased;
             q = questions.recv() => {
                 let Some((id, question)) = q else { return };
+                if allowed(&shared).is_none() {
+                    stop(&mut current, &mut open, &shared);
+                    continue;
+                }
                 if let Some(c) = &current {
                     c.asked.store(true, Ordering::Relaxed);
                 }
@@ -105,6 +142,11 @@ async fn run_with(shared: Arc<Shared>, runner: Runner) {
                 Err(RecvError::Closed) => return,
             },
         };
+        let busy = current.as_ref().is_some_and(|c| !c.handle.is_finished());
+        // Turned off, or WhatsApp gone, while a request runs: it stops.
+        if busy && allowed(&shared).is_none() {
+            stop(&mut current, &mut open, &shared);
+        }
         let own = shared.whatsapp.own_number();
         // A forward is someone else's words, even here: never a request or
         // an answer.
@@ -115,16 +157,24 @@ async fn run_with(shared: Arc<Shared>, runner: Runner) {
         if shared.whatsapp.is_echo(&m.text) {
             continue;
         }
-        let cfg = Config::load(&shared.settings_path);
-        if !(cfg.enabled && cfg.whatsapp && cfg.self_chat)
-            || chrono::Utc::now().timestamp() - m.at > MAX_AGE_SECS
-        {
+        let Some(cfg) = allowed(&shared) else {
+            continue;
+        };
+        if chrono::Utc::now().timestamp() - m.at > MAX_AGE_SECS {
+            continue;
+        }
+        if is_stop(&m.text, &cfg.name) {
+            let text = match stop(&mut current, &mut open, &shared) {
+                true => "Stopped.",
+                false => "Nothing to stop.",
+            };
+            say(&shared, text).await;
             continue;
         }
         // Only a message written after the question answers it.
         if let Some(o) = open.take_if(|o| m.at >= o.asked_at) {
             if shared.bridge.is_open(o.id) {
-                let yes = matches!(m.text.trim(), "YES" | "yes");
+                let yes = m.text.trim().eq_ignore_ascii_case("yes");
                 shared.bridge.answer(o.id, Answer::Confirm(yes));
                 continue;
             }
@@ -159,6 +209,7 @@ async fn run_with(shared: Arc<Shared>, runner: Runner) {
         emit(&Out::WhatsappRequest);
         let asked = Arc::new(AtomicBool::new(false));
         let (s, a, job) = (shared.clone(), asked.clone(), runner(task, m.text));
+        let d = detail.clone();
         let handle = tokio::spawn(async move {
             let result = job.await;
             // The PC showed its question: end it there too.
@@ -169,10 +220,15 @@ async fn run_with(shared: Arc<Shared>, runner: Runner) {
                 Ok(reply) => ("done", reply),
                 Err(e) => ("failed", e),
             };
-            journal::record(&dir, "whatsapp-request", &detail, outcome);
+            journal::record(&dir, "whatsapp-request", &d, outcome);
             say(&s, &reply).await;
         });
-        current = Some(Current { handle, asked });
+        current = Some(Current {
+            task,
+            detail,
+            handle,
+            asked,
+        });
     }
 }
 
@@ -189,12 +245,20 @@ async fn ask(shared: &Shared, id: u64, question: &str) -> Option<Open> {
     if !shared.bridge.is_open(id) {
         return None;
     }
-    let open = Open {
+    let mut open = Open {
         id,
         asked_at: chrono::Utc::now().timestamp(),
         until: Instant::now() + ANSWER_WITHIN,
     };
-    say(shared, &format!("{question}\n\n{ASK}")).await;
+    let text = format!("{question}\n\n{ASK}");
+    if text.chars().count() > MAX_TEXT {
+        // The phone can't approve what it can't see in full: only the PC can
+        // answer, and the 5 minutes still run out.
+        say(shared, TOO_LONG).await;
+        open.asked_at = i64::MAX;
+    } else {
+        say(shared, &text).await;
+    }
     Some(open)
 }
 
@@ -287,23 +351,28 @@ mod tests {
     /// The engine with a fake agent that asks once, then answers "Sent." or
     /// "Not sent.". Records (task, text, the answer).
     fn start(s: &Arc<Shared>, ask: bool) -> Seen {
+        start_asking(s, ask.then(|| "+491701234567\n\nhi".to_string()))
+    }
+
+    /// Like `start`, asking with this body if any.
+    fn start_asking(s: &Arc<Shared>, body: Option<String>) -> Seen {
         let seen: Seen = Arc::default();
         let (log, sh) = (seen.clone(), s.clone());
         let runner: Runner = Arc::new(move |task, text| {
-            let (log, sh) = (log.clone(), sh.clone());
+            let (log, sh, body) = (log.clone(), sh.clone(), body.clone());
             Box::pin(async move {
-                let answer = match ask {
-                    true => Some(
+                let answer = match body {
+                    Some(body) => Some(
                         sh.bridge
                             .confirm(
                                 task,
                                 ConfirmKind::Message,
                                 "Send WhatsApp to Neha?".into(),
-                                "+491701234567\n\nhi".into(),
+                                body,
                             )
                             .await,
                     ),
-                    false => None,
+                    None => None,
                 };
                 log.lock().unwrap().push((task, text, answer));
                 Ok(match answer {
@@ -357,8 +426,22 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn yes_in_any_case_approves() {
+        for yes in ["Yes", "yEs", " yes\n"] {
+            let (s, _fake) = shared(on());
+            let seen = start(&s, true);
+            tokio::task::yield_now().await;
+            feed_state(&s.whatsapp, mine(ME, "Janice, text Neha hi"));
+            sleep(secs(1)).await;
+            feed_state(&s.whatsapp, mine(ME, yes));
+            sleep(secs(1)).await;
+            assert_eq!(seen.lock().unwrap()[0].2, Some(true), "{yes:?}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn no_answer_in_5_minutes_or_anything_else_is_no() {
-        for answer in [None, Some("yes please"), Some("Yes")] {
+        for answer in [None, Some("yes please"), Some("y")] {
             let (s, fake) = shared(on());
             let seen = start(&s, true);
             tokio::task::yield_now().await;
@@ -586,5 +669,110 @@ mod tests {
         let (s, fake) = shared(on());
         assert!(ask(&s, 99, "Send?").await.is_none());
         assert!(sent(&fake).is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_question_too_long_for_the_chat_is_answered_on_the_pc() {
+        for pc in [Some(true), None] {
+            let (s, fake) = shared(on());
+            let seen = start_asking(&s, Some("x".repeat(5000)));
+            tokio::task::yield_now().await;
+            feed_state(&s.whatsapp, mine(ME, "Janice, text Neha a lot"));
+            sleep(secs(1)).await;
+            assert_eq!(sent(&fake), [TOO_LONG]);
+            // YES can't approve what the phone never saw, nor does it cancel.
+            feed_state(&s.whatsapp, mine(ME, "YES"));
+            sleep(secs(1)).await;
+            assert!(seen.lock().unwrap().is_empty());
+            match pc {
+                Some(yes) => assert!(s.bridge.answer_pending(Answer::Confirm(yes))),
+                None => sleep(ANSWER_WITHIN).await,
+            }
+            sleep(secs(1)).await;
+            assert_eq!(seen.lock().unwrap()[0].2, Some(pc.is_some()), "{pc:?}");
+        }
+    }
+
+    /// A request that takes a minute, and whether it finished.
+    fn start_slow(s: &Arc<Shared>) -> Arc<AtomicBool> {
+        let done = Arc::new(AtomicBool::new(false));
+        let d = done.clone();
+        let runner: Runner = Arc::new(move |_task, _text| {
+            let d = d.clone();
+            Box::pin(async move {
+                sleep(secs(60)).await;
+                d.store(true, Ordering::Relaxed);
+                Ok("Done.".to_string())
+            })
+        });
+        tokio::spawn(run_with(s.clone(), runner));
+        done
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stop_ends_a_running_request() {
+        assert!(is_stop("janice, STOP!", "Janice") && is_stop("Janice stop.", "Janice"));
+        assert!(!is_stop("Janice, stop the music", "Janice") && !is_stop("stop", "Janice"));
+        let (s, fake) = shared(on());
+        let done = start_slow(&s);
+        tokio::task::yield_now().await;
+        feed_state(&s.whatsapp, mine(ME, "Janice, stop"));
+        sleep(secs(1)).await;
+        assert_eq!(sent(&fake), ["Nothing to stop."]);
+        feed_state(&s.whatsapp, mine(ME, "Janice, slow thing"));
+        sleep(secs(1)).await;
+        feed_state(&s.whatsapp, mine(ME, "Janice, Stop"));
+        sleep(secs(120)).await;
+        assert!(!done.load(Ordering::Relaxed), "aborted");
+        assert_eq!(sent(&fake), ["Nothing to stop.", "Stopped."]);
+        let log = std::fs::read_to_string(s.data_dir.join("actions.log")).unwrap();
+        assert!(log.contains(r#""outcome":"stopped""#), "{log}");
+        // A new request runs again.
+        feed_state(&s.whatsapp, mine(ME, "Janice, again"));
+        sleep(secs(61)).await;
+        assert!(done.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stop_drops_an_open_question() {
+        let (s, _fake) = shared(on());
+        let seen = start(&s, true);
+        tokio::task::yield_now().await;
+        feed_state(&s.whatsapp, mine(ME, "Janice, text Neha hi"));
+        sleep(secs(1)).await;
+        feed_state(&s.whatsapp, mine(ME, "Janice, stop"));
+        sleep(secs(1)).await;
+        assert!(seen.lock().unwrap().is_empty(), "aborted, not answered");
+        assert!(
+            !s.bridge.answer_pending(Answer::Confirm(true)),
+            "nothing open"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn turning_it_off_stops_a_running_request() {
+        for off in ["selfchat", "whatsapp"] {
+            let (s, _fake) = shared(on());
+            let done = start_slow(&s);
+            tokio::task::yield_now().await;
+            feed_state(&s.whatsapp, mine(ME, "Janice, slow thing"));
+            sleep(secs(1)).await;
+            if off == "selfchat" {
+                let mut settings = on();
+                settings["bloom-ai-whatsapp-selfchat"] = json!("false");
+                std::fs::write(&s.settings_path, settings.to_string()).unwrap();
+                // Noticed with the next message, in any chat.
+                feed_state(&s.whatsapp, msg("+491", "Neha", 1, "hi"));
+            } else {
+                s.whatsapp.off();
+                // Noticed when the request asks something (or the next message).
+                let phone = s.bridge.phone.lock().unwrap().clone().unwrap();
+                phone.send((99, "q".into())).unwrap();
+            }
+            sleep(secs(120)).await;
+            assert!(!done.load(Ordering::Relaxed), "{off}");
+            let log = std::fs::read_to_string(s.data_dir.join("actions.log")).unwrap();
+            assert!(log.contains(r#""outcome":"stopped""#), "{off}");
+        }
     }
 }
