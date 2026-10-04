@@ -3,6 +3,8 @@
 pub mod files;
 
 use crate::agent::Ctx;
+use crate::protocol::ConfirmKind;
+use crate::{journal, policy, powershell};
 use serde_json::{json, Value};
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -50,7 +52,17 @@ pub fn schema() -> Value {
             }),
             &["action", "value"],
         ),
-        // Task 6 adds run_powershell; Task 7 adds find_contact, save_contact, send_email.
+        tool(
+            "run_powershell",
+            "Run a short Windows PowerShell script as the user (never as admin) and get its \
+             output. Use only when no other tool fits.",
+            json!({
+                "script": { "type": "string" },
+                "purpose": { "type": "string", "description": "One short sentence shown to the user, e.g. 'List the 5 biggest files in Downloads'" }
+            }),
+            &["script", "purpose"],
+        ),
+        // Task 7 adds find_contact, save_contact, send_email.
     ])
 }
 
@@ -91,8 +103,42 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
                 .bloom(str_arg(args, "action")?, args["value"].clone())
                 .await
         }
+        "run_powershell" => run_powershell(ctx, args).await,
         _ => Err(format!("unknown tool {name}")),
     }
+}
+
+async fn run_powershell(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
+    let script = str_arg(args, "script")?;
+    let purpose = args["purpose"]
+        .as_str()
+        .unwrap_or("Run this PowerShell script?");
+    let ask = policy::script_needs_confirm(ctx.cfg.tier, script, ctx.tainted);
+    if ask
+        && !ctx
+            .shared
+            .bridge
+            .confirm(
+                ctx.task,
+                ConfirmKind::Script,
+                purpose.to_string(),
+                script.to_string(),
+            )
+            .await
+    {
+        journal::record(&ctx.shared.data_dir, "script", script, "declined");
+        return Ok("The user chose not to run it.".into());
+    }
+    let output = powershell::run(script).await;
+    let outcome = match (&output, ask) {
+        (Err(_), _) => "failed",
+        (Ok(_), true) => "approved",
+        (Ok(_), false) => "auto",
+    };
+    journal::record(&ctx.shared.data_dir, "script", script, outcome);
+    // What the script printed came from outside the conversation.
+    ctx.tainted = true;
+    output
 }
 
 #[cfg(test)]
@@ -124,5 +170,35 @@ mod tests {
             },
         );
         assert_eq!(running.await.unwrap(), Ok("Volume is 30%.".into()));
+    }
+
+    #[tokio::test]
+    async fn declined_scripts_do_not_run_and_are_logged() {
+        let mut ctx = ctx(); // Conservative by default
+        let shared = ctx.shared.clone();
+        let args = json!({ "script": "Get-Date", "purpose": "Show the date" });
+        let running = tokio::spawn(async move { call(&mut ctx, "run_powershell", &args).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(false));
+        assert_eq!(
+            running.await.unwrap(),
+            Ok("The user chose not to run it.".into())
+        );
+        let log = std::fs::read_to_string(shared.data_dir.join("actions.log")).unwrap();
+        assert!(log.contains("declined"));
+    }
+
+    #[tokio::test]
+    async fn carte_blanche_runs_without_asking_and_taints() {
+        let mut ctx = ctx();
+        ctx.cfg.tier = crate::config::Tier::CarteBlanche;
+        let out = call(
+            &mut ctx,
+            "run_powershell",
+            &json!({ "script": "Write-Output 42", "purpose": "x" }),
+        )
+        .await;
+        assert_eq!(out.unwrap().trim(), "42");
+        assert!(ctx.tainted);
     }
 }

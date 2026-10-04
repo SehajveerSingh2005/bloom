@@ -6,8 +6,10 @@
 mod agent;
 mod bridge;
 mod config;
+mod journal;
 mod llm;
 mod policy;
+mod powershell;
 mod protocol;
 mod secrets;
 mod tools;
