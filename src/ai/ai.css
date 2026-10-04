@@ -64,6 +64,7 @@
 	opacity: 0.7;
 }
 
+/* Always mounted: fades in and out with the sweep, and only pulses while shown. */
 .ai-dots {
 	display: inline-flex;
 	align-items: flex-end;
@@ -72,6 +73,12 @@
 	margin-left: -4px;
 	padding-bottom: 2px;
 	box-sizing: border-box;
+	opacity: 0;
+	transition: opacity 0.4s ease;
+}
+
+.ai-panel[data-thinking] .ai-dots {
+	opacity: 1;
 }
 
 .ai-dots i {
@@ -80,6 +87,9 @@
 	border-radius: 50%;
 	background: currentColor;
 	opacity: 0.3;
+}
+
+.ai-panel[data-thinking] .ai-dots i {
 	animation: ai-dot 1.2s ease-in-out infinite;
 }
 
@@ -140,7 +150,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.ai-dots i,
+	.ai-panel[data-thinking] .ai-dots i,
 	.ai-panel[data-thinking] .ai-sweep::after {
 		animation: none;
 	}

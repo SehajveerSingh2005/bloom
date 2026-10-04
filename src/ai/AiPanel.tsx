@@ -89,8 +89,15 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 			onHeightRef.current(h);
 		}
 	}, []);
-	// Rows come and go with renders; text reflows and Markdown loads without one.
-	useLayoutEffect(measure);
+	// Rows come and go with these; text reflow and Markdown loading reach the observer.
+	useLayoutEffect(measure, [
+		measure,
+		state.phase,
+		state.heard,
+		state.activity,
+		state.reply,
+		state.confirm
+	]);
 	useEffect(() => {
 		const observer = new ResizeObserver(measure);
 		if (rootRef.current) observer.observe(rootRef.current);
@@ -153,13 +160,11 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 					<span className="ai-status-label">
 						{state.phase === "idle" ? name : STATUS[state.phase]}
 					</span>
-					{thinking && (
-						<span className="ai-dots" aria-hidden>
-							<i />
-							<i />
-							<i />
-						</span>
-					)}
+					<span className="ai-dots" aria-hidden>
+						<i />
+						<i />
+						<i />
+					</span>
 					<span className="ai-sweep" aria-hidden />
 				</div>
 				<div ref={bodyRef} className="ai-body">

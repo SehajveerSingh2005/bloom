@@ -8,7 +8,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "katex/dist/katex.min.css";
-import { safeHref } from "./mdText";
+import { escapeLoneDollars, safeHref } from "./mdText";
 
 const components: Components = {
 	a: ({ href, children }) => {
@@ -22,6 +22,8 @@ const components: Components = {
 					e.preventDefault();
 					openUrl(url).catch(() => {});
 				}}
+				// A middle click would otherwise open a WebView2 window.
+				onAuxClick={(e) => e.preventDefault()}
 			>
 				{children}
 			</a>
@@ -46,7 +48,7 @@ export default function Markdown({ text }: { text: string }) {
 				]}
 				components={components}
 			>
-				{text}
+				{escapeLoneDollars(text)}
 			</ReactMarkdown>
 		</div>
 	);
