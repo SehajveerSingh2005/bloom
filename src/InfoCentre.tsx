@@ -376,17 +376,39 @@ interface PanelProps {
 	setTab: (tab: InfoTab) => void;
 	/** Called whenever the panel's box changes, so the dock's click area follows. */
 	onResize: () => void;
-	/** Bloom AI's tab, last in the row; absent while AI is off. */
-	ai?: { label: string; view: ReactNode };
+	/** Bloom AI's tab, last in the row; absent while AI is off. `height` is
+	 *  its view's natural height: the panel grows to fit it. */
+	ai?: { label: string; view: ReactNode; height: number };
 }
+
+// Every tab is 300px tall; the AI tab grows with Janice's reply up to 400px
+// (the dock window is 600px, and bloom-scale enlarges both), then scrolls.
+const PANEL_HEIGHT = 300;
+const AI_MAX_HEIGHT = 400;
+const HEIGHT_SPRING = { type: "spring", stiffness: 450, damping: 29 } as const;
 
 export function InfoPanel({ tab, setTab, onResize, ai }: PanelProps) {
 	const tabs: [InfoTab, string][] = ai ? [...TABS, ["ai", ai.label]] : TABS;
 	const ref = useRef<HTMLDivElement>(null);
+	const viewRef = useRef<HTMLDivElement>(null);
+	// Padding, tabs and gap around the view, measured once laid out.
+	const [chrome, setChrome] = useState(68);
+	const height =
+		tab === "ai" && ai?.height
+			? Math.min(AI_MAX_HEIGHT, Math.max(PANEL_HEIGHT, ai.height + chrome))
+			: PANEL_HEIGHT;
 	useEffect(() => {
 		if (!ref.current) return;
-		const observer = new ResizeObserver(onResize);
+		const measureChrome = () => {
+			if (ref.current && viewRef.current)
+				setChrome(ref.current.offsetHeight - viewRef.current.offsetHeight);
+		};
+		const observer = new ResizeObserver(() => {
+			measureChrome();
+			onResize();
+		});
 		observer.observe(ref.current);
+		measureChrome();
 		onResize();
 		return () => {
 			observer.disconnect();
@@ -428,10 +450,10 @@ export function InfoPanel({ tab, setTab, onResize, ai }: PanelProps) {
 			ref={ref}
 			className="ic-panel"
 			// Unrolls upward out of the bar, and rolls back into it on close.
-			initial={{ clipPath: "inset(100% 0% 0% 0% round 18px 18px 0px 0px)", opacity: 0.4 }}
-			animate={{ clipPath: "inset(0% 0% 0% 0% round 18px 18px 0px 0px)", opacity: 1 }}
+			initial={{ clipPath: "inset(100% 0% 0% 0% round 18px 18px 0px 0px)", opacity: 0.4, height }}
+			animate={{ clipPath: "inset(0% 0% 0% 0% round 18px 18px 0px 0px)", opacity: 1, height }}
 			exit={{ clipPath: "inset(100% 0% 0% 0% round 18px 18px 0px 0px)", opacity: 0.4 }}
-			transition={{ type: "spring", stiffness: 300, damping: 32 }}
+			transition={{ type: "spring", stiffness: 300, damping: 32, height: HEIGHT_SPRING }}
 			onAnimationComplete={onResize}
 			onWheel={onWheel}
 			onClick={(e) => e.stopPropagation()}
@@ -451,7 +473,7 @@ export function InfoPanel({ tab, setTab, onResize, ai }: PanelProps) {
 					</button>
 				))}
 			</div>
-			<div className="ic-view">
+			<div ref={viewRef} className="ic-view">
 				<AnimatePresence mode="popLayout" initial={false} custom={dir.current}>
 					<motion.div
 						key={tab}

@@ -1,6 +1,7 @@
 /* Janice panel: shared by the notch (App.tsx) and the merged dock, where it is
    a tab of the info panel (InfoCentre.tsx). The orb is AiOrb (orb.css). */
 .ai-panel {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -9,9 +10,13 @@
 	padding: 10px 14px 12px;
 	color: var(--bloom-text, #fff);
 	font-size: 12px;
+	/* The notch is nowrap; replies wrap, long URLs included. */
+	white-space: normal;
+	overflow-wrap: anywhere;
 }
 
 .ai-status {
+	position: relative;
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -20,14 +25,20 @@
 	font-weight: 600;
 }
 
+/* The only row that stretches: it fills what the input leaves and scrolls
+   past that. .ai-lines is its content, measured for the panel's height. */
 .ai-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.ai-lines {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-	flex: 0 1 auto;
-	min-height: 0;
-	max-height: 220px;
-	overflow-y: auto;
 }
 
 .ai-heard,
@@ -35,6 +46,255 @@
 .ai-reply {
 	margin: 0;
 	line-height: 1.4;
+}
+
+/* ── Thinking: the orb swells and glows, dots pulse after the label and a
+   light sweeps under the status line. Transform and opacity only. */
+.ai-status .aio {
+	transition:
+		opacity 0.6s ease,
+		transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.ai-panel[data-thinking] .ai-status .aio {
+	transform: scale(1.25);
+}
+
+.ai-panel[data-thinking] .ai-status .aio-glow {
+	opacity: 0.7;
+}
+
+.ai-dots {
+	display: inline-flex;
+	align-items: flex-end;
+	gap: 3px;
+	height: 1em;
+	margin-left: -4px;
+	padding-bottom: 2px;
+	box-sizing: border-box;
+}
+
+.ai-dots i {
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	background: currentColor;
+	opacity: 0.3;
+	animation: ai-dot 1.2s ease-in-out infinite;
+}
+
+.ai-dots i:nth-child(2) {
+	animation-delay: 0.15s;
+}
+
+.ai-dots i:nth-child(3) {
+	animation-delay: 0.3s;
+}
+
+@keyframes ai-dot {
+	0%,
+	60%,
+	100% {
+		opacity: 0.3;
+		transform: none;
+	}
+	30% {
+		opacity: 1;
+		transform: translateY(-3px);
+	}
+}
+
+.ai-sweep {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: -5px;
+	height: 1px;
+	overflow: hidden;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 0.4s ease;
+}
+
+.ai-sweep::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	width: 45%;
+	background: linear-gradient(90deg, transparent, #8f6bff, #4cc3ff, #ff5fa2, transparent);
+	transform: translateX(-100%);
+}
+
+.ai-panel[data-thinking] .ai-sweep {
+	opacity: 0.8;
+}
+
+.ai-panel[data-thinking] .ai-sweep::after {
+	animation: ai-sweep 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes ai-sweep {
+	to {
+		transform: translateX(225%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ai-dots i,
+	.ai-panel[data-thinking] .ai-sweep::after {
+		animation: none;
+	}
+	.ai-dots i {
+		opacity: 0.7;
+	}
+	.ai-panel[data-thinking] .ai-sweep::after {
+		width: 100%;
+		transform: none;
+	}
+	.ai-panel[data-thinking] .ai-sweep {
+		opacity: 0.4;
+	}
+	.ai-status .aio {
+		transition: opacity 0.6s ease;
+	}
+}
+
+/* ── Markdown replies (Markdown.tsx) ── */
+.ai-md > :first-child {
+	margin-top: 0;
+}
+
+.ai-md > :last-child {
+	margin-bottom: 0;
+}
+
+.ai-md p,
+.ai-md ul,
+.ai-md ol,
+.ai-md pre,
+.ai-md blockquote,
+.ai-md .ai-md-table,
+.ai-md .katex-display {
+	margin: 0 0 6px;
+}
+
+.ai-md h1,
+.ai-md h2,
+.ai-md h3,
+.ai-md h4,
+.ai-md h5,
+.ai-md h6 {
+	margin: 8px 0 4px;
+	font-size: 1em;
+	font-weight: 700;
+	line-height: 1.3;
+}
+
+.ai-md h1 {
+	font-size: 1.25em;
+}
+
+.ai-md h2 {
+	font-size: 1.12em;
+}
+
+.ai-md ul,
+.ai-md ol {
+	padding-left: 18px;
+}
+
+.ai-md li + li {
+	margin-top: 2px;
+}
+
+.ai-md li > p {
+	margin: 0;
+}
+
+.ai-md li:has(> input[type="checkbox"]) {
+	list-style: none;
+	margin-left: -16px;
+}
+
+.ai-md a {
+	color: #6cb6ff;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
+}
+
+.ai-md code {
+	padding: 1px 4px;
+	border-radius: 4px;
+	background: rgba(127, 127, 127, 0.2);
+	font:
+		0.92em/1.4 ui-monospace,
+		Consolas,
+		monospace;
+}
+
+.ai-md pre {
+	padding: 8px 10px;
+	border-radius: 8px;
+	background: rgba(127, 127, 127, 0.16);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.ai-md pre code {
+	padding: 0;
+	background: none;
+}
+
+.ai-md blockquote {
+	padding-left: 10px;
+	border-left: 2px solid rgba(127, 127, 127, 0.45);
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.7));
+}
+
+.ai-md hr {
+	margin: 8px 0;
+	border: 0;
+	border-top: 1px solid rgba(127, 127, 127, 0.3);
+}
+
+.ai-md-table {
+	max-width: 100%;
+	overflow-x: auto;
+}
+
+.ai-md table {
+	border-collapse: collapse;
+	font-size: 0.95em;
+	overflow-wrap: normal;
+}
+
+.ai-md th,
+.ai-md td {
+	padding: 4px 8px;
+	border: 1px solid rgba(127, 127, 127, 0.3);
+	text-align: left;
+	vertical-align: top;
+}
+
+.ai-md th {
+	font-weight: 600;
+	background: rgba(127, 127, 127, 0.14);
+}
+
+.ai-md .katex {
+	font-size: 1.05em;
+}
+
+/* Wide display math scrolls sideways; inline math may wrap at operators. */
+.ai-md .katex-display {
+	overflow-x: auto;
+	overflow-y: hidden;
+	padding: 2px 0;
+}
+
+.ai-md .katex-error {
+	color: inherit;
 }
 
 .ai-heard,
@@ -50,9 +310,9 @@
 	color: #ff9f9a;
 }
 
+/* Never squeezed: its buttons always show; a long body scrolls inside it. */
 .ai-confirm {
-	flex: 1 1 auto;
-	min-height: 0;
+	flex: none;
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
@@ -64,12 +324,13 @@
 
 .ai-confirm-body {
 	margin: 0;
-	flex: 1 1 auto;
-	min-height: 0;
-	max-height: 140px;
+	max-height: 110px;
 	overflow: auto;
 	white-space: pre-wrap;
-	font: 11px/1.4 ui-monospace, Consolas, monospace;
+	font:
+		11px/1.4 ui-monospace,
+		Consolas,
+		monospace;
 	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.7));
 }
 
@@ -197,8 +458,8 @@
 	transform: scale(0.95) translateY(0);
 }
 
-/* In the notch: same box as .command-center-content-minimal. The notch picks a
-   stable height per phase; long content scrolls inside .ai-body. */
+/* In the notch: same box as .command-center-content-minimal. The notch springs
+   to the panel's measured height (clamped); long content scrolls in .ai-body. */
 .ai-notch-content {
 	position: absolute;
 	top: 36px;
@@ -216,8 +477,4 @@
 .ai-notch-content .ai-panel {
 	height: 100%;
 	padding: 0;
-}
-
-.ai-notch-content .ai-body {
-	max-height: none;
 }

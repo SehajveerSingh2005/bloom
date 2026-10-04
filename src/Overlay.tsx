@@ -13,6 +13,7 @@ import "./Overlay.css";
 import { initTheme } from "./theme";
 import { useAi } from "./ai/useAi";
 import { AiOrb } from "./ai/AiOrb";
+import { plainText } from "./ai/mdText";
 
 // ─── App Volume Mixer ───────────────────────────────────────────────────────
 
@@ -805,7 +806,9 @@ function OverlayApp() {
 	const ai = useAi(() => {});
 	const { phase, wake } = ai.state;
 	const orbShown = ai.enabled && wake && phase !== "idle" && phase !== "confirm";
-	const caption = phase === "done" || phase === "error" ? ai.state.reply : ai.state.heard;
+	// Plain text, two lines: the reply's Markdown is stripped, not rendered.
+	const answered = phase === "done" || phase === "error";
+	const caption = answered ? plainText(ai.state.reply) : ai.state.heard;
 	const resetAi = ai.reset;
 	const reduceMotion = useReducedMotion();
 	useEffect(() => {
@@ -988,16 +991,37 @@ function OverlayApp() {
 			{/* Bloom AI orb: under the notch, or above the dock when merged */}
 			<AnimatePresence>
 				{orbShown && mode !== "splash" && mode !== "updating" && (
-					<div key="ai-orb" className={`ai-orb-float ${merged ? "dock" : "notch"}`} style={{ zoom: scale }}>
+					<div
+						key="ai-orb"
+						className={`ai-orb-float ${merged ? "dock" : "notch"}`}
+						style={{ zoom: scale }}
+					>
 						<motion.div
 							className="ai-orb-float-card"
 							initial={{ scale: reduceMotion ? 1 : 0.5, opacity: 0 }}
 							animate={{ scale: 1, opacity: 1 }}
-							exit={{ scale: reduceMotion ? 1 : 0.8, opacity: 0, transition: { duration: 0.2, ease: [0.32, 0.72, 0, 1] } }}
+							exit={{
+								scale: reduceMotion ? 1 : 0.8,
+								opacity: 0,
+								transition: { duration: 0.2, ease: [0.32, 0.72, 0, 1] }
+							}}
 							transition={{ type: "spring", stiffness: 450, damping: 25, mass: 0.7 }}
 						>
 							<AiOrb phase={phase} size={64} />
-							{caption && <p className={`ai-orb-caption ${phase}`}>{caption}</p>}
+							<AnimatePresence mode="popLayout" initial={false}>
+								{caption && (
+									<motion.p
+										key={answered ? "reply" : "heard"}
+										className={`ai-orb-caption ${phase}`}
+										initial={{ opacity: 0, y: reduceMotion ? 0 : merged ? 6 : -6 }}
+										animate={{ opacity: 1, y: 0 }}
+										exit={{ opacity: 0, transition: { duration: 0.15 } }}
+										transition={{ type: "spring", stiffness: 450, damping: 32 }}
+									>
+										{caption}
+									</motion.p>
+								)}
+							</AnimatePresence>
 						</motion.div>
 					</div>
 				)}

@@ -616,6 +616,8 @@ body,
 	font-size: 12px;
 	line-height: 1.4;
 	text-align: center;
+	overflow-wrap: anywhere;
+	box-sizing: border-box;
 	display: -webkit-box;
 	-webkit-box-orient: vertical;
 	-webkit-line-clamp: 2;

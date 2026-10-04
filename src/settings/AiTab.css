@@ -1,5 +1,20 @@
+/* A row's controls never push past its edge (the group clips them): fields
+   shrink, then the controls wrap under each other, right-aligned. */
+.setting-item > .ai-secret,
+.setting-item > .ai-field,
+.setting-item > .ai-btn {
+	margin-left: 10px;
+}
+
+.setting-item:has(> .ai-secret) > .setting-info {
+	min-width: 120px;
+}
+
 .ai-field {
+	box-sizing: border-box;
+	flex: 0 1 170px;
 	width: 170px;
+	min-width: 96px;
 	padding: 4px 8px;
 	border: 1px solid rgba(255, 255, 255, 0.08);
 	border-radius: 6px;
@@ -15,12 +30,18 @@
 
 .ai-secret {
 	display: flex;
+	flex: 0 1 auto;
+	flex-wrap: wrap;
 	align-items: center;
+	justify-content: flex-end;
 	gap: 6px;
+	min-width: 0;
 }
 
 .ai-secret .ai-field + .ai-field {
+	flex: 0 0 56px;
 	width: 56px;
+	min-width: 56px;
 }
 
 .ai-btn {
@@ -30,6 +51,8 @@
 	background: rgba(255, 255, 255, 0.1);
 	color: var(--bloom-text, #fff);
 	font-size: 12px;
+	white-space: nowrap;
+	flex-shrink: 0;
 	cursor: pointer;
 }
 
@@ -39,6 +62,7 @@
 }
 
 .ai-note {
+	white-space: nowrap;
 	font-size: 11px;
 	opacity: 0.6;
 }

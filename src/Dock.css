@@ -1406,17 +1406,15 @@ body {
 /* Bloom AI view (the panel's "ai" tab): the panel's own blocks and controls.
    The confirm card is an .ic-slider block, the text box the same surface
    (hover shade of .ic-tile when focused), text buttons .ic-pill, icon buttons
-   .ic-controls; text at the tiles' 13px. The reply scrolls, the box stays down. */
+   .ic-controls; text at the tiles' 13px. The panel grows to fit her (InfoPanel),
+   then the reply scrolls; the box stays down. */
 .ic-slide > .ai-panel {
 	padding: 0;
 	font-size: 13px;
 }
-.ic-slide .ai-body {
-	flex: 1 1 auto;
-	max-height: none;
-}
-.ic-slide .ai-confirm {
-	flex: 0 1 auto;
+/* The confirm card runs its own fade (AiPanel); the rise would pin it opaque. */
+.ic-slide > .ai-panel > .ai-confirm {
+	animation: none;
 }
 .ic-slide .ai-input input {
 	padding: 10px 12px;

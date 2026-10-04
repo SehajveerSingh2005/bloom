@@ -173,6 +173,8 @@ const Dock = memo(function Dock() {
 	// bar like the others. In notch mode Bloom sends `ai-open` to the notch instead.
 	const aiOpen = infoTab === "ai";
 	const [aiFocus, setAiFocus] = useState(false);
+	// The panel's natural height (AiPanel onHeight): the info panel grows to it.
+	const [aiHeight, setAiHeight] = useState(0);
 	const aiName = useAiName();
 	const ai = useAi((recording) => {
 		if (!infoCentre) return;
@@ -1372,7 +1374,15 @@ const Dock = memo(function Dock() {
 										ai.enabled
 											? {
 													label: aiName,
-													view: <AiPanel ai={ai} onClose={closeAi} focusOnOpen={aiFocus} />
+													height: aiHeight,
+													view: (
+														<AiPanel
+															ai={ai}
+															onClose={closeAi}
+															focusOnOpen={aiFocus}
+															onHeight={setAiHeight}
+														/>
+													)
 												}
 											: undefined
 									}
