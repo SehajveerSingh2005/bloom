@@ -16,6 +16,7 @@ mod powershell;
 mod protocol;
 mod secrets;
 mod tools;
+mod voice;
 
 #[cfg(test)]
 mod testutil;
@@ -69,6 +70,7 @@ async fn serve(shared: Arc<Shared>) {
     });
     emit(&Out::Ready);
     let mut current: Current = None;
+    let mut recorder: Option<voice::Recorder> = None;
     while let Some(line) = rx.recv().await {
         let message = match protocol::parse(&line) {
             Ok(message) => message,
@@ -115,10 +117,38 @@ async fn serve(shared: Arc<Shared>) {
                     emit(&Out::LoginDone { ok, message });
                 });
             }
-            other => emit(&Out::Error {
-                task: None,
-                message: format!("not supported yet: {other:?}"),
-            }),
+            In::RecordStart => {
+                // A key-up that never arrived leaves an old recorder: drop its clip.
+                if let Some(old) = recorder.take() {
+                    drop(tokio::task::spawn_blocking(move || old.finish()));
+                }
+                recorder = Some(voice::start());
+                emit(&Out::Recording { on: true });
+            }
+            In::RecordStop { task } => {
+                let Some(rec) = recorder.take() else { continue };
+                emit(&Out::Recording { on: false });
+                cancel(&mut current, &shared);
+                let s = shared.clone();
+                current = Some((
+                    task,
+                    tokio::spawn(async move {
+                        match voice::listen(rec, &s).await {
+                            Ok(text) => {
+                                emit(&Out::Transcript {
+                                    task,
+                                    text: text.clone(),
+                                });
+                                finish(task, agent::run(task, text, s).await);
+                            }
+                            Err(message) => emit(&Out::Error {
+                                task: Some(task),
+                                message,
+                            }),
+                        }
+                    }),
+                ));
+            }
         }
     }
 }

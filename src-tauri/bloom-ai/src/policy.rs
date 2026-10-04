@@ -121,7 +121,7 @@ pub fn is_read_only(script: &str) -> bool {
 /// Plain variable assignment like $files = ... is still allowed.
 fn has_member_assignment(s: &str) -> bool {
     let b = s.as_bytes();
-    let statement_boundaries = [b';', b'\n', b'\r', b'|', b'{', b'('];
+    let statement_boundaries = *b";\n\r|{(";
 
     for i in 0..b.len() {
         // Check for =, +=, -=, *=, /=, %=
