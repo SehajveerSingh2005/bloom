@@ -3,11 +3,19 @@
 //! to it over stdin/stdout, one JSON object per line (see protocol.rs). It
 //! exits when Bloom closes the pipe, so it never outlives Bloom.
 
+mod config;
 mod protocol;
+mod secrets;
 
 use protocol::{emit, In, Out};
 
 fn main() {
+    // Bloom's "Delete AI altogether" runs `bloom-ai.exe --wipe` before
+    // removing the folder, so stored keys and passwords go too.
+    if std::env::args().any(|a| a == "--wipe") {
+        secrets::wipe();
+        return;
+    }
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -34,6 +42,13 @@ async fn serve() {
                 task,
                 text: format!("echo: {text}"),
             }),
+            Ok(In::SetSecret { name, value }) => match secrets::set(&name, &value) {
+                Ok(()) => emit(&Out::SecretSaved { name }),
+                Err(message) => emit(&Out::Error {
+                    task: None,
+                    message,
+                }),
+            },
             Ok(other) => emit(&Out::Error {
                 task: None,
                 message: format!("not supported yet: {other:?}"),
