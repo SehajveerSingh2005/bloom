@@ -804,6 +804,9 @@ function OverlayApp() {
 	const [brightnessOverlayEnabled, setBrightnessOverlayEnabled] = useState(
 		() => localStorage.getItem("bloom-brightness-overlay-enabled") !== "false"
 	);
+	const [trayButtonEnabled, setTrayButtonEnabled] = useState(
+		() => localStorage.getItem("bloom-tray-button-enabled") !== "false"
+	);
 	const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(
 		() => localStorage.getItem("bloom-brightness-edge-enabled") !== "false"
 	);
@@ -1010,6 +1013,7 @@ function OverlayApp() {
 		"bloom-volume-edge-enabled": setVolumeEdgeEnabled,
 		"bloom-brightness-overlay-enabled": setBrightnessOverlayEnabled,
 		"bloom-brightness-edge-enabled": setBrightnessEdgeEnabled,
+		"bloom-tray-button-enabled": setTrayButtonEnabled,
 		"bloom-scale": setScale
 	});
 
@@ -1222,7 +1226,7 @@ function OverlayApp() {
 			{/* Shares the brightness notch's lifetime so both leave together */}
 			<div style={{ zoom: scale }}>
 				<AnimatePresence>
-					{mode === "brightness" && (
+					{mode === "brightness" && trayButtonEnabled && (
 						<TrayCorner key="tray-corner" onOpenChange={handleTrayOpenChange} />
 					)}
 				</AnimatePresence>

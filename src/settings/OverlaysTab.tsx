@@ -1,4 +1,4 @@
-import { Volume2, Sun, ArrowLeftToLine, ArrowRightToLine } from "lucide-react";
+import { Volume2, Sun, ArrowLeftToLine, ArrowRightToLine, LayoutGrid } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 
 interface OverlaysTabProps {
@@ -10,6 +10,8 @@ interface OverlaysTabProps {
 	toggleBrightnessOverlay: () => void;
 	brightnessEdgeEnabled: boolean;
 	toggleBrightnessEdge: () => void;
+	trayButtonEnabled: boolean;
+	toggleTrayButton: () => void;
 }
 
 export function OverlaysTab({
@@ -20,7 +22,9 @@ export function OverlaysTab({
 	brightnessOverlayEnabled,
 	toggleBrightnessOverlay,
 	brightnessEdgeEnabled,
-	toggleBrightnessEdge
+	toggleBrightnessEdge,
+	trayButtonEnabled,
+	toggleTrayButton
 }: OverlaysTabProps) {
 	return (
 		<>
@@ -62,7 +66,6 @@ export function OverlaysTab({
 						icon={ArrowRightToLine}
 						label="Show on Edge Hover"
 						desc="Slide in from right edge"
-						divider={false}
 					>
 						<label className="toggle-switch">
 							<input
@@ -74,6 +77,18 @@ export function OverlaysTab({
 						</label>
 					</SettingRow>
 				)}
+
+				<SettingRow
+					icon={LayoutGrid}
+					label="Background Apps Button"
+					desc="Tray apps below the brightness HUD"
+					divider={false}
+				>
+					<label className="toggle-switch">
+						<input type="checkbox" checked={trayButtonEnabled} onChange={toggleTrayButton} />
+						<span className="slider"></span>
+					</label>
+				</SettingRow>
 			</div>
 		</>
 	);

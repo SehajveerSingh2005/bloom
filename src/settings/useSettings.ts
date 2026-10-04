@@ -34,6 +34,9 @@ export function useSettings() {
 	const [brightnessOverlayEnabled, setBrightnessOverlayEnabled] = useState(
 		() => localStorage.getItem("bloom-brightness-overlay-enabled") !== "false"
 	);
+	const [trayButtonEnabled, setTrayButtonEnabled] = useState(
+		() => localStorage.getItem("bloom-tray-button-enabled") !== "false"
+	);
 	const [brightnessEdgeEnabled, setBrightnessEdgeEnabled] = useState(
 		() => localStorage.getItem("bloom-brightness-edge-enabled") !== "false"
 	);
@@ -157,6 +160,7 @@ export function useSettings() {
 			apply(getVal("bloom-auto-update"), setAutoUpdate, readBool);
 			apply(getVal("bloom-volume-edge-enabled"), setVolumeEdgeEnabled, readBool);
 			apply(getVal("bloom-brightness-edge-enabled"), setBrightnessEdgeEnabled, readBool);
+			apply(getVal("bloom-tray-button-enabled"), setTrayButtonEnabled, readBool);
 			apply(getVal("bloom-dock-enabled"), setDockEnabled, readBool);
 			apply(getVal("bloom-dock-preview-enabled"), setDockPreviewEnabled, readBool);
 			apply(getVal("bloom-dock-icon-only"), setDockIconOnly, readBool);
@@ -240,6 +244,7 @@ export function useSettings() {
 		"bloom-volume-edge-enabled": setVolumeEdgeEnabled,
 		"bloom-brightness-overlay-enabled": setBrightnessOverlayEnabled,
 		"bloom-brightness-edge-enabled": setBrightnessEdgeEnabled,
+		"bloom-tray-button-enabled": setTrayButtonEnabled,
 		"bloom-theme-mode": setThemeMode,
 		"bloom-theme-color": setThemeColor,
 		"bloom-theme-opacity": setThemeOpacity,
@@ -427,6 +432,12 @@ export function useSettings() {
 		const next = !brightnessEdgeEnabled;
 		setBrightnessEdgeEnabled(next);
 		saveSetting("bloom-brightness-edge-enabled", String(next));
+	};
+
+	const toggleTrayButton = () => {
+		const next = !trayButtonEnabled;
+		setTrayButtonEnabled(next);
+		saveSetting("bloom-tray-button-enabled", String(next));
 	};
 
 	const toggleAmbience = () => {
@@ -800,6 +811,8 @@ export function useSettings() {
 		toggleBrightnessOverlay,
 		brightnessEdgeEnabled,
 		toggleBrightnessEdge,
+		trayButtonEnabled,
+		toggleTrayButton,
 
 		// Updates
 		updateStatus,
