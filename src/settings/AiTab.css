@@ -93,3 +93,26 @@
 	height: 180px;
 	border-radius: 6px;
 }
+
+.ai-text {
+	flex-basis: 220px;
+	width: 220px;
+	resize: vertical;
+	font-family: inherit;
+}
+
+.ai-checks {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+	margin-left: 10px;
+	font-size: 12px;
+}
+
+.ai-checks label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+}

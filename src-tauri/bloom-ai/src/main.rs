@@ -4,6 +4,7 @@
 //! exits when Bloom closes the pipe, so it never outlives Bloom.
 
 mod agent;
+mod autoreply;
 mod bridge;
 mod config;
 mod debug;
@@ -95,6 +96,8 @@ async fn serve(shared: Arc<Shared>) {
         }
     });
     emit(&Out::Ready);
+    // Waits on incoming WhatsApp messages; idle while none arrive.
+    tokio::spawn(autoreply::run(shared.clone()));
     let mut current: Current = None;
     let mut recorder: Option<voice::Recorder> = None;
     // Requests recording or running; the wake word is ignored while any are.

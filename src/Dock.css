@@ -821,6 +821,10 @@ body {
 	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
+.dock-toast.info {
+	color: #f5f5f5;
+}
+
 /* ── Info centre (InfoCentre.tsx) ─────────────────────────────────────────── */
 
 .dock.ic-on .dock-reorder-container {

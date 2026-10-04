@@ -53,6 +53,8 @@ pub struct Status {
     pub qr: Option<String>,
     pub code: Option<String>,
     pub error: Option<String>,
+    /// The linked account's WhatsApp name. Not sent to Settings.
+    pub name: Option<String>,
 }
 
 impl Status {
@@ -88,7 +90,6 @@ pub trait Link: Send + Sync {
     /// `chat`: "+<number>" or a group id.
     async fn send_text(&self, chat: &str, text: &str) -> Result<(), String>;
     /// The "typing..." indicator in `chat`.
-    #[allow(dead_code)] // For automatic replies.
     async fn typing(&self, chat: &str, on: bool) -> Result<(), String>;
     /// Asks WhatsApp for an 8-character link code for `phone` (digits with
     /// country code); it arrives in a `Status`.
@@ -220,7 +221,7 @@ fn as_number(text: &str) -> Option<String> {
 }
 
 /// "14:05" today, "3 Oct 14:05" before.
-fn stamp(at: i64) -> String {
+pub fn stamp(at: i64) -> String {
     use chrono::{Local, TimeZone};
     let Some(t) = Local.timestamp_opt(at, 0).single() else {
         return String::new();
@@ -306,6 +307,24 @@ impl State {
         let mut status = self.status.lock().unwrap();
         status.error = Some(message);
         status.emit();
+    }
+
+    /// The last `n` messages of `chat`, oldest first.
+    pub fn recent(&self, chat: &str, n: usize) -> Vec<Message> {
+        let chats = self.chats.lock().unwrap();
+        let Some(c) = chats.map.get(chat) else {
+            return Vec::new();
+        };
+        c.messages
+            .iter()
+            .skip(c.messages.len().saturating_sub(n))
+            .cloned()
+            .collect()
+    }
+
+    /// The linked account's WhatsApp name, once known.
+    pub fn own_name(&self) -> Option<String> {
+        self.status.lock().unwrap().name.clone()
     }
 
     fn linked(&self) -> bool {
@@ -558,19 +577,26 @@ pub mod tests {
     use crate::config::Tier;
     use crate::testutil::ctx;
 
-    /// Records what it was asked to send.
+    /// Records what it was asked to send, and when it sent or typed.
     #[derive(Default)]
     pub struct Fake {
         pub sent: Mutex<Vec<(String, String)>>,
+        /// ("send" | "typing on" | "typing off", chat, when).
+        pub log: Mutex<Vec<(&'static str, String, tokio::time::Instant)>>,
     }
 
     #[async_trait::async_trait]
     impl Link for Fake {
         async fn send_text(&self, chat: &str, text: &str) -> Result<(), String> {
             self.sent.lock().unwrap().push((chat.into(), text.into()));
+            let now = tokio::time::Instant::now();
+            self.log.lock().unwrap().push(("send", chat.into(), now));
             Ok(())
         }
-        async fn typing(&self, _chat: &str, _on: bool) -> Result<(), String> {
+        async fn typing(&self, chat: &str, on: bool) -> Result<(), String> {
+            let what = if on { "typing on" } else { "typing off" };
+            let now = tokio::time::Instant::now();
+            self.log.lock().unwrap().push((what, chat.into(), now));
             Ok(())
         }
         fn pair_code(&self, _phone: &str) {}
@@ -579,7 +605,7 @@ pub mod tests {
         }
     }
 
-    fn msg(chat: &str, sender: &str, at: i64, text: &str) -> Message {
+    pub fn msg(chat: &str, sender: &str, at: i64, text: &str) -> Message {
         Message {
             chat: chat.into(),
             group: None,
@@ -592,13 +618,17 @@ pub mod tests {
 
     /// A linked fake connection on `ctx`.
     fn link(ctx: &Ctx) -> Arc<Fake> {
+        link_state(&ctx.shared.whatsapp)
+    }
+
+    pub fn link_state(state: &State) -> Arc<Fake> {
         let fake = Arc::new(Fake::default());
-        let state = &ctx.shared.whatsapp;
         let generation = state.attach(fake.clone());
         state.apply(
             generation,
             Event::Status(Status {
                 state: "linked",
+                name: Some("Arnav Aggarwal".into()),
                 ..Status::default()
             }),
         );
@@ -606,7 +636,10 @@ pub mod tests {
     }
 
     fn feed(ctx: &Ctx, m: Message) {
-        let state = &ctx.shared.whatsapp;
+        feed_state(&ctx.shared.whatsapp, m);
+    }
+
+    pub fn feed_state(state: &State, m: Message) {
         state.apply(state.generation.load(Ordering::SeqCst), Event::Message(m));
     }
 
@@ -657,6 +690,14 @@ pub mod tests {
 
         let by_number = read(&mut ctx, "+49 170 1234567", Some(1)).unwrap();
         assert!(by_number.ends_with("Neha: m24"), "{by_number}");
+        let recent = ctx.shared.whatsapp.recent("+491701234567", 3);
+        let texts: Vec<&str> = recent.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, ["m22", "m23", "m24"]);
+        assert!(ctx.shared.whatsapp.recent("+1", 3).is_empty());
+        assert_eq!(
+            ctx.shared.whatsapp.own_name().as_deref(),
+            Some("Arnav Aggarwal")
+        );
         let fam = read(&mut ctx, "family", None).unwrap();
         assert!(
             fam.contains("Family (group)") && fam.ends_with("Sam: [photo] look"),

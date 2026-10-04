@@ -564,6 +564,17 @@ pub fn ai_whatsapp_unlink(app: AppHandle) -> Result<(), String> {
     send(&app, json!({ "type": "whatsapp_unlink" }))
 }
 
+/// Saved phone contacts (`phones.json`: name to number) for Settings >
+/// Auto-reply, sorted by name. Empty when there are none.
+#[tauri::command]
+pub fn ai_whatsapp_contacts(app: AppHandle) -> Vec<(String, String)> {
+    let phones: std::collections::BTreeMap<String, String> = ai_dir(&app)
+        .and_then(|d| std::fs::read_to_string(d.join("phones.json")).ok())
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default();
+    phones.into_iter().collect()
+}
+
 /// The dock's AI button: show the panel with its text box.
 #[tauri::command]
 pub fn ai_open(app: AppHandle) {

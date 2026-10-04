@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { BookOpen, Cpu, Keyboard, KeyRound, Mail, MessageCircle, Mic, AudioLines, Plug, QrCode, Server, Shield, Sparkles, Trash2 } from "lucide-react";
+import { BookOpen, Bot, Cpu, Keyboard, KeyRound, Mail, MessageCircle, Mic, AudioLines, Plug, QrCode, Server, Shield, Sparkles, Trash2 } from "lucide-react";
 import qrcode from "qrcode-generator";
 import { SettingRow } from "./SettingRow";
 import { useSettingsSync } from "../hooks/useSettingsSync";
@@ -24,6 +24,19 @@ const TIERS: Record<string, string> = {
 };
 
 const OUTLOOK = /@(outlook|hotmail|live|msn)\.com$/i;
+
+const DEFAULT_STYLE = "Let them know I'll get back to them soon. Be brief and friendly.";
+
+/** `bloom-ai-whatsapp-auto`: "*" (anyone in my contacts) or a JSON array of numbers. */
+function parseAutoTo(raw: string): { anyone: boolean; numbers: string[] } {
+	if (raw.trim().replace(/"/g, "") === "*") return { anyone: true, numbers: [] };
+	try {
+		const v = JSON.parse(raw);
+		return { anyone: false, numbers: Array.isArray(v) ? v.filter((n) => typeof n === "string") : [] };
+	} catch {
+		return { anyone: false, numbers: [] };
+	}
+}
 
 /** The agent's `whatsapp_status`. `qr` and `code` are pairing credentials. */
 interface WaStatus {
@@ -64,18 +77,23 @@ function useAiSetting(key: string, fallback: string): [string, (value: string) =
 
 /** Saves on blur or Enter, not on every keystroke. `onSave` returning false
  *  rejects the value and puts the saved one back. */
-function Field(props: { value: string; onSave: (v: string) => boolean | void; placeholder: string }) {
+function Field(props: { value: string; onSave: (v: string) => boolean | void; placeholder: string; multiline?: boolean }) {
 	const [draft, setDraft] = useState(props.value);
 	useEffect(() => setDraft(props.value), [props.value]);
+	const common = {
+		value: draft,
+		placeholder: props.placeholder,
+		onBlur: () => {
+			if (draft.trim() !== props.value && props.onSave(draft.trim()) === false) setDraft(props.value);
+		}
+	};
+	if (props.multiline)
+		return <textarea className="ai-field ai-text" rows={3} {...common} onChange={(e) => setDraft(e.target.value)} />;
 	return (
 		<input
 			className="ai-field"
-			value={draft}
-			placeholder={props.placeholder}
+			{...common}
 			onChange={(e) => setDraft(e.target.value)}
-			onBlur={() => {
-				if (draft.trim() !== props.value && props.onSave(draft.trim()) === false) setDraft(props.value);
-			}}
 			onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
 		/>
 	);
@@ -180,6 +198,11 @@ export function AiTab() {
 	const [wa, setWa] = useState<WaStatus | null>(null);
 	const [useCode, setUseCode] = useState(false);
 	const [waPhone, setWaPhone] = useState("");
+	const [autoReply, setAutoReply] = useAiSetting("bloom-ai-whatsapp-autoreply", "false");
+	const [autoTo, setAutoTo] = useAiSetting("bloom-ai-whatsapp-auto", "[]");
+	const [style, setStyle] = useAiSetting("bloom-ai-whatsapp-style", DEFAULT_STYLE);
+	const [sign, setSign] = useAiSetting("bloom-ai-whatsapp-sign", "true");
+	const [contacts, setContacts] = useState<[string, string][]>([]);
 
 	const testEmail = () => {
 		setTesting(true);
@@ -209,6 +232,12 @@ export function AiTab() {
 		if (enabled === "true" && whatsapp === "true") invoke("ai_whatsapp_status").catch(() => {});
 		else setWa(null);
 	}, [enabled, whatsapp]);
+
+	// Saved phone contacts for "Reply automatically to", fresh each time it links.
+	const linked = enabled === "true" && whatsapp === "true" && wa?.state === "linked";
+	useEffect(() => {
+		if (linked) invoke<[string, string][]>("ai_whatsapp_contacts").then(setContacts).catch(() => setContacts([]));
+	}, [linked]);
 
 	// The name decides whether the wake word counts as trained; let the save land first.
 	useEffect(() => {
@@ -369,6 +398,9 @@ export function AiTab() {
 	const waPairing = wa?.state === "not_linked" && (!!wa.qr || !!wa.code || useCode);
 	const waRun = (command: string, args?: Record<string, unknown>) =>
 		invoke(command, args).catch((e) => setMessage(String(e)));
+	const auto = parseAutoTo(autoTo);
+	const toggleNumber = (n: string) =>
+		setAutoTo(JSON.stringify(auto.numbers.includes(n) ? auto.numbers.filter((x) => x !== n) : [...auto.numbers, n]));
 	const vk = Number(hotkey) || 165;
 	const typingKey = vk === 0x20 || (vk >= 0x30 && vk <= 0x5a);
 
@@ -657,6 +689,65 @@ export function AiTab() {
 							</SettingRow>
 						)}
 					</div>
+
+					{linked && (
+						<>
+							<div className="setting-group-label">Auto-reply</div>
+							<div className="setting-group">
+								<SettingRow
+									icon={Bot}
+									label="Reply automatically"
+									desc={`${aiName} answers the contacts you choose, after a short wait. Never groups, and it pauses for 30 minutes when you write in a chat yourself.`}
+								>
+									<label className="toggle-switch">
+										<input
+											type="checkbox"
+											checked={autoReply === "true"}
+											onChange={() => setAutoReply(autoReply === "true" ? "false" : "true")}
+										/>
+										<span className="slider"></span>
+									</label>
+								</SettingRow>
+								<SettingRow
+									icon={Bot}
+									label="Reply automatically to"
+									desc={contacts.length ? "Nobody until you choose" : `No saved numbers yet: ask ${aiName} to save one`}
+								>
+									<div className="ai-checks">
+										<label>
+											<input type="checkbox" checked={auto.anyone} onChange={() => setAutoTo(auto.anyone ? "[]" : "*")} />
+											Anyone in my contacts
+										</label>
+										{contacts.map(([name, number]) => (
+											<label key={number + name} title={number}>
+												<input
+													type="checkbox"
+													checked={auto.anyone || auto.numbers.includes(number)}
+													disabled={auto.anyone}
+													onChange={() => toggleNumber(number)}
+												/>
+												{name}
+											</label>
+										))}
+									</div>
+								</SettingRow>
+								<SettingRow icon={Bot} label="How to reply" desc="In your words, e.g. I'm at work until 6; say I'll call back">
+									<Field value={style} onSave={(v) => setStyle(v || DEFAULT_STYLE)} placeholder={DEFAULT_STYLE} multiline />
+								</SettingRow>
+								<SettingRow
+									icon={Bot}
+									label={`Say it's ${aiName}`}
+									desc={`Replies end with "(${aiName}, <your name>'s assistant)" so nobody is misled`}
+									divider={false}
+								>
+									<label className="toggle-switch">
+										<input type="checkbox" checked={sign !== "false"} onChange={() => setSign(sign === "false" ? "true" : "false")} />
+										<span className="slider"></span>
+									</label>
+								</SettingRow>
+							</div>
+						</>
+					)}
 
 					<div className="setting-group-label">Safety</div>
 					<div className="setting-group">

@@ -17,7 +17,6 @@ use whatsapp_rust::wacore::store::DevicePropsOverride;
 
 enum Cmd {
     Send(String, String, oneshot::Sender<Result<(), String>>),
-    #[allow(dead_code)] // Sent by Link::typing, for automatic replies.
     Typing(String, bool, oneshot::Sender<Result<(), String>>),
     PairCode(String),
     Unlink(oneshot::Sender<Result<bool, String>>),
@@ -168,17 +167,23 @@ impl Conn {
             E::Connected(_) => {
                 self.seen.lock().unwrap().connected = true;
                 let number = client.pn().map(|j| format!("+{}", j.user_base()));
+                let name = Some(client.push_name()).filter(|n| !n.is_empty());
                 self.status(|s| {
                     *s = Status {
                         state: "linked",
                         number,
+                        name,
                         ..Status::default()
                     }
                 });
                 offline(client).await;
             }
             // The library goes "online" once it learns the user's name, too.
-            E::SelfPushNameUpdated(_) => offline(client).await,
+            E::SelfPushNameUpdated(u) => {
+                let name = Some(u.new_name.clone()).filter(|n| !n.is_empty());
+                self.status(|s| s.name = name);
+                offline(client).await
+            }
             E::LoggedOut(_) => self.seen.lock().unwrap().logged_out = true,
             E::PairingQrCodesExhausted(x) if x.disconnected => self.stopped(None),
             E::StreamReplaced(_) => {

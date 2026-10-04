@@ -136,8 +136,16 @@ const Dock = memo(function Dock() {
 	const [startupAnimating, setStartupAnimating] = useState(false);
 	const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
 	const [toast, setToast] = useState<string | null>(null);
+	// A notice rather than an error (shown in the normal text colour).
+	const [toastInfo, setToastInfo] = useState(false);
 	const iconPickerTargetRef = useRef<string | null>(null);
 	const toastTimerRef = useRef<any>(null);
+	const showToast = (msg: string, info = false) => {
+		if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+		setToast(msg);
+		setToastInfo(info);
+		toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+	};
 	const dockRef = useRef<HTMLDivElement>(null);
 	const pinnedItemsRef = useRef<AppInfo[]>([]);
 	const handleAppClickRef = useRef<(app: AppInfo) => void>(() => {});
@@ -206,6 +214,17 @@ const Dock = memo(function Dock() {
 	useEffect(() => {
 		if (ai.state.confirm && ai.enabled && infoCentre) setInfoTab("ai");
 	}, [ai.state.confirm?.id]);
+	// Each automatic WhatsApp reply: "Janice replied to Neha".
+	const aiNameRef = useRef(aiName);
+	aiNameRef.current = aiName;
+	useEffect(() => {
+		const off = listen<{ type: string; name?: string }>("ai-event", ({ payload }) => {
+			if (payload.type === "whatsapp_auto_reply") showToast(`${aiNameRef.current} replied to ${payload.name}`, true);
+		});
+		return () => {
+			off.then((f) => f());
+		};
+	}, []);
 	// A preview already showing when the panel opens would overlap it.
 	useEffect(() => {
 		if (aiOpen) setPreviewData(null);
@@ -527,10 +546,7 @@ const Dock = memo(function Dock() {
 				});
 				setCustomIcons((prev) => ({ ...prev, [target]: newIcon }));
 			} catch (err) {
-				const msg = typeof err === "string" ? err : "Failed to set icon";
-				if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-				setToast(msg);
-				toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+				showToast(typeof err === "string" ? err : "Failed to set icon");
 			}
 		};
 		reader.readAsDataURL(file);
@@ -1603,7 +1619,7 @@ const Dock = memo(function Dock() {
 			<AnimatePresence>
 				{toast && (
 					<motion.div
-						className="dock-toast"
+						className={toastInfo ? "dock-toast info" : "dock-toast"}
 						initial={{ opacity: 0, y: 10 }}
 						animate={{ opacity: 1, y: 0 }}
 						exit={{ opacity: 0, y: 10 }}

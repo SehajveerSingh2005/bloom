@@ -239,6 +239,8 @@ fn main() {
             #[cfg(windows)]
             ai::ai_whatsapp_unlink,
             #[cfg(windows)]
+            ai::ai_whatsapp_contacts,
+            #[cfg(windows)]
             ai::ai_open,
             #[cfg(windows)]
             ai::ai_delete

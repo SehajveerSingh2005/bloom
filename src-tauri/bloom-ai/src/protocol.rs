@@ -126,6 +126,10 @@ pub enum Out {
         code: Option<String>,
         error: Option<String>,
     },
+    /// An automatic reply went to `name` (a toast, no message text).
+    WhatsappAutoReply {
+        name: String,
+    },
 }
 
 /// Writes one message to Bloom. A failed write means Bloom is gone; the stdin
@@ -261,6 +265,13 @@ mod tests {
             })
             .unwrap(),
             r#"{"type":"whatsapp_status","state":"linked","number":"+491701234567","qr":null,"code":null,"error":null}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Out::WhatsappAutoReply {
+                name: "Neha".into()
+            })
+            .unwrap(),
+            r#"{"type":"whatsapp_auto_reply","name":"Neha"}"#
         );
     }
 

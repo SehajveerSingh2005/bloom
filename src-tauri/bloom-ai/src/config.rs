@@ -37,7 +37,19 @@ pub struct Config {
     pub fahrenheit: bool,
     /// "Connect WhatsApp": the WhatsApp tools are offered.
     pub whatsapp: bool,
+    /// `bloom-ai-enabled`.
+    pub enabled: bool,
+    /// Automatic WhatsApp replies (autoreply.rs).
+    pub auto_reply: bool,
+    /// Numbers that get them; "*" is anyone in phones.json.
+    pub auto_to: Vec<String>,
+    /// "How to reply", in the user's words.
+    pub auto_style: String,
+    /// Replies say they come from the assistant.
+    pub auto_sign: bool,
 }
+
+pub const DEFAULT_STYLE: &str = "Let them know I'll get back to them soon. Be brief and friendly.";
 
 pub const DEFAULT_NAME: &str = "Janice";
 
@@ -95,6 +107,16 @@ impl Config {
             smtp_port: get("bloom-ai-smtp-port", "0").parse().unwrap_or(0),
             debug: get("bloom-ai-debug", "false") == "true",
             whatsapp: get("bloom-ai-whatsapp", "false") == "true",
+            enabled: get("bloom-ai-enabled", "false") == "true",
+            auto_reply: get("bloom-ai-whatsapp-autoreply", "false") == "true",
+            auto_to: match map.get("bloom-ai-whatsapp-auto") {
+                Some(Value::String(s)) if s.trim().trim_matches('"') == "*" => vec!["*".into()],
+                Some(Value::String(s)) => serde_json::from_str(s).unwrap_or_default(),
+                Some(v) => serde_json::from_value(v.clone()).unwrap_or_default(),
+                None => Vec::new(),
+            },
+            auto_style: get("bloom-ai-whatsapp-style", DEFAULT_STYLE),
+            auto_sign: get("bloom-ai-whatsapp-sign", "true") == "true",
         }
     }
 
@@ -133,6 +155,28 @@ mod tests {
         assert!(!c.whatsapp);
         assert!(Config::from_map(&map(&[("bloom-ai-whatsapp", "true")])).whatsapp);
         assert!(Config::from_map(&map(&[("bloom-ai-debug", "true")])).debug);
+    }
+
+    #[test]
+    fn auto_reply_settings() {
+        let d = Config::from_map(&HashMap::new());
+        assert!(!d.enabled && !d.auto_reply && d.auto_sign);
+        assert!(d.auto_to.is_empty());
+        assert_eq!(d.auto_style, DEFAULT_STYLE);
+        let c = Config::from_map(&map(&[
+            ("bloom-ai-enabled", "true"),
+            ("bloom-ai-whatsapp-autoreply", "true"),
+            ("bloom-ai-whatsapp-auto", r#"["+491701234567"]"#),
+            ("bloom-ai-whatsapp-style", "At work until 6"),
+            ("bloom-ai-whatsapp-sign", "false"),
+        ]));
+        assert!(c.enabled && c.auto_reply && !c.auto_sign);
+        assert_eq!(c.auto_to, ["+491701234567"]);
+        assert_eq!(c.auto_style, "At work until 6");
+        let any = |v| Config::from_map(&map(&[("bloom-ai-whatsapp-auto", v)])).auto_to;
+        assert_eq!(any("*"), ["*"]);
+        assert_eq!(any(r#""*""#), ["*"]);
+        assert!(any("garbage").is_empty());
     }
 
     #[test]
