@@ -74,11 +74,14 @@ pub fn init(app: &AppHandle) {
     // An install after "Delete AI" may have put the agent back: remove it again.
     if is_deleted(app) {
         if let Some(dir) = ai_dir(app).filter(|d| d.exists()) {
-            // Finish a delete that failed halfway: wipe the keys, then the files.
-            if let Some(exe) = exe_path(app).filter(|p| p.exists()) {
-                let _ = wipe(&exe);
-            }
-            let _ = std::fs::remove_dir_all(dir);
+            // Finish a delete that failed halfway, off the setup thread: wipe the
+            // keys, then the files. A failed wipe leaves everything for the next start.
+            let exe = exe_path(app).filter(|p| p.exists());
+            std::thread::spawn(move || {
+                if exe.is_none_or(|exe| wipe(&exe).is_ok()) {
+                    let _ = std::fs::remove_dir_all(dir);
+                }
+            });
         }
     }
     let (tx, rx) = std::sync::mpsc::channel::<bool>();
