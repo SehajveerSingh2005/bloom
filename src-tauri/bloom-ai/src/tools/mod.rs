@@ -126,12 +126,7 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         }
         "run_powershell" => run_powershell(ctx, args).await,
         "find_contact" => find_contact(ctx, str_arg(args, "name")?).await,
-        "save_contact" => {
-            let (name, address) = (str_arg(args, "name")?, str_arg(args, "email")?);
-            email::save_contact(&ctx.shared.data_dir, name, address)?;
-            ctx.saved_this_task.insert(address.trim().to_lowercase());
-            Ok(format!("Saved {name} <{}>.", address.trim()))
-        }
+        "save_contact" => save_contact(ctx, args).await,
         "send_email" => send_email(ctx, args).await,
         _ => Err(format!("unknown tool {name}")),
     }
@@ -186,6 +181,34 @@ async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
     Ok(format!(
         "No saved contact matches {name}. Ask the user for the address, then call save_contact."
     ))
+}
+
+async fn save_contact(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
+    let name = str_arg(args, "name")?;
+    let address = str_arg(args, "email")?;
+    let trimmed_address = address.trim().to_lowercase();
+    let contacts = email::load_contacts(&ctx.shared.data_dir);
+    if let Some(old_address) = email::contact_needs_confirm(&contacts, name, &trimmed_address) {
+        if !ctx
+            .shared
+            .bridge
+            .confirm(
+                ctx.task,
+                ConfirmKind::Email,
+                format!("Change {}'s address to {}?", name, trimmed_address),
+                format!(
+                    "Saved address: {}\nNew address: {}",
+                    old_address, trimmed_address
+                ),
+            )
+            .await
+        {
+            return Ok("The user kept the saved address.".into());
+        }
+    }
+    email::save_contact(&ctx.shared.data_dir, name, address)?;
+    ctx.saved_this_task.insert(trimmed_address);
+    Ok(format!("Saved {name} <{}>.", address.trim()))
 }
 
 /// The password or token SMTP needs for the sender's account.
@@ -352,5 +375,49 @@ mod tests {
             .await
             .unwrap();
         assert!(out.contains("save_contact"));
+    }
+
+    #[tokio::test]
+    async fn declining_address_change_keeps_old_address() {
+        let mut ctx = ctx();
+        let dir = ctx.shared.data_dir.clone();
+        email::save_contact(&dir, "Alice", "alice@old.com").unwrap();
+        let shared = ctx.shared.clone();
+        let args = json!({ "name": "Alice", "email": "alice@new.com" });
+        let running = tokio::spawn(async move { call(&mut ctx, "save_contact", &args).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(false));
+        assert_eq!(
+            running.await.unwrap(),
+            Ok("The user kept the saved address.".into())
+        );
+        let contacts = email::load_contacts(&dir);
+        assert_eq!(contacts.get("Alice"), Some(&"alice@old.com".to_string()));
+    }
+
+    #[tokio::test]
+    async fn approving_address_change_updates_it() {
+        let mut ctx = ctx();
+        let dir = ctx.shared.data_dir.clone();
+        email::save_contact(&dir, "Alice", "alice@old.com").unwrap();
+        let shared = ctx.shared.clone();
+        let args = json!({ "name": "Alice", "email": "alice@new.com" });
+        let running = tokio::spawn(async move { call(&mut ctx, "save_contact", &args).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(true));
+        assert!(running.await.unwrap().is_ok());
+        let contacts = email::load_contacts(&dir);
+        assert_eq!(contacts.get("Alice"), Some(&"alice@new.com".to_string()));
+    }
+
+    #[tokio::test]
+    async fn saving_new_contact_does_not_ask() {
+        let mut ctx = ctx();
+        let dir = ctx.shared.data_dir.clone();
+        let args = json!({ "name": "Bob", "email": "bob@example.com" });
+        let result = call(&mut ctx, "save_contact", &args).await;
+        assert!(result.is_ok());
+        let contacts = email::load_contacts(&dir);
+        assert_eq!(contacts.get("Bob"), Some(&"bob@example.com".to_string()));
     }
 }

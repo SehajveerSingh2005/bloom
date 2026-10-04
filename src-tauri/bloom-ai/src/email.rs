@@ -97,10 +97,39 @@ pub fn save_contact(dir: &Path, name: &str, address: &str) -> Result<(), String>
     if !is_email(&address) {
         return Err(format!("{address} is not an email address"));
     }
+    let path = dir.join("contacts.json");
+    // Check if file exists but is unparseable (data loss protection).
+    if path.exists() {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                if serde_json::from_str::<BTreeMap<String, String>>(&content).is_err() {
+                    return Err("contacts.json is unreadable; fix or delete it".into());
+                }
+            }
+            Err(e) => return Err(format!("Cannot read contacts.json: {e}")),
+        }
+    }
     let mut contacts = load_contacts(dir);
     contacts.insert(name.trim().to_string(), address);
     let json = serde_json::to_string_pretty(&contacts).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join("contacts.json"), json).map_err(|e| e.to_string())
+    let tmp_path = dir.join("contacts.json.tmp");
+    std::fs::write(&tmp_path, json).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp_path, &path).map_err(|e| e.to_string())
+}
+
+/// Check if a contact name exists with a different address.
+pub fn contact_needs_confirm(
+    contacts: &BTreeMap<String, String>,
+    name: &str,
+    new_address: &str,
+) -> Option<String> {
+    let trimmed_name = name.trim();
+    for (stored_name, stored_address) in contacts.iter() {
+        if stored_name.eq_ignore_ascii_case(trimmed_name) && stored_address != new_address {
+            return Some(stored_address.clone());
+        }
+    }
+    None
 }
 
 /// Contacts whose name or address contains every word of the query.
@@ -239,6 +268,38 @@ mod tests {
         assert_eq!(
             custom,
             server("smtp.mycompany.com", 587, "imap.mycompany.com", false)
+        );
+    }
+
+    #[test]
+    fn corrupt_contacts_json_prevents_save() {
+        let dir = temp_dir();
+        std::fs::write(dir.join("contacts.json"), "{invalid json").unwrap();
+        let result = save_contact(&dir, "Bob", "bob@example.com");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unreadable"));
+        // Verify file unchanged.
+        assert_eq!(
+            std::fs::read_to_string(dir.join("contacts.json")).unwrap(),
+            "{invalid json"
+        );
+    }
+
+    #[test]
+    fn contact_needs_confirm_detects_address_change() {
+        let mut contacts = BTreeMap::new();
+        contacts.insert("Alice".into(), "alice@old.com".into());
+        assert_eq!(
+            contact_needs_confirm(&contacts, "alice", "alice@new.com"),
+            Some("alice@old.com".into())
+        );
+        assert_eq!(
+            contact_needs_confirm(&contacts, "alice", "alice@old.com"),
+            None
+        );
+        assert_eq!(
+            contact_needs_confirm(&contacts, "bob", "bob@example.com"),
+            None
         );
     }
 }
