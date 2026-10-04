@@ -8,12 +8,60 @@ use crate::protocol::{emit, Out};
 use crate::{debug, secrets, tools};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Model round trips per request; a runaway loop stops here.
 const MAX_STEPS: usize = 12;
+
+/// Turns kept for follow-ups ("email her"), and how long they stay.
+const MEMORY_TURNS: usize = 6;
+const MEMORY_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// The last few user/assistant exchanges, text only (no tool results). RAM
+/// only: it dies with the process, on Cancel, and after ten idle minutes.
+#[derive(Default)]
+pub struct Memory {
+    turns: VecDeque<(String, String)>,
+    last: Option<Instant>,
+}
+
+impl Memory {
+    pub fn clear(&mut self) {
+        self.turns.clear();
+        self.last = None;
+    }
+
+    /// Chat messages for the next request; empty once the memory has expired.
+    pub fn messages(&mut self, now: Instant) -> Vec<Value> {
+        if self
+            .last
+            .is_some_and(|t| now.duration_since(t) > MEMORY_TTL)
+        {
+            self.clear();
+        }
+        self.turns
+            .iter()
+            .flat_map(|(u, a)| {
+                [
+                    json!({ "role": "user", "content": u }),
+                    json!({ "role": "assistant", "content": a }),
+                ]
+            })
+            .collect()
+    }
+
+    pub fn remember(&mut self, now: Instant, user: &str, reply: &str) {
+        self.messages(now); // drop expired turns first
+        self.turns.push_back((user.into(), reply.into()));
+        while self.turns.len() > MEMORY_TURNS {
+            self.turns.pop_front();
+        }
+        self.last = Some(now);
+    }
+}
 
 pub struct Shared {
     pub bridge: Bridge,
@@ -21,6 +69,8 @@ pub struct Shared {
     pub data_dir: PathBuf,
     pub settings_path: PathBuf,
     pub http: reqwest::Client,
+    pub memory: Mutex<Memory>,
+    pub endpoints: crate::weather::Endpoints,
 }
 
 impl Shared {
@@ -34,6 +84,8 @@ impl Shared {
             data_dir,
             settings_path,
             http,
+            memory: Mutex::default(),
+            endpoints: Default::default(),
         }
     }
 }
@@ -81,7 +133,14 @@ pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, St
     log("request", text);
     let result = steps(llm, ctx, text).await;
     match &result {
-        Ok(reply) => log("reply", reply),
+        Ok(reply) => {
+            log("reply", reply);
+            ctx.shared
+                .memory
+                .lock()
+                .unwrap()
+                .remember(Instant::now(), text, reply);
+        }
         Err(e) => log("error", e),
     }
     result
@@ -89,10 +148,9 @@ pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, St
 
 async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
     let tools = tools::schema();
-    let mut messages = vec![
-        json!({ "role": "system", "content": system_prompt(&ctx.cfg.name) }),
-        json!({ "role": "user", "content": text }),
-    ];
+    let mut messages = vec![json!({ "role": "system", "content": system_prompt(&ctx.cfg.name) })];
+    messages.extend(ctx.shared.memory.lock().unwrap().messages(Instant::now()));
+    messages.push(json!({ "role": "user", "content": text }));
     for _ in 0..MAX_STEPS {
         let message = llm.chat(&messages, &tools).await?;
         let calls = message["tool_calls"]
@@ -138,6 +196,13 @@ fn system_prompt(name: &str) -> String {
     format!(
         "You are {name}, the assistant built into Bloom, a Windows desktop shell. You act on the \
          user's PC through tools. The user's profile folder is {home}.\n\
+         Answer questions directly in your reply: general knowledge, facts, and the user's own \
+         data through tools. Never open a website to answer a question; use open only when the \
+         user explicitly asks to open, launch or show something. For the weather call get_weather \
+         and answer from it.\n\
+         Whenever the user mentions a person by name (who is X, email X, call X, X's address), \
+         call find_contact first and use what it returns; do not say you don't know someone \
+         before checking.\n\
          Use write_file to create files, send_email for email, bloom_control for volume, \
          brightness, media, Wi-Fi and Bluetooth, and open for installed apps, web links, \
          files and folders. Use run_powershell only when no other tool fits; keep scripts \
@@ -219,6 +284,77 @@ mod tests {
                 ]
             );
         }
+    }
+
+    #[test]
+    fn prompt_has_the_answer_and_people_rules() {
+        let p = system_prompt("Janice");
+        assert!(p.contains("Answer questions directly"));
+        assert!(p.contains("get_weather"));
+        assert!(p.contains("explicitly asks to open"));
+        assert!(p.contains("mentions a person by name"));
+        assert!(p.contains("find_contact first"));
+    }
+
+    #[test]
+    fn memory_keeps_six_turns_and_expires() {
+        let t0 = Instant::now();
+        let mut m = Memory::default();
+        for i in 0..8 {
+            m.remember(t0, &format!("q{i}"), &format!("a{i}"));
+        }
+        let msgs = m.messages(t0);
+        assert_eq!(msgs.len(), 12);
+        assert_eq!(msgs[0]["content"], "q2");
+        assert_eq!(msgs[11]["content"], "a7");
+        // Each new turn restarts the clock; idle past ten minutes forgets.
+        let later = t0 + Duration::from_secs(9 * 60);
+        m.remember(later, "q8", "a8");
+        assert_eq!(m.messages(later + Duration::from_secs(9 * 60)).len(), 12);
+        assert!(m.messages(later + Duration::from_secs(11 * 60)).is_empty());
+        m.remember(later, "x", "y");
+        m.clear();
+        assert!(m.messages(later).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_follow_up_sees_the_previous_exchange() {
+        let a = r#"{"choices":[{"message":{"role":"assistant","content":"Neha is neha@x.com."}}]}"#;
+        let b = r#"{"choices":[{"message":{"role":"assistant","content":"Ok."}}]}"#;
+        let (url, requests) = mock_server(vec![a.into(), b.into()]);
+        let llm = Llm {
+            http: http(),
+            base_url: url,
+            model: "m".into(),
+            key: "k".into(),
+        };
+        let mut ctx = ctx();
+        run_with(&llm, &mut ctx, "who is Neha").await.unwrap();
+        run_with(&llm, &mut ctx, "email her").await.unwrap();
+        requests.recv().unwrap();
+        let second = requests.recv().unwrap();
+        assert!(second.contains("who is Neha") && second.contains("Neha is neha@x.com."));
+        assert!(second.contains("email her"));
+    }
+
+    #[tokio::test]
+    async fn failed_requests_are_not_remembered() {
+        let (url, _r) = mock_server(vec![r#"{"choices":[]}"#.into()]);
+        let llm = Llm {
+            http: http(),
+            base_url: url,
+            model: "m".into(),
+            key: "k".into(),
+        };
+        let mut ctx = ctx();
+        assert!(run_with(&llm, &mut ctx, "x").await.is_err());
+        assert!(ctx
+            .shared
+            .memory
+            .lock()
+            .unwrap()
+            .messages(Instant::now())
+            .is_empty());
     }
 
     #[tokio::test]

@@ -69,6 +69,8 @@ pub fn ctx() -> Ctx {
         data_dir: temp_dir(),
         settings_path: PathBuf::new(),
         http: http(),
+        memory: Default::default(),
+        endpoints: Default::default(),
     };
     Ctx {
         task: 1,
@@ -77,4 +79,17 @@ pub fn ctx() -> Ctx {
         tainted: false,
         saved_this_task: HashSet::new(),
     }
+}
+
+/// A Ctx whose weather lookups all go to `url`.
+pub fn ctx_with_endpoints(url: &str) -> Ctx {
+    let mut c = ctx();
+    let shared = Arc::get_mut(&mut c.shared).unwrap();
+    shared.endpoints = crate::weather::Endpoints {
+        forecast: url.into(),
+        geocode: url.into(),
+        ip_primary: url.into(),
+        ip_fallback: url.into(),
+    };
+    c
 }

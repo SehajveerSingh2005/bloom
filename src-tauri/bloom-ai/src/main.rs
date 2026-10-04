@@ -20,6 +20,7 @@ mod tools;
 mod voice;
 mod wake;
 mod wake_score;
+mod weather;
 
 #[cfg(test)]
 mod testutil;
@@ -168,6 +169,7 @@ async fn serve(shared: Arc<Shared>) {
                 ));
             }
             In::Cancel => {
+                shared.memory.lock().unwrap().clear();
                 wake.abort_request(true);
                 cancel(&mut current, &shared, true)
             }
