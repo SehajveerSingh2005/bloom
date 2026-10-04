@@ -201,12 +201,28 @@ fn transport(
 /// error text (server replies hold no secrets). `who` is what the user calls
 /// the assistant.
 pub fn explain(server: &Server, who: &str, raw: &str) -> String {
+    let who = if who.trim().is_empty() {
+        "Bloom AI"
+    } else {
+        who
+    };
+    let short: String = raw.chars().take(160).collect();
+    // lettre's Display for a negative SMTP reply (error.rs, 0.11.23) is
+    // "permanent error (535): <server text>" or "transient error (454): ...".
+    // Its constructors are crate-private, so tests feed this exact format.
+    if raw.contains("transient error (454") {
+        return format!(
+            "{} is limiting logins. Try again in a few minutes. Server said: {short}",
+            server.smtp
+        );
+    }
     let auth = ["534", "535", "530", "538"]
         .iter()
         .any(|c| raw.contains(&format!("permanent error ({c}")));
     if auth {
-        let short: String = raw.chars().take(160).collect();
-        return if server.smtp == "smtp.gmail.com" {
+        return if server.oauth {
+            format!("Microsoft refused the sign-in: sign in again in Settings > AI > Email. Server said: {short}")
+        } else if server.smtp == "smtp.gmail.com" {
             format!(
                 "Gmail refused the password. {who} needs a Google App Password \
                  (myaccount.google.com/apppasswords, needs 2-Step Verification), not your \
@@ -412,5 +428,19 @@ mod tests {
         assert!(n.starts_with("Can't reach smtp.mycompany.com:587: "));
         let t = explain(&gmail, "Janice", "transient error (451): try later");
         assert!(t.starts_with("Sending failed"));
+        let ms = preset("me@outlook.com").unwrap();
+        let m = explain(
+            &ms,
+            "Janice",
+            "permanent error (535): 5.7.3 Authentication unsuccessful",
+        );
+        assert!(m.starts_with("Microsoft refused the sign-in: sign in again"));
+        let l = explain(
+            &gmail,
+            "Janice",
+            "transient error (454): 4.7.0 Too many login attempts",
+        );
+        assert!(l.contains("Try again in a few minutes"));
+        assert!(explain(&gmail, " ", "permanent error (534): x").contains("Bloom AI needs"));
     }
 }
