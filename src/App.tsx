@@ -29,6 +29,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { WidgetConfig } from "./components/StatusWidgetConfig";
 import { PowerModeIcon, powerModeLabel, usePowerMode } from "./powerMode";
 import { ConnectPage } from "./ConnectPage";
+import { AiPanel } from "./ai/AiPanel";
+import { useAi } from "./ai/useAi";
 import {
 	Cpu,
 	MemoryStick,
@@ -554,6 +556,8 @@ function App() {
 	const [isVisible, setIsVisible] = useState(true);
 	const [isImpacted, setIsImpacted] = useState(false);
 	const [isExpanded, setIsExpanded] = useState(false);
+	// Bloom AI panel open in the notch: keeps a smart/peek notch on screen.
+	const [aiOpen, setAiOpen] = useState(false);
 	const [startupAnimating, setStartupAnimating] = useState(false);
 
 	const [dockMode, setDockMode] = useState(() => {
@@ -578,6 +582,7 @@ function App() {
 	const isAnyInteraction = isHovered || isNotchHovered || isEdgeHovered;
 	const isHidden =
 		!startupAnimating &&
+		!aiOpen &&
 		((notchMode === "smart" && isOverlapped && interactionState === "none") ||
 			(notchMode === "peek" && interactionState === "none" && !eventPeek));
 
@@ -1009,10 +1014,31 @@ function App() {
 		invoke("change_notch_mode", { mode: notchMode });
 	}, [notchMode, windowLabel]);
 
-	// Bloom mode state: 'music', 'calendar', 'command-center', 'announcement', or 'status'
+	// Bloom mode state: 'music', 'calendar', 'command-center', 'announcement', 'status' or 'ai'
 	const [bloomMode, setBloomMode] = useState<
-		"music" | "calendar" | "command-center" | "announcement" | "status"
+		"music" | "calendar" | "command-center" | "announcement" | "status" | "ai"
 	>("status");
+
+	// Bloom AI: Bloom opens the panel here (hotkey or dock button) unless the
+	// notch is merged into the dock, where Dock.tsx shows it instead.
+	const [aiFocus, setAiFocus] = useState(false);
+	const [aiHeight, setAiHeight] = useState(96);
+	const ai = useAi((recording) => {
+		if (infoCentreRef.current) return;
+		setAiFocus(!recording);
+		setAiOpen(true);
+		setBloomMode("ai");
+	});
+	const closeAi = () => {
+		ai.stop();
+		ai.reset();
+		setAiOpen(false);
+		setBloomMode(mediaInfo.has_media && isPlaying ? "music" : "status");
+	};
+	// Turning AI off (or deleting it) closes an open panel.
+	useEffect(() => {
+		if (!ai.enabled && bloomMode === "ai") closeAi();
+	}, [ai.enabled, bloomMode]);
 
 	// Open the notch on an unseen announcement; stays open until dismissed.
 	useEffect(() => {
@@ -1062,7 +1088,7 @@ function App() {
 		});
 
 		// The announcement card is closed explicitly, not cycled away.
-		if (bloomMode === "announcement") return;
+		if (bloomMode === "announcement" || bloomMode === "ai") return;
 
 		const currentIndex = availableModes.indexOf(bloomMode);
 		if (currentIndex === -1) return;
@@ -1262,6 +1288,7 @@ function App() {
 			mediaInfo.has_media &&
 			isPlaying &&
 			bloomMode !== "calendar" &&
+			bloomMode !== "ai" &&
 			!announcementOpenRef.current &&
 			(isNewTrackWhilePlaying || justStartedPlaying)
 		) {
@@ -1822,6 +1849,7 @@ function App() {
 
 	// Calculate width dynamically based on enabled features
 	const getDynamicWidth = () => {
+		if (bloomMode === "ai") return 420;
 		if (bloomMode === "announcement" && announcement && !announcementDismissed) return 380;
 		if (isCalendarMode) return 480;
 		if (bloomMode === "command-center" && isHovered) return 350;
@@ -1850,6 +1878,8 @@ function App() {
 		if (!isExpanded || !isVisible || isHidden) {
 			return isImpacted ? 28.9 : 44.2;
 		}
+		// The 36px status row plus the panel, which reports its own height.
+		if (bloomMode === "ai") return 36 + aiHeight;
 		// Announcement card: body is line-clamped, so a fixed size fits both cases.
 		if (bloomMode === "announcement" && announcement && !announcementDismissed) {
 			return announcement.url ? 168 : 148;
@@ -1947,7 +1977,7 @@ function App() {
 					}}
 					onHoverStart={() => {
 						setIsHovered(true);
-						if (bloomMode !== "announcement") {
+						if (bloomMode !== "announcement" && bloomMode !== "ai") {
 							setBloomMode(mediaInfo.has_media && isPlaying ? "music" : "status");
 						}
 					}}
@@ -2362,7 +2392,7 @@ function App() {
 																			</motion.div>
 																		)}
 																	</AnimatePresence>
-																) : !isMusicMode && isHovered && statusWidgets.left.length > 0 ? (
+																) : !isMusicMode && bloomMode !== "ai" && isHovered && statusWidgets.left.length > 0 ? (
 																	<motion.div
 																		key="left-widgets"
 																		className="passive-features-group"
@@ -2493,7 +2523,7 @@ function App() {
 																			</button>
 																		</motion.div>
 																	</AnimatePresence>
-																) : !isMusicMode && isHovered && statusWidgets.right.length > 0 ? (
+																) : !isMusicMode && bloomMode !== "ai" && isHovered && statusWidgets.right.length > 0 ? (
 																	<motion.div
 																		key="right-widgets"
 																		className="passive-features-group"
@@ -2812,6 +2842,22 @@ function App() {
 													Learn more
 												</button>
 											)}
+										</motion.div>
+									)}
+								</AnimatePresence>
+
+								{/* Bloom AI */}
+								<AnimatePresence>
+									{bloomMode === "ai" && (
+										<motion.div
+											className="ai-notch-content"
+											onClick={(e) => e.stopPropagation()}
+											initial={{ opacity: 0 }}
+											animate={{ opacity: 1 }}
+											exit={{ opacity: 0, transition: { duration: 0.1 } }}
+											transition={{ duration: 0.15 }}
+										>
+											<AiPanel ai={ai} onClose={closeAi} focusOnOpen={aiFocus} onHeight={setAiHeight} />
 										</motion.div>
 									)}
 								</AnimatePresence>
