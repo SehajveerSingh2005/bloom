@@ -1557,7 +1557,6 @@ function TrayPopup({
 }) {
 	const [apps, setApps] = useState<TrayApp[]>([]);
 	const [menuApp, setMenuApp] = useState<TrayApp | null>(null);
-	const [hoveredApp, setHoveredApp] = useState<TrayApp | null>(null);
 	const [loading, setLoading] = useState(true);
 
 	useEffect(() => {
@@ -1631,9 +1630,6 @@ function TrayPopup({
 					setMenuApp(null);
 				}}
 			>
-				<div className="popup-header-row">
-					{(hoveredApp ?? menuApp)?.name || "Background Apps"}
-				</div>
 				<div className="popup-apps-scroll">
 					{loading ? (
 						<div className="popup-loading">
@@ -1645,8 +1641,6 @@ function TrayPopup({
 								<div
 									key={app.id}
 									className={`tray-icon${menuApp?.id === app.id ? " selected" : ""}`}
-									onMouseEnter={() => setHoveredApp(app)}
-									onMouseLeave={() => setHoveredApp(null)}
 									onClick={(e) => {
 										e.stopPropagation();
 										openApp(app);
