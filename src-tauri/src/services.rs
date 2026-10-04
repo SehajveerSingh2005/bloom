@@ -51,6 +51,10 @@ static WIN_KEY_DOWN: AtomicBool = AtomicBool::new(false);
 /// auto-repeat re-fires the keydown; only the first press may toggle an app.
 #[cfg(windows)]
 static WIN_NUMBER_HELD: AtomicU8 = AtomicU8::new(0);
+/// Whether the Bloom AI push-to-talk key is held. Key auto-repeat re-sends the
+/// keydown; only the first one starts a recording.
+#[cfg(windows)]
+static AI_KEY_HELD: AtomicBool = AtomicBool::new(false);
 /// Virtual key Microsoft documents as "unassigned", used as the mask key.
 /// See `send_start_menu_mask`.
 #[cfg(windows)]
@@ -192,6 +196,18 @@ unsafe extern "system" fn keyboard_hook_proc(
         let vk_code = VIRTUAL_KEY(kb.vkCode as u16);
         let is_down = wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize;
         let is_up = wparam.0 == WM_KEYUP as usize || wparam.0 == WM_SYSKEYUP as usize;
+
+        // Bloom AI push-to-talk (Settings > AI). The key is swallowed so it
+        // never reaches the focused app. HOTKEY_VK is 0 while AI is off.
+        let ai_vk = crate::ai::HOTKEY_VK.load(Ordering::Relaxed);
+        if ai_vk != 0 && kb.vkCode == ai_vk && (kb.flags.0 & LLKHF_INJECTED.0) == 0 {
+            if is_down && !AI_KEY_HELD.swap(true, Ordering::Relaxed) {
+                crate::ai::hotkey_event(true);
+            } else if is_up && AI_KEY_HELD.swap(false, Ordering::Relaxed) {
+                crate::ai::hotkey_event(false);
+            }
+            return windows::Win32::Foundation::LRESULT(1);
+        }
 
         // Only physical presses drive the Win+Number replacement; injected
         // events (our own Start taps and mask key) must not re-enter it.
