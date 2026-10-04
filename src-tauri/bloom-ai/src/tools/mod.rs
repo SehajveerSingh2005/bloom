@@ -197,7 +197,7 @@ async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
     // Not saved yet: look through mail the user sent before. Any failure here
     // (no email set up, offline) just falls through to asking the user.
     if let Ok(server) = email::server_for(&ctx.cfg) {
-        if let Ok(secret) = mail_secret(ctx, &server).await {
+        if let Ok(secret) = mail_secret(&ctx.shared.http, &server).await {
             let (user, query) = (ctx.cfg.email.clone(), name.to_string());
             let found = tokio::task::spawn_blocking(move || {
                 imap_lookup::sent_to(&server, &user, &secret, &query)
@@ -250,12 +250,25 @@ async fn save_contact(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
 }
 
 /// The password or token SMTP needs for the sender's account.
-async fn mail_secret(ctx: &Ctx, server: &email::Server) -> Result<String, String> {
+async fn mail_secret(http: &reqwest::Client, server: &email::Server) -> Result<String, String> {
     if server.oauth {
-        return outlook::access_token(&ctx.shared.http).await;
+        return outlook::access_token(http).await;
     }
     secrets::get("email-password")
         .ok_or_else(|| "Save your email app password in Settings > AI first.".into())
+}
+
+/// Settings > Test: connect and log in to the configured server, sending nothing.
+pub async fn test_email(shared: &crate::agent::Shared) -> Result<String, String> {
+    let cfg = crate::config::Config::load(&shared.settings_path);
+    let server = email::server_for(&cfg)?;
+    let secret = mail_secret(&shared.http, &server).await?;
+    let (who, from) = (cfg.name.clone(), cfg.email.clone());
+    let host = server.smtp.clone();
+    tokio::task::spawn_blocking(move || email::test_login(&server, &who, &from, &secret))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(format!("Logged in to {host}. Nothing was sent."))
 }
 
 async fn send_email(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
@@ -287,8 +300,21 @@ async fn send_email(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
         journal::record(&ctx.shared.data_dir, "email", &detail, "declined");
         return Ok("The user chose not to send it.".into());
     }
-    let secret = mail_secret(ctx, &server).await?;
+    let secret = match mail_secret(&ctx.shared.http, &server).await {
+        Ok(secret) => secret,
+        Err(reason) => {
+            journal::record_with(
+                &ctx.shared.data_dir,
+                "email",
+                &detail,
+                "failed",
+                Some(&reason),
+            );
+            return Err(reason);
+        }
+    };
     let from = ctx.cfg.email.clone();
+    let who = ctx.cfg.name.clone();
     let recipient = to.clone();
     let started = if ask {
         "approved-started"
@@ -297,14 +323,21 @@ async fn send_email(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
     };
     journal::record(&ctx.shared.data_dir, "email", &detail, started);
     let sent = tokio::task::spawn_blocking(move || {
-        email::send(&server, &from, &secret, &recipient, &subject, &body)
+        email::send(&server, &who, &from, &secret, &recipient, &subject, &body)
     })
     .await;
     let sent = match sent {
         Ok(sent) => sent,
         Err(e) => {
-            journal::record(&ctx.shared.data_dir, "email", &detail, "failed");
-            return Err(e.to_string());
+            let reason = e.to_string();
+            journal::record_with(
+                &ctx.shared.data_dir,
+                "email",
+                &detail,
+                "failed",
+                Some(&reason),
+            );
+            return Err(reason);
         }
     };
     let outcome = match (&sent, ask) {
@@ -312,7 +345,8 @@ async fn send_email(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
         (Ok(()), true) => "approved",
         (Ok(()), false) => "auto",
     };
-    journal::record(&ctx.shared.data_dir, "email", &detail, outcome);
+    let reason = sent.as_ref().err().map(String::as_str);
+    journal::record_with(&ctx.shared.data_dir, "email", &detail, outcome, reason);
     sent.map(|()| format!("Sent to {to}."))
 }
 
@@ -386,6 +420,24 @@ mod tests {
             })
             .collect();
         assert_eq!(outcomes, ["auto-started", "auto"]);
+    }
+
+    #[tokio::test]
+    async fn failed_email_journals_a_reason() {
+        let mut ctx = ctx();
+        ctx.cfg.email = "me@mycompany.com".into();
+        ctx.cfg.smtp_host = "smtp.invalid".into();
+        let shared = ctx.shared.clone();
+        let args = json!({ "to": "neha@example.com", "subject": "s", "body": "b" });
+        let running = tokio::spawn(async move { call(&mut ctx, "send_email", &args).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(true));
+        // No password saved (or an unreachable host): either way it fails with a reason.
+        assert!(running.await.unwrap().is_err());
+        let log = std::fs::read_to_string(shared.data_dir.join("actions.log")).unwrap();
+        let last: Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+        assert_eq!(last["outcome"], "failed");
+        assert!(last["reason"].as_str().is_some_and(|r| !r.is_empty()));
     }
 
     #[tokio::test]

@@ -216,6 +216,7 @@ fn main() {
             ai::ai_secret_status,
             #[cfg(windows)]
             ai::ai_outlook_login,
+            ai::ai_test_email,
             #[cfg(windows)]
             ai::ai_enroll_sample,
             #[cfg(windows)]

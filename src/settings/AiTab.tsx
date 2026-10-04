@@ -140,10 +140,20 @@ export function AiTab() {
 	const [capturing, setCapturing] = useState(false);
 	const [login, setLogin] = useState<{ url: string; code: string } | null>(null);
 	const [message, setMessage] = useState("");
+	const [testing, setTesting] = useState(false);
 	const [wake, setWake] = useAiSetting("bloom-ai-wake", "false");
 	const [enrolling, setEnrolling] = useState(false);
 	const [next, setNext] = useState(1);
 	const [busy, setBusy] = useState<"" | "recording" | "building">("");
+
+	const testEmail = () => {
+		setTesting(true);
+		setMessage("");
+		invoke("ai_test_email").catch((e) => {
+			setTesting(false);
+			setMessage(String(e));
+		});
+	};
 
 	const refresh = () =>
 		invoke<AiStatus>("ai_status")
@@ -177,6 +187,10 @@ export function AiTab() {
 				setLogin(null);
 				setMessage(payload.message);
 			}
+			if (payload.type === "email_test") {
+				setTesting(false);
+				setMessage(payload.message);
+			}
 			if (payload.type === "enroll_saved") {
 				setNext(payload.index + 1);
 				setBusy("");
@@ -190,9 +204,13 @@ export function AiTab() {
 			if (payload.type === "error" && payload.task == null) {
 				setMessage(payload.message);
 				setBusy("");
+				setTesting(false);
 			}
 			// The agent stopped mid-sample or mid-build: nothing more will come.
-			if (payload.type === "exited") setBusy("");
+			if (payload.type === "exited") {
+				setBusy("");
+				setTesting(false);
+			}
 		});
 		return () => {
 			off.then((f) => f());
@@ -466,11 +484,21 @@ export function AiTab() {
 										Sign in
 									</button>
 								)}
+								{!login && (
+									<button className="ai-btn" disabled={testing} onClick={testEmail}>
+										{testing ? "Testing..." : "Test"}
+									</button>
+								)}
 							</SettingRow>
 						) : (
 							<>
 								<SettingRow icon={KeyRound} label="App password" desc="From your email provider's security settings">
-									<SecretField name="email-password" saved={!!saved["email-password"]} placeholder="app password" />
+									<div className="ai-secret">
+										<SecretField name="email-password" saved={!!saved["email-password"]} placeholder="app password" />
+										<button className="ai-btn" disabled={testing} onClick={testEmail}>
+											{testing ? "Testing..." : "Test"}
+										</button>
+									</div>
 								</SettingRow>
 								<SettingRow icon={Server} label="Mail server" desc="Only for providers Bloom doesn't know" divider={false}>
 									<div className="ai-secret">

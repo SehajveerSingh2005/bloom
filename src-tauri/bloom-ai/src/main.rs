@@ -209,6 +209,17 @@ async fn serve(shared: Arc<Shared>) {
                     emit(&Out::LoginDone { ok, message });
                 });
             }
+            In::TestEmail => {
+                let s = shared.clone();
+                // Its own task: an unreachable server takes the connect timeout.
+                tokio::spawn(async move {
+                    let (ok, message) = match tools::test_email(&s).await {
+                        Ok(m) => (true, m),
+                        Err(e) => (false, e),
+                    };
+                    emit(&Out::EmailTest { ok, message });
+                });
+            }
             In::RecordStart => {
                 wake.abort_request(false);
                 // A key-up that never arrived leaves an old recorder: drop its clip.

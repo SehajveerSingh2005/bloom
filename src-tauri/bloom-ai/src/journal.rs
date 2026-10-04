@@ -9,11 +9,20 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn record(dir: &Path, kind: &str, detail: &str, outcome: &str) {
+    record_with(dir, kind, detail, outcome, None);
+}
+
+/// Like `record`, plus a short human reason (never a secret) for failures.
+pub fn record_with(dir: &Path, kind: &str, detail: &str, outcome: &str, reason: Option<&str>) {
     let at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let line = serde_json::json!({ "at": at, "kind": kind, "outcome": outcome, "detail": detail });
+    let mut line =
+        serde_json::json!({ "at": at, "kind": kind, "outcome": outcome, "detail": detail });
+    if let Some(reason) = reason {
+        line["reason"] = reason.chars().take(300).collect::<String>().into();
+    }
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -39,5 +48,16 @@ mod tests {
             .collect();
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[1]["outcome"], "declined");
+        assert!(lines[1].get("reason").is_none());
+        record_with(
+            &dir,
+            "email",
+            "to a@b.co: hi",
+            "failed",
+            Some("Gmail refused"),
+        );
+        let log = std::fs::read_to_string(dir.join("actions.log")).unwrap();
+        let last: serde_json::Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+        assert_eq!(last["reason"], "Gmail refused");
     }
 }

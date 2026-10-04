@@ -465,6 +465,12 @@ pub fn ai_outlook_login(app: AppHandle) -> Result<(), String> {
     send(&app, json!({ "type": "outlook_login" }))
 }
 
+/// Logs in to the configured mail server without sending; `email_test` follows.
+#[tauri::command]
+pub fn ai_test_email(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "test_email" }))
+}
+
 /// Records "Hey <name>" sample `index` (1 starts over); `enroll_saved` follows.
 #[tauri::command]
 pub fn ai_enroll_sample(app: AppHandle, index: u32) -> Result<(), String> {

@@ -171,9 +171,67 @@ pub fn is_known(contacts: &BTreeMap<String, String>, address: &str) -> bool {
     contacts.values().any(|a| a.eq_ignore_ascii_case(address))
 }
 
+fn transport(
+    server: &Server,
+    from: &str,
+    secret: &str,
+) -> Result<lettre::SmtpTransport, lettre::transport::smtp::Error> {
+    use lettre::transport::smtp::authentication::{Credentials, Mechanism};
+    use lettre::SmtpTransport;
+
+    // 465 is TLS from the first byte; anything else (587) upgrades with STARTTLS.
+    let builder = if server.port == 465 {
+        SmtpTransport::relay(&server.smtp)
+    } else {
+        SmtpTransport::starttls_relay(&server.smtp)
+    }?;
+    let mechanism = if server.oauth {
+        Mechanism::Xoauth2
+    } else {
+        Mechanism::Plain
+    };
+    Ok(builder
+        .port(server.port)
+        .credentials(Credentials::new(from.to_string(), secret.to_string()))
+        .authentication(vec![mechanism])
+        .build())
+}
+
+/// A readable reason for a failed SMTP login or connection. `raw` is lettre's
+/// error text (server replies hold no secrets). `who` is what the user calls
+/// the assistant.
+pub fn explain(server: &Server, who: &str, raw: &str) -> String {
+    let auth = ["534", "535", "530", "538"]
+        .iter()
+        .any(|c| raw.contains(&format!("permanent error ({c}")));
+    if auth {
+        let short: String = raw.chars().take(160).collect();
+        return if server.smtp == "smtp.gmail.com" {
+            format!(
+                "Gmail refused the password. {who} needs a Google App Password \
+                 (myaccount.google.com/apppasswords, needs 2-Step Verification), not your \
+                 normal password. Save it in Settings > AI > Email. Server said: {short}"
+            )
+        } else {
+            format!(
+                "{} refused the login: check the app password. Server said: {short}",
+                server.smtp
+            )
+        };
+    }
+    let network = ["network error", "Connection error", "tls error"]
+        .iter()
+        .any(|k| raw.contains(k));
+    if network {
+        return format!("Can't reach {}:{}: {raw}", server.smtp, server.port);
+    }
+    format!("Sending failed: {raw}")
+}
+
 /// Blocking: call from spawn_blocking.
 pub fn send(
     server: &Server,
+    who: &str,
     from: &str,
     secret: &str,
     to: &str,
@@ -181,8 +239,7 @@ pub fn send(
     body: &str,
 ) -> Result<(), String> {
     use lettre::message::header::ContentType;
-    use lettre::transport::smtp::authentication::{Credentials, Mechanism};
-    use lettre::{Message, SmtpTransport, Transport};
+    use lettre::{Message, Transport};
 
     let message = Message::builder()
         .from(
@@ -196,26 +253,26 @@ pub fn send(
         .header(ContentType::TEXT_PLAIN)
         .body(body.to_string())
         .map_err(|e| e.to_string())?;
-    // 465 is TLS from the first byte; anything else (587) upgrades with STARTTLS.
-    let builder = if server.port == 465 {
-        SmtpTransport::relay(&server.smtp)
-    } else {
-        SmtpTransport::starttls_relay(&server.smtp)
-    }
-    .map_err(|e| e.to_string())?;
-    let mechanism = if server.oauth {
-        Mechanism::Xoauth2
-    } else {
-        Mechanism::Plain
-    };
-    builder
-        .port(server.port)
-        .credentials(Credentials::new(from.to_string(), secret.to_string()))
-        .authentication(vec![mechanism])
-        .build()
+    let fail = |e: lettre::transport::smtp::Error| explain(server, who, &e.to_string());
+    transport(server, from, secret)
+        .map_err(fail)?
         .send(&message)
         .map(|_| ())
-        .map_err(|e| format!("Sending failed: {e}"))
+        .map_err(fail)
+}
+
+/// Blocking: connects and logs in without sending. lettre's `test_connection`
+/// opens a connection, and opening one authenticates when credentials are set.
+pub fn test_login(server: &Server, who: &str, from: &str, secret: &str) -> Result<(), String> {
+    let fail = |e: lettre::transport::smtp::Error| explain(server, who, &e.to_string());
+    match transport(server, from, secret)
+        .map_err(fail)?
+        .test_connection()
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(format!("{} closed the connection.", server.smtp)),
+        Err(e) => Err(fail(e)),
+    }
 }
 
 #[cfg(test)]
@@ -326,5 +383,34 @@ mod tests {
         let contacts = load_contacts(&dir);
         assert_eq!(contacts.len(), 1, "Should have exactly one entry");
         assert_eq!(contacts.get("alice"), Some(&"alice@new.com".to_string()));
+    }
+
+    #[test]
+    fn explains_login_and_network_failures() {
+        let gmail = preset("me@gmail.com").unwrap();
+        let g = explain(
+            &gmail,
+            "Janice",
+            "permanent error (534): 5.7.9 Application-specific password required",
+        );
+        assert!(g.starts_with("Gmail refused the password. Janice needs a Google App Password"));
+        assert!(g.contains("5.7.9 Application-specific"));
+        let g = explain(
+            &gmail,
+            "Bloom AI",
+            "permanent error (535): 5.7.8 Username and Password not accepted",
+        );
+        assert!(g.contains("Bloom AI needs") && g.contains("5.7.8"));
+        let other = server("smtp.mycompany.com", 587, "imap.mycompany.com", false);
+        let o = explain(&other, "Janice", "permanent error (535): bad credentials");
+        assert!(o.starts_with("smtp.mycompany.com refused the login: check the app password."));
+        let n = explain(
+            &other,
+            "Janice",
+            "network error: failed to lookup address information",
+        );
+        assert!(n.starts_with("Can't reach smtp.mycompany.com:587: "));
+        let t = explain(&gmail, "Janice", "transient error (451): try later");
+        assert!(t.starts_with("Sending failed"));
     }
 }

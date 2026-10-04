@@ -15,6 +15,7 @@ pub enum In {
     BloomResult { id: u64, ok: bool, detail: String },
     SetSecret { name: String, value: String },
     OutlookLogin,
+    TestEmail,
     SecretStatus,
     WakeOn,
     WakeOff,
@@ -78,6 +79,10 @@ pub enum Out {
         code: String,
     },
     LoginDone {
+        ok: bool,
+        message: String,
+    },
+    EmailTest {
         ok: bool,
         message: String,
     },
@@ -153,6 +158,19 @@ mod tests {
             r#"{"type":"enroll_saved","index":3}"#
         );
         assert_eq!(json(Out::EnrollDone), r#"{"type":"enroll_done"}"#);
+    }
+
+    #[test]
+    fn email_test_messages() {
+        assert_eq!(parse(r#"{"type":"test_email"}"#), Ok(In::TestEmail));
+        assert_eq!(
+            serde_json::to_string(&Out::EmailTest {
+                ok: false,
+                message: "x".into()
+            })
+            .unwrap(),
+            r#"{"type":"email_test","ok":false,"message":"x"}"#
+        );
     }
 
     #[test]
