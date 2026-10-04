@@ -162,8 +162,8 @@ const Dock = memo(function Dock() {
 	// tab: that one stays until it is closed, as in the notch. While Janice is
 	// busy an open panel goes back to her tab instead of closing, so Stop and
 	// the confirm card stay in reach.
-	const aiBusyRef = useRef(false);
-	const keepAi = (t: InfoTab | null) => (t === "ai" || (t && aiBusyRef.current) ? "ai" : null);
+	const aiOwnRef = useRef(false);
+	const keepAi = (t: InfoTab | null) => (t === "ai" || (t && aiOwnRef.current) ? "ai" : null);
 	const scheduleInfoClose = () => {
 		if (infoCloseTimer.current) clearTimeout(infoCloseTimer.current);
 		infoCloseTimer.current = setTimeout(() => setInfoTab(keepAi), 350);
@@ -179,7 +179,10 @@ const Dock = memo(function Dock() {
 		setAiFocus(!recording);
 		setInfoTab("ai");
 	});
-	aiBusyRef.current = ["recording", "transcribing", "working", "confirm"].includes(ai.state.phase);
+	// The dock hears every `ai-event`, the notch's too: it only owns a busy task
+	// that was running while merged, and keeps owning it until it ends.
+	if (!["recording", "transcribing", "working", "confirm"].includes(ai.state.phase)) aiOwnRef.current = false;
+	else if (infoCentre) aiOwnRef.current = true;
 	const closeAi = () => {
 		ai.stop();
 		ai.reset();
@@ -190,11 +193,11 @@ const Dock = memo(function Dock() {
 		setAiFocus(t === "ai");
 		setInfoTab(t);
 	};
-	// AI off, Delete AI or unmerging stops Janice even if another tab is showing.
-	// (In notch mode the notch owns the task, so only a dock tab or a busy task
-	// that started here counts.)
+	// AI off, Delete AI or unmerging stops Janice even if another tab is showing,
+	// but only a task the dock owns (never one the notch started).
 	useEffect(() => {
-		if ((!ai.enabled || !infoCentre) && (aiOpen || aiBusyRef.current)) closeAi();
+		if ((!ai.enabled || !infoCentre) && (aiOpen || aiOwnRef.current)) closeAi();
+		if (!infoCentre) setInfoTab(null);
 	}, [ai.enabled, infoCentre, aiOpen]);
 	// A request waiting for an OK brings the AI tab back if another tab is showing.
 	useEffect(() => {
