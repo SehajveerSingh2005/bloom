@@ -1991,6 +1991,30 @@ pub fn open_notification_center() {
 }
 
 #[tauri::command]
+pub async fn get_tray_apps() -> Vec<crate::types::TrayApp> {
+    tauri::async_runtime::spawn_blocking(move || unsafe {
+        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+
+        let com_initialized = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
+        let apps = crate::tray::list_tray_apps();
+        if com_initialized {
+            CoUninitialize();
+        }
+        apps
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[tauri::command]
+pub async fn click_tray_app(hwnd: isize, uid: u32, callback_message: u32, right: bool) {
+    let _ = tauri::async_runtime::spawn_blocking(move || unsafe {
+        crate::tray::click_tray_app(hwnd, uid, callback_message, right);
+    })
+    .await;
+}
+
+#[tauri::command]
 pub fn open_system_tray() {
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use std::sync::atomic::Ordering;
@@ -2361,7 +2385,7 @@ pub fn set_volume(volume: f32) {
 }
 
 /// Full path of a running process, or `None` when it can't be opened.
-unsafe fn process_image_path(pid: u32) -> Option<String> {
+pub(crate) unsafe fn process_image_path(pid: u32) -> Option<String> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
@@ -2385,7 +2409,7 @@ unsafe fn process_image_path(pid: u32) -> Option<String> {
 /// Friendly name for an executable: the shell's `FileDescription` from version
 /// info ("Google Chrome"), falling back to the prettified file stem. Results are
 /// cached by path because the mixer polls while it is open.
-unsafe fn friendly_process_name(path: &str) -> String {
+pub(crate) unsafe fn friendly_process_name(path: &str) -> String {
     let cache = PROCESS_NAME_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     if let Ok(guard) = cache.lock() {
         if let Some(name) = guard.get(path) {
