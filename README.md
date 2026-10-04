@@ -163,6 +163,7 @@ You'll need [Rust](https://rustup.rs/) and [Bun](https://bun.sh/). That's it.
 Bloom is open source.
 Found a bug? Open an issue.
 Have an idea? Send a PR.
+Want to translate Bloom? See [Translations](CONTRIBUTING.md#translations) in the contributing guide.
 Want to just say it's cool? A star goes a long way.
 
 Licensed under [GPLv3](LICENSE).

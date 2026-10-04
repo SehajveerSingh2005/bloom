@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 import { StatusWidgetConfig } from "../components/StatusWidgetConfig";
+import { useTranslation } from "../i18n";
 import type { WidgetConfig } from "./types";
 
 interface NotchTabProps {
@@ -87,30 +88,36 @@ export function NotchTab({
 	statusWidgets,
 	handleWidgetsChange
 }: NotchTabProps) {
+	const { t } = useTranslation();
+
 	return (
 		<>
-			<div className="setting-group-label">Notch</div>
+			<div className="setting-group-label">{t("settings.groups.notch")}</div>
 			<div className="setting-group">
-				<SettingRow icon={PanelTop} label="Notch Behavior" desc="Choose how the notch appears">
+				<SettingRow
+					icon={PanelTop}
+					label={t("settings.notch.behavior")}
+					desc={t("settings.notch.behaviorDesc")}
+				>
 					<select
 						className="settings-select"
 						value={notchMode}
 						onChange={(e) => setNotchModeValue(e.target.value)}
 					>
-						<option value="fixed">Fixed</option>
-						<option value="smart">Smart</option>
-						<option value="peek">Peek</option>
+						<option value="fixed">{t("common.behavior.fixed")}</option>
+						<option value="smart">{t("common.behavior.smart")}</option>
+						<option value="peek">{t("common.behavior.peek")}</option>
 					</select>
 				</SettingRow>
 
 				{notchMode !== "fixed" && (
 					<SettingRow
 						icon={Timer}
-						label="Peek Delay"
+						label={t("settings.notch.peekDelay")}
 						desc={
 							notchEdgeDelay === 0
-								? "Reveal instantly on top-edge contact"
-								: `Rest on the top edge for ${notchEdgeDelay}ms to reveal`
+								? t("settings.notch.peekInstant")
+								: t("settings.notch.peekDelayed", { ms: notchEdgeDelay })
 						}
 					>
 						<input
@@ -125,7 +132,11 @@ export function NotchTab({
 					</SettingRow>
 				)}
 
-				<SettingRow icon={Calendar} label="Calendar & Timer" desc="Enable productivity split-view">
+				<SettingRow
+					icon={Calendar}
+					label={t("settings.notch.calendar")}
+					desc={t("settings.notch.calendarDesc")}
+				>
 					<label className="toggle-switch">
 						<input type="checkbox" checked={calendarEnabled} onChange={toggleCalendar} />
 						<span className="slider"></span>
@@ -135,8 +146,8 @@ export function NotchTab({
 				{calendarEnabled && (
 					<SettingRow
 						icon={BellRing}
-						label="Timer Sound"
-						desc="Play a chime when the timer finishes"
+						label={t("settings.notch.timerSound")}
+						desc={t("settings.notch.timerSoundDesc")}
 					>
 						<label className="toggle-switch">
 							<input type="checkbox" checked={timerSoundEnabled} onChange={toggleTimerSound} />
@@ -145,7 +156,11 @@ export function NotchTab({
 					</SettingRow>
 				)}
 
-				<SettingRow icon={Music} label="Music Mode" desc="Interactive live music widget">
+				<SettingRow
+					icon={Music}
+					label={t("settings.notch.music")}
+					desc={t("settings.notch.musicDesc")}
+				>
 					<label className="toggle-switch">
 						<input type="checkbox" checked={musicModeEnabled} onChange={toggleMusicMode} />
 						<span className="slider"></span>
@@ -156,8 +171,8 @@ export function NotchTab({
 					<>
 						<SettingRow
 							icon={Minimize2}
-							label="Compact Mode"
-							desc="Show visualizer & artwork when collapsed"
+							label={t("settings.notch.compact")}
+							desc={t("settings.notch.compactDesc")}
 						>
 							<label className="toggle-switch">
 								<input
@@ -169,27 +184,31 @@ export function NotchTab({
 							</label>
 						</SettingRow>
 
-						<SettingRow icon={LayoutList} label="Media Layout" desc="Choose expanded player style">
+						<SettingRow
+							icon={LayoutList}
+							label={t("settings.notch.mediaLayout")}
+							desc={t("settings.notch.mediaLayoutDesc")}
+						>
 							<div className="unit-toggle-minimal wide">
 								<span
 									className={mediaLayout === "classic" ? "active" : ""}
 									onClick={() => toggleMediaLayout("classic")}
 								>
-									Classic
+									{t("common.mediaLayout.classic")}
 								</span>
 								<span
 									className={mediaLayout === "compact" ? "active" : ""}
 									onClick={() => toggleMediaLayout("compact")}
 								>
-									Compact
+									{t("common.mediaLayout.compact")}
 								</span>
 							</div>
 						</SettingRow>
 
 						<SettingRow
 							icon={Sparkles}
-							label="Ambient Glow"
-							desc="Colored glow behind expanded album art"
+							label={t("settings.notch.ambience")}
+							desc={t("settings.notch.ambienceDesc")}
 						>
 							<label className="toggle-switch">
 								<input type="checkbox" checked={mediaAmbienceEnabled} onChange={toggleAmbience} />
@@ -199,8 +218,8 @@ export function NotchTab({
 
 						<SettingRow
 							icon={Circle}
-							label="Compact Glow"
-							desc="Glow around collapsed thumbnail"
+							label={t("settings.notch.compactGlow")}
+							desc={t("settings.notch.compactGlowDesc")}
 							divider={false}
 						>
 							<label className="toggle-switch">
@@ -216,12 +235,12 @@ export function NotchTab({
 				)}
 			</div>
 
-			<div className="setting-group-label">Weather</div>
+			<div className="setting-group-label">{t("settings.groups.weather")}</div>
 			<div className="setting-group">
 				<SettingRow
 					icon={CloudSun}
-					label="Weather Status"
-					desc={cityName || "Auto-detect location"}
+					label={t("settings.notch.weather")}
+					desc={cityName || t("settings.notch.weatherAuto")}
 				>
 					<div className="weather-controls">
 						<div className="unit-toggle-minimal" onClick={toggleTempUnit}>
@@ -240,7 +259,7 @@ export function NotchTab({
 						<div className="city-input-row">
 							<input
 								type="text"
-								placeholder="Search city..."
+								placeholder={t("settings.notch.cityPlaceholder")}
 								value={cityName}
 								onChange={(e) => setCityName(e.target.value)}
 								onFocus={() => citySearchResults.length > 0 && setShowCityDropdown(true)}
@@ -262,7 +281,7 @@ export function NotchTab({
 										e.preventDefault();
 										handleCityClear();
 									}}
-									title="Clear city"
+									title={t("settings.notch.cityClear")}
 								>
 									<X size={10} strokeWidth={2.5} />
 								</button>
@@ -289,7 +308,7 @@ export function NotchTab({
 				)}
 			</div>
 
-			<div className="setting-group-label">Widgets</div>
+			<div className="setting-group-label">{t("settings.groups.widgets")}</div>
 			<div className="setting-group">
 				<StatusWidgetConfig value={statusWidgets} onChange={handleWidgetsChange} />
 			</div>

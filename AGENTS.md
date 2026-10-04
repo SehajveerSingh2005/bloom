@@ -9,6 +9,7 @@ Run from the repo root unless noted. Bun 1.4.0, Rust stable.
 - `bun install` — deps (CI uses `bun install --frozen-lockfile`; never create a root `package-lock.json`)
 - `bun run tauri dev` — full dev loop. Vite is on strict port 1420; do not start `bun run dev` separately
 - `bun run build` — `tsc && vite build`; this is the frontend typecheck. `strict` + `noUnusedLocals`/`noUnusedParameters` fail the build. There is no root lint or frontend test script
+- `bun run i18n:check` — validates `src/i18n/locales/*.json` and every literal `t("...")` key used in `src/`. Missing translations are warnings with a coverage report (English fallback); invalid keys/placeholders/empty values fail
 - `cargo check --locked` and `cargo clippy --locked --all-targets` in `src-tauri` — CI's Rust gates
 - `cargo test --locked` in `src-tauri` — pure-function unit tests. Runs fast on Windows but CI does **not** run it, so run it yourself
 - `bun run bump <x.y.z>` — bumps `package.json`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock` together

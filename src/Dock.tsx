@@ -6,6 +6,7 @@ import "./Dock.css";
 import { initTheme } from "./theme";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
+import { resolveLanguage, setLocale, useTranslation } from "./i18n";
 
 interface AppInfo {
 	name: string;
@@ -79,6 +80,8 @@ function WindowDots({ count }: { count: number }) {
 }
 
 const Dock = memo(function Dock() {
+	const { t } = useTranslation();
+
 	useEffect(() => {
 		return initTheme();
 	}, []);
@@ -260,6 +263,8 @@ const Dock = memo(function Dock() {
 				return fallback;
 			};
 
+			setLocale(resolveLanguage(getVal("bloom-language")));
+
 			const dMode = getVal("bloom-dock-mode", "smart");
 			if (dMode) {
 				const mapped = dMode === "auto-hide" ? "smart" : dMode;
@@ -323,7 +328,8 @@ const Dock = memo(function Dock() {
 		"bloom-dock-icon-only": setDockIconOnly,
 		"bloom-dock-adaptive": setDockAdaptive,
 		"bloom-start-icon": setStartIcon,
-		"bloom-scale": setScale
+		"bloom-scale": setScale,
+		"bloom-language": (value) => setLocale(resolveLanguage(String(value)))
 	});
 
 	useEffect(() => {
@@ -416,7 +422,7 @@ const Dock = memo(function Dock() {
 				});
 				setCustomIcons((prev) => ({ ...prev, [target]: newIcon }));
 			} catch (err) {
-				const msg = typeof err === "string" ? err : "Failed to set icon";
+				const msg = typeof err === "string" ? err : t("dock.toast.setIconFailed");
 				if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
 				setToast(msg);
 				toastTimerRef.current = setTimeout(() => setToast(null), 4000);
@@ -890,7 +896,7 @@ const Dock = memo(function Dock() {
 									>
 										{(!dockPreviewEnabled ||
 											(dockPreviewEnabled && hoveredApp === itemKey(startItem))) && (
-											<div className="tooltip">{startItem.name}</div>
+											<div className="tooltip">{t("dock.tooltip.start")}</div>
 										)}
 										<motion.div
 											className="dock-icon"
@@ -912,7 +918,7 @@ const Dock = memo(function Dock() {
 										>
 											<img
 												src={resolveStartIcon(startIcon)}
-												alt="Start"
+												alt={t("dock.tooltip.start")}
 												className="bloom-icon-img"
 												style={
 													startIcon.startsWith("custom:") ? { borderRadius: "8px" } : undefined
@@ -993,12 +999,15 @@ const Dock = memo(function Dock() {
 																			className="preview-item"
 																			onClick={() => invoke("focus_window", { hwnd: prev.hwnd })}
 																		>
-																			<img src={prev.image} alt={`Preview ${idx}`} />
+																			<img
+																				src={prev.image}
+																				alt={t("dock.preview.imageAlt", { index: idx })}
+																			/>
 																			<div className="preview-label">{prev.title || app.name}</div>
 																			<button
 																				className="preview-close-btn"
 																				onClick={(e) => handleClosePreview(e, prev.hwnd)}
-																				title="Close Window"
+																				title={t("dock.tooltip.closeWindow")}
 																			>
 																				<svg
 																					width="10"
@@ -1142,12 +1151,15 @@ const Dock = memo(function Dock() {
 																	className="preview-item"
 																	onClick={() => invoke("focus_window", { hwnd: prev.hwnd })}
 																>
-																	<img src={prev.image} alt={`Preview ${idx}`} />
+																	<img
+																		src={prev.image}
+																		alt={t("dock.preview.imageAlt", { index: idx })}
+																	/>
 																	<div className="preview-label">{prev.title || app.name}</div>
 																	<button
 																		className="preview-close-btn"
 																		onClick={(e) => handleClosePreview(e, prev.hwnd)}
-																		title="Close Window"
+																		title={t("dock.tooltip.closeWindow")}
 																	>
 																		<svg
 																			width="10"
@@ -1251,13 +1263,13 @@ const Dock = memo(function Dock() {
 											closeMenu();
 										}}
 									>
-										Open New Instance
+										{t("dock.menu.openNewInstance")}
 									</div>
 									<div className="menu-divider" />
 								</>
 							)}
 							<div className="menu-item" onClick={() => togglePin(contextMenu.app!)}>
-								{contextMenu.app.is_pinned ? "Unpin from Dock" : "Pin to Dock"}
+								{contextMenu.app.is_pinned ? t("dock.menu.unpin") : t("dock.menu.pin")}
 							</div>
 							{contextMenu.app.is_pinned && contextMenu.app.path !== "start" && (
 								<>
@@ -1276,7 +1288,7 @@ const Dock = memo(function Dock() {
 											}, 50);
 										}}
 									>
-										Change Icon...
+										{t("dock.menu.changeIcon")}
 									</div>
 									{(() => {
 										const isHost = isBrowserHost(contextMenu.app!.path);
@@ -1291,7 +1303,7 @@ const Dock = memo(function Dock() {
 													closeMenu();
 												}}
 											>
-												Reset Icon
+												{t("dock.menu.resetIcon")}
 											</div>
 										) : null;
 									})()}
@@ -1305,14 +1317,14 @@ const Dock = memo(function Dock() {
 									closeMenu();
 								}}
 							>
-								Add App to Dock...
+								{t("dock.menu.addApp")}
 							</div>
 							<div
 								className="menu-item has-submenu"
 								onMouseEnter={() => setActiveSubmenu("bloom")}
 								onMouseLeave={() => setActiveSubmenu(null)}
 							>
-								Bloom Options
+								{t("dock.menu.bloomOptions")}
 								<span className="submenu-arrow">▶</span>
 								<div className="submenu">
 									<div
@@ -1322,10 +1334,10 @@ const Dock = memo(function Dock() {
 											closeMenu();
 										}}
 									>
-										Open Settings
+										{t("dock.options.openSettings")}
 									</div>
 									<div className="menu-item" onClick={() => invoke("restart_bloom")}>
-										Restart Bloom
+										{t("dock.options.restart")}
 									</div>
 									<div
 										className="menu-item"
@@ -1334,11 +1346,11 @@ const Dock = memo(function Dock() {
 											closeMenu();
 										}}
 									>
-										Clear Icon Cache
+										{t("dock.options.clearIconCache")}
 									</div>
 									<div className="menu-divider" />
 									<div className="menu-item quit" onClick={() => invoke("quit_bloom")}>
-										Quit Bloom
+										{t("dock.options.quit")}
 									</div>
 								</div>
 							</div>
@@ -1357,7 +1369,7 @@ const Dock = memo(function Dock() {
 											closeMenu();
 										}}
 									>
-										Quit {contextMenu.app.name}
+										{t("dock.menu.quitApp", { name: contextMenu.app.name })}
 									</div>
 								</>
 							)}
@@ -1371,14 +1383,14 @@ const Dock = memo(function Dock() {
 									closeMenu();
 								}}
 							>
-								Add App to Dock...
+								{t("dock.menu.addApp")}
 							</div>
 							<div
 								className="menu-item has-submenu"
 								onMouseEnter={() => setActiveSubmenu("bloom")}
 								onMouseLeave={() => setActiveSubmenu(null)}
 							>
-								Bloom Options
+								{t("dock.menu.bloomOptions")}
 								<span className="submenu-arrow">▶</span>
 								<div className="submenu">
 									<div
@@ -1388,10 +1400,10 @@ const Dock = memo(function Dock() {
 											closeMenu();
 										}}
 									>
-										Open Settings
+										{t("dock.options.openSettings")}
 									</div>
 									<div className="menu-item" onClick={() => invoke("restart_bloom")}>
-										Restart Bloom
+										{t("dock.options.restart")}
 									</div>
 									<div
 										className="menu-item"
@@ -1400,11 +1412,11 @@ const Dock = memo(function Dock() {
 											closeMenu();
 										}}
 									>
-										Clear Icon Cache
+										{t("dock.options.clearIconCache")}
 									</div>
 									<div className="menu-divider" />
 									<div className="menu-item quit" onClick={() => invoke("quit_bloom")}>
-										Quit Bloom
+										{t("dock.options.quit")}
 									</div>
 								</div>
 							</div>
@@ -1464,6 +1476,7 @@ function AddAppPopup({
 	containerRef: React.RefObject<HTMLDivElement | null>;
 	scale: number;
 }) {
+	const { t } = useTranslation();
 	const [apps, setApps] = useState<AppInfo[]>([]);
 	const [search, setSearch] = useState("");
 	const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -1615,7 +1628,7 @@ function AddAppPopup({
 						ref={inputRef}
 						type="text"
 						className="popup-search-input"
-						placeholder="Search apps..."
+						placeholder={t("dock.addApp.searchPlaceholder")}
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
 					/>
@@ -1648,7 +1661,7 @@ function AddAppPopup({
 							);
 						})
 					) : (
-						<div className="popup-empty">No results</div>
+						<div className="popup-empty">{t("dock.addApp.noResults")}</div>
 					)}
 				</div>
 			</motion.div>

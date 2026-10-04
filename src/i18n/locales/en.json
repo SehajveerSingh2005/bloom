@@ -1,0 +1,304 @@
+{
+	"common": {
+		"cancel": "Cancel",
+		"dismiss": "Dismiss",
+		"learnMore": "Learn more",
+		"remove": "Remove",
+		"swapSide": "Swap side",
+		"left": "Left",
+		"right": "Right",
+		"dropHere": "Drop here",
+		"behavior": {
+			"fixed": "Fixed",
+			"smart": "Smart",
+			"peek": "Peek"
+		},
+		"mediaLayout": {
+			"classic": "Classic",
+			"compact": "Compact"
+		}
+	},
+	"settings": {
+		"title": "Settings",
+		"closeTitle": "Close Settings",
+		"tabs": {
+			"general": "General",
+			"appearance": "Appearance",
+			"notch": "Notch",
+			"dock": "Dock",
+			"overlays": "Overlays",
+			"about": "About"
+		},
+		"groups": {
+			"system": "System",
+			"app": "App",
+			"theme": "Theme",
+			"display": "Display",
+			"dock": "Dock",
+			"notch": "Notch",
+			"weather": "Weather",
+			"widgets": "Widgets",
+			"overlays": "Overlays",
+			"updates": "Software Updates",
+			"data": "Data"
+		},
+		"general": {
+			"language": "Language",
+			"languageDesc": "Bloom's display language",
+			"languageSystem": "System default",
+			"launchAtLogin": "Launch at Login",
+			"launchAtLoginDesc": "Open Bloom automatically",
+			"updateIndicator": "Update Indicator",
+			"updateIndicatorDesc": "Show green dot when update available",
+			"time24h": "24-Hour Time",
+			"time24hDesc": "Use 24-hour clock format",
+			"lowBattery": "Low Battery Alert",
+			"lowBatteryDesc": "Trigger at {percent}%",
+			"reset": "Reset to Defaults",
+			"resetDesc": "Restore all settings and restart Bloom",
+			"restart": "Restart Bloom",
+			"restartDesc": "Reinitialize all components",
+			"quit": "Quit Bloom",
+			"quitDesc": "Exit application completely"
+		},
+		"appearance": {
+			"themeMode": "Theme Mode",
+			"themeModeDesc": "Configure visual styling",
+			"themeDark": "Dark (Translucent)",
+			"themeLight": "Light (Translucent)",
+			"themeCustom": "Custom Color",
+			"themeAdaptive": "Adaptive Accent",
+			"customColor": "Custom Theme Color",
+			"customColorDesc": "Choose layout background color",
+			"opacity": "Background Opacity",
+			"opacityDesc": "Adjust theme transparency ({percent}%)",
+			"saturation": "Color Saturation",
+			"saturationDesc": "Adjust theme color vibrancy ({percent}%)",
+			"brightness": "Background Brightness",
+			"brightnessDesc": "Adjust background lightness ({percent}%)",
+			"corners": "Screen Corners",
+			"cornersDesc": "Rounded top edges",
+			"scale": "UI & Font Scale",
+			"scaleDesc": "Adjust desktop size ({percent}%)",
+			"decreaseScale": "Decrease Scale",
+			"increaseScale": "Increase Scale"
+		},
+		"dock": {
+			"enabled": "Bloom Dock",
+			"enabledDesc": "Replace Windows taskbar",
+			"behavior": "Behavior",
+			"behaviorDesc": "Choose how the dock appears",
+			"previews": "Show App Previews",
+			"previewsDesc": "Show window thumbnails on hover",
+			"iconOnly": "Icon Only",
+			"iconOnlyDesc": "Remove icon background and padding",
+			"winNumber": "Win+Number Shortcuts",
+			"winNumberDesc": "Open pinned apps with Win+1 through Win+9",
+			"adaptive": "Adaptive Mode",
+			"adaptiveDesc": "Stretch to full width when a window is maximized",
+			"startIcon": "Start Menu Icon",
+			"startIconDesc": "Choose the dock start button icon",
+			"startIconCustom": "Custom icon",
+			"startIconReset": "Reset to default",
+			"iconBloom": "Bloom",
+			"iconColorful": "Colorful",
+			"iconGolden": "Golden",
+			"iconOrange": "Orange",
+			"iconWindows": "Windows"
+		},
+		"notch": {
+			"behavior": "Notch Behavior",
+			"behaviorDesc": "Choose how the notch appears",
+			"peekDelay": "Peek Delay",
+			"peekInstant": "Reveal instantly on top-edge contact",
+			"peekDelayed": "Rest on the top edge for {ms}ms to reveal",
+			"calendar": "Calendar & Timer",
+			"calendarDesc": "Enable productivity split-view",
+			"timerSound": "Timer Sound",
+			"timerSoundDesc": "Play a chime when the timer finishes",
+			"music": "Music Mode",
+			"musicDesc": "Interactive live music widget",
+			"compact": "Compact Mode",
+			"compactDesc": "Show visualizer & artwork when collapsed",
+			"mediaLayout": "Media Layout",
+			"mediaLayoutDesc": "Choose expanded player style",
+			"ambience": "Ambient Glow",
+			"ambienceDesc": "Colored glow behind expanded album art",
+			"compactGlow": "Compact Glow",
+			"compactGlowDesc": "Glow around collapsed thumbnail",
+			"weather": "Weather Status",
+			"weatherAuto": "Auto-detect location",
+			"cityPlaceholder": "Search city...",
+			"cityClear": "Clear city"
+		},
+		"widgets": {
+			"weather": "Weather",
+			"battery": "Battery",
+			"cpu": "CPU",
+			"ram": "RAM",
+			"disk": "Disk",
+			"net": "Net"
+		},
+		"overlays": {
+			"volume": "Volume HUD",
+			"volumeDesc": "Bloom volume overlay",
+			"volumeEdge": "Show on Edge Hover",
+			"volumeEdgeDesc": "Slide in from left edge",
+			"brightness": "Brightness HUD",
+			"brightnessDesc": "Bloom brightness overlay",
+			"brightnessEdge": "Show on Edge Hover",
+			"brightnessEdgeDesc": "Slide in from right edge"
+		},
+		"about": {
+			"version": "Version {version}",
+			"madeWith": "Made with",
+			"by": "by",
+			"authorTitle": "sehaz on GitHub",
+			"checking": "Checking...",
+			"available": "Update Available (v{version})",
+			"upToDate": "Bloom is up to date",
+			"downloading": "Downloading Update...",
+			"installing": "Installing...",
+			"noUpdates": "No updates found",
+			"check": "Check for Updates",
+			"installDesc": "Click to install and restart",
+			"currentVersion": "Currently running v{version}",
+			"autoUpdate": "Auto Update",
+			"autoUpdateDesc": "Update automatically on startup",
+			"export": "Export Settings",
+			"exporting": "Exporting...",
+			"exported": "Exported!",
+			"exportDesc": "Save settings to a file",
+			"import": "Import Settings",
+			"importing": "Importing...",
+			"imported": "Imported!",
+			"importDesc": "Load settings from a file"
+		},
+		"dialogs": {
+			"resetTitle": "Reset Bloom to Defaults",
+			"resetBody": "All settings return to their defaults and Bloom restarts. Pinned apps and custom icons are kept.",
+			"resetConfirm": "Reset and Restart",
+			"exportTitle": "Export Bloom Settings",
+			"importTitle": "Import Bloom Settings"
+		}
+	},
+	"dock": {
+		"menu": {
+			"openNewInstance": "Open New Instance",
+			"pin": "Pin to Dock",
+			"unpin": "Unpin from Dock",
+			"changeIcon": "Change Icon...",
+			"resetIcon": "Reset Icon",
+			"addApp": "Add App to Dock...",
+			"bloomOptions": "Bloom Options",
+			"quitApp": "Quit {name}"
+		},
+		"options": {
+			"openSettings": "Open Settings",
+			"restart": "Restart Bloom",
+			"clearIconCache": "Clear Icon Cache",
+			"quit": "Quit Bloom"
+		},
+		"addApp": {
+			"searchPlaceholder": "Search apps...",
+			"noResults": "No results"
+		},
+		"tooltip": {
+			"start": "Start",
+			"closeWindow": "Close Window"
+		},
+		"preview": {
+			"imageAlt": "Preview {index}"
+		},
+		"toast": {
+			"setIconFailed": "Failed to set icon"
+		}
+	},
+	"notch": {
+		"status": {
+			"weatherTooltip": "{condition} — {city}",
+			"cpuUsage": "CPU Usage",
+			"ramUsage": "RAM Usage",
+			"freeDiskSpace": "Free Disk Space",
+			"networkSpeed": "Network Speed",
+			"updateAvailable": "Update Available",
+			"lowBattery": "Low Battery",
+			"charging": "Charging",
+			"onBattery": "On Battery"
+		},
+		"music": {
+			"artAlt": "Art",
+			"volume": "Volume",
+			"audioOutput": "Audio Output"
+		},
+		"calendar": {
+			"start": "Start",
+			"pause": "Pause",
+			"resume": "Resume",
+			"restart": "Restart",
+			"reset": "Reset",
+			"setDuration": "Set duration",
+			"timesUp": "Time's up",
+			"clickToEdit": "Click to edit",
+			"endsAt": "ends {time}",
+			"pausedEndsAt": "Paused · ends {time}",
+			"clickToSetDuration": "Click to set a duration",
+			"timerDurationAria": "Set timer duration",
+			"presetMinutes": "{count}m"
+		},
+		"commandCenter": {
+			"toggleHint": "Left-click to toggle, Right-click for Settings",
+			"wifi": "Wi-Fi",
+			"on": "On",
+			"off": "Off",
+			"connected": "Connected",
+			"notConnected": "Not connected",
+			"dockMode": "Dock Mode",
+			"cycleDockMode": "Cycle dock mode: {fixed} / {smart} / {peek}",
+			"bluetooth": "Bluetooth",
+			"notchMode": "Notch Mode",
+			"cycleNotchMode": "Cycle notch mode: {fixed} / {smart} / {peek}",
+			"focusDnd": "Focus / DND: {state}",
+			"energySaver": "Energy Saver: {state} — Click to open Settings",
+			"systemTray": "System Tray",
+			"notificationCenter": "Notification Center",
+			"bloomSettings": "Bloom Settings",
+			"restartBloom": "Restart Bloom",
+			"volume": "Volume",
+			"brightness": "Brightness"
+		}
+	},
+	"weather": {
+		"conditions": {
+			"clear": "Clear",
+			"mostlyClear": "Mostly Clear",
+			"partlyCloudy": "Partly Cloudy",
+			"overcast": "Overcast",
+			"fog": "Foggy",
+			"drizzle": "Drizzle",
+			"freezingDrizzle": "Freezing Drizzle",
+			"rain": "Rainy",
+			"freezingRain": "Freezing Rain",
+			"snow": "Snowy",
+			"showers": "Rain Showers",
+			"snowShowers": "Snow Showers",
+			"thunderstorm": "Stormy",
+			"unknown": "Unknown"
+		}
+	},
+	"overlay": {
+		"volume": {
+			"mute": "Mute",
+			"unmute": "Unmute",
+			"mixer": "App volume mixer",
+			"loading": "Loading...",
+			"sessionsError": "Couldn't read audio sessions",
+			"noApps": "No apps with audio"
+		},
+		"update": {
+			"checking": "Checking for updates...",
+			"downloading": "Downloading update... {percent}%",
+			"installing": "Installing update..."
+		}
+	}
+}

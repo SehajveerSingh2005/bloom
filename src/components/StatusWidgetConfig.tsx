@@ -31,6 +31,7 @@ import {
 	ChevronDown
 } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
+import { useTranslation } from "../i18n";
 
 export interface WidgetConfig {
 	left: string[];
@@ -39,18 +40,18 @@ export interface WidgetConfig {
 
 interface WidgetDef {
 	id: string;
-	label: string;
+	labelKey: string;
 	icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number; strokeWidth?: number }>;
 	color: string;
 }
 
 const WIDGET_DEFS: WidgetDef[] = [
-	{ id: "weather", label: "Weather", icon: CloudSun, color: "#60a5fa" },
-	{ id: "battery", label: "Battery", icon: BatteryFull, color: "#4ade80" },
-	{ id: "cpu", label: "CPU", icon: Cpu, color: "#f97316" },
-	{ id: "ram", label: "RAM", icon: MemoryStick, color: "#a78bfa" },
-	{ id: "disk", label: "Disk", icon: HardDrive, color: "#38bdf8" },
-	{ id: "net", label: "Net", icon: ArrowUpDown, color: "#2dd4bf" }
+	{ id: "weather", labelKey: "settings.widgets.weather", icon: CloudSun, color: "#60a5fa" },
+	{ id: "battery", labelKey: "settings.widgets.battery", icon: BatteryFull, color: "#4ade80" },
+	{ id: "cpu", labelKey: "settings.widgets.cpu", icon: Cpu, color: "#f97316" },
+	{ id: "ram", labelKey: "settings.widgets.ram", icon: MemoryStick, color: "#a78bfa" },
+	{ id: "disk", labelKey: "settings.widgets.disk", icon: HardDrive, color: "#38bdf8" },
+	{ id: "net", labelKey: "settings.widgets.net", icon: ArrowUpDown, color: "#2dd4bf" }
 ];
 
 const DEFAULT_CONFIG: WidgetConfig = {
@@ -63,6 +64,7 @@ const MAX_PER_ZONE = 2;
 /* ── Draggable pool chip ── */
 function PoolChip({ id }: { id: string }) {
 	const def = WIDGET_DEFS.find((w) => w.id === id)!;
+	const { t } = useTranslation();
 	const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id });
 	const Icon = def.icon;
 	return (
@@ -73,7 +75,7 @@ function PoolChip({ id }: { id: string }) {
 			{...attributes}
 		>
 			<Icon size={12} strokeWidth={2} style={{ color: def.color }} />
-			<span>{def.label}</span>
+			<span>{t(def.labelKey)}</span>
 		</div>
 	);
 }
@@ -95,6 +97,7 @@ function SortablePlacedChip({
 	onMove: (id: string, dir: -1 | 1) => void;
 }) {
 	const def = WIDGET_DEFS.find((w) => w.id === id)!;
+	const { t } = useTranslation();
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id
 	});
@@ -116,7 +119,7 @@ function SortablePlacedChip({
 		>
 			<div {...attributes} {...listeners} className="widget-pill-drag-handle">
 				<Icon size={12} strokeWidth={2} style={{ color: def.color }} />
-				<span>{def.label}</span>
+				<span>{t(def.labelKey)}</span>
 			</div>
 			<div className="widget-pill-btns">
 				{idx > 0 && (
@@ -129,12 +132,12 @@ function SortablePlacedChip({
 						<ChevronDown size={9} />
 					</button>
 				)}
-				<button className="widget-pill-btn" title="Swap side" onClick={() => onSwap(id)}>
+				<button className="widget-pill-btn" title={t("common.swapSide")} onClick={() => onSwap(id)}>
 					<ArrowLeftRight size={9} />
 				</button>
 				<button
 					className="widget-pill-btn widget-pill-btn--x"
-					title="Remove"
+					title={t("common.remove")}
 					onClick={() => onRemove(id)}
 				>
 					<X size={10} />
@@ -161,12 +164,15 @@ function DropZone({
 	onMove: (id: string, dir: -1 | 1) => void;
 }) {
 	const { setNodeRef, isOver } = useDroppable({ id });
+	const { t } = useTranslation();
 	return (
 		<div
 			ref={setNodeRef}
 			className={`widget-config-zone ${isOver ? "widget-config-zone--over" : ""}`}
 		>
-			<span className="widget-config-side">{side === "left" ? "Left" : "Right"}</span>
+			<span className="widget-config-side">
+				{side === "left" ? t("common.left") : t("common.right")}
+			</span>
 			<div className="widget-config-chips">
 				<SortableContext items={items} strategy={horizontalListSortingStrategy}>
 					{items.length > 0 ? (
@@ -182,7 +188,7 @@ function DropZone({
 							/>
 						))
 					) : (
-						<span className="widget-config-empty">Drop here</span>
+						<span className="widget-config-empty">{t("common.dropHere")}</span>
 					)}
 				</SortableContext>
 			</div>
@@ -336,6 +342,7 @@ export function StatusWidgetConfig({ value, onChange }: StatusWidgetConfigProps)
 	);
 
 	const activeDef = activeId ? WIDGET_DEFS.find((w) => w.id === activeId) : null;
+	const { t } = useTranslation();
 
 	return (
 		<DndContext
@@ -377,7 +384,7 @@ export function StatusWidgetConfig({ value, onChange }: StatusWidgetConfigProps)
 				{activeDef ? (
 					<div className="widget-pill widget-pill--dragging">
 						<activeDef.icon size={12} strokeWidth={2} style={{ color: activeDef.color }} />
-						<span>{activeDef.label}</span>
+						<span>{t(activeDef.labelKey)}</span>
 					</div>
 				) : null}
 			</DragOverlay>

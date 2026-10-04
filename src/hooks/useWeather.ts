@@ -13,39 +13,65 @@ import {
 	Thermometer,
 	type LucideProps
 } from "lucide-react";
+import { t } from "../i18n";
 
 // WMO weather interpretation codes
 // https://open-meteo.com/en/docs#weathervariables
 const WMO_CODES: Record<number, string> = {
-	0: "Clear",
-	1: "Mostly Clear",
-	2: "Partly Cloudy",
-	3: "Overcast",
-	45: "Foggy",
-	48: "Foggy",
-	51: "Drizzle",
-	53: "Drizzle",
-	55: "Drizzle",
-	56: "Freezing Drizzle",
-	57: "Freezing Drizzle",
-	61: "Rainy",
-	63: "Rainy",
-	65: "Rainy",
-	66: "Freezing Rain",
-	67: "Freezing Rain",
-	71: "Snowy",
-	73: "Snowy",
-	75: "Snowy",
-	77: "Snowy",
-	80: "Rain Showers",
-	81: "Rain Showers",
-	82: "Rain Showers",
-	85: "Snow Showers",
-	86: "Snow Showers",
-	95: "Stormy",
-	96: "Stormy",
-	99: "Stormy"
+	0: "weather.conditions.clear",
+	1: "weather.conditions.mostlyClear",
+	2: "weather.conditions.partlyCloudy",
+	3: "weather.conditions.overcast",
+	45: "weather.conditions.fog",
+	48: "weather.conditions.fog",
+	51: "weather.conditions.drizzle",
+	53: "weather.conditions.drizzle",
+	55: "weather.conditions.drizzle",
+	56: "weather.conditions.freezingDrizzle",
+	57: "weather.conditions.freezingDrizzle",
+	61: "weather.conditions.rain",
+	63: "weather.conditions.rain",
+	65: "weather.conditions.rain",
+	66: "weather.conditions.freezingRain",
+	67: "weather.conditions.freezingRain",
+	71: "weather.conditions.snow",
+	73: "weather.conditions.snow",
+	75: "weather.conditions.snow",
+	77: "weather.conditions.snow",
+	80: "weather.conditions.showers",
+	81: "weather.conditions.showers",
+	82: "weather.conditions.showers",
+	85: "weather.conditions.snowShowers",
+	86: "weather.conditions.snowShowers",
+	95: "weather.conditions.thunderstorm",
+	96: "weather.conditions.thunderstorm",
+	99: "weather.conditions.thunderstorm"
 };
+
+// Condition values cached before i18n held English labels; map them back to
+// keys so an upgraded install keeps the right label and icon until the next
+// successful fetch.
+const LEGACY_CONDITION_KEYS: Record<string, string> = {
+	Clear: "weather.conditions.clear",
+	"Mostly Clear": "weather.conditions.mostlyClear",
+	"Partly Cloudy": "weather.conditions.partlyCloudy",
+	Overcast: "weather.conditions.overcast",
+	Foggy: "weather.conditions.fog",
+	Drizzle: "weather.conditions.drizzle",
+	"Freezing Drizzle": "weather.conditions.freezingDrizzle",
+	Rainy: "weather.conditions.rain",
+	"Freezing Rain": "weather.conditions.freezingRain",
+	Snowy: "weather.conditions.snow",
+	"Rain Showers": "weather.conditions.showers",
+	"Snow Showers": "weather.conditions.snowShowers",
+	Stormy: "weather.conditions.thunderstorm",
+	Unknown: "weather.conditions.unknown"
+};
+
+function conditionKeyFromCache(value: string): string {
+	if (!value || value.startsWith("weather.conditions.")) return value;
+	return LEGACY_CONDITION_KEYS[value] ?? value;
+}
 
 const DELHI_LAT = 28.6139;
 const DELHI_LON = 77.209;
@@ -53,7 +79,7 @@ const REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
 interface WeatherState {
 	temperature: number | null;
-	weatherCondition: string;
+	weatherConditionKey: string;
 	weatherIcon: ComponentType<LucideProps>;
 }
 
@@ -63,27 +89,27 @@ interface ResolvedLocation {
 	city?: string;
 }
 
-function getWeatherIcon(condition: string, isDay = true): ComponentType<LucideProps> {
-	switch (condition) {
-		case "Clear":
-		case "Mostly Clear":
+function getWeatherIcon(conditionKey: string, isDay = true): ComponentType<LucideProps> {
+	switch (conditionKey) {
+		case "weather.conditions.clear":
+		case "weather.conditions.mostlyClear":
 			return isDay ? Sun : Moon;
-		case "Partly Cloudy":
-		case "Overcast":
+		case "weather.conditions.partlyCloudy":
+		case "weather.conditions.overcast":
 			return Cloud;
-		case "Foggy":
+		case "weather.conditions.fog":
 			return CloudFog;
-		case "Drizzle":
-		case "Freezing Drizzle":
+		case "weather.conditions.drizzle":
+		case "weather.conditions.freezingDrizzle":
 			return CloudDrizzle;
-		case "Rainy":
-		case "Rain Showers":
-		case "Freezing Rain":
+		case "weather.conditions.rain":
+		case "weather.conditions.showers":
+		case "weather.conditions.freezingRain":
 			return CloudRain;
-		case "Snowy":
-		case "Snow Showers":
+		case "weather.conditions.snow":
+		case "weather.conditions.snowShowers":
 			return CloudSnow;
-		case "Stormy":
+		case "weather.conditions.thunderstorm":
 			return CloudLightning;
 		default:
 			return Thermometer;
@@ -112,13 +138,13 @@ async function fetchWeatherForCoords(
 
 	const temp = Math.round(data.current.temperature_2m);
 	const code = data.current.weather_code;
-	const condition = WMO_CODES[code] || "Unknown";
+	const conditionKey = WMO_CODES[code] || "weather.conditions.unknown";
 	const isDay = data.current.is_day === 1;
 
 	return {
 		temperature: temp,
-		weatherCondition: condition,
-		weatherIcon: getWeatherIcon(condition, isDay)
+		weatherConditionKey: conditionKey,
+		weatherIcon: getWeatherIcon(conditionKey, isDay)
 	};
 }
 
@@ -194,8 +220,8 @@ export function useWeather(enabled: boolean) {
 		const cached = localStorage.getItem("bloom-weather-cached-temp");
 		return cached !== null ? Number(cached) : null;
 	});
-	const [weatherCondition, setWeatherCondition] = useState<string>(
-		() => localStorage.getItem("bloom-weather-cached-condition") || ""
+	const [weatherConditionKey, setWeatherConditionKey] = useState<string>(() =>
+		conditionKeyFromCache(localStorage.getItem("bloom-weather-cached-condition") || "")
 	);
 	const [weatherIcon, setWeatherIcon] = useState<ComponentType<LucideProps>>(() => Thermometer);
 	const [cityName, setCityName] = useState<string>(
@@ -221,22 +247,24 @@ export function useWeather(enabled: boolean) {
 				const result = await fetchWeatherForCoords(location.lat, location.lon, tempUnitRef.current);
 
 				setTemperature(result.temperature);
-				setWeatherCondition(result.weatherCondition);
+				setWeatherConditionKey(result.weatherConditionKey);
 				setWeatherIcon(() => result.weatherIcon);
-				persistWeather(result.temperature, result.weatherCondition);
+				persistWeather(result.temperature, result.weatherConditionKey);
 
 				// Update city name if resolved from IP geolocation
 				if (location.city) {
 					setCityName(location.city);
 					localStorage.setItem("bloom-weather-city", location.city);
-					invoke("save_setting", { key: "bloom-weather-city", value: location.city }).catch(() => {});
+					invoke("save_setting", { key: "bloom-weather-city", value: location.city }).catch(
+						() => {}
+					);
 				}
 			} catch (e) {
 				console.warn("Weather fetch failed:", e);
 				if (!showStaleOnError && import.meta.env.DEV) {
 					const mockTemp = tempUnitRef.current === "fahrenheit" ? 72 : 22;
 					setTemperature(mockTemp);
-					setWeatherCondition("Partly Cloudy");
+					setWeatherConditionKey("weather.conditions.partlyCloudy");
 					setWeatherIcon(() => Cloud);
 				}
 			}
@@ -258,8 +286,9 @@ export function useWeather(enabled: boolean) {
 					settings["bloom-weather-cached-condition"] ??
 					localStorage.getItem("bloom-weather-cached-condition");
 				if (cachedCond) {
-					setWeatherCondition(String(cachedCond));
-					setWeatherIcon(() => getWeatherIcon(String(cachedCond)));
+					const conditionKey = conditionKeyFromCache(String(cachedCond));
+					setWeatherConditionKey(conditionKey);
+					setWeatherIcon(() => getWeatherIcon(conditionKey));
 				}
 				const savedUnit = settings["bloom-temp-unit"] ?? localStorage.getItem("bloom-temp-unit");
 				if (savedUnit) {
@@ -345,7 +374,7 @@ export function useWeather(enabled: boolean) {
 
 	return {
 		temperature,
-		weatherCondition,
+		weatherCondition: weatherConditionKey ? t(weatherConditionKey) : "",
 		weatherIcon,
 		cityName,
 		tempUnit

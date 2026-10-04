@@ -31,6 +31,9 @@ jobs:
       - name: Build frontend
         run: bun run build
 
+      - name: Check translations
+        run: bun run i18n:check
+
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable

@@ -37,6 +37,25 @@ Useful commands:
 - Commit messages follow conventional commits (`feat:`, `fix:`, `chore:`), because release notes are generated from them.
 - Test your change on Windows before opening the PR — this is a Windows-first app.
 
+## Translations
+
+Bloom ships a small dependency-free i18n layer in `src/i18n/`. English (`src/i18n/locales/en.json`) is the source of truth. Other locales may be partial: a missing key falls back to English at runtime, so translations can catch up at their own pace after a feature ships.
+
+Adding or improving a language:
+
+1. Copy `src/i18n/locales/en.json` to `<code>.json` (for example `de.json`).
+2. Translate the values. Keep `{placeholders}` exactly as they are, and use the plural group that fits the language (`one` / `few` / `many` / `other`). You can start with only the sections you know — partial files are valid.
+3. Register the locale in the `LOCALES` list in `src/i18n/index.ts`.
+4. Run `bun run i18n:check`. It prints coverage per locale and lists any missing keys; invalid entries (unknown keys, placeholder mismatches, empty values) fail the check.
+5. Run `bun run build` and try it in Settings → General → Language. Language changes apply live; no restart is needed.
+
+Notes:
+
+- Do not translate brand names (Bloom, Windows), system data (app names, window titles, city names), setting keys, or symbol-only strings.
+- Use `tCount("key.base", count)` for counts. Store the group as `key.base.one`, `key.base.few`, etc.
+- UI strings should stay short — they render in a small notch, dock and popovers.
+- Translating a new string later? Run `bun run i18n:check` — it lists exactly which keys are missing.
+
 ## Pull requests
 
 - CI must pass (frontend build, `cargo check`, clippy, CodeQL).

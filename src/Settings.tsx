@@ -17,22 +17,24 @@ import {
 import type { SettingsTab } from "./settings/index";
 import { useAnnouncement } from "./hooks/useAnnouncement";
 import { initTheme } from "./theme";
+import { initI18n, useTranslation } from "./i18n";
 import "./Settings.css";
 
 const appWindow = getCurrentWebviewWindow();
 
-const TABS: { id: SettingsTab; label: string; icon: typeof Settings }[] = [
-	{ id: "general", label: "General", icon: Settings },
-	{ id: "appearance", label: "Appearance", icon: Palette },
-	{ id: "notch", label: "Notch", icon: PanelTop },
-	{ id: "dock", label: "Dock", icon: Monitor },
-	{ id: "overlays", label: "Overlays", icon: Layers },
-	{ id: "about", label: "About", icon: Info }
+const TABS: { id: SettingsTab; icon: typeof Settings }[] = [
+	{ id: "general", icon: Settings },
+	{ id: "appearance", icon: Palette },
+	{ id: "notch", icon: PanelTop },
+	{ id: "dock", icon: Monitor },
+	{ id: "overlays", icon: Layers },
+	{ id: "about", icon: Info }
 ];
 
 function SettingsApp() {
 	const [activeTab, setActiveTab] = useState<SettingsTab>("general");
 	const settings = useSettings();
+	const { t } = useTranslation();
 	const { announcement, dismissed, dismiss } = useAnnouncement();
 
 	useEffect(() => {
@@ -74,16 +76,16 @@ function SettingsApp() {
 		<div className="settings-container" style={{ zoom: settings.scale }}>
 			<div className="title-bar" data-tauri-drag-region>
 				<span className="title-text" data-tauri-drag-region>
-					Settings
+					{t("settings.title")}
 				</span>
-				<button className="close-btn" onClick={handleClose} title="Close Settings">
+				<button className="close-btn" onClick={handleClose} title={t("settings.closeTitle")}>
 					<X size={12} strokeWidth={1.5} className="close-btn-icon" />
 				</button>
 			</div>
 
 			<div className="settings-body">
 				<div className="settings-sidebar">
-					{TABS.map(({ id, label, icon: Icon }) => (
+					{TABS.map(({ id, icon: Icon }) => (
 						<button
 							key={id}
 							className={`sidebar-tab ${activeTab === id ? "active" : ""}`}
@@ -92,7 +94,7 @@ function SettingsApp() {
 							<div className="sidebar-tab-icon">
 								<Icon size={14} strokeWidth={1.5} />
 							</div>
-							<span>{label}</span>
+							<span>{t(`settings.tabs.${id}`)}</span>
 						</button>
 					))}
 				</div>
@@ -112,13 +114,13 @@ function SettingsApp() {
 									className="announcement-banner-link"
 									onClick={() => openUrl(announcement.url!)}
 								>
-									Learn more
+									{t("common.learnMore")}
 								</button>
 							)}
 							<button
 								className="announcement-banner-close"
 								onClick={dismiss}
-								title="Dismiss"
+								title={t("common.dismiss")}
 							>
 								<X size={12} strokeWidth={2.2} />
 							</button>
@@ -128,6 +130,8 @@ function SettingsApp() {
 						<GeneralTab
 							autostart={settings.autostart}
 							toggleAutostart={settings.toggleAutostart}
+							language={settings.language}
+							handleLanguageChange={settings.handleLanguageChange}
 							timeFormat24h={settings.timeFormat24h}
 							toggleTimeFormat24h={settings.toggleTimeFormat24h}
 							showUpdateIndicator={settings.showUpdateIndicator}
@@ -242,6 +246,8 @@ function SettingsApp() {
 		</div>
 	);
 }
+
+initI18n();
 
 createRoot(document.getElementById("root") as HTMLElement).render(
 	<StrictMode>

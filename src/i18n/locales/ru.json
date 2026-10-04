@@ -1,0 +1,304 @@
+{
+	"common": {
+		"cancel": "Отмена",
+		"dismiss": "Скрыть",
+		"learnMore": "Подробнее",
+		"remove": "Удалить",
+		"swapSide": "Сменить сторону",
+		"left": "Слева",
+		"right": "Справа",
+		"dropHere": "Перетащите сюда",
+		"behavior": {
+			"fixed": "Фиксированный",
+			"smart": "Умный",
+			"peek": "По наведению"
+		},
+		"mediaLayout": {
+			"classic": "Классический",
+			"compact": "Компактный"
+		}
+	},
+	"settings": {
+		"title": "Настройки",
+		"closeTitle": "Закрыть настройки",
+		"tabs": {
+			"general": "Общие",
+			"appearance": "Внешний вид",
+			"notch": "Вырез",
+			"dock": "Док",
+			"overlays": "Оверлеи",
+			"about": "О программе"
+		},
+		"groups": {
+			"system": "Система",
+			"app": "Приложение",
+			"theme": "Тема",
+			"display": "Экран",
+			"dock": "Док",
+			"notch": "Вырез",
+			"weather": "Погода",
+			"widgets": "Виджеты",
+			"overlays": "Оверлеи",
+			"updates": "Обновления",
+			"data": "Данные"
+		},
+		"general": {
+			"language": "Язык",
+			"languageDesc": "Язык интерфейса Bloom",
+			"languageSystem": "Как в системе",
+			"launchAtLogin": "Запускать при входе",
+			"launchAtLoginDesc": "Автоматически открывать Bloom",
+			"updateIndicator": "Индикатор обновлений",
+			"updateIndicatorDesc": "Показывать зелёную точку при наличии обновления",
+			"time24h": "24-часовой формат",
+			"time24hDesc": "Использовать 24-часовой формат времени",
+			"lowBattery": "Уведомление о низком заряде",
+			"lowBatteryDesc": "Срабатывает при {percent}%",
+			"reset": "Сбросить настройки",
+			"resetDesc": "Вернуть все настройки и перезапустить Bloom",
+			"restart": "Перезапустить Bloom",
+			"restartDesc": "Заново инициализировать все компоненты",
+			"quit": "Выйти из Bloom",
+			"quitDesc": "Полностью закрыть приложение"
+		},
+		"appearance": {
+			"themeMode": "Режим темы",
+			"themeModeDesc": "Настройка внешнего вида",
+			"themeDark": "Тёмная (полупрозрачная)",
+			"themeLight": "Светлая (полупрозрачная)",
+			"themeCustom": "Свой цвет",
+			"themeAdaptive": "Адаптивный акцент",
+			"customColor": "Свой цвет темы",
+			"customColorDesc": "Выберите цвет фона интерфейса",
+			"opacity": "Непрозрачность фона",
+			"opacityDesc": "Настройка прозрачности темы ({percent}%)",
+			"saturation": "Насыщенность цвета",
+			"saturationDesc": "Настройка насыщенности цвета темы ({percent}%)",
+			"brightness": "Яркость фона",
+			"brightnessDesc": "Настройка светлоты фона ({percent}%)",
+			"corners": "Скругление углов",
+			"cornersDesc": "Скруглённые верхние углы",
+			"scale": "Масштаб интерфейса",
+			"scaleDesc": "Настройка размера интерфейса ({percent}%)",
+			"decreaseScale": "Уменьшить масштаб",
+			"increaseScale": "Увеличить масштаб"
+		},
+		"dock": {
+			"enabled": "Док Bloom",
+			"enabledDesc": "Заменить панель задач Windows",
+			"behavior": "Поведение",
+			"behaviorDesc": "Выберите, как отображается док",
+			"previews": "Показывать превью приложений",
+			"previewsDesc": "Показывать миниатюры окон при наведении",
+			"iconOnly": "Только иконки",
+			"iconOnlyDesc": "Убрать фон и отступы вокруг иконок",
+			"winNumber": "Сочетания Win+цифра",
+			"winNumberDesc": "Открывать закреплённые приложения по Win+1…Win+9",
+			"adaptive": "Адаптивный режим",
+			"adaptiveDesc": "Растягивать на всю ширину при развёрнутом окне",
+			"startIcon": "Значок кнопки «Пуск»",
+			"startIconDesc": "Выберите значок кнопки «Пуск» в доке",
+			"startIconCustom": "Свой значок",
+			"startIconReset": "Сбросить по умолчанию",
+			"iconBloom": "Bloom",
+			"iconColorful": "Разноцветный",
+			"iconGolden": "Золотой",
+			"iconOrange": "Оранжевый",
+			"iconWindows": "Windows"
+		},
+		"notch": {
+			"behavior": "Поведение выреза",
+			"behaviorDesc": "Выберите, как отображается вырез",
+			"peekDelay": "Задержка показа",
+			"peekInstant": "Показывать сразу при касании верхнего края",
+			"peekDelayed": "Удерживайте курсор у верхнего края {ms} мс",
+			"calendar": "Календарь и таймер",
+			"calendarDesc": "Включить продуктивный режим",
+			"timerSound": "Звук таймера",
+			"timerSoundDesc": "Проигрывать звук по завершении таймера",
+			"music": "Музыкальный режим",
+			"musicDesc": "Интерактивный музыкальный виджет",
+			"compact": "Компактный режим",
+			"compactDesc": "Визуализатор и обложка в свёрнутом виде",
+			"mediaLayout": "Вид плеера",
+			"mediaLayoutDesc": "Выберите вид развёрнутого плеера",
+			"ambience": "Цветное свечение",
+			"ambienceDesc": "Свечение за обложкой альбома",
+			"compactGlow": "Свечение в компактном режиме",
+			"compactGlowDesc": "Свечение вокруг миниатюры",
+			"weather": "Погода в строке состояния",
+			"weatherAuto": "Определять местоположение автоматически",
+			"cityPlaceholder": "Поиск города...",
+			"cityClear": "Очистить город"
+		},
+		"widgets": {
+			"weather": "Погода",
+			"battery": "Батарея",
+			"cpu": "ЦП",
+			"ram": "ОЗУ",
+			"disk": "Диск",
+			"net": "Сеть"
+		},
+		"overlays": {
+			"volume": "Индикатор громкости",
+			"volumeDesc": "Оверлей громкости Bloom",
+			"volumeEdge": "При наведении на край",
+			"volumeEdgeDesc": "Выезжать слева",
+			"brightness": "Индикатор яркости",
+			"brightnessDesc": "Оверлей яркости Bloom",
+			"brightnessEdge": "При наведении на край",
+			"brightnessEdgeDesc": "Выезжать справа"
+		},
+		"about": {
+			"version": "Версия {version}",
+			"madeWith": "Сделано с",
+			"by": "от",
+			"authorTitle": "sehaz на GitHub",
+			"checking": "Проверка...",
+			"available": "Доступно обновление (v{version})",
+			"upToDate": "У вас последняя версия Bloom",
+			"downloading": "Загрузка обновления...",
+			"installing": "Установка...",
+			"noUpdates": "Обновления не найдены",
+			"check": "Проверить обновления",
+			"installDesc": "Нажмите, чтобы установить и перезапустить",
+			"currentVersion": "Текущая версия v{version}",
+			"autoUpdate": "Автообновление",
+			"autoUpdateDesc": "Автоматически обновляться при запуске",
+			"export": "Экспорт настроек",
+			"exporting": "Экспорт...",
+			"exported": "Экспортировано!",
+			"exportDesc": "Сохранить настройки в файл",
+			"import": "Импорт настроек",
+			"importing": "Импорт...",
+			"imported": "Импортировано!",
+			"importDesc": "Загрузить настройки из файла"
+		},
+		"dialogs": {
+			"resetTitle": "Сбросить Bloom к настройкам по умолчанию",
+			"resetBody": "Все настройки вернутся к значениям по умолчанию, и Bloom перезапустится. Закреплённые приложения и свои значки сохранятся.",
+			"resetConfirm": "Сбросить и перезапустить",
+			"exportTitle": "Экспорт настроек Bloom",
+			"importTitle": "Импорт настроек Bloom"
+		}
+	},
+	"dock": {
+		"menu": {
+			"openNewInstance": "Открыть новое окно",
+			"pin": "Закрепить в доке",
+			"unpin": "Открепить от дока",
+			"changeIcon": "Изменить значок...",
+			"resetIcon": "Сбросить значок",
+			"addApp": "Добавить приложение в док...",
+			"bloomOptions": "Параметры Bloom",
+			"quitApp": "Закрыть {name}"
+		},
+		"options": {
+			"openSettings": "Открыть настройки",
+			"restart": "Перезапустить Bloom",
+			"clearIconCache": "Очистить кэш значков",
+			"quit": "Выйти из Bloom"
+		},
+		"addApp": {
+			"searchPlaceholder": "Поиск приложений...",
+			"noResults": "Ничего не найдено"
+		},
+		"tooltip": {
+			"start": "Пуск",
+			"closeWindow": "Закрыть окно"
+		},
+		"preview": {
+			"imageAlt": "Превью {index}"
+		},
+		"toast": {
+			"setIconFailed": "Не удалось установить значок"
+		}
+	},
+	"notch": {
+		"status": {
+			"weatherTooltip": "{condition} — {city}",
+			"cpuUsage": "Загрузка ЦП",
+			"ramUsage": "Загрузка ОЗУ",
+			"freeDiskSpace": "Свободное место на диске",
+			"networkSpeed": "Скорость сети",
+			"updateAvailable": "Доступно обновление",
+			"lowBattery": "Низкий заряд",
+			"charging": "Заряжается",
+			"onBattery": "От батареи"
+		},
+		"music": {
+			"artAlt": "Обложка",
+			"volume": "Громкость",
+			"audioOutput": "Аудиовыход"
+		},
+		"calendar": {
+			"start": "Старт",
+			"pause": "Пауза",
+			"resume": "Продолжить",
+			"restart": "Заново",
+			"reset": "Сбросить",
+			"setDuration": "Задайте время",
+			"timesUp": "Время вышло",
+			"clickToEdit": "Нажмите, чтобы изменить",
+			"endsAt": "до {time}",
+			"pausedEndsAt": "Пауза · до {time}",
+			"clickToSetDuration": "Нажмите, чтобы задать время",
+			"timerDurationAria": "Задать длительность таймера",
+			"presetMinutes": "{count} мин"
+		},
+		"commandCenter": {
+			"toggleHint": "ЛКМ — переключить, ПКМ — настройки",
+			"wifi": "Wi-Fi",
+			"on": "Вкл",
+			"off": "Выкл",
+			"connected": "Подключено",
+			"notConnected": "Не подключено",
+			"dockMode": "Режим дока",
+			"cycleDockMode": "Переключить режим дока: {fixed} / {smart} / {peek}",
+			"bluetooth": "Bluetooth",
+			"notchMode": "Режим выреза",
+			"cycleNotchMode": "Переключить режим выреза: {fixed} / {smart} / {peek}",
+			"focusDnd": "Фокус / Не беспокоить: {state}",
+			"energySaver": "Энергосбережение: {state} — нажмите, чтобы открыть настройки",
+			"systemTray": "Системный трей",
+			"notificationCenter": "Центр уведомлений",
+			"bloomSettings": "Настройки Bloom",
+			"restartBloom": "Перезапустить Bloom",
+			"volume": "Громкость",
+			"brightness": "Яркость"
+		}
+	},
+	"weather": {
+		"conditions": {
+			"clear": "Ясно",
+			"mostlyClear": "Преимущественно ясно",
+			"partlyCloudy": "Переменная облачность",
+			"overcast": "Пасмурно",
+			"fog": "Туман",
+			"drizzle": "Морось",
+			"freezingDrizzle": "Ледяная морось",
+			"rain": "Дождь",
+			"freezingRain": "Ледяной дождь",
+			"snow": "Снег",
+			"showers": "Ливень",
+			"snowShowers": "Снегопад",
+			"thunderstorm": "Гроза",
+			"unknown": "Неизвестно"
+		}
+	},
+	"overlay": {
+		"volume": {
+			"mute": "Без звука",
+			"unmute": "Включить звук",
+			"mixer": "Микшер громкости приложений",
+			"loading": "Загрузка...",
+			"sessionsError": "Не удалось прочитать аудиосессии",
+			"noApps": "Нет приложений со звуком"
+		},
+		"update": {
+			"checking": "Проверка обновлений...",
+			"downloading": "Загрузка обновления... {percent}%",
+			"installing": "Установка обновления..."
+		}
+	}
+}

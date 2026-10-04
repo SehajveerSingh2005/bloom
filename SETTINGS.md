@@ -110,6 +110,7 @@ Example:
 | `bloom-show-update-indicator` | `"true"` / `"false"` | `"true"`  | Show a green dot on the notch when an update is available.                                           |
 | `bloom-announcement-dismissed` | announcement id      | `""`      | ID of the last dismissed in-app announcement (published via `website/public/announcements.json`).    |
 | `bloom-time-format-24h`       | `"true"` / `"false"` | `"false"` | Use 24-hour clock format in the notch. When `"false"`, displays 12-hour format with AM/PM.           |
+| `bloom-language`              | `"system"` / locale code        | `"system"` | UI language. `"system"` follows the Windows display language when supported. Available: `"en"`, `"ru"`. |
 
 ### Internal (Do Not Edit Manually)
 

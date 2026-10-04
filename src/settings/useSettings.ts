@@ -7,6 +7,7 @@ import type { UpdateCheckResult } from "../updater";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "../hooks/settingsMirror";
 import { hexToHsl } from "../theme";
+import { getLocale, resolveLanguage, setLocale, t, type LanguageSetting } from "../i18n";
 import type { WidgetConfig } from "./types";
 
 function saveSetting(key: string, value: string) {
@@ -122,6 +123,9 @@ export function useSettings() {
 	const [importStatus, setImportStatus] = useState<"idle" | "importing" | "success" | "error">(
 		"idle"
 	);
+	const [language, setLanguage] = useState<LanguageSetting>(
+		() => (localStorage.getItem("bloom-language") as LanguageSetting) || "system"
+	);
 
 	// ── Load all settings from backend + localStorage ──
 	const loadAllSettings = useCallback(async () => {
@@ -174,6 +178,12 @@ export function useSettings() {
 
 			const savedCity = getVal("bloom-weather-city");
 			if (savedCity) setCityName(savedCity);
+
+			const savedLanguage = getVal("bloom-language");
+			if (savedLanguage) {
+				setLanguage(savedLanguage as LanguageSetting);
+				setLocale(resolveLanguage(savedLanguage));
+			}
 
 			apply(getVal("bloom-theme-mode"), setThemeMode, (v) => v);
 			apply(getVal("bloom-theme-color"), setThemeColor, (v) => v);
@@ -245,7 +255,12 @@ export function useSettings() {
 		"bloom-theme-opacity": setThemeOpacity,
 		"bloom-theme-saturation": setThemeSaturation,
 		"bloom-theme-brightness": setThemeBrightness,
-		"bloom-weather-city": (v) => setCityName(v || "")
+		"bloom-weather-city": (v) => setCityName(v || ""),
+		"bloom-language": (v) => {
+			const next = String(v) as LanguageSetting;
+			setLanguage(next);
+			setLocale(resolveLanguage(next));
+		}
 	});
 
 	// ── Listen for system accent changes (adaptive theme) ──
@@ -278,7 +293,7 @@ export function useSettings() {
 		const timeout = setTimeout(async () => {
 			try {
 				const res = await fetch(
-					`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=5&language=en&format=json`
+					`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=5&language=${getLocale()}&format=json`
 				);
 				const data = await res.json();
 				if (data.results && data.results.length > 0) {
@@ -506,6 +521,13 @@ export function useSettings() {
 		saveSetting("bloom-auto-update", String(next));
 	};
 
+	const handleLanguageChange = (code: string) => {
+		const next = code as LanguageSetting;
+		setLanguage(next);
+		setLocale(resolveLanguage(next));
+		saveSetting("bloom-language", next);
+	};
+
 	// ── Value setters ──
 	const setDockModeValue = (newMode: string) => {
 		setDockMode(newMode);
@@ -628,15 +650,12 @@ export function useSettings() {
 	const resetToDefaults = async () => {
 		try {
 			const { ask } = await import("@tauri-apps/plugin-dialog");
-			const confirmed = await ask(
-				"All settings return to their defaults and Bloom restarts. Pinned apps and custom icons are kept.",
-				{
-					title: "Reset Bloom to Defaults",
-					kind: "warning",
-					okLabel: "Reset and Restart",
-					cancelLabel: "Cancel"
-				}
-			);
+			const confirmed = await ask(t("settings.dialogs.resetBody"), {
+				title: t("settings.dialogs.resetTitle"),
+				kind: "warning",
+				okLabel: t("settings.dialogs.resetConfirm"),
+				cancelLabel: t("common.cancel")
+			});
 			if (!confirmed) return;
 
 			await invoke("reset_settings");
@@ -664,7 +683,7 @@ export function useSettings() {
 			const { save: saveDialog } = await import("@tauri-apps/plugin-dialog");
 			const settingsJson = await invoke<string>("export_settings");
 			const filePath = await saveDialog({
-				title: "Export Bloom Settings",
+				title: t("settings.dialogs.exportTitle"),
 				defaultPath: "bloom-settings.json",
 				filters: [{ name: "JSON", extensions: ["json"] }]
 			});
@@ -687,7 +706,7 @@ export function useSettings() {
 		try {
 			const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
 			const filePath = await openDialog({
-				title: "Import Bloom Settings",
+				title: t("settings.dialogs.importTitle"),
 				filters: [{ name: "JSON", extensions: ["json"] }],
 				multiple: false
 			});
@@ -713,6 +732,8 @@ export function useSettings() {
 		// System
 		autostart,
 		toggleAutostart,
+		language,
+		handleLanguageChange,
 		autoUpdate,
 		toggleAutoUpdate,
 		lowBatteryThreshold,

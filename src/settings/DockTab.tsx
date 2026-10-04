@@ -10,13 +10,14 @@ import {
 	RotateCcw
 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
+import { useTranslation } from "../i18n";
 
 const START_ICON_PRESETS = [
-	{ key: "default", src: "/bloom.png", label: "Bloom" },
-	{ key: "bloom-colorful", src: "/bloom-colorful.png", label: "Colorful" },
-	{ key: "bloom-golden", src: "/bloom-golden.png", label: "Golden" },
-	{ key: "bloom-biscuit", src: "/bloom-biscuit.png", label: "Orange" },
-	{ key: "windows", src: "/windows.png", label: "Windows" }
+	{ key: "default", src: "/bloom.png", labelKey: "settings.dock.iconBloom" },
+	{ key: "bloom-colorful", src: "/bloom-colorful.png", labelKey: "settings.dock.iconColorful" },
+	{ key: "bloom-golden", src: "/bloom-golden.png", labelKey: "settings.dock.iconGolden" },
+	{ key: "bloom-biscuit", src: "/bloom-biscuit.png", labelKey: "settings.dock.iconOrange" },
+	{ key: "windows", src: "/windows.png", labelKey: "settings.dock.iconWindows" }
 ];
 
 const startIconTileStyle = (active: boolean): CSSProperties => ({
@@ -67,6 +68,8 @@ export function DockTab({
 	startIcon,
 	handleStartIconChange
 }: DockTabProps) {
+	const { t } = useTranslation();
+
 	const handleStartIconUpload = (e: ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0];
 		if (!file) return;
@@ -80,9 +83,13 @@ export function DockTab({
 
 	return (
 		<>
-			<div className="setting-group-label">Dock</div>
+			<div className="setting-group-label">{t("settings.groups.dock")}</div>
 			<div className="setting-group">
-				<SettingRow icon={Monitor} label="Bloom Dock" desc="Replace Windows taskbar">
+				<SettingRow
+					icon={Monitor}
+					label={t("settings.dock.enabled")}
+					desc={t("settings.dock.enabledDesc")}
+				>
 					<label className="toggle-switch">
 						<input type="checkbox" checked={dockEnabled} onChange={toggleDock} />
 						<span className="slider"></span>
@@ -93,21 +100,25 @@ export function DockTab({
 					<>
 						<SettingRow
 							icon={dockMode === "fixed" ? EyeOff : Eye}
-							label="Behavior"
-							desc="Choose how the dock appears"
+							label={t("settings.dock.behavior")}
+							desc={t("settings.dock.behaviorDesc")}
 						>
 							<select
 								className="settings-select"
 								value={dockMode}
 								onChange={(e) => setDockModeValue(e.target.value)}
 							>
-								<option value="fixed">Fixed</option>
-								<option value="smart">Smart</option>
-								<option value="peek">Peek</option>
+								<option value="fixed">{t("common.behavior.fixed")}</option>
+								<option value="smart">{t("common.behavior.smart")}</option>
+								<option value="peek">{t("common.behavior.peek")}</option>
 							</select>
 						</SettingRow>
 
-						<SettingRow icon={Eye} label="Show App Previews" desc="Show window thumbnails on hover">
+						<SettingRow
+							icon={Eye}
+							label={t("settings.dock.previews")}
+							desc={t("settings.dock.previewsDesc")}
+						>
 							<label className="toggle-switch">
 								<input type="checkbox" checked={dockPreviewEnabled} onChange={toggleDockPreview} />
 								<span className="slider"></span>
@@ -116,8 +127,8 @@ export function DockTab({
 
 						<SettingRow
 							icon={Circle}
-							label="Icon Only"
-							desc="Remove icon background and padding"
+							label={t("settings.dock.iconOnly")}
+							desc={t("settings.dock.iconOnlyDesc")}
 							divider={false}
 						>
 							<label className="toggle-switch">
@@ -128,8 +139,8 @@ export function DockTab({
 
 						<SettingRow
 							icon={Keyboard}
-							label="Win+Number Shortcuts"
-							desc="Open pinned apps with Win+1 through Win+9"
+							label={t("settings.dock.winNumber")}
+							desc={t("settings.dock.winNumberDesc")}
 							divider={dockMode === "fixed"}
 						>
 							<label className="toggle-switch">
@@ -145,8 +156,8 @@ export function DockTab({
 						{dockMode === "fixed" && (
 							<SettingRow
 								icon={Maximize2}
-								label="Adaptive Mode"
-								desc="Stretch to full width when a window is maximized"
+								label={t("settings.dock.adaptive")}
+								desc={t("settings.dock.adaptiveDesc")}
 								divider={false}
 							>
 								<label className="toggle-switch">
@@ -166,8 +177,8 @@ export function DockTab({
 									<Sparkles size={14} strokeWidth={1.5} />
 								</div>
 								<div className="setting-info">
-									<span className="setting-label">Start Menu Icon</span>
-									<span className="setting-desc">Choose the dock start button icon</span>
+									<span className="setting-label">{t("settings.dock.startIcon")}</span>
+									<span className="setting-desc">{t("settings.dock.startIconDesc")}</span>
 								</div>
 							</div>
 							<div style={{ display: "flex", gap: "8px", flexWrap: "wrap", paddingLeft: "34px" }}>
@@ -176,11 +187,11 @@ export function DockTab({
 										key={icon.key}
 										onClick={() => handleStartIconChange(icon.key)}
 										style={startIconTileStyle(startIcon === icon.key)}
-										title={icon.label}
+										title={t(icon.labelKey)}
 									>
 										<img
 											src={icon.src}
-											alt={icon.label}
+											alt={t(icon.labelKey)}
 											style={{ width: "100%", height: "100%", objectFit: "contain" }}
 											draggable={false}
 										/>
@@ -189,12 +200,12 @@ export function DockTab({
 								<div
 									onClick={() => document.getElementById("start-icon-file-input")?.click()}
 									style={startIconTileStyle(startIcon.startsWith("custom:"))}
-									title="Custom icon"
+									title={t("settings.dock.startIconCustom")}
 								>
 									{startIcon.startsWith("custom:") ? (
 										<img
 											src={startIcon.replace("custom:", "")}
-											alt="Custom"
+											alt={t("settings.dock.startIconCustom")}
 											style={{
 												width: "100%",
 												height: "100%",
@@ -211,7 +222,7 @@ export function DockTab({
 									<div
 										onClick={() => handleStartIconChange("default")}
 										style={startIconTileStyle(false)}
-										title="Reset to default"
+										title={t("settings.dock.startIconReset")}
 									>
 										<RotateCcw size={18} strokeWidth={1.5} />
 									</div>

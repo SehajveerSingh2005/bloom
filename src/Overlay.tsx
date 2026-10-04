@@ -7,6 +7,7 @@ import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
 import { getVersion } from "@tauri-apps/api/app";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
+import { initI18n, resolveLanguage, setLocale, useTranslation } from "./i18n";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { MixerIcon, SpeakerIcon } from "./icons";
 import "./Overlay.css";
@@ -33,6 +34,7 @@ function MixerTile({
 	onMuteToggle: (pid: number) => void;
 	draggingRef: { current: number | null };
 }) {
+	const { t } = useTranslation();
 	const [icon, setIcon] = useState<string | null>(null);
 	const [showPercentage, setShowPercentage] = useState(false);
 	const barRef = useRef<HTMLDivElement>(null);
@@ -114,7 +116,7 @@ function MixerTile({
 					showPercentage ? "showing-percent" : ""
 				}`}
 				onClick={() => onMuteToggle(session.pid)}
-				title={session.is_muted ? "Unmute" : "Mute"}
+				title={session.is_muted ? t("overlay.volume.unmute") : t("overlay.volume.mute")}
 			>
 				{icon ? (
 					<img src={icon} alt="" draggable={false} />
@@ -157,6 +159,7 @@ function VolumeNotch({
 	mixerExpanded: boolean;
 	onMixerExpandedChange: (expanded: boolean) => void;
 }) {
+	const { t } = useTranslation();
 	const percentage = Math.round(volume * 100);
 	const barRef = useRef<HTMLDivElement>(null);
 	const shellRef = useRef<HTMLDivElement>(null);
@@ -406,7 +409,7 @@ function VolumeNotch({
 							e.stopPropagation();
 							onMixerExpandedChange(!mixerExpanded);
 						}}
-						title="App volume mixer"
+						title={t("overlay.volume.mixer")}
 					>
 						<span className="volume-notch-action-icon">
 							<SpeakerIcon size={16} muted={isMuted} />
@@ -441,10 +444,10 @@ function VolumeNotch({
 								{sessions.length === 0 ? (
 									<div className="volume-mixer-empty">
 										{!sessionsLoaded
-											? "Loading..."
+											? t("overlay.volume.loading")
 											: sessionsError
-												? "Couldn't read audio sessions"
-												: "No apps with audio"}
+												? t("overlay.volume.sessionsError")
+												: t("overlay.volume.noApps")}
 									</div>
 								) : (
 									sessions.map((session) => (
@@ -571,6 +574,8 @@ function BrightnessNotch({
 // ─── Main Overlay Component ─────────────────────────────────────────────────
 
 function OverlayApp() {
+	const { t } = useTranslation();
+
 	useEffect(() => {
 		return initTheme();
 	}, []);
@@ -624,6 +629,7 @@ function OverlayApp() {
 		invoke("load_settings")
 			.then(async (settings: any) => {
 				if (await reloadIfMirrorWasStale(settings)) return;
+				setLocale(resolveLanguage(settings?.["bloom-language"] ?? null));
 				if (settings && settings["bloom-scale"] !== undefined) {
 					setScale(parseFloat(settings["bloom-scale"]));
 				}
@@ -784,7 +790,8 @@ function OverlayApp() {
 		"bloom-volume-edge-enabled": setVolumeEdgeEnabled,
 		"bloom-brightness-overlay-enabled": setBrightnessOverlayEnabled,
 		"bloom-brightness-edge-enabled": setBrightnessEdgeEnabled,
-		"bloom-scale": setScale
+		"bloom-scale": setScale,
+		"bloom-language": (value) => setLocale(resolveLanguage(String(value)))
 	});
 
 	// Side effects: reset overlay mode to idle when overlay is disabled
@@ -941,9 +948,10 @@ function OverlayApp() {
 					>
 						<img src="/bloom.png" className="update-splash-logo" alt="Bloom" />
 						<p className="update-splash-text">
-							{updateStatus === "checking" && "Checking for updates..."}
-							{updateStatus === "downloading" && `Downloading update... ${updateProgress}%`}
-							{updateStatus === "installing" && "Installing update..."}
+							{updateStatus === "checking" && t("overlay.update.checking")}
+							{updateStatus === "downloading" &&
+								t("overlay.update.downloading", { percent: updateProgress })}
+							{updateStatus === "installing" && t("overlay.update.installing")}
 						</p>
 						{updateStatus === "downloading" && (
 							<div className="update-progress-bar">
@@ -995,6 +1003,8 @@ function OverlayApp() {
 		</div>
 	);
 }
+
+initI18n();
 
 createRoot(document.getElementById("root")!).render(
 	<StrictMode>
