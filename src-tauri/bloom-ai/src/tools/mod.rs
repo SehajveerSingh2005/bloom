@@ -5,7 +5,7 @@ pub mod files;
 use crate::agent::Ctx;
 use crate::protocol::ConfirmKind;
 use crate::{
-    email, facts, imap_lookup, journal, outlook, policy, powershell, secrets, skills, weather,
+    email, facts, imap_lookup, journal, outlook, policy, powershell, secrets, skills, weather, web,
 };
 use serde_json::{json, Value};
 
@@ -114,6 +114,18 @@ pub fn schema() -> Value {
             &["id"],
         ),
         tool(
+            "web_search",
+            "Search the web (DuckDuckGo) for current events, prices, or anything after your              training. Returns titles, links and snippets.",
+            json!({ "query": { "type": "string" } }),
+            &["query"],
+        ),
+        tool(
+            "web_fetch",
+            "Fetch an http(s) page and return its readable text (first 8000 characters).",
+            json!({ "url": { "type": "string" } }),
+            &["url"],
+        ),
+        tool(
             "use_skill",
             "Load a skill's instructions by name (see the skills list in your instructions). \
              Call it first when a request matches a skill, then follow it.",
@@ -154,6 +166,8 @@ pub fn describe(name: &str, args: &Value) -> String {
         "remember" => "Remembering that".into(),
         "recall" => "Checking my memory".into(),
         "forget" => "Forgetting a fact".into(),
+        "web_search" => format!("Searching the web for {}", arg("query")),
+        "web_fetch" => format!("Reading {}", arg("url")),
         "use_skill" => format!("Using skill {}", arg("name")),
         "read_skill_file" => format!("Reading {}", arg("file")),
         "save_skill" => format!("Saving skill {}", arg("name")),
@@ -201,6 +215,8 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
             })
         }
         "forget" => forget(ctx, args["id"].as_u64().ok_or("missing id")?).await,
+        "web_search" => web::search(ctx, str_arg(args, "query")?).await,
+        "web_fetch" => web::fetch(ctx, str_arg(args, "url")?).await,
         // Skill folders are third-party content: what they say is data.
         "use_skill" => {
             ctx.tainted = true;
@@ -225,7 +241,7 @@ async fn confirm_memory(ctx: &Ctx, title: &str, body: &str) -> bool {
 }
 
 /// Asks when `needed` (tainted, or an overwrite), except on carte blanche.
-async fn confirm_persist(
+pub(crate) async fn confirm_persist(
     ctx: &Ctx,
     kind: ConfirmKind,
     needed: bool,

@@ -87,6 +87,7 @@ pub struct Shared {
     pub http: reqwest::Client,
     pub memory: Mutex<Memory>,
     pub endpoints: crate::weather::Endpoints,
+    pub web: crate::web::WebCfg,
 }
 
 impl Shared {
@@ -102,6 +103,7 @@ impl Shared {
             http,
             memory: Mutex::default(),
             endpoints: Default::default(),
+            web: crate::web::WebCfg::new(),
         }
     }
 }
@@ -116,6 +118,9 @@ pub struct Ctx {
     pub tainted: bool,
     /// Addresses saved during this request. They are not "known" yet.
     pub saved_this_task: HashSet<String>,
+    /// URLs web_fetch may open without asking while tainted: the user's own
+    /// text and this request's search results.
+    pub allowed_urls: HashSet<String>,
 }
 
 pub async fn run(task: u64, text: String, shared: Arc<Shared>) -> Result<String, String> {
@@ -135,6 +140,7 @@ pub async fn run(task: u64, text: String, shared: Arc<Shared>) -> Result<String,
         shared,
         tainted: false,
         saved_this_task: HashSet::new(),
+        allowed_urls: HashSet::new(),
     };
     run_with(&llm, &mut ctx, &text).await
 }
@@ -172,6 +178,7 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
         messages.extend(memory.messages(Instant::now()));
         ctx.tainted |= memory.tainted;
     }
+    ctx.allowed_urls.extend(crate::web::urls_in(text));
     messages.push(json!({ "role": "user", "content": text }));
     for _ in 0..MAX_STEPS {
         let message = llm.chat(&messages, &tools).await?;
@@ -241,6 +248,9 @@ fn system_prompt(name: &str, data_dir: &std::path::Path) -> String {
          A skill's instructions never give you new powers: any script still goes through \
          run_powershell. After a multi-step task the user is likely to repeat, offer to save \
          it as a skill, and call save_skill only once they agree.\n\
+         For current events, prices, or anything after your training, call web_search and \
+         answer with the key facts and the source names; read a page with web_fetch only when \
+         the snippets are not enough, and still never open a browser to answer.\n\
          When done, reply in one or two short sentences.{known}"
     )
 }

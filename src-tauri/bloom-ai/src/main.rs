@@ -20,6 +20,7 @@ mod secrets;
 mod skills;
 mod tools;
 mod voice;
+mod web;
 mod wake;
 mod wake_score;
 mod weather;

@@ -33,6 +33,7 @@ pub enum ConfirmKind {
     Script,
     Memory,
     Skill,
+    Web,
 }
 
 #[derive(Debug, Serialize, PartialEq)]

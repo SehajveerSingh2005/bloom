@@ -20,6 +20,15 @@ pub fn mock_server_status(
     status: &'static str,
     bodies: Vec<String>,
 ) -> (String, mpsc::Receiver<String>) {
+    mock_server_full(status, "Content-Type: application/json\r\n", bodies)
+}
+
+/// Like `mock_server`, with a status line and raw header lines (each ending CRLF).
+pub fn mock_server_full(
+    status: &'static str,
+    headers: &'static str,
+    bodies: Vec<String>,
+) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let (tx, rx) = mpsc::channel();
@@ -42,14 +51,15 @@ pub fn mock_server_status(
             reader.read_exact(&mut request).unwrap();
             tx.send(String::from_utf8_lossy(&request).into_owned())
                 .unwrap();
-            write!(
+            // The client may hang up early (body cap tests).
+            let _ = write!(
                 stream,
-                "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                "HTTP/1.1 {}\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
                 status,
+                headers,
                 body.len(),
                 body
-            )
-            .unwrap();
+            );
         }
     });
     (url, rx)
@@ -80,6 +90,7 @@ pub fn ctx() -> Ctx {
         http: http(),
         memory: Default::default(),
         endpoints: Default::default(),
+        web: crate::web::WebCfg::new(),
     };
     Ctx {
         task: 1,
@@ -87,6 +98,7 @@ pub fn ctx() -> Ctx {
         shared: Arc::new(shared),
         tainted: false,
         saved_this_task: HashSet::new(),
+        allowed_urls: HashSet::new(),
     }
 }
 
