@@ -6,7 +6,7 @@
 
 use crate::voice;
 use rustpotter::{
-    Rustpotter, RustpotterConfig, SampleFormat, WakewordLoad, WakewordRef,
+    Rustpotter, RustpotterConfig, SampleFormat, VADMode, WakewordLoad, WakewordRef,
     WakewordRefBuildFromFiles, WakewordSave,
 };
 use std::collections::VecDeque;
@@ -170,6 +170,9 @@ fn detector(model: WakewordRef, rate: u32) -> Result<Rustpotter, String> {
     let mut config = RustpotterConfig::default();
     config.fmt.sample_rate = rate as usize;
     config.fmt.sample_format = SampleFormat::I16;
+    // Scores only while there is sound well above the room's quiet level:
+    // about 1-2% of a core in a noisy room instead of ~3%.
+    config.detector.vad_mode = Some(VADMode::Hard);
     let mut detector = Rustpotter::new(&config)?;
     detector.add_wakeword_ref(NAME, model)?;
     Ok(detector)

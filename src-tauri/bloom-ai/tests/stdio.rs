@@ -30,6 +30,15 @@ fn answers_over_stdio_and_exits_when_stdin_closes() {
     out.read_line(&mut line).unwrap();
     assert_eq!(line.trim(), EXPECTED);
 
+    // No wake word trained next to the test binary: wake_on is refused.
+    writeln!(stdin, r#"{{"type":"wake_on"}}"#).unwrap();
+    line.clear();
+    out.read_line(&mut line).unwrap();
+    assert_eq!(
+        line.trim(),
+        r#"{"type":"error","task":null,"message":"Teach Janice your voice first in Settings > AI."}"#
+    );
+
     // Closing the pipe must end the process; a hang here is the bug.
     drop(stdin);
     assert!(child.wait().unwrap().success());

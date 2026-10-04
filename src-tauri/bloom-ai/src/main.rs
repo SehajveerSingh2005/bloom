@@ -133,6 +133,8 @@ async fn serve(shared: Arc<Shared>) {
         };
         match message {
             In::Prompt { task, text } => {
+                // Replaces a wake request still recording, silently like any other.
+                wake_task = None;
                 cancel(&mut current, &shared, false);
                 let s = shared.clone();
                 let guard = wake::Busy::new(&busy);
@@ -174,6 +176,7 @@ async fn serve(shared: Arc<Shared>) {
                 });
             }
             In::RecordStart => {
+                wake_task = None;
                 // A key-up that never arrived leaves an old recorder: drop its clip.
                 if let Some((old, _)) = recorder.take() {
                     drop(tokio::task::spawn_blocking(move || old.finish()));
@@ -198,6 +201,7 @@ async fn serve(shared: Arc<Shared>) {
             }
             In::WakeOn => {
                 listener = None;
+                stop_wake_request(&mut wake_task);
                 match wake::Listener::start(&shared.data_dir, busy.clone(), wake_tx.clone()) {
                     Ok(started) => listener = Some(started),
                     Err(message) => emit(&Out::Error {
@@ -231,6 +235,7 @@ async fn serve(shared: Arc<Shared>) {
                 Ok(()) => {
                     // A running listener switches to the new voice.
                     if listener.take().is_some() {
+                        stop_wake_request(&mut wake_task);
                         listener =
                             wake::Listener::start(&shared.data_dir, busy.clone(), wake_tx.clone())
                                 .ok();
