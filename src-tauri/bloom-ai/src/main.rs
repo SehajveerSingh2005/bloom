@@ -8,6 +8,7 @@ mod bridge;
 mod config;
 mod debug;
 mod email;
+mod facts;
 mod imap_lookup;
 mod journal;
 mod llm;
@@ -197,6 +198,31 @@ async fn serve(shared: Arc<Shared>) {
                     outlook,
                 });
             }
+            In::LibraryStatus => emit_library_status(&shared),
+            In::ForgetAll => {
+                if let Err(message) = facts::clear(&shared.data_dir) {
+                    emit(&Out::Error {
+                        task: None,
+                        message,
+                    });
+                }
+                // Refreshes the Settings count.
+                emit_library_status(&shared);
+            }
+            In::Reveal { what } => {
+                let opened = match what.as_str() {
+                    "memory" => facts::ensure(&shared.data_dir)
+                        .and_then(|p| tools::files::shell_open(&p.to_string_lossy())),
+                    // Later tasks fill these in.
+                    other => Err(format!("Opening {other} is not available yet.")),
+                };
+                if let Err(message) = opened {
+                    emit(&Out::Error {
+                        task: None,
+                        message,
+                    });
+                }
+            }
             In::OutlookLogin => {
                 let s = shared.clone();
                 // Its own task: polling waits up to 15 minutes and must not
@@ -289,6 +315,17 @@ async fn serve(shared: Arc<Shared>) {
             },
         }
     }
+}
+
+/// Counts for Settings > Library. Later tasks fill in the zeros.
+fn emit_library_status(shared: &Shared) {
+    emit(&Out::LibraryStatus {
+        memory: facts::count(&shared.data_dir),
+        skills: 0,
+        mcp_servers: 0,
+        mcp_tools: 0,
+        mcp_errors: vec![],
+    });
 }
 
 /// A spoken request: show what was heard, then run it.

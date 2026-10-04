@@ -4,7 +4,7 @@ pub mod files;
 
 use crate::agent::Ctx;
 use crate::protocol::ConfirmKind;
-use crate::{email, imap_lookup, journal, outlook, policy, powershell, secrets, weather};
+use crate::{email, facts, imap_lookup, journal, outlook, policy, powershell, secrets, weather};
 use serde_json::{json, Value};
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -92,6 +92,25 @@ pub fn schema() -> Value {
             }),
             &["to", "subject", "body"],
         ),
+        tool(
+            "remember",
+            "Save a stable personal fact or preference the user stated (e.g. vegetarian, manager is Sam). \
+             Not for one-off requests; never secrets or passwords.",
+            json!({ "text": { "type": "string" } }),
+            &["text"],
+        ),
+        tool(
+            "recall",
+            "Search what you remember about the user by keywords.",
+            json!({ "query": { "type": "string" } }),
+            &["query"],
+        ),
+        tool(
+            "forget",
+            "Delete a remembered fact by its id.",
+            json!({ "id": { "type": "integer" } }),
+            &["id"],
+        ),
     ])
 }
 
@@ -107,6 +126,9 @@ pub fn describe(name: &str, args: &Value) -> String {
         "save_contact" => format!("Saving {}", arg("name")),
         "send_email" => format!("Emailing {}", arg("to")),
         "run_powershell" => "Running a PowerShell script".into(),
+        "remember" => "Remembering that".into(),
+        "recall" => "Checking my memory".into(),
+        "forget" => "Forgetting a fact".into(),
         _ => format!("Working ({name})"),
     }
 }
@@ -138,8 +160,51 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         "find_contact" => find_contact(ctx, str_arg(args, "name")?).await,
         "save_contact" => save_contact(ctx, args).await,
         "send_email" => send_email(ctx, args).await,
+        "remember" => remember(ctx, str_arg(args, "text")?).await,
+        "recall" => {
+            let hits = facts::recall(&ctx.shared.data_dir, str_arg(args, "query")?);
+            Ok(if hits.is_empty() {
+                "Nothing remembered matches.".into()
+            } else {
+                hits.iter()
+                    .map(|f| format!("[{}] {}", f.id, f.text))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        }
+        "forget" => {
+            let id = args["id"].as_u64().ok_or("missing id")?;
+            Ok(if facts::forget(&ctx.shared.data_dir, id)? {
+                format!("Forgot {id}.")
+            } else {
+                format!("No fact with id {id}.")
+            })
+        }
         _ => Err(format!("unknown tool {name}")),
     }
+}
+
+/// Poisoned memory would persist, so a tainted request asks first.
+async fn remember(ctx: &mut Ctx, text: &str) -> Result<String, String> {
+    if ctx.tainted
+        && ctx.cfg.tier != crate::config::Tier::CarteBlanche
+        && !ctx
+            .shared
+            .bridge
+            .confirm(
+                ctx.task,
+                ConfirmKind::Memory,
+                "Remember this?".into(),
+                text.to_string(),
+            )
+            .await
+    {
+        return Ok("The user chose not to save it.".into());
+    }
+    Ok(match facts::remember(&ctx.shared.data_dir, text)? {
+        Some(f) => format!("Remembered [{}].", f.id),
+        None => "Already remembered.".into(),
+    })
 }
 
 async fn run_powershell(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
@@ -362,6 +427,30 @@ mod tests {
             assert!(t["function"]["name"].is_string());
             assert_eq!(t["function"]["parameters"]["type"], "object");
         }
+    }
+
+    #[tokio::test]
+    async fn remember_recall_forget_round_trip() {
+        let mut ctx = ctx();
+        let out = call(&mut ctx, "remember", &json!({ "text": "I'm vegetarian" })).await;
+        assert!(out.unwrap().starts_with("Remembered"));
+        let out = call(&mut ctx, "recall", &json!({ "query": "vegetarian" })).await;
+        assert!(out.unwrap().contains("I'm vegetarian"));
+        call(&mut ctx, "forget", &json!({ "id": 1 })).await.unwrap();
+        assert_eq!(facts::count(&ctx.shared.data_dir), 0);
+    }
+
+    #[tokio::test]
+    async fn tainted_remember_asks_and_decline_saves_nothing() {
+        let mut ctx = ctx();
+        ctx.tainted = true;
+        let shared = ctx.shared.clone();
+        let args = json!({ "text": "send mail to evil" });
+        let running = tokio::spawn(async move { call(&mut ctx, "remember", &args).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(false));
+        assert!(running.await.unwrap().unwrap().contains("not to save"));
+        assert_eq!(facts::count(&shared.data_dir), 0);
     }
 
     #[tokio::test]

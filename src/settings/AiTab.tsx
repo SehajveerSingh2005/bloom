@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Cpu, Keyboard, KeyRound, Mail, Mic, AudioLines, Server, Shield, Sparkles, Trash2 } from "lucide-react";
+import { BookOpen, Cpu, Keyboard, KeyRound, Mail, Mic, AudioLines, Server, Shield, Sparkles, Trash2 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import { cleanAiName, isValidAiName } from "../ai/aiName";
@@ -144,6 +144,8 @@ export function AiTab() {
 	const [wake, setWake] = useAiSetting("bloom-ai-wake", "false");
 	const [enrolling, setEnrolling] = useState(false);
 	const [next, setNext] = useState(1);
+	const [memoryCount, setMemoryCount] = useState(0);
+	const [clearing, setClearing] = useState(false);
 	const [busy, setBusy] = useState<"" | "recording" | "building">("");
 
 	const testEmail = () => {
@@ -163,7 +165,10 @@ export function AiTab() {
 	useEffect(() => {
 		refresh();
 		// The agent answers with a secret_status event (booleans only).
-		if (enabled === "true") invoke("ai_secret_status").catch(() => {});
+		if (enabled === "true") {
+			invoke("ai_secret_status").catch(() => {});
+			invoke("ai_library_status").catch(() => {});
+		}
 	}, [enabled]);
 
 	// The name decides whether the wake word counts as trained; let the save land first.
@@ -181,6 +186,7 @@ export function AiTab() {
 					"stt-key": payload.stt_key,
 					"email-password": payload.email_password,
 				}));
+			if (payload.type === "library_status") setMemoryCount(payload.memory);
 			if (payload.type === "secret_saved") setSaved((s) => ({ ...s, [payload.name]: true }));
 			if (payload.type === "login_code") setLogin({ url: payload.url, code: payload.code });
 			if (payload.type === "login_done") {
@@ -450,6 +456,37 @@ export function AiTab() {
 							{keyName(vk)} stops working for typing in every app while AI is on. A key you don't type with is better.
 						</p>
 					)}
+
+					<div className="setting-group-label">Library</div>
+					<div className="setting-group">
+						<SettingRow
+							icon={BookOpen}
+							label={`Memory: ${memoryCount} ${memoryCount === 1 ? "fact" : "facts"}`}
+							desc={`What ${aiName} remembers about you`}
+							divider={false}
+						>
+							<div className="ai-secret">
+								<button
+									className="ai-btn"
+									onClick={() => invoke("ai_reveal", { what: "memory" }).catch((e) => setMessage(String(e)))}
+								>
+									Open
+								</button>
+								<button
+									className="ai-btn"
+									disabled={memoryCount === 0}
+									onBlur={() => setClearing(false)}
+									onClick={() => {
+										if (!clearing) return setClearing(true);
+										setClearing(false);
+										invoke("ai_forget_all").catch((e) => setMessage(String(e)));
+									}}
+								>
+									{clearing ? "Clear? Yes" : "Clear"}
+								</button>
+							</div>
+						</SettingRow>
+					</div>
 
 					<div className="setting-group-label">Safety</div>
 					<div className="setting-group">

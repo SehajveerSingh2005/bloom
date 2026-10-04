@@ -21,6 +21,9 @@ pub enum In {
     WakeOff,
     EnrollSample { index: u32 },
     EnrollBuild,
+    LibraryStatus,
+    Reveal { what: String },
+    ForgetAll,
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone, Copy)]
@@ -28,6 +31,7 @@ pub enum In {
 pub enum ConfirmKind {
     Email,
     Script,
+    Memory,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -94,6 +98,13 @@ pub enum Out {
         index: u32,
     },
     EnrollDone,
+    LibraryStatus {
+        memory: usize,
+        skills: usize,
+        mcp_servers: usize,
+        mcp_tools: usize,
+        mcp_errors: Vec<String>,
+    },
 }
 
 /// Writes one message to Bloom. A failed write means Bloom is gone; the stdin
@@ -170,6 +181,29 @@ mod tests {
             })
             .unwrap(),
             r#"{"type":"email_test","ok":false,"message":"x"}"#
+        );
+    }
+
+    #[test]
+    fn library_messages() {
+        assert_eq!(parse(r#"{"type":"library_status"}"#), Ok(In::LibraryStatus));
+        assert_eq!(parse(r#"{"type":"forget_all"}"#), Ok(In::ForgetAll));
+        assert_eq!(
+            parse(r#"{"type":"reveal","what":"memory"}"#),
+            Ok(In::Reveal {
+                what: "memory".into()
+            })
+        );
+        assert_eq!(
+            serde_json::to_string(&Out::LibraryStatus {
+                memory: 2,
+                skills: 0,
+                mcp_servers: 0,
+                mcp_tools: 0,
+                mcp_errors: vec![]
+            })
+            .unwrap(),
+            r#"{"type":"library_status","memory":2,"skills":0,"mcp_servers":0,"mcp_tools":0,"mcp_errors":[]}"#
         );
     }
 

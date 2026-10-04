@@ -215,6 +215,12 @@ fn main() {
             #[cfg(windows)]
             ai::ai_secret_status,
             #[cfg(windows)]
+            ai::ai_library_status,
+            #[cfg(windows)]
+            ai::ai_reveal,
+            #[cfg(windows)]
+            ai::ai_forget_all,
+            #[cfg(windows)]
             ai::ai_outlook_login,
             #[cfg(windows)]
             ai::ai_test_email,

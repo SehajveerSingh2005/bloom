@@ -460,6 +460,24 @@ pub fn ai_secret_status(app: AppHandle) -> Result<(), String> {
     send(&app, json!({ "type": "secret_status" }))
 }
 
+/// Asks the agent for Library counts; `library_status` follows as an `ai-event`.
+#[tauri::command]
+pub fn ai_library_status(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "library_status" }))
+}
+
+/// Opens a Library item ("memory", "skills" or "mcp") in its default app.
+#[tauri::command]
+pub fn ai_reveal(app: AppHandle, what: String) -> Result<(), String> {
+    send(&app, json!({ "type": "reveal", "what": what }))
+}
+
+/// Clears the agent's long-term memory; `library_status` follows.
+#[tauri::command]
+pub fn ai_forget_all(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "forget_all" }))
+}
+
 #[tauri::command]
 pub fn ai_outlook_login(app: AppHandle) -> Result<(), String> {
     send(&app, json!({ "type": "outlook_login" }))
