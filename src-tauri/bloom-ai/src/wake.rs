@@ -128,20 +128,33 @@ pub(crate) fn train(files: &[&PathBuf], retrim: bool) -> Result<WakewordRef, Str
 /// The trained wake word. One built before `trim` was fixed is rebuilt once
 /// from its saved samples, trimmed now: those samples are ~2.2 s with only
 /// ~0.7 s of voice, so the old model scored the user's voice at about the
-/// threshold and quiet room noise above it.
-fn load(dir: &Path, name: &str) -> Result<WakewordRef, String> {
-    let path = model_path(dir).to_string_lossy().into_owned();
-    let untrained = || format!("Teach {name} your voice first in Settings > AI.");
-    let model = WakewordRef::load_from_file(&path).map_err(|_| untrained())?;
-    if model.name != OLD_NAME {
-        return Ok(model);
+/// threshold and quiet room noise above it. A missing or unreadable model is
+/// rebuilt the same way when the samples are there. If rebuilding fails, an
+/// old model that loaded is used as it is (the reason goes to the debug log).
+fn load(dir: &Path, settings: &Path, name: &str) -> Result<WakewordRef, String> {
+    match WakewordRef::load_from_file(&model_path(dir).to_string_lossy()) {
+        Ok(model) if model.name != OLD_NAME => Ok(model),
+        loaded => rebuild(dir).or_else(|reason| {
+            if crate::config::Config::load(settings).debug {
+                crate::debug::log(dir, "wake-rebuild-failed", &reason);
+            }
+            loaded.map_err(|_| format!("Teach {name} your voice first in Settings > AI."))
+        }),
     }
+}
+
+/// Trains the wake word again from the saved samples, trimmed, and saves it
+/// (to a temporary file first, so a failed write keeps the old one).
+fn rebuild(dir: &Path) -> Result<WakewordRef, String> {
     let files = samples(dir);
     if files.len() < MIN_SAMPLES {
-        return Err(untrained());
+        return Err(format!("{} samples, {MIN_SAMPLES} needed", files.len()));
     }
     let model = train(&files.iter().collect::<Vec<_>>(), true)?;
-    model.save_to_file(&path)?;
+    let path = model_path(dir);
+    let tmp = path.with_extension("rpw.tmp");
+    model.save_to_file(&tmp.to_string_lossy())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
     Ok(model)
 }
 
@@ -190,7 +203,7 @@ impl Listener {
         busy: Arc<AtomicUsize>,
         events: UnboundedSender<Event>,
     ) -> Result<Listener, String> {
-        let model = load(dir, name)?;
+        let model = load(dir, settings, name)?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         let paths = (dir.to_path_buf(), settings.to_path_buf());
@@ -726,11 +739,11 @@ mod tests {
     /// others, with margin over the threshold.
     #[test]
     fn own_samples_wake_a_model_trained_on_the_others() {
-        let Some(local) = dirs::data_local_dir() else {
-            return;
-        };
-        let samples = samples_in(&local.join("com.sehaz.bloom").join("ai").join("wake"));
+        let samples = dirs::data_local_dir()
+            .map(|local| samples_in(&local.join("com.sehaz.bloom").join("ai").join("wake")))
+            .unwrap_or_default();
         if samples.len() <= MIN_SAMPLES {
+            println!("skipped: no local wake samples");
             return;
         }
         for sample in &samples {
@@ -771,21 +784,64 @@ mod tests {
         let old_frames = old.samples_features["sample-1.wav"].len();
         old.save_to_file(&model_file).unwrap();
 
-        let model = load(&dir, "Mina").unwrap();
+        let settings = dir.join("settings.json");
+        let model = load(&dir, &settings, "Mina").unwrap();
         assert_eq!(model.name, NAME);
         let frames = model.samples_features["sample-1.wav"].len();
         assert!(frames * 2 < old_frames, "{frames} vs {old_frames}");
-        // Saved, so the next start loads it as it is.
-        let mut saved = WakewordRef::load_from_file(&model_file).unwrap();
+        // Saved (no temporary file left), so the next start loads it as it is.
+        let saved = WakewordRef::load_from_file(&model_file).unwrap();
         assert_eq!(saved.name, NAME);
+        assert!(!dir.join("wake").join("wake.rpw.tmp").exists());
+    }
 
-        // An old model with no samples left to rebuild from: train again.
-        saved.name = OLD_NAME.into();
-        saved.save_to_file(&model_file).unwrap();
+    /// An old-label model in `dir` (from fake voices) and its samples.
+    fn old_model_with_samples(dir: &Path) {
+        std::fs::create_dir_all(dir.join("wake")).unwrap();
         for i in 1..=3 {
-            std::fs::remove_file(sample_path(&dir, i)).unwrap();
+            std::fs::write(sample_path(dir, i), voice::wav(&fake_voice(i), RATE)).unwrap();
         }
-        assert!(load(&dir, "Mina").is_err_and(|e| e.contains("Teach Mina")));
+        let files: Vec<PathBuf> = (1..=3).map(|i| sample_path(dir, i)).collect();
+        let mut old = train(&files.iter().collect::<Vec<_>>(), false).unwrap();
+        old.name = OLD_NAME.into();
+        old.save_to_file(&model_path(dir).to_string_lossy())
+            .unwrap();
+    }
+
+    #[test]
+    fn a_failed_rebuild_keeps_the_old_model() {
+        let dir = temp_dir();
+        let settings = dir.join("settings.json");
+        std::fs::write(&settings, r#"{"bloom-ai-debug":"true"}"#).unwrap();
+        old_model_with_samples(&dir);
+        // Unreadable samples: training fails.
+        for i in 1..=3 {
+            std::fs::write(sample_path(&dir, i), b"junk").unwrap();
+        }
+        assert_eq!(load(&dir, &settings, "Mina").unwrap().name, OLD_NAME);
+        let log = std::fs::read_to_string(dir.join("debug.log")).unwrap();
+        assert!(log.contains("wake-rebuild-failed"), "{log}");
+        // Too few samples: the same.
+        std::fs::remove_file(sample_path(&dir, 3)).unwrap();
+        assert_eq!(load(&dir, &settings, "Mina").unwrap().name, OLD_NAME);
+        let model = WakewordRef::load_from_file(&model_path(&dir).to_string_lossy()).unwrap();
+        assert_eq!(model.name, OLD_NAME, "the old model file was replaced");
+    }
+
+    #[test]
+    fn an_unreadable_model_is_rebuilt_from_the_samples() {
+        let dir = temp_dir();
+        let settings = dir.join("settings.json");
+        old_model_with_samples(&dir);
+        std::fs::write(model_path(&dir), b"not a model").unwrap();
+        assert_eq!(load(&dir, &settings, "Mina").unwrap().name, NAME);
+        let saved = WakewordRef::load_from_file(&model_path(&dir).to_string_lossy()).unwrap();
+        assert_eq!(saved.name, NAME);
+        // Nothing to rebuild from either: train first.
+        std::fs::write(model_path(&dir), b"not a model").unwrap();
+        std::fs::remove_file(sample_path(&dir, 1)).unwrap();
+        let err = load(&dir, &settings, "Mina").map(|m| m.name).unwrap_err();
+        assert!(err.contains("Teach Mina"), "{err}");
     }
 
     #[test]

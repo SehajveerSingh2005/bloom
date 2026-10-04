@@ -4,8 +4,9 @@
 //! event in the ai folder (so "Delete AI altogether" removes it). Past
 //! ROTATE_BYTES the file becomes debug.old.log and a new one starts, so both
 //! together stay around 1 MB. Callers check the setting; with it off nothing
-//! is written. Secrets never pass through here: keys and passwords travel
-//! only as `set_secret` messages, and a `value` under that name is redacted.
+//! is written. API keys and mail passwords are never written (they never
+//! reach the agent loop); request text, tool arguments (such as email
+//! bodies) and tool results are.
 
 use serde_json::Value;
 use std::io::Write;
@@ -46,14 +47,8 @@ pub fn cut(text: &str, max: usize) -> String {
     }
 }
 
-/// A tool call for the log, with any secret value blanked out.
+/// A tool call for the log: its name and arguments.
 pub fn call(name: &str, args: &Value) -> String {
-    let mut args = args.clone();
-    if name == "set_secret" {
-        if let Some(value) = args.get_mut("value") {
-            *value = Value::from("[redacted]");
-        }
-    }
     format!("{name} {args}")
 }
 
@@ -97,15 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn secret_values_are_redacted() {
-        let line = call(
-            "set_secret",
-            &json!({ "name": "llm-key", "value": "sk-123" }),
-        );
-        assert!(
-            !line.contains("sk-123") && line.contains("[redacted]"),
-            "{line}"
-        );
+    fn tool_calls_show_name_and_arguments() {
         let line = call("open", &json!({ "target": "notepad" }));
         assert_eq!(line, r#"open {"target":"notepad"}"#);
     }
