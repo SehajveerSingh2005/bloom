@@ -6,6 +6,7 @@
 mod agent;
 mod bridge;
 mod config;
+mod debug;
 mod email;
 mod imap_lookup;
 mod journal;
@@ -311,7 +312,13 @@ impl WakeState {
     fn start(&mut self) {
         self.listener = None;
         let name = config::Config::load(&self.settings).name;
-        match wake::Listener::start(&self.dir, &name, self.busy.clone(), self.events.clone()) {
+        match wake::Listener::start(
+            &self.dir,
+            &self.settings,
+            &name,
+            self.busy.clone(),
+            self.events.clone(),
+        ) {
             Ok(started) => self.listener = Some(started),
             Err(message) => emit(&Out::Error {
                 task: None,

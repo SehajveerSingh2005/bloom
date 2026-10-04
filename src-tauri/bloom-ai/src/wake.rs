@@ -182,8 +182,10 @@ pub struct Listener {
 
 impl Listener {
     /// `name` is the assistant's configured name, for the error message.
+    /// `settings` is read again on each wake score, for `bloom-ai-debug`.
     pub fn start(
         dir: &Path,
+        settings: &Path,
         name: &str,
         busy: Arc<AtomicUsize>,
         events: UnboundedSender<Event>,
@@ -191,8 +193,9 @@ impl Listener {
         let model = load(dir, name)?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
+        let paths = (dir.to_path_buf(), settings.to_path_buf());
         let thread = std::thread::spawn(move || {
-            if let Err(message) = listen(model, &flag, &busy, &events) {
+            if let Err(message) = listen(model, &paths, &flag, &busy, &events) {
                 crate::protocol::emit(&crate::protocol::Out::Error {
                     task: None,
                     message,
@@ -258,8 +261,26 @@ pub(crate) fn feed(
     heard
 }
 
+/// Logs a wake score if `bloom-ai-debug` is on. `paths` is (ai folder,
+/// settings.json).
+fn log_score(paths: &(PathBuf, PathBuf), event: &str, (score, avg, frames): Score) {
+    if crate::config::Config::load(&paths.1).debug {
+        let detail = format!("score {score:.3}, avg {avg:.3}, frames {frames}");
+        crate::debug::log(&paths.0, event, &detail);
+    }
+}
+
+/// A detection's score, its averaged-template score and how many frames
+/// scored over the threshold.
+type Score = (f32, f32, usize);
+
+fn score(d: &RustpotterDetection) -> Score {
+    (d.score, d.avg_score, d.counter)
+}
+
 fn listen(
     model: WakewordRef,
+    paths: &(PathBuf, PathBuf),
     stop: &AtomicBool,
     busy: &Arc<AtomicUsize>,
     events: &UnboundedSender<Event>,
@@ -273,6 +294,8 @@ fn listen(
     let mut request: Option<(Endpoint, Vec<i16>, Busy)> = None;
     let mut paused = false;
     let mut last_wake: Option<Instant> = None;
+    // A score over the threshold that has not (yet) become a detection.
+    let mut near: Option<Score> = None;
     voice::stream(|rate, chunk| {
         if stop.load(Ordering::Relaxed) {
             return false;
@@ -315,7 +338,21 @@ fn listen(
         if recent.len() > keep {
             recent.drain(..recent.len() - keep);
         }
-        let heard = feed(detector, &mut frame, chunk).is_some();
+        let detection = feed(detector, &mut frame, chunk);
+        match (&detection, detector.get_partial_detection()) {
+            (Some(d), _) => {
+                near = None;
+                log_score(paths, "wake", score(d));
+            }
+            // Rustpotter keeps the best partial score, with a running count.
+            (None, Some(partial)) => near = Some(score(partial)),
+            (None, None) => {
+                if let Some(missed) = near.take() {
+                    log_score(paths, "wake-near-miss", missed);
+                }
+            }
+        }
+        let heard = detection.is_some();
         if heard && last_wake.is_none_or(|t| t.elapsed() >= COOLDOWN) {
             last_wake = Some(Instant::now());
             request = Some((
@@ -573,6 +610,22 @@ mod tests {
         .concat();
         let phrase = ms_of(trim(&audio, RATE).unwrap());
         assert!((800..=1000).contains(&phrase), "{phrase}");
+    }
+
+    #[test]
+    fn wake_scores_are_logged_only_with_debug_on() {
+        let dir = temp_dir();
+        let settings = dir.join("settings.json");
+        let paths = (dir.clone(), settings.clone());
+        for on in ["false", "true"] {
+            std::fs::write(&settings, format!(r#"{{"bloom-ai-debug":"{on}"}}"#)).unwrap();
+            log_score(&paths, "wake-near-miss", (0.48, 0.3, 2));
+            let log = std::fs::read_to_string(dir.join("debug.log"));
+            match on {
+                "false" => assert!(log.is_err(), "wrote a log while off"),
+                _ => assert!(log.unwrap().contains("score 0.480, avg 0.300, frames 2")),
+            }
+        }
     }
 
     #[test]

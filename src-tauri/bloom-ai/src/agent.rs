@@ -5,7 +5,7 @@ use crate::bridge::Bridge;
 use crate::config::Config;
 use crate::llm::Llm;
 use crate::protocol::{emit, Out};
-use crate::{secrets, tools};
+use crate::{debug, secrets, tools};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -72,6 +72,22 @@ pub async fn run(task: u64, text: String, shared: Arc<Shared>) -> Result<String,
 }
 
 pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
+    let dir = ctx.cfg.debug.then(|| ctx.shared.data_dir.clone());
+    let log = |event: &str, detail: &str| {
+        if let Some(dir) = &dir {
+            debug::log(dir, event, detail);
+        }
+    };
+    log("request", text);
+    let result = steps(llm, ctx, text).await;
+    match &result {
+        Ok(reply) => log("reply", reply),
+        Err(e) => log("error", e),
+    }
+    result
+}
+
+async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
     let tools = tools::schema();
     let mut messages = vec![
         json!({ "role": "system", "content": system_prompt(&ctx.cfg.name) }),
@@ -106,6 +122,11 @@ pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, St
                 Ok(result) => result,
                 Err(e) => format!("Error: {e}"),
             };
+            if ctx.cfg.debug {
+                let dir = &ctx.shared.data_dir;
+                debug::log(dir, "tool", &debug::call(name, &args));
+                debug::log(dir, "result", &debug::cut(&result, debug::RESULT_CHARS));
+            }
             messages.push(json!({ "role": "tool", "tool_call_id": call["id"], "content": result }));
         }
     }
@@ -157,6 +178,47 @@ mod tests {
         let second_request = requests.recv().unwrap();
         assert!(second_request.contains("unknown tool no_such_tool"));
         assert!(second_request.contains(r#""tool_call_id":"c1""#));
+    }
+
+    #[tokio::test]
+    async fn debug_log_records_the_request_only_when_on() {
+        let first = r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"no_such_tool","arguments":"{\"a\":1}"}}]}}]}"#;
+        let second = r#"{"choices":[{"message":{"role":"assistant","content":"All done."}}]}"#;
+        for on in [false, true] {
+            let (url, _requests) = mock_server(vec![first.into(), second.into()]);
+            let llm = Llm {
+                http: http(),
+                base_url: url,
+                model: "m".into(),
+                key: "k".into(),
+            };
+            let mut ctx = ctx();
+            ctx.cfg.debug = on;
+            run_with(&llm, &mut ctx, "do it").await.unwrap();
+            let log = std::fs::read_to_string(ctx.shared.data_dir.join("debug.log"));
+            if !on {
+                assert!(log.is_err(), "wrote a log while off");
+                continue;
+            }
+            let events: Vec<Value> = log
+                .unwrap()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            let pairs: Vec<(&str, &str)> = events
+                .iter()
+                .map(|e| (e["event"].as_str().unwrap(), e["detail"].as_str().unwrap()))
+                .collect();
+            assert_eq!(
+                pairs,
+                [
+                    ("request", "do it"),
+                    ("tool", r#"no_such_tool {"a":1}"#),
+                    ("result", "Error: unknown tool no_such_tool"),
+                    ("reply", "All done."),
+                ]
+            );
+        }
     }
 
     #[tokio::test]

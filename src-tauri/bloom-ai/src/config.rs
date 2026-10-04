@@ -28,6 +28,8 @@ pub struct Config {
     pub smtp_host: String,
     /// 0: use the preset.
     pub smtp_port: u16,
+    /// Write ai\debug.log (debug.rs).
+    pub debug: bool,
 }
 
 pub const DEFAULT_NAME: &str = "Janice";
@@ -76,6 +78,7 @@ impl Config {
             email: get("bloom-ai-email", ""),
             smtp_host: get("bloom-ai-smtp-host", ""),
             smtp_port: get("bloom-ai-smtp-port", "0").parse().unwrap_or(0),
+            debug: get("bloom-ai-debug", "false") == "true",
         }
     }
 
@@ -110,6 +113,8 @@ mod tests {
         assert_eq!(c.model, "");
         assert_eq!(c.tier, Tier::Conservative);
         assert_eq!(c.smtp_port, 0);
+        assert!(!c.debug);
+        assert!(Config::from_map(&map(&[("bloom-ai-debug", "true")])).debug);
     }
 
     #[test]
