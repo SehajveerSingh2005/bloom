@@ -9,6 +9,7 @@ mod config;
 mod email;
 mod journal;
 mod llm;
+mod outlook;
 mod policy;
 mod powershell;
 mod protocol;
@@ -101,6 +102,18 @@ async fn serve(shared: Arc<Shared>) {
                     message,
                 }),
             },
+            In::OutlookLogin => {
+                let s = shared.clone();
+                // Its own task: polling waits up to 15 minutes and must not
+                // block requests or be cancelled by them.
+                tokio::spawn(async move {
+                    let (ok, message) = match outlook::login(&s.http).await {
+                        Ok(()) => (true, "Signed in.".to_string()),
+                        Err(e) => (false, e),
+                    };
+                    emit(&Out::LoginDone { ok, message });
+                });
+            }
             other => emit(&Out::Error {
                 task: None,
                 message: format!("not supported yet: {other:?}"),

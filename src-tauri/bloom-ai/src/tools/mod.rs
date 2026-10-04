@@ -4,7 +4,7 @@ pub mod files;
 
 use crate::agent::Ctx;
 use crate::protocol::ConfirmKind;
-use crate::{email, journal, policy, powershell, secrets};
+use crate::{email, journal, outlook, policy, powershell, secrets};
 use serde_json::{json, Value};
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -212,9 +212,9 @@ async fn save_contact(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
 }
 
 /// The password or token SMTP needs for the sender's account.
-async fn mail_secret(_ctx: &Ctx, server: &email::Server) -> Result<String, String> {
+async fn mail_secret(ctx: &Ctx, server: &email::Server) -> Result<String, String> {
     if server.oauth {
-        return Err("Sign in with Microsoft in Settings > AI first.".into());
+        return outlook::access_token(&ctx.shared.http).await;
     }
     secrets::get("email-password")
         .ok_or_else(|| "Save your email app password in Settings > AI first.".into())
