@@ -124,28 +124,55 @@ mod tests {
         wipe();
     }
 
-    /// Saved keys are never lost: `wipe` is called only from `--wipe` in main().
-    #[test]
-    fn wipe_is_only_reachable_from_the_wipe_flag() {
-        let needle = concat!("secrets::", "wipe(");
-        let mut hits = Vec::new();
-        for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src")).unwrap() {
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
-            if path.file_name().is_some_and(|n| n == "secrets.rs")
-                || path.extension().is_none_or(|e| e != "rs")
-            {
-                continue;
-            }
-            let src = std::fs::read_to_string(&path).unwrap();
-            for (at, _) in src.match_indices(needle) {
-                hits.push((path.file_name().unwrap().to_owned(), src[..at].to_string()));
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
             }
         }
-        assert_eq!(hits.len(), 1, "wipe called from more than one place");
-        let (file, before) = &hits[0];
-        assert_eq!(file, "main.rs");
+    }
+
+    /// Saved keys are never lost: any code mentioning `wipe` (a call, a `use`,
+    /// an alias) anywhere in the agent, including this file, fails here except
+    /// the definition and the `--wipe` branch of main().
+    #[test]
+    fn wipe_is_only_reachable_from_the_wipe_flag() {
+        let mut files = Vec::new();
+        rust_files(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src")), &mut files);
+        let mut hits = Vec::new();
+        for path in files {
+            let src = std::fs::read_to_string(&path).unwrap();
+            let code = src.split("#[cfg(test)]\nmod tests").next().unwrap();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let mut before = String::new();
+            for line in code.lines() {
+                let t = line.trim();
+                let mentions = t.contains("wipe") && !t.starts_with("//");
+                let allowed = (name == "secrets.rs" && t == "pub fn wipe() {")
+                    || (name == "main.rs" && t.contains(r#"a == "--wipe""#));
+                if mentions && !allowed {
+                    hits.push((name.clone(), t.to_string(), before.clone()));
+                }
+                before.push_str(line);
+                before.push('\n');
+            }
+        }
+        assert_eq!(hits.len(), 1, "wipe referenced outside --wipe: {hits:?}");
+        let (file, line, before) = &hits[0];
+        assert_eq!((file.as_str(), line.as_str()), ("main.rs", "secrets::wipe();"));
         assert!(before.contains("fn main()") && !before.contains("async fn serve"));
         assert!(before.trim_end().ends_with(r#"if args.iter().any(|a| a == "--wipe") {"#));
+    }
+
+    #[test]
+    fn status_reports_chunked_values() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        set("outlook-refresh", &"x".repeat(2500)).unwrap();
+        assert_eq!(status(), [false, false, false, true]);
+        wipe();
     }
 
     #[test]

@@ -147,7 +147,7 @@ export function AiTab() {
 	useEffect(() => {
 		refresh();
 		// The agent answers with a secret_status event (booleans only).
-		if (enabled) invoke("ai_secret_status").catch(() => {});
+		if (enabled === "true") invoke("ai_secret_status").catch(() => {});
 	}, [enabled]);
 
 	useEffect(() => {

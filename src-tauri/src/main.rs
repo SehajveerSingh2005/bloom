@@ -211,6 +211,7 @@ fn main() {
             ai::ai_confirm,
             #[cfg(windows)]
             ai::ai_set_secret,
+            #[cfg(windows)]
             ai::ai_secret_status,
             #[cfg(windows)]
             ai::ai_outlook_login,
