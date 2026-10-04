@@ -85,7 +85,12 @@ pub fn slug(name: &str) -> String {
 }
 
 fn read_skill(folder: &Path) -> Option<(Skill, String)> {
-    let text = std::fs::read_to_string(folder.join("SKILL.md")).ok()?;
+    let file = folder.join("SKILL.md");
+    // list() runs every request: never read an oversized file.
+    if std::fs::metadata(&file).ok()?.len() > 4 * MAX_BYTES as u64 {
+        return None;
+    }
+    let text = std::fs::read_to_string(file).ok()?;
     let (name, description, body) = parse(&text)?;
     let folder = folder.file_name()?.to_string_lossy().into_owned();
     Some((
@@ -129,8 +134,17 @@ fn find(data: &Path, name: &str) -> Option<(Skill, String)> {
         .and_then(|s| read_skill(&dir(data).join(&s.folder)))
 }
 
+/// The folder `save` writes to: the matching skill's own folder (by name or
+/// folder), else a new `<slug>` folder. `exists` agrees with it.
+fn target(data: &Path, name: &str) -> String {
+    match find(data, name) {
+        Some((s, _)) => s.folder,
+        None => slug(name),
+    }
+}
+
 pub fn exists(data: &Path, name: &str) -> bool {
-    find(data, name).is_some() || dir(data).join(slug(name)).join("SKILL.md").exists()
+    dir(data).join(target(data, name)).join("SKILL.md").exists()
 }
 
 fn cut(s: &str) -> String {
@@ -149,19 +163,26 @@ fn other_files(root: &Path) -> Vec<String> {
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
         for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            // file_type does not follow links, so a junction loop cannot hang this.
+            let Ok(t) = e.file_type() else { continue };
             let p = e.path();
-            if p.is_dir() {
+            if t.is_dir() {
                 stack.push(p);
-            } else if let Ok(rel) = p.strip_prefix(root) {
-                let rel = rel.to_string_lossy().replace('\\', "/");
-                if rel != "SKILL.md" {
-                    out.push(rel);
+            } else if t.is_file() {
+                if let Ok(rel) = p.strip_prefix(root) {
+                    let rel = rel.to_string_lossy().replace('\\', "/");
+                    if rel != "SKILL.md" {
+                        out.push(rel);
+                    }
                 }
+            }
+            if out.len() >= 50 {
+                out.sort();
+                return out;
             }
         }
     }
     out.sort();
-    out.truncate(50);
     out
 }
 
@@ -217,6 +238,7 @@ pub fn save(
     instructions: &str,
 ) -> Result<String, String> {
     let slug = slug(name);
+    let folder_name = target(data, name);
     if slug.is_empty() {
         return Err("The skill needs a name with letters or digits.".into());
     }
@@ -225,7 +247,7 @@ pub fn save(
     if desc.is_empty() || instructions.trim().is_empty() {
         return Err("The skill needs a description and instructions.".into());
     }
-    let folder = dir(data).join(&slug);
+    let folder = dir(data).join(&folder_name);
     std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let file = folder.join("SKILL.md");
     let tmp = folder.join("SKILL.md.tmp");
@@ -235,7 +257,7 @@ pub fn save(
     );
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &file).map_err(|e| e.to_string())?;
-    Ok(slug)
+    Ok(folder_name)
 }
 
 /// The "Skills you can use" prompt section; empty when none.
@@ -351,6 +373,16 @@ mod tests {
         assert_eq!(out, "1. do\n2. done");
         assert_eq!(list(&d)[0].description, "Make it fast");
         assert!(save(&d, "!!", "d", "i").is_err());
+        // A skill whose name differs from its folder is replaced in place.
+        put(
+            &d,
+            "odd-folder",
+            "---\nname: Odd Name\ndescription: x\n---\nold",
+        );
+        assert!(exists(&d, "odd name"));
+        assert_eq!(save(&d, "Odd Name", "y", "new").unwrap(), "odd-folder");
+        assert_eq!(use_skill(&d, "odd-name").unwrap(), "new");
+        assert_eq!(count(&d), 2);
         assert!(prompt_section(&d).contains("- weekly-report: Make it fast"));
     }
 }

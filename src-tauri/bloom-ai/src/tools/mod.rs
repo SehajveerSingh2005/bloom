@@ -201,12 +201,19 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
             })
         }
         "forget" => forget(ctx, args["id"].as_u64().ok_or("missing id")?).await,
-        "use_skill" => skills::use_skill(&ctx.shared.data_dir, str_arg(args, "name")?),
-        "read_skill_file" => skills::read_file(
-            &ctx.shared.data_dir,
-            str_arg(args, "name")?,
-            str_arg(args, "file")?,
-        ),
+        // Skill folders are third-party content: what they say is data.
+        "use_skill" => {
+            ctx.tainted = true;
+            skills::use_skill(&ctx.shared.data_dir, str_arg(args, "name")?)
+        }
+        "read_skill_file" => {
+            ctx.tainted = true;
+            skills::read_file(
+                &ctx.shared.data_dir,
+                str_arg(args, "name")?,
+                str_arg(args, "file")?,
+            )
+        }
         "save_skill" => save_skill(ctx, args).await,
         _ => Err(format!("unknown tool {name}")),
     }
@@ -558,6 +565,25 @@ mod tests {
         assert!(running.await.unwrap().unwrap().contains("not to save"));
         let kept = skills::use_skill(&shared.data_dir, "tidy-up").unwrap();
         assert_eq!(kept, "step 1");
+    }
+
+    #[tokio::test]
+    async fn using_a_skill_taints_so_later_writes_ask_and_approval_saves() {
+        let mut ctx = ctx();
+        let a = json!({ "name": "base", "description": "d", "instructions": "i" });
+        call(&mut ctx, "save_skill", &a).await.unwrap();
+        assert!(!ctx.tainted);
+        call(&mut ctx, "use_skill", &json!({ "name": "base" }))
+            .await
+            .unwrap();
+        assert!(ctx.tainted);
+        let shared = ctx.shared.clone();
+        let b = json!({ "name": "next", "description": "d", "instructions": "i" });
+        let running = tokio::spawn(async move { call(&mut ctx, "save_skill", &b).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(true));
+        assert_eq!(running.await.unwrap().unwrap(), "Saved skill next.");
+        assert_eq!(skills::count(&shared.data_dir), 2);
     }
 
     #[tokio::test]
