@@ -110,11 +110,26 @@ pub fn save_contact(dir: &Path, name: &str, address: &str) -> Result<(), String>
         }
     }
     let mut contacts = load_contacts(dir);
-    contacts.insert(name.trim().to_string(), address);
+    let trimmed_name = name.trim();
+    // Find and remove any existing key that matches case-insensitively.
+    if let Some(existing_key) = contacts
+        .keys()
+        .find(|k| k.eq_ignore_ascii_case(trimmed_name))
+        .cloned()
+    {
+        contacts.remove(&existing_key);
+    }
+    contacts.insert(trimmed_name.to_string(), address);
     let json = serde_json::to_string_pretty(&contacts).map_err(|e| e.to_string())?;
     let tmp_path = dir.join("contacts.json.tmp");
-    std::fs::write(&tmp_path, json).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp_path, &path).map_err(|e| e.to_string())
+    std::fs::write(&tmp_path, json)
+        .map_err(|e| e.to_string())
+        .and_then(|_| {
+            std::fs::rename(&tmp_path, &path).map_err(|e| {
+                let _ = std::fs::remove_file(&tmp_path);
+                e.to_string()
+            })
+        })
 }
 
 /// Check if a contact name exists with a different address.
@@ -301,5 +316,15 @@ mod tests {
             contact_needs_confirm(&contacts, "bob", "bob@example.com"),
             None
         );
+    }
+
+    #[test]
+    fn save_contact_replaces_case_insensitively() {
+        let dir = temp_dir();
+        save_contact(&dir, "Alice", "alice@old.com").unwrap();
+        save_contact(&dir, "alice", "alice@new.com").unwrap();
+        let contacts = load_contacts(&dir);
+        assert_eq!(contacts.len(), 1, "Should have exactly one entry");
+        assert_eq!(contacts.get("alice"), Some(&"alice@new.com".to_string()));
     }
 }

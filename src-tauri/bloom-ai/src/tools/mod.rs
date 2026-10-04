@@ -420,4 +420,24 @@ mod tests {
         let contacts = email::load_contacts(&dir);
         assert_eq!(contacts.get("Bob"), Some(&"bob@example.com".to_string()));
     }
+
+    #[tokio::test]
+    async fn address_change_with_different_case_replaces_old_entry() {
+        let mut ctx = ctx();
+        let dir = ctx.shared.data_dir.clone();
+        email::save_contact(&dir, "Alice", "alice@old.com").unwrap();
+        let shared = ctx.shared.clone();
+        let args = json!({ "name": "alice", "email": "alice@new.com" });
+        let running = tokio::spawn(async move { call(&mut ctx, "save_contact", &args).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(true));
+        assert!(running.await.unwrap().is_ok());
+        let contacts = email::load_contacts(&dir);
+        assert_eq!(contacts.len(), 1, "Should have exactly one entry");
+        assert_eq!(
+            contacts.get("alice"),
+            Some(&"alice@new.com".to_string()),
+            "New entry with new casing should be present"
+        );
+    }
 }
