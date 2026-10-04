@@ -1,0 +1,56 @@
+.ai-field {
+	width: 170px;
+	padding: 4px 8px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.06);
+	color: var(--bloom-text, #fff);
+	font-size: 12px;
+	outline: none;
+}
+
+.ai-field:focus {
+	border-color: var(--bloom-accent, #0a84ff);
+}
+
+.ai-secret {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.ai-secret .ai-field + .ai-field {
+	width: 56px;
+}
+
+.ai-btn {
+	padding: 4px 10px;
+	border: none;
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.1);
+	color: var(--bloom-text, #fff);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.ai-btn:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.ai-note {
+	font-size: 11px;
+	opacity: 0.6;
+}
+
+.ai-code {
+	font-family: ui-monospace, Consolas, monospace;
+	font-size: 14px;
+	letter-spacing: 1px;
+}
+
+.ai-warning {
+	margin: 4px 14px 8px;
+	font-size: 11px;
+	color: #ffb340;
+}

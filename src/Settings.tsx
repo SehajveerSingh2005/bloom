@@ -4,7 +4,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Effect } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { X, Settings, Palette, PanelTop, Monitor, Layers, Info, Megaphone } from "lucide-react";
+import { X, Settings, Palette, PanelTop, Monitor, Layers, Info, Megaphone, Sparkles } from "lucide-react";
 import {
 	useSettings,
 	GeneralTab,
@@ -12,6 +12,7 @@ import {
 	NotchTab,
 	DockTab,
 	OverlaysTab,
+	AiTab,
 	AboutTab
 } from "./settings/index";
 import type { SettingsTab } from "./settings/index";
@@ -27,6 +28,7 @@ const TABS: { id: SettingsTab; label: string; icon: typeof Settings }[] = [
 	{ id: "notch", label: "Notch", icon: PanelTop },
 	{ id: "dock", label: "Dock", icon: Monitor },
 	{ id: "overlays", label: "Overlays", icon: Layers },
+	{ id: "ai", label: "AI", icon: Sparkles },
 	{ id: "about", label: "About", icon: Info }
 ];
 
@@ -226,6 +228,7 @@ function SettingsApp() {
 							toggleBrightnessEdge={settings.toggleBrightnessEdge}
 						/>
 					)}
+					{activeTab === "ai" && <AiTab />}
 					{activeTab === "about" && (
 						<AboutTab
 							appVersion={settings.appVersion}
