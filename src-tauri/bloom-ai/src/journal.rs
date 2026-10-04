@@ -1,4 +1,4 @@
-//! actions.log: JSON lines for every email or script, whatever the outcome.
+//! actions.log: JSON lines for every email, script or MCP call, whatever the outcome.
 //! A run that actually starts writes `auto-started` or `approved-started`
 //! first, then its final line (`auto`, `approved` or `failed`), so a Stop
 //! mid-run leaves the started line. `declined` has no started line.

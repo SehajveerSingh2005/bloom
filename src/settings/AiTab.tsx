@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { BookOpen, Cpu, Keyboard, KeyRound, Mail, Mic, AudioLines, Server, Shield, Sparkles, Trash2 } from "lucide-react";
+import { BookOpen, Cpu, Keyboard, KeyRound, Mail, Mic, AudioLines, Plug, Server, Shield, Sparkles, Trash2 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import { cleanAiName, isValidAiName } from "../ai/aiName";
@@ -146,6 +146,7 @@ export function AiTab() {
 	const [next, setNext] = useState(1);
 	const [memoryCount, setMemoryCount] = useState(0);
 	const [skillCount, setSkillCount] = useState(0);
+	const [mcp, setMcp] = useState({ servers: 0, tools: 0, errors: [] as string[] });
 	const [clearing, setClearing] = useState(false);
 	const [busy, setBusy] = useState<"" | "recording" | "building">("");
 
@@ -190,6 +191,7 @@ export function AiTab() {
 			if (payload.type === "library_status") {
 				setMemoryCount(payload.memory);
 				setSkillCount(payload.skills);
+				setMcp({ servers: payload.mcp_servers, tools: payload.mcp_tools, errors: payload.mcp_errors ?? [] });
 			}
 			if (payload.type === "secret_saved") setSaved((s) => ({ ...s, [payload.name]: true }));
 			if (payload.type === "login_code") setLogin({ url: payload.url, code: payload.code });
@@ -474,6 +476,23 @@ export function AiTab() {
 							>
 								Open folder
 							</button>
+						</SettingRow>
+						<SettingRow
+							icon={Plug}
+							label={`MCP: ${mcp.servers} ${mcp.servers === 1 ? "server" : "servers"}, ${mcp.tools} ${mcp.tools === 1 ? "tool" : "tools"}`}
+							desc={mcp.errors.length ? mcp.errors.join("; ") : "Servers in mcp.json start with your first request"}
+						>
+							<div className="ai-secret">
+								<button
+									className="ai-btn"
+									onClick={() => invoke("ai_reveal", { what: "mcp" }).catch((e) => setMessage(String(e)))}
+								>
+									Open config
+								</button>
+								<button className="ai-btn" onClick={() => invoke("ai_mcp_reload").catch((e) => setMessage(String(e)))}>
+									Reload
+								</button>
+							</div>
 						</SettingRow>
 						<SettingRow
 							icon={BookOpen}

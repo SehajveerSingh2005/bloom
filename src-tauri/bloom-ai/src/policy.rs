@@ -1,6 +1,6 @@
-//! The three security levels. They guard only emails and PowerShell scripts;
-//! the other tools are safe by construction (write_file never overwrites,
-//! open refuses programs).
+//! The three security levels. They guard only emails, PowerShell scripts and
+//! MCP tool calls; the other tools are safe by construction (write_file never
+//! overwrites, open refuses programs).
 
 use crate::config::Tier;
 
@@ -8,6 +8,16 @@ pub fn email_needs_confirm(tier: Tier, known_recipient: bool, tainted: bool) -> 
     match tier {
         Tier::Conservative => true,
         Tier::Competent => !known_recipient || tainted,
+        Tier::CarteBlanche => false,
+    }
+}
+
+/// MCP tools: competent trusts only servers marked `"trusted": true` in
+/// mcp.json, and only while the request is untainted.
+pub fn mcp_needs_confirm(tier: Tier, trusted_server: bool, tainted: bool) -> bool {
+    match tier {
+        Tier::Conservative => true,
+        Tier::Competent => !trusted_server || tainted,
         Tier::CarteBlanche => false,
     }
 }

@@ -91,6 +91,7 @@ pub fn ctx() -> Ctx {
         memory: Default::default(),
         endpoints: Default::default(),
         web: crate::web::WebCfg::new(),
+        mcp: Default::default(),
     };
     Ctx {
         task: 1,

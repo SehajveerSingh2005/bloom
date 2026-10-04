@@ -24,6 +24,7 @@ pub enum In {
     LibraryStatus,
     Reveal { what: String },
     ForgetAll,
+    McpReload,
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone, Copy)]
@@ -34,6 +35,8 @@ pub enum ConfirmKind {
     Memory,
     Skill,
     Web,
+    /// An MCP server's tool.
+    Tool,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -190,6 +193,11 @@ mod tests {
     fn library_messages() {
         assert_eq!(parse(r#"{"type":"library_status"}"#), Ok(In::LibraryStatus));
         assert_eq!(parse(r#"{"type":"forget_all"}"#), Ok(In::ForgetAll));
+        assert_eq!(parse(r#"{"type":"mcp_reload"}"#), Ok(In::McpReload));
+        assert_eq!(
+            serde_json::to_string(&ConfirmKind::Tool).unwrap(),
+            r#""tool""#
+        );
         assert_eq!(
             parse(r#"{"type":"reveal","what":"memory"}"#),
             Ok(In::Reveal {

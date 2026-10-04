@@ -12,6 +12,7 @@ mod facts;
 mod imap_lookup;
 mod journal;
 mod llm;
+mod mcp;
 mod outlook;
 mod policy;
 mod powershell;
@@ -217,8 +218,9 @@ async fn serve(shared: Arc<Shared>) {
                         .and_then(|p| tools::files::shell_open(&p.to_string_lossy())),
                     "skills" => skills::ensure(&shared.data_dir)
                         .and_then(|p| tools::files::shell_open(&p.to_string_lossy())),
-                    // Later tasks fill these in.
-                    other => Err(format!("Opening {other} is not available yet.")),
+                    "mcp" => mcp::ensure(&shared.data_dir)
+                        .and_then(|p| tools::files::shell_open(&p.to_string_lossy())),
+                    other => Err(format!("Can't open {other}.")),
                 };
                 if let Err(message) = opened {
                     emit(&Out::Error {
@@ -226,6 +228,14 @@ async fn serve(shared: Arc<Shared>) {
                         message,
                     });
                 }
+            }
+            In::McpReload => {
+                let s = shared.clone();
+                // Its own task: starting takes up to 15 s and must not block requests.
+                tokio::spawn(async move {
+                    s.mcp.reload(&s.data_dir).await;
+                    emit_library_status(&s);
+                });
             }
             In::OutlookLogin => {
                 let s = shared.clone();
@@ -321,14 +331,16 @@ async fn serve(shared: Arc<Shared>) {
     }
 }
 
-/// Counts for Settings > Library. Later tasks fill in the zeros.
+/// Counts for Settings > Library. MCP counts are the running servers (none
+/// before the first request or Reload).
 fn emit_library_status(shared: &Shared) {
+    let (mcp_servers, mcp_tools, mcp_errors) = shared.mcp.status();
     emit(&Out::LibraryStatus {
         memory: facts::count(&shared.data_dir),
         skills: skills::count(&shared.data_dir),
-        mcp_servers: 0,
-        mcp_tools: 0,
-        mcp_errors: vec![],
+        mcp_servers,
+        mcp_tools,
+        mcp_errors,
     });
 }
 

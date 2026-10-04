@@ -472,6 +472,12 @@ pub fn ai_reveal(app: AppHandle, what: String) -> Result<(), String> {
     send(&app, json!({ "type": "reveal", "what": what }))
 }
 
+/// Restarts the agent's MCP servers from mcp.json; `library_status` follows.
+#[tauri::command]
+pub fn ai_mcp_reload(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "mcp_reload" }))
+}
+
 /// Clears the agent's long-term memory; `library_status` follows.
 #[tauri::command]
 pub fn ai_forget_all(app: AppHandle) -> Result<(), String> {

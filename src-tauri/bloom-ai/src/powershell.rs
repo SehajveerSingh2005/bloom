@@ -66,7 +66,7 @@ pub async fn run(script: &str) -> Result<String, String> {
 }
 
 #[cfg(windows)]
-mod job {
+pub(crate) mod job {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::System::JobObjects::{
@@ -79,6 +79,8 @@ mod job {
     pub struct KillOnClose(HANDLE);
     // The handle is only ever closed, from whichever thread drops it.
     unsafe impl Send for KillOnClose {}
+    // Shared use is only `disarm`, a kernel call that is safe from any thread.
+    unsafe impl Sync for KillOnClose {}
     impl Drop for KillOnClose {
         fn drop(&mut self) {
             unsafe {

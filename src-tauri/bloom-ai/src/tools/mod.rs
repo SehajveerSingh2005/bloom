@@ -171,6 +171,7 @@ pub fn describe(name: &str, args: &Value) -> String {
         "use_skill" => format!("Using skill {}", arg("name")),
         "read_skill_file" => format!("Reading {}", arg("file")),
         "save_skill" => format!("Saving skill {}", arg("name")),
+        _ if name.starts_with("mcp_") => format!("Using {}", &name[4..]),
         _ => format!("Working ({name})"),
     }
 }
@@ -231,6 +232,7 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
             )
         }
         "save_skill" => save_skill(ctx, args).await,
+        _ if name.starts_with("mcp_") => crate::mcp::call(ctx, name, args).await,
         _ => Err(format!("unknown tool {name}")),
     }
 }
@@ -240,7 +242,7 @@ async fn confirm_memory(ctx: &Ctx, title: &str, body: &str) -> bool {
     confirm_persist(ctx, ConfirmKind::Memory, ctx.tainted, title, body).await
 }
 
-/// Asks when `needed` (tainted, or an overwrite), except on carte blanche.
+/// Asks when `needed` (tainted, an overwrite, an MCP call), except on carte blanche.
 pub(crate) async fn confirm_persist(
     ctx: &Ctx,
     kind: ConfirmKind,
