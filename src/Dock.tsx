@@ -177,8 +177,12 @@ const Dock = memo(function Dock() {
 		setAiOpen(false);
 	};
 	useEffect(() => {
-		if (!ai.enabled && aiOpen) closeAi();
-	}, [ai.enabled, aiOpen]);
+		if ((!ai.enabled || !infoCentre) && aiOpen) closeAi();
+	}, [ai.enabled, infoCentre, aiOpen]);
+	// A preview already showing when the panel opens would overlap it.
+	useEffect(() => {
+		if (aiOpen) setPreviewData(null);
+	}, [aiOpen]);
 
 	useEffect(() => {
 		const onResize = () => setViewportWidth(window.innerWidth);
