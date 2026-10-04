@@ -144,7 +144,8 @@ mod tests {
         rust_files(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src")), &mut files);
         let mut hits = Vec::new();
         for path in files {
-            let src = std::fs::read_to_string(&path).unwrap();
+            // A CRLF checkout (core.autocrlf) must still find the tests module.
+            let src = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
             let code = src.split("#[cfg(test)]\nmod tests").next().unwrap();
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
             let mut before = String::new();
