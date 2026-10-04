@@ -585,7 +585,6 @@ function TrayCorner({ onOpenChange }: { onOpenChange: (open: boolean) => void })
 	const [menuApp, setMenuApp] = useState<TrayApp | null>(null);
 	const buttonRef = useRef<HTMLDivElement>(null);
 	const boxRef = useRef<HTMLDivElement>(null);
-	const leaveTimerRef = useRef<any>(null);
 
 	const close = useCallback(() => {
 		setOpen(false);
@@ -619,10 +618,12 @@ function TrayCorner({ onOpenChange }: { onOpenChange: (open: boolean) => void })
 			if (e.key === "Escape") close();
 		};
 		window.addEventListener("keydown", onKeyDown);
-		window.addEventListener("blur", close);
+		// The backend watches the cursor (the overlay is click-through and never
+		// focused) and signals when it has left the button and popup.
+		const closePromise = listen("tray-popup-close", close);
 		return () => {
 			window.removeEventListener("keydown", onKeyDown);
-			window.removeEventListener("blur", close);
+			closePromise.then((unlisten) => unlisten());
 		};
 	}, [open, close]);
 
@@ -643,7 +644,8 @@ function TrayCorner({ onOpenChange }: { onOpenChange: (open: boolean) => void })
 					y: Math.round(top),
 					width: Math.round(right - left),
 					height: Math.round(bottom - top)
-				}
+				},
+				open
 			}).catch(() => {});
 		};
 		report();
@@ -658,8 +660,7 @@ function TrayCorner({ onOpenChange }: { onOpenChange: (open: boolean) => void })
 
 	useEffect(() => {
 		return () => {
-			clearTimeout(leaveTimerRef.current);
-			invoke("update_tray_button_rect", { rect: null }).catch(() => {});
+			invoke("update_tray_button_rect", { rect: null, open: false }).catch(() => {});
 		};
 	}, []);
 
@@ -675,14 +676,19 @@ function TrayCorner({ onOpenChange }: { onOpenChange: (open: boolean) => void })
 	};
 
 	return (
-		<div
+		<motion.div
 			className="tray-corner"
-			onMouseEnter={() => clearTimeout(leaveTimerRef.current)}
-			onMouseLeave={() => {
-				if (!open) return;
-				clearTimeout(leaveTimerRef.current);
-				leaveTimerRef.current = setTimeout(close, 700);
+			style={{ transformOrigin: "right center" }}
+			initial={{ scaleX: 0, scaleY: 0.5, opacity: 0, filter: "blur(12px)" }}
+			animate={{ scaleX: 1, scaleY: 1, opacity: 1, filter: "blur(0px)" }}
+			exit={{
+				scaleX: 0,
+				scaleY: 0.8,
+				opacity: 0,
+				filter: "blur(12px)",
+				transition: { duration: 0.2, ease: [0.32, 0.72, 0, 1] }
 			}}
+			transition={{ type: "spring", stiffness: 450, damping: 25, mass: 0.7 }}
 		>
 			<div ref={boxRef} className="tray-popup-box">
 				<AnimatePresence>
@@ -761,7 +767,7 @@ function TrayCorner({ onOpenChange }: { onOpenChange: (open: boolean) => void })
 					<polyline points="15 6 9 12 15 18" />
 				</svg>
 			</div>
-		</div>
+		</motion.div>
 	);
 }
 
@@ -821,10 +827,11 @@ function OverlayApp() {
 	// lets the usual idle timeout resume once it closes.
 	const handleTrayOpenChange = useCallback(
 		(open: boolean) => {
+			const wasOpen = trayOpenRef.current;
 			trayOpenRef.current = open;
 			if (open) {
 				if (timeoutRef.current) clearTimeout(timeoutRef.current);
-			} else {
+			} else if (wasOpen) {
 				resetHideTimeout();
 			}
 		},
@@ -1207,11 +1214,14 @@ function OverlayApp() {
 				</div>
 			)}
 
-			{mode !== "splash" && mode !== "updating" && (
-				<div style={{ zoom: scale }}>
-					<TrayCorner onOpenChange={handleTrayOpenChange} />
-				</div>
-			)}
+			{/* Shares the brightness notch's lifetime so both leave together */}
+			<div style={{ zoom: scale }}>
+				<AnimatePresence>
+					{mode === "brightness" && (
+						<TrayCorner key="tray-corner" onOpenChange={handleTrayOpenChange} />
+					)}
+				</AnimatePresence>
+			</div>
 		</div>
 	);
 }

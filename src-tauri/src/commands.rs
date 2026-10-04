@@ -45,7 +45,8 @@ pub async fn update_dock_rect(rect: IntRect) {
 }
 
 #[tauri::command]
-pub async fn update_tray_button_rect(rect: Option<IntRect>) {
+pub async fn update_tray_button_rect(rect: Option<IntRect>, open: bool) {
+    TRAY_POPUP_OPEN.store(open, Ordering::Relaxed);
     if let Ok(mut r) = TRAY_BUTTON_RECT.lock() {
         *r = rect;
     }

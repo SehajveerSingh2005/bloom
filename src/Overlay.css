@@ -604,7 +604,8 @@ body,
 }
 
 .tray-popup {
-	width: 232px;
+	width: max-content;
+	max-width: 184px;
 	box-sizing: border-box;
 	padding: 6px;
 	background: var(--bloom-bg, rgba(0, 0, 0, 0.8));
@@ -622,9 +623,9 @@ body,
 }
 
 .tray-icon {
-	width: 40px;
-	height: 40px;
-	border-radius: 10px;
+	width: 30px;
+	height: 30px;
+	border-radius: 8px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -639,8 +640,8 @@ body,
 }
 
 .tray-icon img {
-	width: 24px;
-	height: 24px;
+	width: 18px;
+	height: 18px;
 	object-fit: contain;
 	pointer-events: none;
 	user-select: none;

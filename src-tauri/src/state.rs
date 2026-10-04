@@ -22,6 +22,8 @@ pub static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 pub static DOCK_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
 /// Hit area of the dock's right-corner tray button, which sits outside `DOCK_RECT`.
 pub static TRAY_BUTTON_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
+/// True while the background-apps popup is open.
+pub static TRAY_POPUP_OPEN: AtomicBool = AtomicBool::new(false);
 pub static NOTCH_RECT: Mutex<Option<IntRect>> = Mutex::new(None);
 pub static DOCK_IS_HOVERED: AtomicBool = AtomicBool::new(false);
 pub static NOTCH_IS_HOVERED: AtomicBool = AtomicBool::new(false);

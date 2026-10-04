@@ -1421,6 +1421,13 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                 std::thread::sleep(std::time::Duration::from_millis(150));
                 continue;
             }
+            // Interacting with the background-apps popup can move the foreground
+            // window; keep the current overlap state so the dock does not re-evaluate
+            // (and slide up) underneath it.
+            if TRAY_POPUP_OPEN.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                continue;
+            }
             unsafe {
                 let now = Instant::now();
                 if now.duration_since(last_monitor_update) > Duration::from_millis(1000) {
@@ -2177,6 +2184,41 @@ fn setup_volume_mixer_watchdog(app_handle: AppHandle) {
     });
 }
 
+/// Closes the background-apps popup once the cursor has been off it for a moment.
+/// The overlay is click-through and never focused, so the page cannot rely on DOM
+/// mouse-leave or blur events to know the cursor left.
+fn setup_tray_popup_watchdog(app_handle: AppHandle) {
+    std::thread::spawn(move || {
+        let mut outside_since: Option<Instant> = None;
+        loop {
+            std::thread::sleep(Duration::from_millis(100));
+            if SHUTTING_DOWN.load(Ordering::Relaxed) || !TRAY_POPUP_OPEN.load(Ordering::Relaxed) {
+                outside_since = None;
+                continue;
+            }
+            let mut pt = windows::Win32::Foundation::POINT::default();
+            if unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt) }.is_err() {
+                continue;
+            }
+            let inside = app_handle
+                .primary_monitor()
+                .ok()
+                .flatten()
+                .is_some_and(|m| cursor_in_tray_rect(&m, pt.x, pt.y));
+            if inside {
+                outside_since = None;
+            } else if let Some(since) = outside_since {
+                if since.elapsed() >= Duration::from_millis(700) {
+                    outside_since = None;
+                    let _ = app_handle.emit("tray-popup-close", ());
+                }
+            } else {
+                outside_since = Some(Instant::now());
+            }
+        }
+    });
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2285,6 +2327,7 @@ fn apply_capture_ui_state(app: &AppHandle, active: bool) {
 pub fn setup_mouse_hook(app_handle: AppHandle) {
     let _ = MOUSE_HOOK_APP_HANDLE.set(app_handle.clone());
     setup_volume_mixer_watchdog(app_handle.clone());
+    setup_tray_popup_watchdog(app_handle.clone());
     setup_top_edge_watchdog(app_handle);
     unsafe {
         SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0)
@@ -2783,12 +2826,14 @@ unsafe extern "system" fn mouse_hook_proc(
                 // The background-apps button sits below the brightness notch, off the
                 // edge band: keep the hover alive over it so the HUD does not hide
                 // before the click lands.
-                let over_tray = MH_LAST_RIGHT_EDGE_HOVER.load(Ordering::Relaxed) != 0
-                    && app_handle
-                        .primary_monitor()
-                        .ok()
-                        .flatten()
-                        .is_some_and(|m| cursor_in_tray_rect(&m, cursor.x, cursor.y));
+                // While the popup is open the HUD stays up wherever the cursor is.
+                let over_tray = TRAY_POPUP_OPEN.load(Ordering::Relaxed)
+                    || (MH_LAST_RIGHT_EDGE_HOVER.load(Ordering::Relaxed) != 0
+                        && app_handle
+                            .primary_monitor()
+                            .ok()
+                            .flatten()
+                            .is_some_and(|m| cursor_in_tray_rect(&m, cursor.x, cursor.y)));
 
                 if at_right_edge || over_tray {
                     MH_RIGHT_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
