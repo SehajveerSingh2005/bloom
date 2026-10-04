@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Cpu, Keyboard, KeyRound, Mail, Mic, Server, Shield, Sparkles, Trash2 } from "lucide-react";
+import { Cpu, Keyboard, KeyRound, Mail, Mic, AudioLines, Server, Shield, Sparkles, Trash2 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import "./AiTab.css";
@@ -12,6 +12,7 @@ interface AiStatus {
 	deleted: boolean;
 	enabled: boolean;
 	running: boolean;
+	wake_trained: boolean;
 }
 
 const TIERS: Record<string, string> = {
@@ -133,6 +134,10 @@ export function AiTab() {
 	const [capturing, setCapturing] = useState(false);
 	const [login, setLogin] = useState<{ url: string; code: string } | null>(null);
 	const [message, setMessage] = useState("");
+	const [wake, setWake] = useAiSetting("bloom-ai-wake", "false");
+	const [enrolling, setEnrolling] = useState(false);
+	const [next, setNext] = useState(1);
+	const [busy, setBusy] = useState<"" | "recording" | "building">("");
 
 	const refresh = () =>
 		invoke<AiStatus>("ai_status")
@@ -151,7 +156,20 @@ export function AiTab() {
 				setLogin(null);
 				setMessage(payload.message);
 			}
-			if (payload.type === "error" && payload.task == null) setMessage(payload.message);
+			if (payload.type === "enroll_saved") {
+				setNext(payload.index + 1);
+				setBusy("");
+			}
+			if (payload.type === "enroll_done") {
+				setBusy("");
+				setEnrolling(false);
+				setMessage("");
+				refresh();
+			}
+			if (payload.type === "error" && payload.task == null) {
+				setMessage(payload.message);
+				setBusy("");
+			}
 		});
 		return () => {
 			off.then((f) => f());
@@ -168,6 +186,24 @@ export function AiTab() {
 			if (!ok) return;
 		}
 		setTier(next);
+	};
+
+	const record = () => {
+		setMessage("");
+		setBusy("recording");
+		invoke("ai_enroll_sample", { index: next }).catch((e) => {
+			setMessage(String(e));
+			setBusy("");
+		});
+	};
+
+	const finish = () => {
+		setMessage("");
+		setBusy("building");
+		invoke("ai_enroll_build").catch((e) => {
+			setMessage(String(e));
+			setBusy("");
+		});
 	};
 
 	const runDelete = () => {
@@ -267,6 +303,57 @@ export function AiTab() {
 						</SettingRow>
 						<SettingRow icon={KeyRound} label="Speech key" desc="Empty uses the model key">
 							<SecretField name="stt-key" saved={!!saved["stt-key"]} placeholder="optional" />
+						</SettingRow>
+						<SettingRow
+							icon={AudioLines}
+							label="Teach Janice your voice"
+							desc={
+								enrolling || !status.wake_trained
+									? `Say "Hello Janice" after you click. Sample ${Math.min(next, 5)} of 5`
+									: "Janice knows your voice. Retrain if it mishears you."
+							}
+						>
+							{enrolling || !status.wake_trained ? (
+								<div className="ai-secret">
+									<button className="ai-btn" onClick={record} disabled={busy !== "" || next > 5}>
+										{busy === "recording" ? "Listening..." : "Record"}
+									</button>
+									{next > 3 && (
+										<button className="ai-btn" onClick={finish} disabled={busy !== ""}>
+											{busy === "building" ? "Building..." : "Finish"}
+										</button>
+									)}
+								</div>
+							) : (
+								<button
+									className="ai-btn"
+									onClick={() => {
+										setNext(1);
+										setEnrolling(true);
+									}}
+								>
+									Retrain
+								</button>
+							)}
+						</SettingRow>
+						<SettingRow
+							icon={AudioLines}
+							label="Hello Janice"
+							desc={
+								status.wake_trained
+									? 'While on, the microphone listens on this PC. Only what you say after "Hello Janice" is sent.'
+									: "Teach Janice your voice first"
+							}
+						>
+							<label className="toggle-switch">
+								<input
+									type="checkbox"
+									checked={wake === "true"}
+									disabled={!status.wake_trained}
+									onChange={() => setWake(wake === "true" ? "false" : "true")}
+								/>
+								<span className="slider"></span>
+							</label>
 						</SettingRow>
 						<SettingRow icon={Keyboard} label="Push-to-talk key" desc="Hold to record, release to send" divider={false}>
 							<button
