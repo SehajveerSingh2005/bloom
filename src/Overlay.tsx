@@ -628,35 +628,39 @@ function TrayCorner({ onOpenChange }: { onOpenChange: (open: boolean) => void })
 	}, [open, close]);
 
 	// The overlay is click-through except over known rects, so the backend needs the
-	// button (and the popup while it is open) to let clicks reach them.
+	// button (and the popup while it is open) to let clicks reach them. The button
+	// enters with a scale animation, so it is measured once that has settled.
+	const reportRect = useCallback(() => {
+		const button = buttonRef.current?.getBoundingClientRect();
+		if (!button || button.width < 1) return;
+		const popup = open ? boxRef.current?.getBoundingClientRect() : undefined;
+		const left = Math.min(button.left, popup?.left ?? button.left);
+		const top = Math.min(button.top, popup?.top ?? button.top);
+		const right = Math.max(button.right, popup?.right ?? button.right);
+		const bottom = Math.max(button.bottom, popup?.bottom ?? button.bottom);
+		invoke("update_tray_button_rect", {
+			rect: {
+				x: Math.round(left),
+				y: Math.round(top),
+				width: Math.round(right - left),
+				height: Math.round(bottom - top)
+			},
+			open
+		}).catch(() => {});
+	}, [open]);
+
 	useLayoutEffect(() => {
-		const report = () => {
-			const button = buttonRef.current?.getBoundingClientRect();
-			if (!button) return;
-			const popup = open ? boxRef.current?.getBoundingClientRect() : undefined;
-			const left = Math.min(button.left, popup?.left ?? button.left);
-			const top = Math.min(button.top, popup?.top ?? button.top);
-			const right = Math.max(button.right, popup?.right ?? button.right);
-			const bottom = Math.max(button.bottom, popup?.bottom ?? button.bottom);
-			invoke("update_tray_button_rect", {
-				rect: {
-					x: Math.round(left),
-					y: Math.round(top),
-					width: Math.round(right - left),
-					height: Math.round(bottom - top)
-				},
-				open
-			}).catch(() => {});
-		};
-		report();
-		window.addEventListener("resize", report);
-		const observer = new ResizeObserver(report);
+		reportRect();
+		const settle = setTimeout(reportRect, 450);
+		window.addEventListener("resize", reportRect);
+		const observer = new ResizeObserver(reportRect);
 		if (boxRef.current) observer.observe(boxRef.current);
 		return () => {
-			window.removeEventListener("resize", report);
+			clearTimeout(settle);
+			window.removeEventListener("resize", reportRect);
 			observer.disconnect();
 		};
-	}, [open]);
+	}, [reportRect]);
 
 	useEffect(() => {
 		return () => {
@@ -689,6 +693,7 @@ function TrayCorner({ onOpenChange }: { onOpenChange: (open: boolean) => void })
 				transition: { duration: 0.2, ease: [0.32, 0.72, 0, 1] }
 			}}
 			transition={{ type: "spring", stiffness: 450, damping: 25, mass: 0.7 }}
+			onAnimationComplete={reportRect}
 		>
 			<div ref={boxRef} className="tray-popup-box">
 				<AnimatePresence>
