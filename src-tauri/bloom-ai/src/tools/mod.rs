@@ -5,7 +5,8 @@ pub mod files;
 use crate::agent::Ctx;
 use crate::protocol::ConfirmKind;
 use crate::{
-    email, facts, imap_lookup, journal, outlook, phones, policy, powershell, secrets, skills, weather, web,
+    email, facts, imap_lookup, journal, outlook, phones, policy, powershell, secrets, skills,
+    weather, web,
 };
 use serde_json::{json, Value};
 
@@ -424,16 +425,14 @@ fn list(matches: &[(String, String)]) -> String {
 
 async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
     let matches = email::find(&email::load_contacts(&ctx.shared.data_dir), name);
-    let numbers = phones::find(&ctx.shared.data_dir, name);
-    if !matches.is_empty() || !numbers.is_empty() {
-        let mut out = list(&matches);
-        for (n, p) in &numbers {
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            out.push_str(&format!("{n} phone: {p}"));
-        }
-        return Ok(out);
+    let numbers = phones::find(&ctx.shared.data_dir, name)?;
+    let phone_lines: String = numbers
+        .iter()
+        .map(|(n, p)| format!("
+{n} phone: {p}"))
+        .collect();
+    if !matches.is_empty() {
+        return Ok(format!("{}{phone_lines}", list(&matches)));
     }
     // Not saved yet: look through mail the user sent before. Any failure here
     // (no email set up, offline) just falls through to asking the user.
@@ -450,12 +449,17 @@ async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
                     // Display names come from the mailbox: outside content.
                     ctx.tainted = true;
                     return Ok(format!(
-                        "{}\n(Found in the user's Sent mail. If the user confirms one, save it with save_contact.)",
+                        "{}\n(Found in the user's Sent mail. If the user confirms one, save it with save_contact.){phone_lines}",
                         list(&found)
                     ));
                 }
             }
         }
+    }
+    if !numbers.is_empty() {
+        return Ok(format!(
+            "No saved email for {name}. Ask the user for the address, then call save_contact.{phone_lines}"
+        ));
     }
     Ok(format!(
         "No saved contact matches {name}. Ask the user for the address, then call save_contact."
@@ -491,7 +495,10 @@ async fn save_contact(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
 }
 
 async fn save_phone(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
-    let name = str_arg(args, "name")?;
+    let name = str_arg(args, "name")?.trim();
+    if name.is_empty() {
+        return Err("name is empty".into());
+    }
     let number = phones::normalize(str_arg(args, "phone")?)?;
     if let Some(old) = phones::needs_confirm(&ctx.shared.data_dir, name, &number) {
         if !ctx
@@ -991,6 +998,31 @@ mod tests {
             .await
             .unwrap();
         assert!(out.contains("+14155550100"));
+    }
+
+    #[tokio::test]
+    async fn phone_only_contact_still_gets_the_save_contact_hint() {
+        let mut ctx = ctx();
+        phones::save(&ctx.shared.data_dir, "Sam", "+14155550100").unwrap();
+        let out = call(&mut ctx, "find_contact", &json!({ "name": "Sam" }))
+            .await
+            .unwrap();
+        assert!(
+            out.contains("save_contact") && out.contains("+14155550100"),
+            "{out}"
+        );
+        std::fs::write(ctx.shared.data_dir.join("phones.json"), "{bad").unwrap();
+        let err = call(&mut ctx, "find_contact", &json!({ "name": "Sam" }))
+            .await
+            .unwrap_err();
+        assert!(err.contains("not valid JSON"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn blank_name_cannot_save_a_phone() {
+        let mut ctx = ctx();
+        let args = json!({ "name": "  ", "phone": "+14155550100" });
+        assert!(call(&mut ctx, "save_phone", &args).await.is_err());
     }
 
     #[tokio::test]

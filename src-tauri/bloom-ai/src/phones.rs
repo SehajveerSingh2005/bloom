@@ -62,11 +62,20 @@ pub fn normalize_in(raw: &str, region: Option<&str>) -> Result<String, String> {
                      code, like +49 170 1234567."
                 )
             })?;
-        // National trunk prefix.
-        if digits.starts_with('0') {
-            digits.remove(0);
+        let region = region.unwrap_or_default();
+        if digits.starts_with(code) && digits.len() >= code.len() + 7 {
+            // Already carries the country code, just without the plus.
+            digits
+        } else {
+            // National trunk prefix; Italy and the Vatican keep it abroad.
+            let keeps_zero = ["IT", "SM", "VA"]
+                .iter()
+                .any(|r| r.eq_ignore_ascii_case(region));
+            if digits.starts_with('0') && !keeps_zero {
+                digits.remove(0);
+            }
+            format!("{code}{digits}")
         }
-        format!("{code}{digits}")
     };
     if !(8..=15).contains(&full.len()) || full.starts_with('0') {
         return Err(format!("{raw} is not a valid phone number"));
@@ -76,15 +85,22 @@ pub fn normalize_in(raw: &str, region: Option<&str>) -> Result<String, String> {
 
 /// phones.json: display name to number.
 pub fn load(dir: &Path) -> BTreeMap<String, String> {
-    std::fs::read_to_string(dir.join("phones.json"))
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    try_load(dir).unwrap_or_default()
+}
+
+/// Like `load`, but a present file that is not valid JSON is an error.
+pub fn try_load(dir: &Path) -> Result<BTreeMap<String, String>, String> {
+    match std::fs::read_to_string(dir.join("phones.json")) {
+        Ok(c) => serde_json::from_str(&c)
+            .map_err(|_| "phones.json is not valid JSON; fix or delete it".to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(e) => Err(format!("Cannot read phones.json: {e}")),
+    }
 }
 
 /// Saved numbers whose name or number contains every word of the query.
-pub fn find(dir: &Path, query: &str) -> Vec<(String, String)> {
-    crate::email::find(&load(dir), query)
+pub fn find(dir: &Path, query: &str) -> Result<Vec<(String, String)>, String> {
+    Ok(crate::email::find(&try_load(dir)?, query))
 }
 
 /// The saved number if this name already has a different one.
@@ -134,6 +150,19 @@ mod tests {
             .unwrap_err()
             .contains("full number"));
         assert!(normalize_in("170 1234567", Some("ZZ")).is_err());
+        // Italy keeps the trunk 0; a number that already has the code is not doubled.
+        assert_eq!(
+            normalize_in("06 1234 5678", Some("IT")).unwrap(),
+            "+390612345678"
+        );
+        assert_eq!(
+            normalize_in("1 415 555 0100", Some("US")).unwrap(),
+            "+14155550100"
+        );
+        assert_eq!(
+            normalize_in("415 555 0100", Some("US")).unwrap(),
+            "+14155550100"
+        );
         assert!(n("call me").is_err());
         assert!(n("12+3456789").is_err());
         assert!(n("+123").is_err());
@@ -145,10 +174,10 @@ mod tests {
         save(&dir, "Neha Aggarwal", "+919876543210").unwrap();
         save(&dir, "neha aggarwal", "+919876500000").unwrap();
         assert_eq!(
-            find(&dir, "NEHA"),
+            find(&dir, "NEHA").unwrap(),
             vec![("neha aggarwal".into(), "+919876500000".into())]
         );
-        assert_eq!(find(&dir, "+91987").len(), 1);
+        assert_eq!(find(&dir, "+91987").unwrap().len(), 1);
         assert_eq!(
             needs_confirm(&dir, "Neha Aggarwal", "+1555"),
             Some("+919876500000".into())
@@ -161,6 +190,7 @@ mod tests {
         let dir = temp_dir();
         std::fs::write(dir.join("phones.json"), "{bad").unwrap();
         assert!(save(&dir, "Bob", "+491701234567").is_err());
+        assert!(find(&dir, "Bob").unwrap_err().contains("not valid JSON"));
         assert_eq!(
             std::fs::read_to_string(dir.join("phones.json")).unwrap(),
             "{bad"
