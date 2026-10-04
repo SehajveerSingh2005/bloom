@@ -568,6 +568,203 @@ function BrightnessNotch({
 	);
 }
 
+// ─── Background Apps (system tray) ──────────────────────────────────────────
+
+interface TrayApp {
+	id: string;
+	name: string;
+	path: string;
+	icon: string | null;
+}
+
+// Sits on the right edge, centered vertically just below the brightness notch, and
+// opens leftwards as a compact grid of the apps living in the tray.
+function TrayCorner({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+	const [open, setOpen] = useState(false);
+	const [apps, setApps] = useState<TrayApp[]>([]);
+	const [menuApp, setMenuApp] = useState<TrayApp | null>(null);
+	const buttonRef = useRef<HTMLDivElement>(null);
+	const boxRef = useRef<HTMLDivElement>(null);
+	const leaveTimerRef = useRef<any>(null);
+
+	const close = useCallback(() => {
+		setOpen(false);
+		setMenuApp(null);
+	}, []);
+
+	useEffect(() => {
+		onOpenChange(open);
+	}, [open, onOpenChange]);
+
+	useEffect(() => {
+		if (!open) return;
+		let active = true;
+		const load = () =>
+			invoke<TrayApp[]>("get_tray_apps")
+				.then((res) => {
+					if (active) setApps(res);
+				})
+				.catch(console.error);
+		load();
+		const timer = setInterval(load, 3000);
+		return () => {
+			active = false;
+			clearInterval(timer);
+		};
+	}, [open]);
+
+	useEffect(() => {
+		if (!open) return;
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") close();
+		};
+		window.addEventListener("keydown", onKeyDown);
+		window.addEventListener("blur", close);
+		return () => {
+			window.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("blur", close);
+		};
+	}, [open, close]);
+
+	// The overlay is click-through except over known rects, so the backend needs the
+	// button (and the popup while it is open) to let clicks reach them.
+	useLayoutEffect(() => {
+		const report = () => {
+			const button = buttonRef.current?.getBoundingClientRect();
+			if (!button) return;
+			const popup = open ? boxRef.current?.getBoundingClientRect() : undefined;
+			const left = Math.min(button.left, popup?.left ?? button.left);
+			const top = Math.min(button.top, popup?.top ?? button.top);
+			const right = Math.max(button.right, popup?.right ?? button.right);
+			const bottom = Math.max(button.bottom, popup?.bottom ?? button.bottom);
+			invoke("update_tray_button_rect", {
+				rect: {
+					x: Math.round(left),
+					y: Math.round(top),
+					width: Math.round(right - left),
+					height: Math.round(bottom - top)
+				}
+			}).catch(() => {});
+		};
+		report();
+		window.addEventListener("resize", report);
+		const observer = new ResizeObserver(report);
+		if (boxRef.current) observer.observe(boxRef.current);
+		return () => {
+			window.removeEventListener("resize", report);
+			observer.disconnect();
+		};
+	}, [open]);
+
+	useEffect(() => {
+		return () => {
+			clearTimeout(leaveTimerRef.current);
+			invoke("update_tray_button_rect", { rect: null }).catch(() => {});
+		};
+	}, []);
+
+	const openApp = (app: TrayApp) => {
+		close();
+		invoke("open_tray_app", { path: app.path }).catch(console.error);
+	};
+
+	const closeApp = (app: TrayApp) => {
+		setMenuApp(null);
+		setApps((prev) => prev.filter((a) => a.id !== app.id));
+		invoke("close_tray_app", { path: app.path }).catch(console.error);
+	};
+
+	return (
+		<div
+			className="tray-corner"
+			onMouseEnter={() => clearTimeout(leaveTimerRef.current)}
+			onMouseLeave={() => {
+				if (!open) return;
+				clearTimeout(leaveTimerRef.current);
+				leaveTimerRef.current = setTimeout(close, 700);
+			}}
+		>
+			<div ref={boxRef} className="tray-popup-box">
+				<AnimatePresence>
+					{open && (
+						<motion.div
+							className="tray-popup"
+							style={{ transformOrigin: "right top" }}
+							initial={{ opacity: 0, scaleX: 0.4, scaleY: 0.8, filter: "blur(8px)" }}
+							animate={{ opacity: 1, scaleX: 1, scaleY: 1, filter: "blur(0px)" }}
+							exit={{
+								opacity: 0,
+								scaleX: 0.4,
+								scaleY: 0.8,
+								filter: "blur(8px)",
+								transition: { duration: 0.15, ease: [0.32, 0.72, 0, 1] }
+							}}
+							transition={{ type: "spring", stiffness: 450, damping: 28, mass: 0.7 }}
+							onClick={() => setMenuApp(null)}
+						>
+							{apps.length > 0 ? (
+								<div className="tray-grid">
+									{apps.map((app) => (
+										<div
+											key={app.id}
+											className={`tray-icon${menuApp?.id === app.id ? " selected" : ""}`}
+											onClick={(e) => {
+												e.stopPropagation();
+												openApp(app);
+											}}
+											onContextMenu={(e) => {
+												e.preventDefault();
+												e.stopPropagation();
+												setMenuApp(app);
+											}}
+										>
+											{app.icon ? (
+												<img src={app.icon} alt={app.name} draggable={false} />
+											) : (
+												<span className="tray-icon-initial">{(app.name || "?")[0]}</span>
+											)}
+										</div>
+									))}
+								</div>
+							) : (
+								<div className="tray-empty">No background apps</div>
+							)}
+							{menuApp && (
+								<div className="tray-actions" onClick={(e) => e.stopPropagation()}>
+									<div className="tray-action" onClick={() => openApp(menuApp)}>
+										Open
+									</div>
+									<div className="tray-action quit" onClick={() => closeApp(menuApp)}>
+										Quit
+									</div>
+								</div>
+							)}
+						</motion.div>
+					)}
+				</AnimatePresence>
+			</div>
+			<div
+				ref={buttonRef}
+				className={`tray-button${open ? " active" : ""}`}
+				onClick={() => (open ? close() : setOpen(true))}
+			>
+				<svg
+					width="18"
+					height="18"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<polyline points="15 6 9 12 15 18" />
+				</svg>
+			</div>
+		</div>
+	);
+}
+
 // ─── Main Overlay Component ─────────────────────────────────────────────────
 
 function OverlayApp() {
@@ -608,16 +805,31 @@ function OverlayApp() {
 	const hideWindowTimeoutRef = useRef<any>(null);
 	const splashActiveRef = useRef(false);
 	const mixerExpandedRef = useRef(false);
+	const trayOpenRef = useRef(false);
 
 	const resetHideTimeout = useCallback(() => {
 		// Keep the notch pinned while the mixer panel is open; it closes on
 		// mouse leave via the edge-hover timeout instead.
-		if (mixerExpandedRef.current) return;
+		if (mixerExpandedRef.current || trayOpenRef.current) return;
 		if (timeoutRef.current) clearTimeout(timeoutRef.current);
 		timeoutRef.current = setTimeout(() => {
-			if (!splashActiveRef.current) setMode("idle");
+			if (!splashActiveRef.current && !trayOpenRef.current) setMode("idle");
 		}, 2000);
 	}, []);
+
+	// The background-apps popup keeps the overlay on screen while it is open and
+	// lets the usual idle timeout resume once it closes.
+	const handleTrayOpenChange = useCallback(
+		(open: boolean) => {
+			trayOpenRef.current = open;
+			if (open) {
+				if (timeoutRef.current) clearTimeout(timeoutRef.current);
+			} else {
+				resetHideTimeout();
+			}
+		},
+		[resetHideTimeout]
+	);
 
 	// Load scale from settings
 	useEffect(() => {
@@ -740,7 +952,9 @@ function OverlayApp() {
 				if (timeoutRef.current) clearTimeout(timeoutRef.current);
 			} else {
 				if (timeoutRef.current) clearTimeout(timeoutRef.current);
-				timeoutRef.current = setTimeout(() => setMode("idle"), 1500);
+				timeoutRef.current = setTimeout(() => {
+					if (!trayOpenRef.current) setMode("idle");
+				}, 1500);
 			}
 		});
 
@@ -990,6 +1204,12 @@ function OverlayApp() {
 							/>
 						)}
 					</AnimatePresence>
+				</div>
+			)}
+
+			{mode !== "splash" && mode !== "updating" && (
+				<div style={{ zoom: scale }}>
+					<TrayCorner onOpenChange={handleTrayOpenChange} />
 				</div>
 			)}
 		</div>

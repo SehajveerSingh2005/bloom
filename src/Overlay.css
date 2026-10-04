@@ -561,3 +561,126 @@ body,
 .light-mode .brightness-notch-bar {
 	background: rgba(0, 0, 0, 0.12);
 }
+
+/* ─── Background Apps (right edge, below the brightness notch) ───────────── */
+
+.tray-corner {
+	position: fixed;
+	right: 0;
+	top: calc(50% + 98px + 12px);
+	overflow: visible;
+	pointer-events: none;
+}
+
+.tray-button {
+	width: 42px;
+	height: 42px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--bloom-bg, rgba(0, 0, 0, 0.8));
+	color: var(--bloom-text, white);
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
+	border-right: none;
+	border-radius: 18px 0 0 18px;
+	cursor: pointer;
+	pointer-events: auto;
+	box-sizing: border-box;
+}
+
+.tray-button svg {
+	transition: transform 0.2s ease;
+}
+
+.tray-button.active svg {
+	transform: rotate(180deg);
+}
+
+.tray-popup-box {
+	position: absolute;
+	right: 50px;
+	top: 0;
+	pointer-events: none;
+}
+
+.tray-popup {
+	width: 232px;
+	box-sizing: border-box;
+	padding: 6px;
+	background: var(--bloom-bg, rgba(0, 0, 0, 0.8));
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
+	border-radius: 18px;
+	backdrop-filter: blur(40px) saturate(1.6);
+	-webkit-backdrop-filter: blur(40px) saturate(1.6);
+	pointer-events: auto;
+}
+
+.tray-grid {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.tray-icon {
+	width: 40px;
+	height: 40px;
+	border-radius: 10px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	overflow: hidden;
+	transition: background 0.15s ease;
+}
+
+.tray-icon:hover,
+.tray-icon.selected {
+	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.08));
+}
+
+.tray-icon img {
+	width: 24px;
+	height: 24px;
+	object-fit: contain;
+	pointer-events: none;
+	user-select: none;
+}
+
+.tray-icon-initial,
+.tray-empty {
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.5));
+	font-size: 13px;
+}
+
+.tray-empty {
+	padding: 10px;
+	text-align: center;
+}
+
+.tray-actions {
+	display: flex;
+	gap: 4px;
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.08));
+}
+
+.tray-action {
+	flex: 1;
+	padding: 8px 12px;
+	border-radius: 6px;
+	text-align: center;
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--bloom-text, white);
+	cursor: pointer;
+	transition: background 0.2s ease;
+}
+
+.tray-action:hover {
+	background: #3b82f6;
+}
+
+.tray-action.quit:hover {
+	background: #ef4444;
+}

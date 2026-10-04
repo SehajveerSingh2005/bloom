@@ -2107,6 +2107,22 @@ const TOP_EDGE_POLL_MS: u64 = 40;
 static MH_TOP_EDGE_ENTER_MS: AtomicI64 = AtomicI64::new(0);
 static MH_TOP_EDGE_ARMED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the cursor is over the background-apps button or its open popup. The
+/// frontend reports their union in overlay CSS pixels.
+fn cursor_in_tray_rect(monitor: &tauri::Monitor, x: i32, y: i32) -> bool {
+    let Some(r) = TRAY_BUTTON_RECT.try_lock().ok().and_then(|g| *g) else {
+        return false;
+    };
+    let sc = monitor.scale_factor();
+    let mp = monitor.position();
+    let pad = (5.0 * sc) as i32;
+    let rx = mp.x + (r.x as f64 * sc) as i32 - pad;
+    let ry = mp.y + (r.y as f64 * sc) as i32 - pad;
+    let rw = (r.width as f64 * sc) as i32 + pad * 2;
+    let rh = (r.height as f64 * sc) as i32 + pad * 2;
+    x >= rx && x <= rx + rw && y >= ry && y <= ry + rh
+}
+
 /// Physical bounds `(x, y, width, height)` of the expanded per-app volume
 /// mixer (notch + panel), if it is open. The frontend reports the card in
 /// overlay CSS pixels; scale and monitor offset convert it to virtual-desktop
@@ -2625,26 +2641,6 @@ unsafe extern "system" fn mouse_hook_proc(
                                 }
                             }
 
-                            if !is_click_interactive {
-                                if let Ok(rect) = TRAY_BUTTON_RECT.try_lock() {
-                                    if let Some(r) = *rect {
-                                        let scale = dock_win.scale_factor().unwrap_or(1.0);
-                                        let pad = (5.0 * scale) as i32;
-                                        let rx = win_pos.x + (r.x as f64 * scale) as i32 - pad;
-                                        let ry = win_pos.y + (r.y as f64 * scale) as i32 - pad;
-                                        let rw = (r.width as f64 * scale) as i32 + pad * 2;
-                                        let rh = (r.height as f64 * scale) as i32 + pad * 2;
-                                        if cursor.x >= rx
-                                            && cursor.x <= (rx + rw)
-                                            && cursor.y >= ry
-                                            && cursor.y <= (ry + rh)
-                                        {
-                                            is_click_interactive = true;
-                                        }
-                                    }
-                                }
-                            }
-
                             if !is_click_interactive && MENU_IS_OPEN.load(Ordering::Relaxed) {
                                 if let Ok(rect) = MENU_RECT.try_lock() {
                                     if let Some(r) = *rect {
@@ -2784,7 +2780,17 @@ unsafe extern "system" fn mouse_hook_proc(
                     && cursor.y >= mon_y
                     && cursor.y <= (mon_y + mon_h);
 
-                if at_right_edge {
+                // The background-apps button sits below the brightness notch, off the
+                // edge band: keep the hover alive over it so the HUD does not hide
+                // before the click lands.
+                let over_tray = MH_LAST_RIGHT_EDGE_HOVER.load(Ordering::Relaxed) != 0
+                    && app_handle
+                        .primary_monitor()
+                        .ok()
+                        .flatten()
+                        .is_some_and(|m| cursor_in_tray_rect(&m, cursor.x, cursor.y));
+
+                if at_right_edge || over_tray {
                     MH_RIGHT_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
                 }
 
@@ -2851,7 +2857,13 @@ unsafe extern "system" fn mouse_hook_proc(
                         false
                     };
 
-                    let should_ignore = !(over_left || over_right);
+                    let over_tray = ov_win
+                        .primary_monitor()
+                        .ok()
+                        .flatten()
+                        .is_some_and(|m| cursor_in_tray_rect(&m, cursor.x, cursor.y));
+
+                    let should_ignore = !(over_left || over_right || over_tray);
                     let prev = MH_LAST_OV_IGNORE.load(Ordering::Relaxed);
                     let new_val = if should_ignore { 1 } else { 0 };
                     if prev != new_val {
