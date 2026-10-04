@@ -30,6 +30,11 @@ pub struct Config {
     pub smtp_port: u16,
     /// Write ai\debug.log (debug.rs).
     pub debug: bool,
+    /// Bloom's saved weather location and unit (see weather.rs).
+    pub weather_lat: Option<f64>,
+    pub weather_lon: Option<f64>,
+    pub weather_city: String,
+    pub fahrenheit: bool,
 }
 
 pub const DEFAULT_NAME: &str = "Janice";
@@ -58,7 +63,15 @@ impl Config {
         let base_url = get("bloom-ai-base-url", "https://api.openai.com/v1")
             .trim_end_matches('/')
             .to_string();
+        let number = |key: &str| {
+            let v = map.get(key)?;
+            v.as_f64().or_else(|| v.as_str()?.trim().parse().ok())
+        };
         Config {
+            weather_lat: number("bloom-weather-lat"),
+            weather_lon: number("bloom-weather-lon"),
+            weather_city: get("bloom-weather-city", ""),
+            fahrenheit: get("bloom-temp-unit", "celsius") == "fahrenheit",
             name: clean_name(
                 map.get("bloom-ai-name")
                     .and_then(Value::as_str)
@@ -115,6 +128,25 @@ mod tests {
         assert_eq!(c.smtp_port, 0);
         assert!(!c.debug);
         assert!(Config::from_map(&map(&[("bloom-ai-debug", "true")])).debug);
+    }
+
+    #[test]
+    fn weather_settings_parse_from_strings_or_numbers() {
+        let mut m = map(&[
+            ("bloom-weather-lat", " 28.6 "),
+            ("bloom-weather-city", "Delhi"),
+            ("bloom-temp-unit", "fahrenheit"),
+        ]);
+        m.insert("bloom-weather-lon".into(), json!(77.2));
+        let c = Config::from_map(&m);
+        assert_eq!((c.weather_lat, c.weather_lon), (Some(28.6), Some(77.2)));
+        assert_eq!(c.weather_city, "Delhi");
+        assert!(c.fahrenheit);
+        let d = Config::from_map(&HashMap::new());
+        assert_eq!(
+            (d.weather_lat, d.weather_lon, d.fahrenheit),
+            (None, None, false)
+        );
     }
 
     #[test]

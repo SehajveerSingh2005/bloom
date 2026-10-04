@@ -4,7 +4,7 @@ pub mod files;
 
 use crate::agent::Ctx;
 use crate::protocol::ConfirmKind;
-use crate::{email, imap_lookup, journal, outlook, policy, powershell, secrets};
+use crate::{email, imap_lookup, journal, outlook, policy, powershell, secrets, weather};
 use serde_json::{json, Value};
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -63,8 +63,16 @@ pub fn schema() -> Value {
             &["script", "purpose"],
         ),
         tool(
+            "get_weather",
+            "Current weather and the forecast for today and tomorrow. Defaults to the user's \
+             location; pass city only when they ask about another place.",
+            json!({ "city": { "type": "string" } }),
+            &[],
+        ),
+        tool(
             "find_contact",
-            "Find a person's email address by name. Call this before send_email.",
+            "Look up a person by name in the user's contacts and return their email address. Call \
+             this whenever a person is mentioned, and before send_email.",
             json!({ "name": { "type": "string" } }),
             &["name"],
         ),
@@ -94,6 +102,7 @@ pub fn describe(name: &str, args: &Value) -> String {
         "write_file" => format!("Writing {}", arg("name")),
         "open" => format!("Opening {}", arg("target")),
         "bloom_control" => format!("Changing {}", arg("action")),
+        "get_weather" => "Checking the weather".into(),
         "find_contact" => format!("Looking up {}", arg("name")),
         "save_contact" => format!("Saving {}", arg("name")),
         "send_email" => format!("Emailing {}", arg("to")),
@@ -125,6 +134,7 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
                 .await
         }
         "run_powershell" => run_powershell(ctx, args).await,
+        "get_weather" => weather::get(ctx, args["city"].as_str()).await,
         "find_contact" => find_contact(ctx, str_arg(args, "name")?).await,
         "save_contact" => save_contact(ctx, args).await,
         "send_email" => send_email(ctx, args).await,
@@ -417,6 +427,33 @@ mod tests {
             running.await.unwrap(),
             Ok("The user chose not to send it.".into())
         );
+    }
+
+    #[tokio::test]
+    async fn find_contact_matches_the_saved_neha_in_any_case() {
+        let mut ctx = ctx();
+        std::fs::write(
+            ctx.shared.data_dir.join("contacts.json"),
+            r#"{"Neha aggarwal": "neha.aggarwal2004@gmail.com"}"#,
+        )
+        .unwrap();
+        for q in ["Neha Aggarwal", "neha", "Aggarwal"] {
+            let out = call(&mut ctx, "find_contact", &json!({ "name": q }))
+                .await
+                .unwrap();
+            assert!(out.contains("neha.aggarwal2004@gmail.com"), "{q}: {out}");
+        }
+    }
+
+    #[tokio::test]
+    async fn get_weather_goes_through_the_dispatcher() {
+        let d = r#"{"current":{"temperature_2m":20.0,"weather_code":0},"daily":{}}"#;
+        let (url, _r) = crate::testutil::mock_server(vec![d.into()]);
+        let mut ctx = crate::testutil::ctx_with_endpoints(&url);
+        ctx.cfg.weather_lat = Some(1.0);
+        ctx.cfg.weather_lon = Some(1.0);
+        let out = call(&mut ctx, "get_weather", &json!({})).await.unwrap();
+        assert!(out.starts_with("Now: 20C"), "{out}");
     }
 
     #[tokio::test]
