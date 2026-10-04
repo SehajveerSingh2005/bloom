@@ -1044,10 +1044,12 @@ function App() {
 	useEffect(() => {
 		if (!announcement || announcementDismissed) return;
 		if (announcementShownRef.current === announcement.id) return;
+		// Wait for the AI panel to close; the effect re-runs then.
+		if (bloomMode === "ai") return;
 		announcementShownRef.current = announcement.id;
 		setBloomMode("announcement");
 		if (notchMode === "peek") triggerEventPeek(6000);
-	}, [announcement, announcementDismissed, notchMode, triggerEventPeek]);
+	}, [announcement, announcementDismissed, notchMode, triggerEventPeek, bloomMode]);
 
 	// Leave the announcement view once it is dismissed (or gone).
 	useEffect(() => {
@@ -1764,7 +1766,7 @@ function App() {
 			resetTimer();
 			return;
 		}
-		if (!settingsCalendarEnabled) return;
+		if (!settingsCalendarEnabled || bloomMode === "ai") return;
 
 		setBloomMode((prev) => {
 			if (prev === "calendar") {
