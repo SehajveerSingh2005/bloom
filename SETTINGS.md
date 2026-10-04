@@ -77,6 +77,23 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | `bloom-brightness-overlay-enabled` | `"true"` / `"false"` | `"true"` | Show Bloom brightness HUD when brightness changes.                       |
 | `bloom-brightness-edge-enabled`    | `"true"` / `"false"` | `"true"` | Trigger brightness HUD by hovering the right screen edge.                |
 
+### AI
+
+Bloom AI is optional and off by default. Its agent (`bloom-ai.exe`) lives in `%LOCALAPPDATA%\com.sehaz.bloom\ai\` and starts on first use. API keys and email passwords are kept in Windows Credential Manager (service `bloom-ai`), never in this file. "Delete AI altogether" removes the agent, its credentials, its data and every key below, and writes `ai_deleted.flag` next to this file so it is never reinstalled.
+
+| Key                  | Type                                                 | Default                     | Description                                                                 |
+| -------------------- | ---------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------- |
+| `bloom-ai-enabled`   | `"true"` / `"false"`                                 | `"false"`                   | Turn Bloom AI on. Off stops the agent at once and frees the hotkey.         |
+| `bloom-ai-base-url`  | URL                                                  | `"https://api.openai.com/v1"` | Any OpenAI-compatible chat endpoint.                                      |
+| `bloom-ai-model`     | string                                               | `""`                        | Model id. Required.                                                         |
+| `bloom-ai-stt-url`   | URL                                                  | same as `bloom-ai-base-url` | OpenAI-compatible transcription endpoint (cloud or a local Whisper server). |
+| `bloom-ai-stt-model` | string                                               | `"whisper-1"`               | Transcription model id.                                                     |
+| `bloom-ai-hotkey`    | virtual-key code                                     | `"165"` (Right Alt)         | Hold to record, release to send. The key no longer reaches apps while AI is on. |
+| `bloom-ai-security`  | `"conservative"` / `"competent"` / `"carte-blanche"` | `"conservative"`            | When the agent asks before sending email or running PowerShell.            |
+| `bloom-ai-email`     | address                                              | `""`                        | Account the agent sends email from.                                         |
+| `bloom-ai-smtp-host` | host                                                 | `""`                        | Mail server for providers Bloom has no preset for.                          |
+| `bloom-ai-smtp-port` | number                                               | `""`                        | Port for `bloom-ai-smtp-host` (465 TLS, or 587 STARTTLS).                   |
+
 ### Appearance
 
 | Key                      | Type                                             | Default     | Description                                                                                                                                                 |
