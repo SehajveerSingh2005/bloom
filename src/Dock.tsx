@@ -167,6 +167,7 @@ const Dock = memo(function Dock() {
 	const [aiOpen, setAiOpen] = useState(false);
 	const [aiFocus, setAiFocus] = useState(false);
 	const ai = useAi((recording) => {
+		if (!infoCentre) return;
 		setInfoTab(null);
 		setAiFocus(!recording);
 		setAiOpen(true);

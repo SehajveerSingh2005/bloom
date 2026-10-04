@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import { IDLE, reduceAiEvent, type AiEvent, type AiState } from "./aiState";
 
@@ -33,7 +34,8 @@ export function useAi(onOpen: (recording: boolean) => void): AiControls {
 			if (e.payload.type === "deleted") setEnabled(false);
 			setState((s) => reduceAiEvent(s, e.payload));
 		});
-		const opens = listen<{ recording: boolean }>("ai-open", (e) => onOpenRef.current(e.payload.recording));
+		// Window-scoped: a global listener would also hear `emit_to` aimed at the other window.
+		const opens = getCurrentWebviewWindow().listen<{ recording: boolean }>("ai-open", (e) => onOpenRef.current(e.payload.recording));
 		return () => {
 			events.then((off) => off());
 			opens.then((off) => off());
