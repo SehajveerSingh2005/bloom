@@ -6,6 +6,7 @@
 mod agent;
 mod bridge;
 mod config;
+mod email;
 mod journal;
 mod llm;
 mod policy;
