@@ -80,6 +80,22 @@ const READ_COMMANDS: [&str; 18] = [
 /// (System.Management.Automation.Language.Parser) if harmless scripts ask too often.
 pub fn is_read_only(script: &str) -> bool {
     let s = script.to_ascii_lowercase();
+
+    // Check for property assignment ($x.y = ...)
+    if has_property_assignment(&s) {
+        return false;
+    }
+
+    // Check for dynamic method calls (.'(...), ."(...), .(, )(...))
+    if has_dynamic_method_call(&s) {
+        return false;
+    }
+
+    // Check for % or foreach-object not immediately followed by {
+    if has_foreach_without_block(&s) {
+        return false;
+    }
+
     if DANGER.iter().any(|d| s.contains(d)) || has_method_call(&s) {
         return false;
     }
@@ -99,6 +115,85 @@ pub fn is_read_only(script: &str) -> bool {
                         && first[v.len()..].chars().all(|c| c.is_ascii_alphabetic())
                 })
         })
+}
+
+/// Reject $x.y = ... (property assignment, not plain variable assignment).
+fn has_property_assignment(s: &str) -> bool {
+    let b = s.as_bytes();
+    for i in 0..b.len() {
+        if b[i] == b'$' {
+            let mut j = i + 1;
+            while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                j += 1;
+            }
+            if j < b.len() && b[j] == b'.' {
+                // Found $x., check what follows before any =
+                let mut k = j + 1;
+                while k < b.len() {
+                    if b[k] == b'=' && (k + 1 >= b.len() || b[k + 1] != b'=') {
+                        return true;
+                    }
+                    if !(b[k].is_ascii_alphanumeric() || b[k] == b'_' || b[k].is_ascii_whitespace())
+                    {
+                        break;
+                    }
+                    k += 1;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Reject .(...), ."(...), .'(...) and )(...) (dynamic method calls).
+fn has_dynamic_method_call(s: &str) -> bool {
+    let b = s.as_bytes();
+    for i in 0..b.len() {
+        if b[i] == b'.' && i + 1 < b.len() {
+            let next = b[i + 1];
+            if next == b'(' || next == b'\'' || next == b'"' {
+                return true;
+            }
+        }
+        if b[i] == b')' {
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < b.len() && b[j] == b'(' {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Allow % and foreach-object only when next token is { (script block).
+fn has_foreach_without_block(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        let is_percent = b[i] == b'%';
+        let is_foreach = i + 14 <= b.len() && &b[i..i + 14] == b"foreach-object";
+
+        if is_percent || is_foreach {
+            let mut j = i + if is_percent { 1 } else { 14 };
+            while j < b.len() && b[j] == b' ' {
+                j += 1;
+            }
+            if j < b.len() && b[j] != b'{' {
+                return true;
+            }
+            if is_percent {
+                i += 1;
+            } else {
+                i += 14;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
 }
 
 /// `.Name(` anywhere: a .NET method call, which can do anything.
@@ -160,6 +255,8 @@ mod tests {
             "$files = Get-ChildItem C:\\Users; $files.Count",
             "ls | measure",
             "Get-Content notes.txt | Select-String eggs",
+            "Get-ChildItem | % { $_.Name }",
+            "Get-ChildItem | ForEach-Object { $_.Length }",
         ] {
             assert!(is_read_only(script), "should be read-only: {script}");
         }
@@ -187,6 +284,14 @@ mod tests {
             ". .\\script.ps1",
             "Get-ChildItem `\n| Remove-Item",
             "Get-ChildItem 'C:\\a (b)'",
+            "Get-ChildItem | % Delete",
+            "Get-Process notepad | % Kill",
+            "Get-ChildItem | ForEach-Object Delete",
+            "$p.('Kill')()",
+            "$p.\"Kill\"()",
+            "$p.'Kill'()",
+            "$f.IsReadOnly = $true",
+            "$f.LastWriteTime = Get-Date",
         ] {
             assert!(!is_read_only(script), "should need a confirm: {script}");
         }
