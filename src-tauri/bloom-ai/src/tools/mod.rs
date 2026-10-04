@@ -4,7 +4,7 @@ pub mod files;
 
 use crate::agent::Ctx;
 use crate::protocol::ConfirmKind;
-use crate::{email, journal, outlook, policy, powershell, secrets};
+use crate::{email, imap_lookup, journal, outlook, policy, powershell, secrets};
 use serde_json::{json, Value};
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -177,6 +177,28 @@ async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
     let matches = email::find(&email::load_contacts(&ctx.shared.data_dir), name);
     if !matches.is_empty() {
         return Ok(list(&matches));
+    }
+    // Not saved yet: look through mail the user sent before. Any failure here
+    // (no email set up, offline) just falls through to asking the user.
+    if let Ok(server) = email::server_for(&ctx.cfg) {
+        if let Ok(secret) = mail_secret(ctx, &server).await {
+            let (user, query) = (ctx.cfg.email.clone(), name.to_string());
+            let found = tokio::task::spawn_blocking(move || {
+                imap_lookup::sent_to(&server, &user, &secret, &query)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            if let Ok(found) = found {
+                if !found.is_empty() {
+                    // Display names come from the mailbox: outside content.
+                    ctx.tainted = true;
+                    return Ok(format!(
+                        "{}\n(Found in the user's Sent mail. If the user confirms one, save it with save_contact.)",
+                        list(&found)
+                    ));
+                }
+            }
+        }
     }
     Ok(format!(
         "No saved contact matches {name}. Ask the user for the address, then call save_contact."

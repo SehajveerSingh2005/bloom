@@ -7,6 +7,7 @@ mod agent;
 mod bridge;
 mod config;
 mod email;
+mod imap_lookup;
 mod journal;
 mod llm;
 mod outlook;
