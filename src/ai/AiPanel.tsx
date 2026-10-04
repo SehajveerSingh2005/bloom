@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ArrowUp, Square, X } from "lucide-react";
 import type { AiControls } from "./useAi";
 import { useAiName } from "./aiName";
+import { AiOrb } from "./AiOrb";
 import "./ai.css";
 
 const STATUS: Record<string, string> = {
@@ -88,9 +89,7 @@ export function AiPanel({ ai, onClose, focusOnOpen }: Props) {
 			}}
 		>
 			<div className="ai-status">
-				<span className="ai-orb-wrap">
-					<span className="ai-orb" />
-				</span>
+				<AiOrb phase={state.phase} size={16} />
 				<span className="ai-status-label">{state.phase === "idle" ? name : STATUS[state.phase]}</span>
 			</div>
 			<div className="ai-body">

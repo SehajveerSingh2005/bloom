@@ -1,6 +1,5 @@
 /* Janice panel: shared by the notch (App.tsx) and the merged dock, where it is
-   a tab of the info panel (InfoCentre.tsx). The orb animates only while Janice is
-   listening, transcribing, working or asking; transform/opacity only. */
+   a tab of the info panel (InfoCentre.tsx). The orb is AiOrb (orb.css). */
 .ai-panel {
 	display: flex;
 	flex-direction: column;
@@ -29,76 +28,6 @@
 	min-height: 0;
 	max-height: 220px;
 	overflow-y: auto;
-}
-
-/* Orb: blurred multi-colour conic gradient. The wrapper holds the static blur
-   so the animated layer only changes transform/opacity. */
-.ai-orb-wrap {
-	flex-shrink: 0;
-	display: block;
-	width: 16px;
-	height: 16px;
-	filter: blur(1.5px) saturate(1.3);
-}
-
-.ai-orb {
-	display: block;
-	width: 100%;
-	height: 100%;
-	border-radius: 50%;
-	background: conic-gradient(from 0deg, #ff5fa2, #ffb340, #5ee0a0, #4cc3ff, #8f6bff, #ff5fa2);
-	opacity: 0.45;
-	will-change: auto;
-}
-
-.ai-panel[data-phase="recording"] .ai-orb,
-.ai-panel[data-phase="transcribing"] .ai-orb,
-.ai-panel[data-phase="working"] .ai-orb {
-	opacity: 0.9;
-	will-change: transform;
-	animation: ai-orb-spin 4s linear infinite;
-}
-
-.ai-panel[data-phase="recording"] .ai-orb {
-	opacity: 1;
-	animation: ai-orb-spin 1.6s linear infinite;
-}
-
-.ai-panel[data-phase="confirm"] .ai-orb {
-	will-change: transform;
-	animation: ai-orb-pulse 1.8s ease-in-out infinite;
-}
-
-.ai-panel[data-phase="error"] .ai-orb {
-	background: conic-gradient(from 0deg, #ff453a, #ff7a66, #c4251c, #ff453a);
-	opacity: 0.85;
-}
-
-@keyframes ai-orb-spin {
-	0% {
-		transform: rotate(0deg) scale(1);
-	}
-	50% {
-		transform: rotate(180deg) scale(1.18);
-	}
-	100% {
-		transform: rotate(360deg) scale(1);
-	}
-}
-
-@keyframes ai-orb-pulse {
-	50% {
-		transform: scale(1.15);
-		opacity: 0.6;
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.ai-panel[data-phase] .ai-orb {
-		animation: none;
-		will-change: auto;
-		box-shadow: 0 0 8px rgba(143, 107, 255, 0.6);
-	}
 }
 
 .ai-heard,
