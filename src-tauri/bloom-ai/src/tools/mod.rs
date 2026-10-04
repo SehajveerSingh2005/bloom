@@ -153,6 +153,12 @@ async fn run_powershell(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
         journal::record(&ctx.shared.data_dir, "script", script, "declined");
         return Ok("The user chose not to run it.".into());
     }
+    let started = if ask {
+        "approved-started"
+    } else {
+        "auto-started"
+    };
+    journal::record(&ctx.shared.data_dir, "script", script, started);
     let output = powershell::run(script).await;
     let outcome = match (&output, ask) {
         (Err(_), _) => "failed",
@@ -274,11 +280,23 @@ async fn send_email(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
     let secret = mail_secret(ctx, &server).await?;
     let from = ctx.cfg.email.clone();
     let recipient = to.clone();
+    let started = if ask {
+        "approved-started"
+    } else {
+        "auto-started"
+    };
+    journal::record(&ctx.shared.data_dir, "email", &detail, started);
     let sent = tokio::task::spawn_blocking(move || {
         email::send(&server, &from, &secret, &recipient, &subject, &body)
     })
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
+    let sent = match sent {
+        Ok(sent) => sent,
+        Err(e) => {
+            journal::record(&ctx.shared.data_dir, "email", &detail, "failed");
+            return Err(e.to_string());
+        }
+    };
     let outcome = match (&sent, ask) {
         (Err(_), _) => "failed",
         (Ok(()), true) => "approved",
@@ -347,6 +365,17 @@ mod tests {
         .await;
         assert_eq!(out.unwrap().trim(), "42");
         assert!(ctx.tainted);
+        let log = std::fs::read_to_string(ctx.shared.data_dir.join("actions.log")).unwrap();
+        let outcomes: Vec<String> = log
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<Value>(l).unwrap()["outcome"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(outcomes, ["auto-started", "auto"]);
     }
 
     #[tokio::test]

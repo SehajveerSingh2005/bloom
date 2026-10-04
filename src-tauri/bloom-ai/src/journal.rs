@@ -1,4 +1,7 @@
-//! actions.log: one JSON line per email or script, whatever the outcome.
+//! actions.log: JSON lines for every email or script, whatever the outcome.
+//! A run that actually starts writes `auto-started` or `approved-started`
+//! first, then its final line (`auto`, `approved` or `failed`), so a Stop
+//! mid-run leaves the started line. `declined` has no started line.
 //! It lives in the ai folder, so "Delete AI altogether" removes it.
 
 use std::io::Write;
