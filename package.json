@@ -11,7 +11,9 @@
     "tauri": "tauri",
     "bump": "bun scripts/bump-version.mjs",
     "release": "bun scripts/release.mjs",
-    "format": "oxfmt && cd src-tauri && cargo fmt"
+    "format": "oxfmt && cd src-tauri && cargo fmt",
+    "ai:dev": "bun scripts/install-ai.mjs",
+    "ai:build": "cargo build --release --locked -p bloom-ai --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@crabnebula/tauri-plugin-drag": "^2.1.0",
