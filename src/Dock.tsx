@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, memo } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, memo } from "react";
 import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -8,6 +8,9 @@ import { useSettingsSync } from "./hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 import { InfoLeft, InfoPanel, InfoProvider, InfoRight, type InfoTab } from "./InfoCentre";
 import { useGlass, useGlassEnabled } from "./hooks/useGlass";
+import { Sparkles } from "lucide-react";
+import { AiPanel } from "./ai/AiPanel";
+import { useAi } from "./ai/useAi";
 
 interface AppInfo {
 	name: string;
@@ -150,6 +153,7 @@ const Dock = memo(function Dock() {
 	const infoPanelRef = useRef<HTMLDivElement>(null);
 	const updateRectRef = useRef(() => {});
 	const openInfo = (tab: InfoTab | null) => {
+		if (aiOpen) return; // the AI panel wins while it is open
 		if (infoCloseTimer.current) clearTimeout(infoCloseTimer.current);
 		setInfoTab((cur) => tab ?? cur);
 	};
@@ -157,6 +161,24 @@ const Dock = memo(function Dock() {
 		if (infoCloseTimer.current) clearTimeout(infoCloseTimer.current);
 		infoCloseTimer.current = setTimeout(() => setInfoTab(null), 350);
 	};
+
+	// Bloom AI in merged mode: its panel opens above the dock, in the info
+	// panel's place. In notch mode Bloom sends `ai-open` to the notch instead.
+	const [aiOpen, setAiOpen] = useState(false);
+	const [aiFocus, setAiFocus] = useState(false);
+	const ai = useAi((recording) => {
+		setInfoTab(null);
+		setAiFocus(!recording);
+		setAiOpen(true);
+	});
+	const closeAi = () => {
+		ai.stop();
+		ai.reset();
+		setAiOpen(false);
+	};
+	useEffect(() => {
+		if (!ai.enabled && aiOpen) closeAi();
+	}, [ai.enabled, aiOpen]);
 
 	useEffect(() => {
 		const onResize = () => setViewportWidth(window.innerWidth);
@@ -184,6 +206,7 @@ const Dock = memo(function Dock() {
 
 	const isHidden =
 		!startupAnimating &&
+		!aiOpen &&
 		((dockMode === "smart" && isOverlapped && interactionState === "none") ||
 			(dockMode === "peek" && interactionState === "none"));
 
@@ -360,10 +383,12 @@ const Dock = memo(function Dock() {
 		"bloom-info-centre": (v) => setInfoCentre(v === true || v === "true")
 	});
 	const infoOpen = infoCentre && !!infoTab && isExpanded && !isHidden && isVisible;
+	const aiPanelOpen = infoCentre && aiOpen && isVisible;
+	const onAiHeight = useCallback(() => updateRectRef.current(), []);
 	// One glass sheet: the open info panel and the dock under it share it.
 	const glass = useGlassEnabled();
 	const infoOpenRef = useRef(infoOpen);
-	infoOpenRef.current = infoOpen;
+	infoOpenRef.current = infoOpen || aiPanelOpen;
 	// A closing panel stops counting as glass at once, not when its exit
 	// animation ends.
 	useGlass(
@@ -381,7 +406,7 @@ const Dock = memo(function Dock() {
 	useEffect(() => {
 		const t = setTimeout(() => updateRectRef.current(), 450);
 		return () => clearTimeout(t);
-	}, [infoOpen]);
+	}, [infoOpen, aiPanelOpen]);
 
 	useEffect(() => {
 		let pollSeq = 0;
@@ -801,7 +826,7 @@ const Dock = memo(function Dock() {
 			return () => clearTimeout(timer);
 		}
 
-		if (hoveredApp && !isDragging) {
+		if (hoveredApp && !isDragging && !aiOpen) {
 			const app = dockItems.find((a) => itemKey(a) === hoveredApp);
 			if (app && app.is_running) {
 				const hwndsToCapture = app.all_hwnds || (app.hwnd ? [[app.hwnd, app.name]] : []);
@@ -852,7 +877,7 @@ const Dock = memo(function Dock() {
 		return () => {
 			if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
 		};
-	}, [hoveredApp, isDragging, dockItems]);
+	}, [hoveredApp, isDragging, dockItems, aiOpen]);
 
 	const iconVariants = {
 		idle: { y: 0, scale: 1 },
@@ -1294,17 +1319,40 @@ const Dock = memo(function Dock() {
 								{infoCentre && (
 									<InfoRight active={infoTab === "controls"} onOpen={() => openInfo("controls")} />
 								)}
+								{ai.enabled && (
+									<button
+										className="dock-ai-btn"
+										title="Bloom AI"
+										onClick={(e) => {
+											e.stopPropagation();
+											invoke("ai_open").catch(() => {});
+										}}
+									>
+										<Sparkles size={16} strokeWidth={1.8} />
+									</button>
+								)}
 							</motion.div>
 						)}
 					</AnimatePresence>
 					<AnimatePresence>
-						{infoOpen && (
+						{(infoOpen || aiPanelOpen) && (
 							<div ref={infoPanelRef} className="ic-panel-anchor" key="info-panel">
-								<InfoPanel
-									tab={infoTab!}
-									setTab={setInfoTab}
-									onResize={() => updateRectRef.current()}
-								/>
+								{aiPanelOpen ? (
+									<div className="ic-panel ai-dock-panel">
+										<AiPanel
+											ai={ai}
+											onClose={closeAi}
+											focusOnOpen={aiFocus}
+											onHeight={onAiHeight}
+										/>
+									</div>
+								) : (
+									<InfoPanel
+										tab={infoTab!}
+										setTab={setInfoTab}
+										onResize={() => updateRectRef.current()}
+									/>
+								)}
 							</div>
 						)}
 					</AnimatePresence>

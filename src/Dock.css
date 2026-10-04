@@ -1471,3 +1471,29 @@ html.glass:not(.no-blur).light-mode .ic-zone.active {
 		inset 0 1px 0 rgba(255, 255, 255, 0.7),
 		inset 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
+
+/* Bloom AI button: same footprint as a dock icon, quieter. */
+.dock-ai-btn {
+	display: grid;
+	place-items: center;
+	width: 34px;
+	height: 34px;
+	border: none;
+	border-radius: 10px;
+	background: transparent;
+	color: var(--bloom-text, #fff);
+	opacity: 0.75;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.dock-ai-btn:hover {
+	opacity: 1;
+	background: rgba(255, 255, 255, 0.1);
+}
+
+/* The AI panel takes the info panel glass sheet but sizes to its content. */
+.ic-panel.ai-dock-panel {
+	height: auto;
+	padding: 0;
+}
