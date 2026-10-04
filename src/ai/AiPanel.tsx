@@ -1,0 +1,122 @@
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { ArrowUp, Square, X } from "lucide-react";
+import type { AiControls } from "./useAi";
+import "./ai.css";
+
+const STATUS: Record<string, string> = {
+	idle: "Bloom AI",
+	recording: "Listening",
+	transcribing: "Transcribing",
+	working: "Working",
+	confirm: "Needs your OK",
+	done: "Done",
+	error: "Couldn't finish"
+};
+
+/** The notch and dock are no-activate windows: take the keyboard, then focus. */
+function takeKeyboard(el: HTMLElement | null) {
+	if (!el) return;
+	invoke("take_keyboard")
+		.catch(() => {})
+		.finally(() => el.focus());
+}
+
+interface Props {
+	ai: AiControls;
+	onClose: () => void;
+	/** Opened from the dock button: focus the text box. */
+	focusOnOpen: boolean;
+	/** Reports the panel's height so the notch can size itself. */
+	onHeight?: (height: number) => void;
+}
+
+export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
+	const { state, send, stop, answer } = ai;
+	const [text, setText] = useState("");
+	const rootRef = useRef<HTMLDivElement>(null);
+	const inputRef = useRef<HTMLInputElement>(null);
+	const approveRef = useRef<HTMLButtonElement>(null);
+	const busy = ["recording", "transcribing", "working", "confirm"].includes(state.phase);
+
+	useEffect(() => {
+		if (focusOnOpen) takeKeyboard(inputRef.current);
+	}, [focusOnOpen]);
+
+	// Enter approves (the focused button), Escape declines (handler below).
+	useEffect(() => {
+		if (state.phase === "confirm") takeKeyboard(approveRef.current);
+	}, [state.phase]);
+
+	useEffect(() => {
+		const el = rootRef.current;
+		if (!el || !onHeight) return;
+		const observer = new ResizeObserver(() => onHeight(el.offsetHeight));
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [onHeight]);
+
+	const submit = (e: React.FormEvent) => {
+		e.preventDefault();
+		const t = text.trim();
+		if (!t || busy) return;
+		send(t);
+		setText("");
+	};
+
+	return (
+		<div
+			ref={rootRef}
+			className="ai-panel"
+			onClick={(e) => e.stopPropagation()}
+			onKeyDown={(e) => {
+				if (e.key !== "Escape") return;
+				if (state.confirm) answer(false);
+				else onClose();
+			}}
+		>
+			<div className="ai-status">
+				{state.phase === "recording" && <span className="ai-dot" />}
+				{STATUS[state.phase]}
+			</div>
+			{state.heard && <p className="ai-heard">{state.heard}</p>}
+			{state.phase === "working" && state.activity && <p className="ai-activity">{state.activity}</p>}
+			{state.confirm && (
+				<div className="ai-confirm">
+					<div className="ai-confirm-title">{state.confirm.title}</div>
+					<pre className="ai-confirm-body">{state.confirm.body}</pre>
+					<div className="ai-row">
+						<button onClick={() => answer(false)}>Cancel</button>
+						<button ref={approveRef} className="primary" onClick={() => answer(true)}>
+							{state.confirm.kind === "email" ? "Send" : "Run"}
+						</button>
+					</div>
+				</div>
+			)}
+			{(state.phase === "done" || state.phase === "error") && (
+				<p className={`ai-reply ${state.phase}`}>{state.reply}</p>
+			)}
+			<form className="ai-input" onSubmit={submit}>
+				<input
+					ref={inputRef}
+					value={text}
+					onChange={(e) => setText(e.target.value)}
+					onMouseDown={() => takeKeyboard(inputRef.current)}
+					placeholder="Ask Bloom to do something"
+				/>
+				{busy ? (
+					<button type="button" title="Stop" onClick={stop}>
+						<Square size={13} />
+					</button>
+				) : (
+					<button type="submit" title="Send">
+						<ArrowUp size={14} />
+					</button>
+				)}
+				<button type="button" title="Close" onClick={onClose}>
+					<X size={14} />
+				</button>
+			</form>
+		</div>
+	);
+}
