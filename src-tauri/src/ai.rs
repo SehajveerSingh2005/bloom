@@ -12,7 +12,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -37,6 +37,8 @@ static NEXT_TASK: AtomicU64 = AtomicU64::new(0);
 /// "Hello Janice" is on: the agent was told `wake_on`, and is told again
 /// whenever it is restarted.
 static WAKE: AtomicBool = AtomicBool::new(false);
+/// When the agent died on its own while "Hello Janice" was on (last minute).
+static CRASHES: Mutex<Vec<Instant>> = Mutex::new(Vec::new());
 
 fn ai_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_local_data_dir().ok().map(|d| d.join("ai"))
@@ -100,7 +102,8 @@ pub fn init(app: &AppHandle) {
         }
     });
     let _ = HOTKEY_TX.set(tx);
-    sync_from_settings();
+    // Off the setup thread: with "Hello Janice" on this starts the agent.
+    std::thread::spawn(sync_from_settings);
 }
 
 /// After any settings change: arms or disarms the hotkey, turns "Hello Janice"
@@ -165,13 +168,14 @@ fn spawn(app: &AppHandle) -> Result<Sidecar, String> {
     let stdin = child.stdin.take().ok_or("The AI agent has no input pipe.")?;
     let stdout = child.stdout.take().ok_or("The AI agent has no output pipe.")?;
     let handle = app.clone();
-    std::thread::spawn(move || relay(handle, stdout));
+    let pid = child.id();
+    std::thread::spawn(move || relay(handle, stdout, pid));
     Ok(Sidecar { child, stdin })
 }
 
 /// The agent's output: `bloom` requests are carried out here, everything else
 /// goes to the webviews.
-fn relay(app: AppHandle, stdout: ChildStdout) {
+fn relay(app: AppHandle, stdout: ChildStdout, pid: u32) {
     for line in BufReader::new(stdout).lines() {
         let Ok(line) = line else { break };
         let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
@@ -194,6 +198,34 @@ fn relay(app: AppHandle, stdout: ChildStdout) {
         }
     }
     let _ = app.emit("ai-event", json!({ "type": "exited" }));
+    rearm_after_crash(&app, pid);
+}
+
+/// The agent died on its own while "Hello Janice" was on: start it again so
+/// the wake word keeps working, unless it keeps crashing.
+fn rearm_after_crash(app: &AppHandle, pid: u32) {
+    // stop() (AI off, Delete AI) or a replacement leaves the slot without this pid.
+    let crashed = SIDECAR.lock().is_ok_and(|slot| slot.as_ref().is_some_and(|s| s.child.id() == pid));
+    if !crashed || !WAKE.load(Ordering::Relaxed) {
+        return;
+    }
+    let gave_up = {
+        let Ok(mut crashes) = CRASHES.lock() else { return };
+        crashes.retain(|t| t.elapsed() < Duration::from_secs(60));
+        crashes.push(Instant::now());
+        crashes.len() >= 3
+    };
+    if gave_up {
+        let message = "Hello Janice stopped: the AI agent keeps crashing.";
+        let _ = app.emit("ai-event", json!({ "type": "error", "task": null, "message": message }));
+        return;
+    }
+    std::thread::sleep(Duration::from_secs(2));
+    if WAKE.load(Ordering::Relaxed) && enabled(app) {
+        if let Ok(mut slot) = SIDECAR.lock() {
+            let _ = ensure_running(app, &mut slot);
+        }
+    }
 }
 
 /// Sends one message, starting the agent first if needed.
@@ -202,6 +234,13 @@ fn send(app: &AppHandle, message: Value) -> Result<(), String> {
         return Err("Bloom AI is off. Turn it on in Settings > AI.".into());
     }
     let mut slot = SIDECAR.lock().map_err(|_| "AI state is unavailable.")?;
+    ensure_running(app, &mut slot)?;
+    write_line(&mut slot, message)
+}
+
+/// Starts the agent unless it is running, and re-arms "Hello Janice" on a
+/// fresh one.
+fn ensure_running(app: &AppHandle, slot: &mut Option<Sidecar>) -> Result<(), String> {
     // An agent that exited on its own is replaced.
     if slot.as_mut().is_some_and(|s| !matches!(s.child.try_wait(), Ok(None))) {
         *slot = None;
@@ -209,10 +248,10 @@ fn send(app: &AppHandle, message: Value) -> Result<(), String> {
     if slot.is_none() {
         *slot = Some(spawn(app)?);
         if WAKE.load(Ordering::Relaxed) {
-            write_line(&mut slot, json!({ "type": "wake_on" }))?;
+            write_line(slot, json!({ "type": "wake_on" }))?;
         }
     }
-    write_line(&mut slot, message)
+    Ok(())
 }
 
 /// For answers and cancels: never starts the agent just to deliver them.
