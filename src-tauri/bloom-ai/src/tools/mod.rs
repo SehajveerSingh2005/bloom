@@ -4,7 +4,9 @@ pub mod files;
 
 use crate::agent::Ctx;
 use crate::protocol::ConfirmKind;
-use crate::{email, facts, imap_lookup, journal, outlook, policy, powershell, secrets, weather};
+use crate::{
+    email, facts, imap_lookup, journal, outlook, policy, powershell, secrets, skills, weather,
+};
 use serde_json::{json, Value};
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -111,6 +113,29 @@ pub fn schema() -> Value {
             json!({ "id": { "type": "integer" } }),
             &["id"],
         ),
+        tool(
+            "use_skill",
+            "Load a skill's instructions by name (see the skills list in your instructions). \
+             Call it first when a request matches a skill, then follow it.",
+            json!({ "name": { "type": "string" } }),
+            &["name"],
+        ),
+        tool(
+            "read_skill_file",
+            "Read a text file from inside a skill's folder (a name listed by use_skill).",
+            json!({ "name": { "type": "string" }, "file": { "type": "string" } }),
+            &["name", "file"],
+        ),
+        tool(
+            "save_skill",
+            "Save a reusable procedure as a skill. Only after the user agrees to keep it.",
+            json!({
+                "name": { "type": "string", "description": "Short name; becomes a lowercase-hyphen slug" },
+                "description": { "type": "string", "description": "One line: when to use it" },
+                "instructions": { "type": "string", "description": "Markdown steps to follow" }
+            }),
+            &["name", "description", "instructions"],
+        ),
     ])
 }
 
@@ -129,6 +154,9 @@ pub fn describe(name: &str, args: &Value) -> String {
         "remember" => "Remembering that".into(),
         "recall" => "Checking my memory".into(),
         "forget" => "Forgetting a fact".into(),
+        "use_skill" => format!("Using skill {}", arg("name")),
+        "read_skill_file" => format!("Reading {}", arg("file")),
+        "save_skill" => format!("Saving skill {}", arg("name")),
         _ => format!("Working ({name})"),
     }
 }
@@ -173,19 +201,58 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
             })
         }
         "forget" => forget(ctx, args["id"].as_u64().ok_or("missing id")?).await,
+        "use_skill" => skills::use_skill(&ctx.shared.data_dir, str_arg(args, "name")?),
+        "read_skill_file" => skills::read_file(
+            &ctx.shared.data_dir,
+            str_arg(args, "name")?,
+            str_arg(args, "file")?,
+        ),
+        "save_skill" => save_skill(ctx, args).await,
         _ => Err(format!("unknown tool {name}")),
     }
 }
 
 /// Poisoned memory would persist, so a tainted request asks before writing it.
 async fn confirm_memory(ctx: &Ctx, title: &str, body: &str) -> bool {
-    !ctx.tainted
+    confirm_persist(ctx, ConfirmKind::Memory, ctx.tainted, title, body).await
+}
+
+/// Asks when `needed` (tainted, or an overwrite), except on carte blanche.
+async fn confirm_persist(
+    ctx: &Ctx,
+    kind: ConfirmKind,
+    needed: bool,
+    title: &str,
+    body: &str,
+) -> bool {
+    !needed
         || ctx.cfg.tier == crate::config::Tier::CarteBlanche
         || ctx
             .shared
             .bridge
-            .confirm(ctx.task, ConfirmKind::Memory, title.into(), body.into())
+            .confirm(ctx.task, kind, title.into(), body.into())
             .await
+}
+
+async fn save_skill(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
+    let (name, desc, ins) = (
+        str_arg(args, "name")?,
+        str_arg(args, "description")?,
+        str_arg(args, "instructions")?,
+    );
+    let overwrite = skills::exists(&ctx.shared.data_dir, name);
+    let title = if overwrite {
+        "Replace this skill?"
+    } else {
+        "Save this skill?"
+    };
+    let body = format!("{}\n{desc}\n\n{ins}", skills::slug(name));
+    let needed = ctx.tainted || overwrite;
+    if !confirm_persist(ctx, ConfirmKind::Skill, needed, title, &body).await {
+        return Ok("The user chose not to save it.".into());
+    }
+    let slug = skills::save(&ctx.shared.data_dir, name, desc, ins)?;
+    Ok(format!("Saved skill {slug}."))
 }
 
 async fn forget(ctx: &mut Ctx, id: u64) -> Result<String, String> {
@@ -471,6 +538,47 @@ mod tests {
         let out = call(&mut ctx, "remember", &json!({ "text": "coffee" })).await;
         assert!(out.unwrap().starts_with("Remembered"));
         assert_eq!(facts::count(&ctx.shared.data_dir), 2);
+    }
+
+    #[tokio::test]
+    async fn skill_save_use_and_overwrite_confirm() {
+        let mut ctx = ctx();
+        let a = json!({ "name": "Tidy Up", "description": "clean", "instructions": "step 1" });
+        let out = call(&mut ctx, "save_skill", &a).await.unwrap();
+        assert_eq!(out, "Saved skill tidy-up.");
+        let out = call(&mut ctx, "use_skill", &json!({ "name": "tidy-up" })).await;
+        assert_eq!(out.unwrap(), "step 1");
+        let bad = json!({ "name": "tidy-up", "file": "../x" });
+        assert!(call(&mut ctx, "read_skill_file", &bad).await.is_err());
+        let shared = ctx.shared.clone();
+        let b = json!({ "name": "Tidy Up", "description": "clean", "instructions": "step 2" });
+        let running = tokio::spawn(async move { call(&mut ctx, "save_skill", &b).await });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(false));
+        assert!(running.await.unwrap().unwrap().contains("not to save"));
+        let kept = skills::use_skill(&shared.data_dir, "tidy-up").unwrap();
+        assert_eq!(kept, "step 1");
+    }
+
+    #[tokio::test]
+    async fn tainted_skill_save_asks_and_carte_blanche_skips() {
+        let mut ctx = ctx();
+        ctx.tainted = true;
+        let shared = ctx.shared.clone();
+        let a = json!({ "name": "evil", "description": "d", "instructions": "i" });
+        let a2 = a.clone();
+        let running = tokio::spawn(async move {
+            let r = call(&mut ctx, "save_skill", &a2).await;
+            (ctx, r)
+        });
+        tokio::task::yield_now().await;
+        shared.bridge.answer(1, Answer::Confirm(false));
+        let (mut ctx, r) = running.await.unwrap();
+        assert!(r.unwrap().contains("not to save"));
+        assert_eq!(skills::count(&shared.data_dir), 0);
+        ctx.cfg.tier = crate::config::Tier::CarteBlanche;
+        call(&mut ctx, "save_skill", &a).await.unwrap();
+        assert_eq!(skills::count(&shared.data_dir), 1);
     }
 
     #[tokio::test]

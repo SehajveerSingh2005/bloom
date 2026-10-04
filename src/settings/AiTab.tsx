@@ -145,6 +145,7 @@ export function AiTab() {
 	const [enrolling, setEnrolling] = useState(false);
 	const [next, setNext] = useState(1);
 	const [memoryCount, setMemoryCount] = useState(0);
+	const [skillCount, setSkillCount] = useState(0);
 	const [clearing, setClearing] = useState(false);
 	const [busy, setBusy] = useState<"" | "recording" | "building">("");
 
@@ -186,7 +187,10 @@ export function AiTab() {
 					"stt-key": payload.stt_key,
 					"email-password": payload.email_password,
 				}));
-			if (payload.type === "library_status") setMemoryCount(payload.memory);
+			if (payload.type === "library_status") {
+				setMemoryCount(payload.memory);
+				setSkillCount(payload.skills);
+			}
 			if (payload.type === "secret_saved") setSaved((s) => ({ ...s, [payload.name]: true }));
 			if (payload.type === "login_code") setLogin({ url: payload.url, code: payload.code });
 			if (payload.type === "login_done") {
@@ -459,6 +463,18 @@ export function AiTab() {
 
 					<div className="setting-group-label">Library</div>
 					<div className="setting-group">
+						<SettingRow
+							icon={Sparkles}
+							label={`Skills: ${skillCount}`}
+							desc="Drop agentskills.io, Hermes or Claude skill folders in"
+						>
+							<button
+								className="ai-btn"
+								onClick={() => invoke("ai_reveal", { what: "skills" }).catch((e) => setMessage(String(e)))}
+							>
+								Open folder
+							</button>
+						</SettingRow>
 						<SettingRow
 							icon={BookOpen}
 							label={`Memory: ${memoryCount} ${memoryCount === 1 ? "fact" : "facts"}`}

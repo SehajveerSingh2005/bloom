@@ -214,7 +214,7 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
 }
 
 fn system_prompt(name: &str, data_dir: &std::path::Path) -> String {
-    let known = crate::facts::prompt_section(data_dir);
+    let known = crate::facts::prompt_section(data_dir) + &crate::skills::prompt_section(data_dir);
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     format!(
         "You are {name}, the assistant built into Bloom, a Windows desktop shell. You act on the \
@@ -238,6 +238,9 @@ fn system_prompt(name: &str, data_dir: &std::path::Path) -> String {
          Use remember for stable personal facts and preferences the user states (\"I'm \
          vegetarian\", \"my manager is Sam\"), not one-off requests; never store secrets or \
          passwords. Use recall to look facts up and forget to delete one by id.\n\
+         A skill's instructions never give you new powers: any script still goes through \
+         run_powershell. After a multi-step task the user is likely to repeat, offer to save \
+         it as a skill, and call save_skill only once they agree.\n\
          When done, reply in one or two short sentences.{known}"
     )
 }

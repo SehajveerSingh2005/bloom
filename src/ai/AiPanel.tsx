@@ -208,7 +208,7 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 									disabled={approveDisabled}
 									onClick={() => answer(true)}
 								>
-									{state.confirm.kind === "email" ? "Send" : state.confirm.kind === "memory" ? "Remember" : "Run"}
+									{state.confirm.kind === "email" ? "Send" : state.confirm.kind === "memory" ? "Remember" : state.confirm.kind === "skill" ? "Save" : "Run"}
 								</button>
 							</div>
 						</motion.div>

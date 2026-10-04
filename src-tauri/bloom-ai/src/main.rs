@@ -9,6 +9,7 @@ mod config;
 mod debug;
 mod email;
 mod facts;
+mod skills;
 mod imap_lookup;
 mod journal;
 mod llm;
@@ -213,6 +214,8 @@ async fn serve(shared: Arc<Shared>) {
                 let opened = match what.as_str() {
                     "memory" => facts::ensure(&shared.data_dir)
                         .and_then(|p| tools::files::shell_open(&p.to_string_lossy())),
+                    "skills" => skills::ensure(&shared.data_dir)
+                        .and_then(|p| tools::files::shell_open(&p.to_string_lossy())),
                     // Later tasks fill these in.
                     other => Err(format!("Opening {other} is not available yet.")),
                 };
@@ -321,7 +324,7 @@ async fn serve(shared: Arc<Shared>) {
 fn emit_library_status(shared: &Shared) {
     emit(&Out::LibraryStatus {
         memory: facts::count(&shared.data_dir),
-        skills: 0,
+        skills: skills::count(&shared.data_dir),
         mcp_servers: 0,
         mcp_tools: 0,
         mcp_errors: vec![],
