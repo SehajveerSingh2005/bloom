@@ -118,13 +118,15 @@ pub enum Out {
     },
     /// The WhatsApp link, for Settings only. `state`: "off", "connecting",
     /// "not_linked" or "linked". `qr` and `code` are pairing credentials:
-    /// never logged.
+    /// never logged. `contacts` and `groups`: how many are synced.
     WhatsappStatus {
         state: String,
         number: Option<String>,
         qr: Option<String>,
         code: Option<String>,
         error: Option<String>,
+        contacts: Option<usize>,
+        groups: Option<usize>,
     },
     /// An automatic reply went to `name` (a toast, no message text).
     WhatsappAutoReply {
@@ -263,10 +265,12 @@ mod tests {
                 number: Some("+491701234567".into()),
                 qr: None,
                 code: None,
-                error: None
+                error: None,
+                contacts: Some(120),
+                groups: Some(8),
             })
             .unwrap(),
-            r#"{"type":"whatsapp_status","state":"linked","number":"+491701234567","qr":null,"code":null,"error":null}"#
+            r#"{"type":"whatsapp_status","state":"linked","number":"+491701234567","qr":null,"code":null,"error":null,"contacts":120,"groups":8}"#
         );
         assert_eq!(
             serde_json::to_string(&Out::WhatsappAutoReply {

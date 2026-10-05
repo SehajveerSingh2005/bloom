@@ -661,6 +661,16 @@ mod tests {
         assert!(allowed(&shared(nobody), NEHA).is_none(), "default nobody");
     }
 
+    #[test]
+    fn synced_whatsapp_contacts_never_widen_anyone_in_my_contacts() {
+        let any = shared(on(json!("*")));
+        crate::whatsapp::tests::sync_book(&any.data_dir);
+        // Sam is only in the synced address book; "Family" is a synced group.
+        assert!(allowed(&any, "+4917000000003").is_none());
+        assert!(allowed(&any, "1@g.us").is_none());
+        assert!(allowed(&any, NEHA).is_some(), "phones.json still counts");
+    }
+
     #[tokio::test]
     async fn the_request_has_no_tools_facts_skills_or_contacts() {
         let s = shared(on(json!("*")));

@@ -3,7 +3,14 @@
 //! hold up a request. Commands go in over a channel, events come out over
 //! another. Lost connections retry after 5 s, 30 s, then every 5 minutes.
 //! Nothing here logs: QR and link codes go to Settings only.
+//!
+//! Contacts: history sync stays off, but app-state sync is on (the library
+//! does it on link). On connect the groups the user is in are fetched and,
+//! at most once a day, the address book (`critical_unblock_low`) is synced
+//! afresh; later address-book changes arrive as `ContactUpdate`s. Both land
+//! in whatsapp\contacts.json (wa_contacts.rs).
 
+use crate::wa_contacts::{self, Contact, Group};
 use crate::whatsapp::{remove_session, Event, Link, Message, Status};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,6 +20,8 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use whatsapp_rust::pair_code::PairCodeOptions;
 use whatsapp_rust::prelude::*;
+use whatsapp_rust::sync_task::MajorSyncTask;
+use whatsapp_rust::wacore::appstate::patch_decode::WAPatchName;
 use whatsapp_rust::wacore::store::DevicePropsOverride;
 
 enum Cmd {
@@ -128,11 +137,17 @@ struct Seen {
     /// The QR codes ran out (or WhatsApp refused us): wait for the user.
     stopped: bool,
     groups: HashMap<String, String>,
+    /// Address-book entries not saved yet: (phone number or LID, name).
+    pending: Vec<(Jid, String)>,
+    /// The connect-time sync is running: updates wait for it.
+    refreshing: bool,
 }
 
 struct Conn {
     seen: Mutex<Seen>,
     events: mpsc::UnboundedSender<Event>,
+    /// The session folder, which holds contacts.json.
+    dir: PathBuf,
 }
 
 impl Conn {
@@ -168,16 +183,21 @@ impl Conn {
                 self.seen.lock().unwrap().connected = true;
                 let number = client.pn().map(|j| format!("+{}", j.user_base()));
                 let name = Some(client.push_name()).filter(|n| !n.is_empty());
+                let synced = wa_contacts::load(&self.dir).ok().map(|b| counts(&b));
                 self.status(|s| {
                     *s = Status {
                         state: "linked",
                         number,
                         name,
+                        synced,
                         ..Status::default()
                     }
                 });
                 offline(client).await;
+                self.refresh(client).await;
             }
+            // Recorded by `Book`; a change made on the phone is saved at once.
+            E::ContactUpdate(u) if !u.from_full_sync => self.save(client, false, None).await,
             // The library goes "online" once it learns the user's name, too.
             E::SelfPushNameUpdated(u) => {
                 let name = Some(u.new_name.clone()).filter(|n| !n.is_empty());
@@ -205,6 +225,62 @@ impl Conn {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// The groups the user is in, and the whole address book when the saved
+    /// one is a day old (or missing).
+    async fn refresh(&self, client: &Arc<Client>) {
+        self.seen.lock().unwrap().refreshing = true;
+        let groups = client.groups().get_participating().await.ok().map(|all| {
+            all.into_values()
+                // A community's parent group takes no messages.
+                .filter(|m| !m.is_parent_group)
+                .map(|m| Group {
+                    jid: m.id.to_non_ad_string(),
+                    members: m
+                        .size
+                        .map(|n| n as usize)
+                        .or(Some(m.participants.len()).filter(|n| *n > 0)),
+                    subject: m.subject,
+                })
+                .collect()
+        });
+        let full = stale(&self.dir);
+        if full {
+            // Names arrive through `Book` while this runs. A failed sync is
+            // retried by the library, and its names arrive the same way.
+            let task = MajorSyncTask::AppStateSync {
+                name: WAPatchName::CriticalUnblockLow,
+                full_sync: true,
+            };
+            client.process_sync_task(task).await;
+        }
+        self.seen.lock().unwrap().refreshing = false;
+        self.save(client, full, groups).await;
+    }
+
+    /// Saves what `Book` recorded. `full`: it is the whole address book.
+    async fn save(&self, client: &Arc<Client>, full: bool, groups: Option<Vec<Group>>) {
+        let pending = {
+            let mut seen = self.seen.lock().unwrap();
+            if seen.refreshing {
+                return;
+            }
+            std::mem::take(&mut seen.pending)
+        };
+        if pending.is_empty() && groups.is_none() {
+            return;
+        }
+        let mut contacts = Vec::new();
+        for (jid, name) in pending {
+            if let Some(number) = chat_key(client, &jid, None).await {
+                contacts.push(Contact { name, number });
+            }
+        }
+        match wa_contacts::update(&self.dir, full, contacts, groups) {
+            Ok(book) => self.status(|s| s.synced = Some(counts(&book))),
+            Err(e) => self.status(|s| s.error = Some(e)),
         }
     }
 
@@ -271,6 +347,56 @@ impl Conn {
         self.seen.lock().unwrap().groups.insert(key, name.clone());
         name
     }
+}
+
+/// Records address-book names as app-state sync dispatches them. Runs inline,
+/// so a full sync's names are all in by the time it returns.
+struct Book(Arc<Conn>);
+
+impl EventHandler for Book {
+    fn handle_event(&self, event: Arc<whatsapp_rust::prelude::Event>) {
+        if let whatsapp_rust::prelude::Event::ContactUpdate(u) = &*event {
+            if let Some(entry) = address_entry(&u.jid, &u.action) {
+                self.0.seen.lock().unwrap().pending.push(entry);
+            }
+        }
+    }
+
+    fn interest(&self) -> EventInterest {
+        EventInterest::of(&[EventKind::ContactUpdate])
+    }
+}
+
+/// (the phone-number JID if given, else the chat's JID; the saved name).
+fn address_entry(
+    jid: &Jid,
+    action: &wa::sync_action_value::ContactAction,
+) -> Option<(Jid, String)> {
+    let name = [&action.full_name, &action.first_name]
+        .into_iter()
+        .flatten()
+        .map(|n| n.trim())
+        .find(|n| !n.is_empty())?;
+    let pn = action
+        .pn_jid
+        .as_deref()
+        .and_then(|p| p.parse::<Jid>().ok())
+        .filter(Jid::is_pn);
+    Some((pn.unwrap_or_else(|| jid.clone()), name.to_string()))
+}
+
+/// (contacts, groups) for Settings.
+fn counts(book: &wa_contacts::Book) -> (usize, usize) {
+    (book.contacts.len(), book.groups.len())
+}
+
+/// The saved address book is missing or a day old.
+fn stale(dir: &Path) -> bool {
+    std::fs::metadata(dir.join("contacts.json"))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_none_or(|age| age >= Duration::from_secs(24 * 3600))
 }
 
 /// Without this the phone stops showing notifications while Bloom is linked.
@@ -443,6 +569,7 @@ async fn supervise(
         let conn = Arc::new(Conn {
             seen: Mutex::default(),
             events: events.clone(),
+            dir: dir.to_path_buf(),
         });
         conn.status(|s| s.state = "connecting");
         let bot = match build(dir, &conn, pair.take()).await {
@@ -583,6 +710,7 @@ async fn build(dir: &Path, conn: &Arc<Conn>, pair: Option<String>) -> Result<Bot
             ..Default::default()
         })
         .with_device_props(DevicePropsOverride::new().with_os("Bloom"))
+        .with_event_handler(Book(conn.clone()))
         .on_event(move |event, client| {
             let c = c.clone();
             async move { c.handle(&event, &client).await }
@@ -668,6 +796,49 @@ mod tests {
         };
         assert_eq!(describe(&quoting).as_deref(), Some("YES"));
         assert!(!forwarded(&quoting));
+    }
+
+    #[test]
+    fn address_book_entries_take_the_number_and_the_best_name() {
+        use wa::sync_action_value::ContactAction;
+        let lid = Jid::lid("12345");
+        let full = ContactAction {
+            full_name: Some(" Neha Sharma ".into()),
+            first_name: Some("Neha".into()),
+            pn_jid: Some("491701234567@s.whatsapp.net".into()),
+            ..Default::default()
+        };
+        let (jid, name) = address_entry(&lid, &full).unwrap();
+        assert_eq!(
+            (jid.to_string().as_str(), name.as_str()),
+            ("491701234567@s.whatsapp.net", "Neha Sharma")
+        );
+        // No number given: the chat's JID (a LID is looked up when saving).
+        let first = ContactAction {
+            full_name: Some(String::new()),
+            first_name: Some("Sam".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            address_entry(&lid, &first),
+            Some((lid.clone(), "Sam".into()))
+        );
+        assert_eq!(address_entry(&lid, &ContactAction::default()), None);
+    }
+
+    #[test]
+    fn the_address_book_is_synced_afresh_once_a_day() {
+        let dir = crate::testutil::temp_dir();
+        assert!(stale(&dir), "never synced");
+        wa_contacts::update(&dir, true, Vec::new(), Some(Vec::new())).unwrap();
+        assert!(!stale(&dir));
+        let old = std::time::SystemTime::now() - Duration::from_secs(25 * 3600);
+        let file = std::fs::File::options()
+            .write(true)
+            .open(dir.join("contacts.json"))
+            .unwrap();
+        file.set_modified(old).unwrap();
+        assert!(stale(&dir));
     }
 
     #[test]

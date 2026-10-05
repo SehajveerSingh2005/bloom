@@ -7,9 +7,13 @@
 //! lands in the buffer (`shared.whatsapp.incoming.subscribe()`, own messages
 //! included, `from_me` set), and `State::link()` gives `send_text` and
 //! `typing`. Chats are keyed by "+<number>" (1:1) or the group id.
+//!
+//! Names also come from whatsapp\contacts.json (wa_contacts.rs: the phone's
+//! address book and the user's groups), after phones.json.
 
 use crate::agent::{Ctx, Shared};
 use crate::protocol::{emit, ConfirmKind, Out};
+use crate::wa_contacts::{self, Book};
 use crate::{journal, phones, policy};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::Path;
@@ -25,10 +29,16 @@ const SENDS_PER_HOUR: usize = 20;
 const MAX_TEXT: usize = 4096;
 const READ_MAX: usize = 20;
 const LIST_MAX: usize = 20;
+const GROUPS_MAX: usize = 50;
 /// How long a text sent to the user's own chat counts as an echo.
 const ECHO_FOR: Duration = Duration::from_secs(60);
 /// Offered only while "Connect WhatsApp" is on.
-pub const TOOLS: [&str; 3] = ["read_whatsapp", "list_whatsapp_chats", "send_whatsapp"];
+pub const TOOLS: [&str; 4] = [
+    "read_whatsapp",
+    "list_whatsapp_chats",
+    "list_whatsapp_groups",
+    "send_whatsapp",
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
@@ -59,6 +69,8 @@ pub struct Status {
     pub error: Option<String>,
     /// The linked account's WhatsApp name. Not sent to Settings.
     pub name: Option<String>,
+    /// (contacts, groups) in whatsapp\contacts.json.
+    pub synced: Option<(usize, usize)>,
 }
 
 impl Status {
@@ -74,6 +86,8 @@ impl Status {
             qr: self.qr.clone(),
             code: self.code.clone(),
             error: self.error.clone(),
+            contacts: self.synced.map(|s| s.0),
+            groups: self.synced.map(|s| s.1),
         });
     }
 }
@@ -128,7 +142,8 @@ impl Chats {
             }
         }
         let chat = self.map.entry(m.chat.clone()).or_default();
-        chat.group = m.group.is_some();
+        // Our own sends carry no subject.
+        chat.group |= m.group.is_some();
         if let Some(subject) = &m.group {
             chat.name = subject.clone();
         } else if !m.from_me {
@@ -149,20 +164,64 @@ impl Chats {
         }
     }
 
-    /// "Neha (+49...)" from phones.json, else the WhatsApp name.
-    fn label(&self, saved: &BTreeMap<String, String>, key: &str) -> String {
-        let chat = self.map.get(key);
-        if chat.is_some_and(|c| c.group) {
-            return format!("{} (group)", chat.map_or("", |c| &c.name));
+    /// "Neha (+49...)" from phones.json, else the address book or the
+    /// WhatsApp name; "Family (group)" for a group.
+    fn label(&self, saved: &BTreeMap<String, String>, book: &Book, key: &str) -> String {
+        if let Some((subject, _)) = self.group(book, key) {
+            return format!("{subject} (group)");
         }
-        match saved_name(saved, key).or(chat.map(|c| c.name.as_str()).filter(|n| !n.is_empty())) {
+        let chat = self.map.get(key);
+        match saved_name(saved, key)
+            .or(book.name_of(key))
+            .or(chat.map(|c| c.name.as_str()).filter(|n| !n.is_empty()))
+        {
             Some(name) => format!("{name} ({key})"),
             None => key.to_string(),
         }
     }
 
+    /// The subject and member count (if known), when `key` is a group.
+    fn group(&self, book: &Book, key: &str) -> Option<(String, Option<usize>)> {
+        if let Some(g) = book.group(key) {
+            return Some((g.subject.clone(), g.members));
+        }
+        let chat = self.map.get(key).filter(|c| c.group)?;
+        Some((chat.name.clone(), None))
+    }
+
+    /// The chats a name means beyond phones.json: synced contacts and groups,
+    /// group chats and (with `people`) the names people gave themselves.
+    /// Exact names win over partial ones.
+    fn others(&self, book: &Book, query: &str, people: bool) -> Vec<String> {
+        let q = query.trim().to_lowercase();
+        let mut found: Vec<(&str, &str)> = book
+            .people(query)
+            .into_iter()
+            .map(|c| (c.number.as_str(), c.name.as_str()))
+            .collect();
+        found.extend(
+            book.groups_named(query)
+                .into_iter()
+                .map(|g| (g.jid.as_str(), g.subject.as_str())),
+        );
+        found.extend(
+            self.map
+                .iter()
+                .filter(|(_, c)| (people || c.group) && !c.name.is_empty())
+                .filter(|(_, c)| c.name.to_lowercase().contains(&q))
+                .map(|(k, c)| (k.as_str(), c.name.as_str())),
+        );
+        if found.iter().any(|(_, n)| n.to_lowercase() == q) {
+            found.retain(|(_, n)| n.to_lowercase() == q);
+        }
+        let mut keys: Vec<String> = found.into_iter().map(|(k, _)| k.to_string()).collect();
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
     /// The chat a name, number or group name means.
-    fn find(&self, dir: &Path, query: &str) -> Result<String, String> {
+    fn find(&self, dir: &Path, book: &Book, query: &str) -> Result<String, String> {
         let q = query.trim();
         if let Some(number) = as_number(q) {
             return Ok(number);
@@ -175,13 +234,7 @@ impl Chats {
             keys.retain(|k| self.map.contains_key(k));
         }
         if keys.is_empty() && saved.is_empty() {
-            let q = q.to_lowercase();
-            keys = self
-                .map
-                .iter()
-                .filter(|(_, c)| !c.name.is_empty() && c.name.to_lowercase().contains(&q))
-                .map(|(k, _)| k.clone())
-                .collect();
+            keys = self.others(book, q, true);
         }
         match keys.len() {
             1 => Ok(keys.remove(0)),
@@ -191,7 +244,7 @@ impl Chats {
             _ => {
                 let names = if saved.is_empty() {
                     keys.iter()
-                        .map(|k| self.label(&BTreeMap::new(), k))
+                        .map(|k| self.label(&BTreeMap::new(), book, k))
                         .collect::<Vec<_>>()
                 } else {
                     saved.iter().map(|(n, p)| format!("{n} ({p})")).collect()
@@ -214,6 +267,24 @@ fn saved_name<'a>(saved: &'a BTreeMap<String, String>, number: &str) -> Option<&
         .iter()
         .find(|(_, n)| *n == number)
         .map(|(k, _)| k.as_str())
+}
+
+/// whatsapp\contacts.json; empty when missing or unreadable (Settings says
+/// why).
+fn book(data_dir: &Path) -> Book {
+    wa_contacts::load(&data_dir.join("whatsapp")).unwrap_or_default()
+}
+
+/// find_contact's lines from the synced address book and groups (at most 10
+/// of each); empty if none match.
+pub fn synced_lines(data_dir: &Path, query: &str) -> String {
+    let book = book(data_dir);
+    let people = book.people(query).into_iter().take(10);
+    let groups = book.groups_named(query).into_iter().take(10);
+    people
+        .map(|c| format!("\n{} phone: {} (from WhatsApp)", c.name, c.number))
+        .chain(groups.map(|g| format!("\n{} (WhatsApp group)", g.subject)))
+        .collect()
 }
 
 /// A phone number as E.164, if `text` is one.
@@ -505,9 +576,10 @@ pub fn read(ctx: &mut Ctx, chat: &str, count: Option<u64>) -> Result<String, Str
     ctx.tainted = true;
     let count = count.unwrap_or(10).clamp(1, READ_MAX as u64) as usize;
     let saved = phones::try_load(&ctx.shared.data_dir)?;
+    let book = book(&ctx.shared.data_dir);
     let chats = state.chats.lock().unwrap();
-    let key = chats.find(&ctx.shared.data_dir, chat)?;
-    let label = chats.label(&saved, &key);
+    let key = chats.find(&ctx.shared.data_dir, &book, chat)?;
+    let label = chats.label(&saved, &book, &key);
     let Some(found) = chats.map.get(&key) else {
         return Ok(format!(
             "No WhatsApp messages with {label} since Bloom connected."
@@ -530,6 +602,7 @@ pub fn list(ctx: &mut Ctx) -> Result<String, String> {
         return Err(NOT_LINKED.into());
     }
     let saved = phones::try_load(&ctx.shared.data_dir)?;
+    let book = book(&ctx.shared.data_dir);
     let chats = state.chats.lock().unwrap();
     let mut keys: Vec<(&String, &Chat)> = chats.map.iter().collect();
     if keys.is_empty() {
@@ -544,7 +617,7 @@ pub fn list(ctx: &mut Ctx) -> Result<String, String> {
         .map(|(k, c)| {
             format!(
                 "{}: {} unread, last {}",
-                chats.label(&saved, k),
+                chats.label(&saved, &book, k),
                 c.unread,
                 stamp(c.last)
             )
@@ -553,14 +626,72 @@ pub fn list(ctx: &mut Ctx) -> Result<String, String> {
         .join("\n"))
 }
 
-fn confirm_text(name: &str, number: &str, text: &str) -> (String, String) {
+/// list_whatsapp_groups: the user's groups, latest message first (since
+/// linking), then by name.
+pub fn list_groups(ctx: &mut Ctx) -> Result<String, String> {
+    let state = &ctx.shared.whatsapp;
+    if state.link().is_none() {
+        return Err(NOT_LINKED.into());
+    }
+    let book = book(&ctx.shared.data_dir);
+    let chats = state.chats.lock().unwrap();
+    let last = |key: &str| chats.map.get(key).map_or(0, |c| c.last);
+    let mut groups: Vec<(&str, Option<usize>, i64)> = book
+        .groups
+        .iter()
+        .map(|g| (g.subject.as_str(), g.members, last(&g.jid)))
+        .collect();
+    // Heard from since linking, not synced yet.
+    groups.extend(
+        chats
+            .map
+            .iter()
+            .filter(|(k, c)| c.group && book.group(k).is_none())
+            .map(|(_, c)| (c.name.as_str(), None, c.last)),
+    );
+    if groups.is_empty() {
+        return Ok("No WhatsApp groups synced yet.".into());
+    }
+    // Subjects come from WhatsApp: outside content.
+    ctx.tainted = true;
+    groups.sort_by_key(|g| std::cmp::Reverse(g.2));
+    Ok(groups
+        .iter()
+        .take(GROUPS_MAX)
+        .map(|(subject, members, last)| {
+            let mut line = subject.to_string();
+            if let Some(n) = members {
+                line += &format!(", {n} members");
+            }
+            if *last > 0 {
+                line += &format!(", last message {}", stamp(*last));
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+/// `group`: Some(member count, if known) for a group.
+fn confirm_text(
+    name: &str,
+    number: &str,
+    group: Option<Option<usize>>,
+    text: &str,
+) -> (String, String) {
+    let to = match group {
+        Some(Some(n)) => format!("Group, {n} members"),
+        Some(None) => "Group".to_string(),
+        None => number.to_string(),
+    };
     (
         format!("Send WhatsApp to {name}?"),
-        format!("{number}\n\n{text}"),
+        format!("{to}\n\n{text}"),
     )
 }
 
-/// send_whatsapp: to a saved name or a number, on the user's request.
+/// send_whatsapp: to a saved name, a number, or (after phones.json) a synced
+/// contact or group, on the user's request.
 pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String> {
     let text = text.trim();
     if text.is_empty() {
@@ -571,14 +702,40 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
     }
     let dir = ctx.shared.data_dir.clone();
     let saved = phones::try_load(&dir)?;
-    let (name, number) = match as_number(to) {
-        Some(n) => (saved_name(&saved, &n).unwrap_or(&n).to_string(), n),
+    let book = book(&dir);
+    let shared = ctx.shared.clone();
+    let state = &shared.whatsapp;
+    // `synced`: found by a name from WhatsApp, not the user's own files.
+    let (name, number, synced) = match as_number(to) {
+        Some(n) => (saved_name(&saved, &n).unwrap_or(&n).to_string(), n, false),
         None => match phones::find(&dir, to)?.as_slice() {
-            [(name, number)] => (name.clone(), number.clone()),
+            [(name, number)] => (name.clone(), number.clone(), false),
             [] => {
-                return Err(format!(
-                    "No saved number for {to}. Ask the user for it, then call save_phone."
-                ))
+                let chats = state.chats.lock().unwrap();
+                match chats.others(&book, to, false).as_slice() {
+                    [key] => {
+                        let name = match chats.group(&book, key) {
+                            Some((subject, _)) => subject,
+                            None => book.name_of(key).unwrap_or(key).to_string(),
+                        };
+                        (name, key.clone(), true)
+                    }
+                    [] => {
+                        return Err(format!(
+                            "No saved number for {to}. Ask the user for it, then call save_phone."
+                        ))
+                    }
+                    many => {
+                        // The names come from WhatsApp: outside data.
+                        ctx.tainted = true;
+                        let names: Vec<String> =
+                            many.iter().map(|k| chats.label(&saved, &book, k)).collect();
+                        return Err(format!(
+                            "Several match {to}: {}. Which one?",
+                            names.join(", ")
+                        ));
+                    }
+                }
             }
             many => {
                 let names: Vec<String> = many.iter().map(|(n, p)| format!("{n} ({p})")).collect();
@@ -589,7 +746,6 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
             }
         },
     };
-    let state = &ctx.shared.whatsapp;
     if state.link().is_none() || !state.linked() {
         return Err(NOT_LINKED.into());
     }
@@ -598,11 +754,18 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
             "Already sent {SENDS_PER_HOUR} WhatsApp messages in the last hour. Try again later."
         ));
     }
-    let known = saved_name(&saved, &number).is_some() && !ctx.saved_this_task.contains(&number);
+    let group = state.chats.lock().unwrap().group(&book, &number);
+    // Groups the user is in (as synced) are known, like saved numbers.
+    let known = match group {
+        Some(_) => book.group(&number).is_some(),
+        None => saved_name(&saved, &number).is_some(),
+    } && !ctx.saved_this_task.contains(&number);
     // No message text in actions.log: messages stay in RAM.
     let detail = format!("to {name} {number} ({} chars)", text.chars().count());
     let ask = policy::email_needs_confirm(ctx.cfg.tier, known, ctx.tainted);
-    let (title, body) = confirm_text(&name, &number, text);
+    // The name typed by the user found it; from here on it is in the result.
+    ctx.tainted |= synced;
+    let (title, body) = confirm_text(&name, &number, group.map(|g| g.1), text);
     if ask
         && !ctx
             .shared
@@ -833,19 +996,176 @@ pub mod tests {
     }
 
     /// Runs send_whatsapp, answering a confirm with `answer` if one comes.
-    async fn send_with(
+    async fn send_with(ctx: Ctx, to: &str, answer: Option<bool>) -> (Result<String, String>, bool) {
+        let (out, asked, _) = send_ctx(ctx, to, answer).await;
+        (out, asked)
+    }
+
+    /// `send_with`, handing the Ctx back.
+    async fn send_ctx(
         mut ctx: Ctx,
         to: &str,
         answer: Option<bool>,
-    ) -> (Result<String, String>, bool) {
+    ) -> (Result<String, String>, bool, Ctx) {
         let shared = ctx.shared.clone();
         let (to, text) = (to.to_string(), "Running late".to_string());
-        let running = tokio::spawn(async move { send(&mut ctx, &to, &text).await });
+        let running = tokio::spawn(async move {
+            let out = send(&mut ctx, &to, &text).await;
+            (out, ctx)
+        });
         tokio::task::yield_now().await;
         let asked = shared
             .bridge
             .answer_pending(Answer::Confirm(answer.unwrap_or(false)));
-        (running.await.unwrap(), asked)
+        let (out, ctx) = running.await.unwrap();
+        (out, asked, ctx)
+    }
+
+    /// What the connection synced: Neha and Sam from the address book, the
+    /// Family group (5 members) and Family Trip.
+    pub fn sync_book(data_dir: &Path) {
+        use crate::wa_contacts::tests::{group, person};
+        wa_contacts::update(
+            &data_dir.join("whatsapp"),
+            true,
+            vec![
+                person("Neha Sharma", "+4917000000002"),
+                person("Sam", "+4917000000003"),
+            ],
+            Some(vec![
+                group("Family", "1@g.us", Some(5)),
+                group("Family Trip", "2@g.us", None),
+            ]),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn own_numbers_win_over_synced_ones() {
+        let mut c = ctx();
+        c.cfg.tier = Tier::CarteBlanche;
+        phones::save(&c.shared.data_dir, "Neha", "+491701234567").unwrap();
+        sync_book(&c.shared.data_dir);
+        let fake = link(&c);
+        let (out, _, c) = send_ctx(c, "neha", None).await;
+        assert_eq!(out.unwrap(), "Sent to Neha.");
+        assert_eq!(fake.sent.lock().unwrap()[0].0, "+491701234567");
+        assert!(!c.tainted, "only the user's own file was used");
+        // Only in the address book: found there, and the name taints.
+        let (out, _, c) = send_ctx(c, "sam", None).await;
+        assert_eq!(out.unwrap(), "Sent to Sam.");
+        assert_eq!(fake.sent.lock().unwrap()[1].0, "+4917000000003");
+        assert!(c.tainted);
+    }
+
+    #[tokio::test]
+    async fn group_sends_go_to_the_group_and_its_members_are_known() {
+        let mut c = ctx();
+        c.cfg.tier = Tier::Competent;
+        sync_book(&c.shared.data_dir);
+        let fake = link(&c);
+        let shared = c.shared.clone();
+        // The exact subject wins over "Family Trip"; a group the user is in
+        // is known, so the competent tier sends without asking.
+        let (out, asked, c) = send_ctx(c, "FAMILY", None).await;
+        assert!(!asked);
+        assert_eq!(out.unwrap(), "Sent to Family.");
+        assert_eq!(
+            fake.sent.lock().unwrap()[0],
+            ("1@g.us".to_string(), "Running late".to_string())
+        );
+        assert!(c.tainted, "the subject came back in the result");
+        let kept = shared.whatsapp.recent("1@g.us", 5);
+        assert!(kept[0].from_me);
+        // Once tainted, the next one asks.
+        let (_, asked, _) = send_ctx(c, "family trip", Some(false)).await;
+        assert!(asked);
+        assert_eq!(
+            confirm_text("Family", "1@g.us", Some(Some(5)), "hi"),
+            (
+                "Send WhatsApp to Family?".into(),
+                "Group, 5 members\n\nhi".into()
+            )
+        );
+        assert_eq!(
+            confirm_text("Trip", "2@g.us", Some(None), "hi").1,
+            "Group\n\nhi"
+        );
+        // The send counts toward the hourly limit like any other.
+        assert_eq!(shared.whatsapp.sends.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_group_only_seen_in_messages_is_not_known() {
+        let mut c = ctx();
+        c.cfg.tier = Tier::Competent;
+        let fake = link(&c);
+        let mut m = msg("9@g.us", "Sam", 1, "hi");
+        m.group = Some("Book Club".into());
+        feed(&c, m);
+        let (out, asked, _) = send_ctx(c, "book club", Some(true)).await;
+        assert!(asked);
+        assert_eq!(out.unwrap(), "Sent to Book Club.");
+        assert_eq!(fake.sent.lock().unwrap()[0].0, "9@g.us");
+    }
+
+    #[tokio::test]
+    async fn several_synced_matches_ask_which_and_taint() {
+        let mut c = ctx();
+        c.cfg.tier = Tier::CarteBlanche;
+        sync_book(&c.shared.data_dir);
+        let fake = link(&c);
+        let (out, asked, c) = send_ctx(c, "fam", None).await;
+        assert!(!asked);
+        let err = out.unwrap_err();
+        assert!(
+            err.contains("Several match fam")
+                && err.contains("Family (group)")
+                && err.contains("Family Trip (group)"),
+            "{err}"
+        );
+        assert!(c.tainted);
+        assert!(fake.sent.lock().unwrap().is_empty());
+        let (out, _, _) = send_ctx(c, "Bob", None).await;
+        assert!(out.unwrap_err().contains("save_phone"));
+    }
+
+    #[tokio::test]
+    async fn synced_groups_are_read_and_listed_without_messages() {
+        let mut c = ctx();
+        sync_book(&c.shared.data_dir);
+        link(&c);
+        assert_eq!(
+            read(&mut c, "family", None).unwrap(),
+            "No WhatsApp messages with Family (group) since Bloom connected."
+        );
+        let mut c = ctx();
+        sync_book(&c.shared.data_dir);
+        link(&c);
+        let mut trip = msg("2@g.us", "Sam", 50, "boarding");
+        trip.group = Some("Family Trip".into());
+        feed(&c, trip);
+        let mut club = msg("9@g.us", "Sam", 40, "hi");
+        club.group = Some("Book Club".into());
+        feed(&c, club);
+        feed(&c, msg("+4917000000002", "Neha S.", 30, "hi"));
+        let out = list_groups(&mut c).unwrap();
+        assert!(c.tainted);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "{out}");
+        assert!(lines[0].starts_with("Family Trip, last message"), "{out}");
+        assert!(lines[1].starts_with("Book Club, last message"), "{out}");
+        assert_eq!(lines[2], "Family, 5 members");
+        // Chat labels use the address-book name over the WhatsApp one.
+        let chats = list(&mut c).unwrap();
+        assert!(chats.contains("Neha Sharma (+4917000000002)"), "{chats}");
+        let mut empty = ctx();
+        link(&empty);
+        assert_eq!(
+            list_groups(&mut empty).unwrap(),
+            "No WhatsApp groups synced yet."
+        );
+        assert!(!empty.tainted);
     }
 
     #[tokio::test]
@@ -914,7 +1234,7 @@ pub mod tests {
         assert!(kept[0].from_me && kept[0].sender == "me" && kept[0].text == "Running late");
         assert_eq!(rx.recv().await.unwrap(), kept[0]);
         assert_eq!(
-            confirm_text("Neha", "+491701234567", "hi"),
+            confirm_text("Neha", "+491701234567", None, "hi"),
             (
                 "Send WhatsApp to Neha?".into(),
                 "+491701234567\n\nhi".into()

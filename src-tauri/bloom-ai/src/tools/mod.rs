@@ -172,10 +172,16 @@ pub fn schema() -> Value {
             &[],
         ),
         tool(
+            "list_whatsapp_groups",
+            "List the WhatsApp groups the user is in, most recent first.",
+            json!({}),
+            &[],
+        ),
+        tool(
             "send_whatsapp",
-            "Send a WhatsApp text message as the user to a saved name or a phone number.",
+            "Send a WhatsApp text message as the user to a contact, a phone number or a group.",
             json!({
-                "to": { "type": "string", "description": "Saved name or phone number" },
+                "to": { "type": "string", "description": "Contact name, phone number or group name" },
                 "text": { "type": "string" }
             }),
             &["to", "text"],
@@ -206,6 +212,7 @@ pub fn describe(name: &str, args: &Value) -> String {
         "save_skill" => format!("Saving skill {}", arg("name")),
         "read_whatsapp" => format!("Reading WhatsApp with {}", arg("chat")),
         "list_whatsapp_chats" => "Checking WhatsApp".into(),
+        "list_whatsapp_groups" => "Checking WhatsApp groups".into(),
         "send_whatsapp" => format!("Messaging {} on WhatsApp", arg("to")),
         _ if name.starts_with("mcp_") => format!("Using {}", &name[4..]),
         _ => format!("Working ({name})"),
@@ -282,6 +289,7 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         "save_skill" => save_skill(ctx, args).await,
         "read_whatsapp" => whatsapp::read(ctx, str_arg(args, "chat")?, args["count"].as_u64()),
         "list_whatsapp_chats" => whatsapp::list(ctx),
+        "list_whatsapp_groups" => whatsapp::list_groups(ctx),
         "send_whatsapp" => whatsapp::send(ctx, str_arg(args, "to")?, str_arg(args, "text")?).await,
         _ if name.starts_with("mcp_") => crate::mcp::call(ctx, name, args).await,
         _ => Err(format!("unknown tool {name}")),
@@ -457,10 +465,18 @@ fn list(matches: &[(String, String)]) -> String {
 async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
     let matches = email::find(&email::load_contacts(&ctx.shared.data_dir), name);
     let numbers = phones::find(&ctx.shared.data_dir, name)?;
-    let phone_lines: String = numbers
+    let mut phone_lines: String = numbers
         .iter()
         .map(|(n, p)| format!("\n{n} phone: {p}"))
         .collect();
+    // The user's own files first; WhatsApp's synced names only if they have
+    // no one.
+    let synced = matches.is_empty() && numbers.is_empty() && ctx.cfg.whatsapp;
+    if synced {
+        phone_lines = whatsapp::synced_lines(&ctx.shared.data_dir, name);
+        // Names people chose themselves: outside data.
+        ctx.tainted |= !phone_lines.is_empty();
+    }
     if !matches.is_empty() {
         return Ok(format!("{}{phone_lines}", list(&matches)));
     }
@@ -489,6 +505,11 @@ async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
     if !numbers.is_empty() {
         return Ok(format!(
             "No saved email for {name}. Ask the user for the address, then call save_contact.{phone_lines}"
+        ));
+    }
+    if !phone_lines.is_empty() {
+        return Ok(format!(
+            "No saved contact matches {name}. In the user's WhatsApp:{phone_lines}"
         ));
     }
     Ok(format!(
@@ -1046,6 +1067,43 @@ mod tests {
             .await
             .unwrap();
         assert!(out.contains("+14155550100"));
+    }
+
+    #[tokio::test]
+    async fn find_contact_searches_whatsapp_after_the_users_own_files() {
+        let mut ctx = ctx();
+        let dir = ctx.shared.data_dir.clone();
+        crate::whatsapp::tests::sync_book(&dir);
+        phones::save(&dir, "Neha", "+919876543210").unwrap();
+        // Off: nothing synced is offered.
+        let out = call(&mut ctx, "find_contact", &json!({ "name": "Sam" }))
+            .await
+            .unwrap();
+        assert!(!out.contains("+4917000000003"), "{out}");
+        ctx.cfg.whatsapp = true;
+        let out = call(&mut ctx, "find_contact", &json!({ "name": "neha" }))
+            .await
+            .unwrap();
+        assert!(
+            out.contains("+919876543210") && !out.contains("+4917000000002"),
+            "{out}"
+        );
+        assert!(!ctx.tainted);
+        let out = call(&mut ctx, "find_contact", &json!({ "name": "sam" }))
+            .await
+            .unwrap();
+        assert!(
+            out.contains("Sam phone: +4917000000003 (from WhatsApp)"),
+            "{out}"
+        );
+        assert!(ctx.tainted, "names from WhatsApp are outside data");
+        let out = call(&mut ctx, "find_contact", &json!({ "name": "family" }))
+            .await
+            .unwrap();
+        assert!(
+            out.contains("Family (WhatsApp group)") && out.contains("Family Trip (WhatsApp group)"),
+            "{out}"
+        );
     }
 
     #[tokio::test]

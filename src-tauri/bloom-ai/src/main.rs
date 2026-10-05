@@ -26,6 +26,7 @@ mod tools;
 mod voice;
 mod web;
 mod wa_client;
+mod wa_contacts;
 mod wake;
 mod wake_score;
 mod weather;

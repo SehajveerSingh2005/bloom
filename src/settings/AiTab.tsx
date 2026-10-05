@@ -45,6 +45,9 @@ interface WaStatus {
 	qr: string | null;
 	code: string | null;
 	error: string | null;
+	/** How many are in whatsapp\contacts.json, once synced. */
+	contacts?: number | null;
+	groups?: number | null;
 }
 
 /** The pairing string as a QR code, drawn here: it never leaves the PC. */
@@ -632,7 +635,16 @@ export function AiTab() {
 							</label>
 						</SettingRow>
 						{waOn && (
-							<SettingRow icon={MessageCircle} label={waLabel} divider={waPairing || linked}>
+							<SettingRow
+								icon={MessageCircle}
+								label={waLabel}
+								desc={
+									wa?.state === "linked" && wa.contacts != null
+										? `${wa.contacts} contacts, ${wa.groups ?? 0} groups synced`
+										: undefined
+								}
+								divider={waPairing || linked}
+							>
 								<div className="ai-secret">
 									{wa?.state === "not_linked" && !wa.qr && !wa.code && (
 										<button className="ai-btn" onClick={() => waRun("ai_whatsapp_restart")}>
