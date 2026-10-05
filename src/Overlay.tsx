@@ -1,4 +1,4 @@
-import { StrictMode, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
+import { StrictMode, useState, useEffect, useRef, useCallback, useLayoutEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { listen, emit } from "@tauri-apps/api/event";
@@ -14,6 +14,10 @@ import { initTheme } from "./theme";
 import { useAi } from "./ai/useAi";
 import { AiOrb } from "./ai/AiOrb";
 import { plainText } from "./ai/mdText";
+import "./ai/ai.css";
+
+// Loaded on the first answer, like the panel does, so the overlay starts light.
+const Markdown = lazy(() => import("./ai/Markdown"));
 
 // ─── App Volume Mixer ───────────────────────────────────────────────────────
 
@@ -806,9 +810,11 @@ function OverlayApp() {
 	const ai = useAi(() => {});
 	const { phase, wake } = ai.state;
 	const orbShown = ai.enabled && wake && phase !== "idle" && phase !== "confirm";
-	// Plain text, two lines: the reply's Markdown is stripped, not rendered.
+	// The whole reply, rendered like the panel. The overlay is click-through, so
+	// it can't scroll: a reply too tall for the card opens in the panel instead.
 	const answered = phase === "done" || phase === "error";
-	const caption = answered ? plainText(ai.state.reply) : ai.state.heard;
+	const reply = ai.state.reply;
+	const caption = answered ? reply : ai.state.heard;
 	const resetAi = ai.reset;
 	const reduceMotion = useReducedMotion();
 	useEffect(() => {
@@ -818,9 +824,27 @@ function OverlayApp() {
 			return;
 		}
 		if (phase !== "done" && phase !== "error") return;
-		const t = setTimeout(resetAi, 5000);
+		// Long enough to read: 5 s plus about 20 characters a second, up to 30 s.
+		const t = setTimeout(resetAi, Math.min(30000, 5000 + reply.length * 50));
 		return () => clearTimeout(t);
-	}, [wake, phase, resetAi]);
+	}, [wake, phase, reply, resetAi]);
+	const captionRef = useRef<HTMLDivElement>(null);
+	useLayoutEffect(() => {
+		const el = captionRef.current;
+		if (!el || !wake || phase !== "done") return;
+		const check = () => {
+			if (el.scrollHeight > el.clientHeight + 2) {
+				invoke("ai_open").catch(() => {});
+				resetAi();
+			}
+		};
+		check();
+		// The Markdown chunk loads after the first paint and can grow the card.
+		const ro = new ResizeObserver(check);
+		for (const child of Array.from(el.children)) ro.observe(child);
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, [wake, phase, reply, resetAi]);
 
 	// Side effects: reset overlay mode to idle when overlay is disabled
 	useEffect(() => {
@@ -1010,16 +1034,23 @@ function OverlayApp() {
 							<AiOrb phase={phase} size={64} />
 							<AnimatePresence mode="popLayout" initial={false}>
 								{caption && (
-									<motion.p
+									<motion.div
 										key={answered ? "reply" : "heard"}
-										className={`ai-orb-caption ${phase}`}
+										ref={captionRef}
+										className={`ai-orb-caption ${phase}${phase === "done" ? " answer" : ""}`}
 										initial={{ opacity: 0, y: reduceMotion ? 0 : merged ? 6 : -6 }}
 										animate={{ opacity: 1, y: 0 }}
 										exit={{ opacity: 0, transition: { duration: 0.15 } }}
 										transition={{ type: "spring", stiffness: 450, damping: 32 }}
 									>
-										{caption}
-									</motion.p>
+										{phase === "done" ? (
+											<Suspense fallback={<p>{plainText(caption)}</p>}>
+												<Markdown text={caption} />
+											</Suspense>
+										) : (
+											caption
+										)}
+									</motion.div>
 								)}
 							</AnimatePresence>
 						</motion.div>

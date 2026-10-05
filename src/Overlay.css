@@ -618,12 +618,18 @@ body,
 	text-align: center;
 	overflow-wrap: anywhere;
 	box-sizing: border-box;
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
-	line-clamp: 2;
+	/* Tall enough for most answers; a taller one moves to the panel (Overlay.tsx). */
+	max-height: 320px;
 	overflow: hidden;
 }
+
+/* A finished answer reads like the panel: wider card, left-aligned Markdown. */
+.ai-orb-caption.answer {
+	max-width: 440px;
+	padding: 10px 14px;
+	text-align: left;
+}
+
 
 .ai-orb-caption.error {
 	color: #ff9f9a;
