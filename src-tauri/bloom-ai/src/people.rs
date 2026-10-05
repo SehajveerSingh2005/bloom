@@ -104,6 +104,12 @@ impl Person {
             || self.sources.iter().any(|s| s == USER)
     }
 
+    /// `name` is this person's name or one of their aliases (folded).
+    pub fn is_named(&self, name: &str) -> bool {
+        let key = fold(name);
+        fold(&self.name) == key || self.aliases.iter().any(|a| fold(a) == key)
+    }
+
     pub fn has_email(&self, address: &str) -> bool {
         self.emails.iter().any(|e| e.address == address)
     }
@@ -393,15 +399,43 @@ fn load_locked(dir: &Path) -> Result<Vec<Person>, String> {
 
 /// Temp file + rename, so a crash never leaves half a file.
 fn write(dir: &Path, people: &[Person]) -> Result<(), String> {
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let json = serde_json::to_string_pretty(people).map_err(|e| e.to_string())?;
+    write_file(dir, FILE, &json)
+}
+
+/// Writes `dir/file` through a temp file of its own (`file.<pid>-<n>.tmp`)
+/// and a rename, so a crash never leaves half a file and two writers never
+/// share a temp file. Temp files a crash left behind (over an hour old) go.
+pub fn write_file(dir: &Path, file: &str, contents: &str) -> Result<(), String> {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    sweep_temp(dir, file, std::time::Duration::from_secs(3600));
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = dir.join(format!("people.json.{}-{n}.tmp", std::process::id()));
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, dir.join(FILE)).map_err(|e| {
+    let tmp = dir.join(format!("{file}.{}-{n}.tmp", std::process::id()));
+    std::fs::write(&tmp, contents).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, dir.join(file)).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         e.to_string()
     })
+}
+
+/// Removes `file.*.tmp` in `dir` older than `age`.
+fn sweep_temp(dir: &Path, file: &str, age: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let prefix = format!("{file}.");
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|e| e >= age);
+        if old && name.starts_with(&prefix) && name.ends_with(".tmp") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// The only way to change the store: load, change, validate everyone, save.
@@ -441,8 +475,8 @@ pub fn update<T>(
 }
 
 /// One email or number belongs to one person. A clash that was already in
-/// the file (a hand edit) is left alone; a new one is refused, naming the
-/// person who already had it.
+/// the file (a hand edit) is left alone but cannot grow; a new one is
+/// refused, naming the person who already had it.
 fn unique(before: &[Person], after: &[Person]) -> Result<(), String> {
     let holders = |people: &[Person], v: &str| -> usize {
         people
@@ -455,7 +489,7 @@ fn unique(before: &[Person], after: &[Person]) -> Result<(), String> {
         emails.chain(p.phones.iter().map(|x| x.number.as_str()))
     });
     for v in values {
-        if holders(after, v) > 1 && holders(before, v) <= 1 {
+        if holders(after, v) > holders(before, v).max(1) {
             let owner = before
                 .iter()
                 .chain(after)
@@ -481,11 +515,10 @@ fn new_id(taken: &[Person]) -> String {
 
 /// The person whose folded name is `name`, preferring the user's own.
 pub fn named<'a>(people: &'a mut [Person], name: &str) -> Option<&'a mut Person> {
-    let key = fold(name);
     let i = people
         .iter()
-        .position(|p| fold(&p.name) == key && p.is_user())
-        .or_else(|| people.iter().position(|p| fold(&p.name) == key))?;
+        .position(|p| p.is_named(name) && p.is_user())
+        .or_else(|| people.iter().position(|p| p.is_named(name)))?;
     Some(&mut people[i])
 }
 
@@ -503,7 +536,10 @@ fn set(dir: &Path, name: &str, value: Field) -> Result<(), String> {
             people.push(Person::new(name, USER));
         }
         let p = named(people, name).expect("just added");
-        p.name = name.to_string();
+        // A new spelling of the name renames; an alias does not.
+        if fold(&p.name) == fold(name) {
+            p.name = name.to_string();
+        }
         match value {
             Field::Email(a) => {
                 p.emails.retain(|e| e.address != a);
@@ -1117,6 +1153,54 @@ mod tests {
         write(&dir, &people).unwrap();
         set_email(&dir, "Sam", "sam@x.org").unwrap();
         assert_eq!(load(&dir).unwrap().len(), 3);
+        // ...but it cannot grow.
+        let err = set_email(&dir, "Sam", "neha@example.com").unwrap_err();
+        assert_eq!(err, "neha@example.com is already saved for Neha.");
+    }
+
+    #[test]
+    fn an_alias_finds_the_person_for_saves_too() {
+        let dir = temp_dir();
+        std::fs::write(
+            dir.join("contacts.json"),
+            r#"{"Neha Aggarwal": "neha@example.com", "N. Aggarwal": "neha@example.com"}"#,
+        )
+        .unwrap();
+        set_phone(&dir, "n. aggarwal", "+919876543210").unwrap();
+        let people = load(&dir).unwrap();
+        assert_eq!(people.len(), 1, "no duplicate for the alias");
+        assert_eq!(people[0].name, "Neha Aggarwal", "an alias does not rename");
+        assert!(people[0].has_phone("+919876543210"));
+    }
+
+    #[test]
+    fn writes_use_their_own_temp_file_and_sweep_old_ones() {
+        let dir = temp_dir();
+        let old = dir.join("people.json.1-1.tmp");
+        let fresh = dir.join("people.json.2-1.tmp");
+        let other = dir.join("notes.txt.tmp");
+        for f in [&old, &fresh, &other] {
+            std::fs::write(f, "x").unwrap();
+        }
+        let two_hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        for f in [&old, &other] {
+            std::fs::File::options()
+                .write(true)
+                .open(f)
+                .unwrap()
+                .set_modified(two_hours_ago)
+                .unwrap();
+        }
+        set_email(&dir, "Sam", "sam@x.org").unwrap();
+        assert!(!old.exists(), "a crash leftover over an hour old goes");
+        assert!(fresh.exists(), "maybe another writer's: kept");
+        assert!(other.exists(), "not ours");
+        let temps = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
+        assert_eq!(temps, 2, "our own temp file was renamed away");
     }
 
     #[test]

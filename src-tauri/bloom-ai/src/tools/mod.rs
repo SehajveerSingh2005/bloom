@@ -744,9 +744,13 @@ pub async fn harvest_mail(
     if server.oauth {
         return Err(OUTLOOK_HARVEST.into());
     }
+    let running = mail_harvest::start()?;
     let secret = mail_secret(&shared.http, &server).await?;
     let (dir, user) = (shared.data_dir.clone(), cfg.email.clone());
     tokio::task::spawn_blocking(move || {
+        // Released when the scan really ends, even if the request stopped
+        // waiting for it.
+        let _running = running;
         let mut mailbox = mail_harvest::Imap(imap_lookup::connect(&server, &user, &secret)?);
         let found = mail_harvest::run(&dir, &mut mailbox, &user);
         let _ = mailbox.0.logout();
@@ -811,19 +815,16 @@ async fn save_address(
     }
     let dir = ctx.shared.data_dir.clone();
     let saved = people::load(&dir)?;
-    let key = people::fold(name);
     if let Some(owner) = saved
         .iter()
-        .find(|p| p.has_email(&address) && people::fold(&p.name) != key)
+        .find(|p| p.has_email(&address) && !p.is_named(name))
     {
         return Ok(format!(
             "{address} is already saved for {}; nothing changed.",
             owner.name
         ));
     }
-    let person = saved
-        .iter()
-        .find(|p| people::fold(&p.name) == key && p.is_user());
+    let person = saved.iter().find(|p| p.is_named(name) && p.is_user());
     let old = person
         .filter(|p| !p.has_email(&address))
         .and_then(|p| p.emails.iter().find(|e| e.primary).or(p.emails.first()))
@@ -916,10 +917,9 @@ async fn save_number(ctx: &mut Ctx, name: &str, raw: &str, label: &str) -> Resul
     let number = phones::normalize(raw)?;
     let dir = ctx.shared.data_dir.clone();
     let saved = people::load(&dir)?;
-    let key = people::fold(name);
     let mine: Vec<&people::Phone> = saved
         .iter()
-        .filter(|p| people::fold(&p.name) == key && p.is_user())
+        .filter(|p| p.is_named(name) && p.is_user())
         .flat_map(|p| p.phones.iter().filter(|x| x.source == people::USER))
         .collect();
     let already = mine.iter().any(|x| x.number == number);
@@ -989,8 +989,7 @@ fn retag(
         .filter_map(|t| people::norm_tag(t).ok())
         .collect();
     people::update(dir, |all| {
-        let key = people::fold(name);
-        let i = match all.iter().position(|p| people::fold(&p.name) == key) {
+        let i = match all.iter().position(|p| p.is_named(name)) {
             Some(i) => i,
             None => match people::lookup(all, name) {
                 Found::One(p, _) => {
@@ -2134,5 +2133,37 @@ mod tests {
         // Fails (no email set up), but it was a try: no rescan on a miss today.
         contacts(&c.shared, "harvest", "", "", "").await;
         assert!(!mail_harvest::try_now(&dir, people::now()));
+    }
+
+    /// The only test that takes the scan guard (it is process-wide).
+    #[tokio::test]
+    async fn one_mail_scan_at_a_time() {
+        let c = ctx();
+        let mut cfg = c.cfg.clone();
+        cfg.email = "me@gmail.com".into();
+        let first = mail_harvest::start().unwrap();
+        let busy = harvest_mail(&c.shared, &cfg).await.unwrap_err();
+        assert_eq!(busy, "A mail scan is already running.");
+        assert!(mail_harvest::start().is_err());
+        drop(first);
+        drop(mail_harvest::start().unwrap());
+    }
+
+    #[tokio::test]
+    async fn saving_under_an_alias_adds_to_that_person() {
+        let c = ctx();
+        let dir = c.shared.data_dir.clone();
+        std::fs::write(
+            dir.join("contacts.json"),
+            r#"{"Neha Aggarwal": "neha@example.com", "N. Aggarwal": "neha@example.com"}"#,
+        )
+        .unwrap();
+        let args = json!({ "name": "N. Aggarwal", "email": "neha@work.com", "tags": ["work"] });
+        let (out, _, _) = run(c, "save_contact", args, true).await;
+        assert!(out.is_ok(), "{out:?}");
+        let all = people::load(&dir).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "Neha Aggarwal");
+        assert_eq!(all[0].emails.len(), 2);
     }
 }

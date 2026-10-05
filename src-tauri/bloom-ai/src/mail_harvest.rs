@@ -273,13 +273,28 @@ pub fn run(dir: &Path, mailbox: &mut dyn Mailbox, own: &str) -> Result<usize, St
     let inbox = mailbox.envelopes(false, PER_FOLDER)?;
     let found = collect(&sent, &inbox, own);
     let json = serde_json::to_string_pretty(&found).map_err(|e| e.to_string())?;
-    let tmp = dir.join("mail-contacts.json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, dir.join(FILE)).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })?;
+    crate::people::write_file(dir, FILE, &json)?;
     Ok(found.len())
+}
+
+static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Held while a scan runs: one at a time (a Refresh during a background
+/// refresh, say, is turned away).
+pub struct Running(());
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+pub fn start() -> Result<Running, String> {
+    use std::sync::atomic::Ordering::SeqCst;
+    RUNNING
+        .compare_exchange(false, true, SeqCst, SeqCst)
+        .map(|_| Running(()))
+        .map_err(|_| "A mail scan is already running.".to_string())
 }
 
 /// The harvest as people for lookups: source "mail", sent-to ranked above

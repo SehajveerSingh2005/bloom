@@ -23,18 +23,29 @@ pub const NO_SENT: &str = "No Sent folder found.";
 /// A silent server fails a read or write after this, instead of hanging.
 const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
+/// The first of `addrs` that answers, each tried for `timeout`: a broken
+/// IPv6 route (often listed first on Windows) falls through to IPv4.
+fn dial(
+    addrs: impl IntoIterator<Item = std::net::SocketAddr>,
+    timeout: std::time::Duration,
+) -> std::io::Result<std::net::TcpStream> {
+    let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
+    for addr in addrs {
+        match std::net::TcpStream::connect_timeout(&addr, timeout) {
+            Ok(tcp) => return Ok(tcp),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
 /// Blocking: a logged-in IMAP session (port 993, TLS) whose socket times out.
 pub fn connect(server: &Server, user: &str, secret: &str) -> Result<Session, String> {
     use std::net::ToSocketAddrs;
     let host = server.imap.as_str();
     let unreachable = |e: &dyn std::fmt::Display| format!("Can't reach {host}: {e}");
-    let addr = (host, 993)
-        .to_socket_addrs()
-        .map_err(|e| unreachable(&e))?
-        .next()
-        .ok_or_else(|| unreachable(&"no address"))?;
-    let tcp =
-        std::net::TcpStream::connect_timeout(&addr, IO_TIMEOUT).map_err(|e| unreachable(&e))?;
+    let addrs = (host, 993).to_socket_addrs().map_err(|e| unreachable(&e))?;
+    let tcp = dial(addrs, IO_TIMEOUT).map_err(|e| unreachable(&e))?;
     tcp.set_read_timeout(Some(IO_TIMEOUT))
         .map_err(|e| unreachable(&e))?;
     tcp.set_write_timeout(Some(IO_TIMEOUT))
@@ -163,6 +174,26 @@ pub fn matches_all(name: &str, address: &str, words: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dialing_falls_through_to_an_address_that_answers() {
+        use std::net::{SocketAddr, TcpListener};
+        let dead: SocketAddr = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap()
+        }; // closed again: refuses
+        let live = TcpListener::bind("127.0.0.1:0").unwrap();
+        let ok = live.local_addr().unwrap();
+        let t = std::time::Duration::from_secs(2);
+        let tcp = dial([dead, ok], t).unwrap();
+        assert_eq!(tcp.peer_addr().unwrap(), ok);
+        // Nothing answers: the last error, not a panic or a hang.
+        assert!(dial([dead], t).is_err());
+        assert_eq!(
+            dial([], t).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+    }
 
     #[test]
     fn all_words_must_match() {
