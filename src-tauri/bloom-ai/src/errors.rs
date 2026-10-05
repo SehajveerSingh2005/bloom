@@ -9,6 +9,7 @@ pub const CONTACT_NOT_FOUND: &str = "CONTACT_NOT_FOUND";
 pub const CONTACT_AMBIGUOUS: &str = "CONTACT_AMBIGUOUS";
 pub const INDEXING_DISABLED: &str = "INDEXING_DISABLED";
 pub const RESEARCH_SOURCE_FAILED: &str = "RESEARCH_SOURCE_FAILED";
+pub const MODEL_RATE_LIMITED: &str = "MODEL_RATE_LIMITED";
 
 pub fn coded(code: &str, message: &str) -> String {
     format!("{code}: {message}")

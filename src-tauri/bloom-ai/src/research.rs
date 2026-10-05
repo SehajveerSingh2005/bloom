@@ -2,8 +2,10 @@
 //! extract claims with source ids, flag conflicts, then write a cited Markdown
 //! report. Everything read here is web content, so the request is tainted.
 
-use crate::agent::Ctx;
-use crate::errors::{coded, RESEARCH_SOURCE_FAILED, SEARCH_BLOCKED, SEARCH_NOT_CONFIGURED};
+use crate::agent::{Ctx, Shared};
+use crate::errors::{
+    coded, MODEL_RATE_LIMITED, RESEARCH_SOURCE_FAILED, SEARCH_BLOCKED, SEARCH_NOT_CONFIGURED,
+};
 use crate::llm::Llm;
 use crate::protocol::{emit, Out};
 use crate::web::{self, Hit};
@@ -31,9 +33,12 @@ impl Default for Budget {
 
 const MAX_QUESTIONS: usize = 6;
 const PER_QUESTION: usize = 3;
-/// Sources per extraction call, and how much of each page it sees.
+/// Sources per extraction call, and how much of each page it sees (small
+/// enough for a free tier of a few thousand tokens a minute).
 const BATCH: usize = 3;
-const SOURCE_CHARS: usize = 3500;
+const SOURCE_CHARS: usize = 2000;
+/// Brave's free tier allows about one request a second.
+const BRAVE_WAIT: Duration = Duration::from_millis(1100);
 /// Kept back from the time budget for writing the report.
 const WRITE_TIME: Duration = Duration::from_secs(40);
 const MAX_CONFLICTS: usize = 8;
@@ -130,7 +135,7 @@ pub async fn run_within(
     show(ctx, format!("Researching: {}", short(text, 80)));
 
     calls = calls.saturating_sub(1);
-    let (questions, time_sensitive) = plan(llm, ctx, text, gather_until).await;
+    let (questions, time_sensitive) = plan(llm, ctx, text, gather_until, &mut partial).await;
     // News needs a Brave key; without one the web results still work.
     let news = time_sensitive && web::search_key(&ctx.shared.web).is_some();
 
@@ -146,7 +151,7 @@ pub async fn run_within(
             break;
         }
         show(ctx, format!("Searching: {}", short(q, 80)));
-        let mut hits = match search(ctx, q, news).await {
+        let mut hits = match search(&ctx.shared, q, news, gather_until).await {
             Ok(hits) => hits,
             Err(e) if e.starts_with(SEARCH_BLOCKED) || e.starts_with(SEARCH_NOT_CONFIGURED) => {
                 return Err(e)
@@ -172,6 +177,15 @@ pub async fn run_within(
         return Err(coded(
             RESEARCH_SOURCE_FAILED,
             &format!("Couldn't search the web for this research: {why}"),
+        ));
+    }
+    if !failures.is_empty() {
+        let limited = failures.iter().any(|e| e.ends_with(web::RATE_LIMITED));
+        partial.push(format!(
+            "{} of {} searches failed{}",
+            failures.len(),
+            questions.len(),
+            if limited { " (Brave's rate limit)" } else { "" }
         ));
     }
 
@@ -261,13 +275,30 @@ pub async fn run_within(
         calls -= 1;
         show(ctx, format!("Extracting claims ({} of {batches})", b + 1));
         let first = b * BATCH + 1;
-        match within(
-            gather_until,
-            llm.json(&extract_messages(text, chunk, first)),
-        )
-        .await
+        let messages = extract_messages(text, chunk, first);
+        let mut got = within(gather_until, llm.json(&messages)).await;
+        // A rate limit that says how long to wait is waited out once, in time.
+        if let Some(wait) = got
+            .as_ref()
+            .err()
+            .and_then(|e| retry_after(e))
+            .filter(|w| Instant::now() + *w < gather_until)
         {
+            show(ctx, "Waiting for the model's rate limit".into());
+            tokio::time::sleep(wait).await;
+            got = within(gather_until, llm.json(&messages)).await;
+        }
+        match got {
             Ok(v) => read_claims(&v, first..first + chunk.len(), &mut claims, &mut conflicts),
+            Err(e) if rate_limited(&e) => {
+                trace(ctx, "research-extract", &e);
+                partial.push(format!(
+                    "the model's rate limit was reached, so sources {first} to {} were not analysed",
+                    sources.len()
+                ));
+                model_error = Some(e);
+                break;
+            }
             Err(e) => {
                 trace(ctx, "research-extract", &e);
                 partial.push(format!(
@@ -279,12 +310,21 @@ pub async fn run_within(
         }
     }
     if claims.is_empty() {
-        return Err(model_error.unwrap_or_else(|| {
-            coded(
+        // The provider's own wording goes to debug.log only.
+        return Err(match model_error {
+            Some(e) if rate_limited(&e) => coded(
+                MODEL_RATE_LIMITED,
+                "The model's rate limit was reached before any source could be analysed. Wait a minute and try again.",
+            ),
+            Some(_) => coded(
+                RESEARCH_SOURCE_FAILED,
+                "The model couldn't analyse the sources it read. Try again, or pick another model in Settings > AI.",
+            ),
+            None => coded(
                 RESEARCH_SOURCE_FAILED,
                 "The sources read had nothing on this request. Try rephrasing it.",
-            )
-        }));
+            ),
+        });
     }
     conflicts.extend(numeric_conflicts(&claims));
     conflicts.dedup();
@@ -318,8 +358,15 @@ pub async fn run_within(
     Ok(finish(&body, &sources, &conflicts, &partial, unread, total))
 }
 
-/// One JSON call for 3-6 search queries; on failure the request itself is the query.
-async fn plan(llm: &Llm, ctx: &Ctx, text: &str, until: Instant) -> (Vec<String>, bool) {
+/// One JSON call for 3-6 search queries; on failure the request itself is the
+/// query, and `partial` says so.
+async fn plan(
+    llm: &Llm,
+    ctx: &Ctx,
+    text: &str,
+    until: Instant,
+    partial: &mut Vec<String>,
+) -> (Vec<String>, bool) {
     show(ctx, "Planning the research".into());
     let mut messages = vec![json!({ "role": "system", "content":
         "You plan web research. Reply with JSON only: {\"questions\": [3 to 6 short web search \
@@ -355,11 +402,13 @@ async fn plan(llm: &Llm, ctx: &Ctx, text: &str, until: Instant) -> (Vec<String>,
         _ => recent.iter().any(|w| text.to_lowercase().contains(w)),
     };
     if questions.is_empty() {
-        trace(
-            ctx,
-            "research-plan",
-            &planned.err().unwrap_or_else(|| "no questions".into()),
-        );
+        let why = planned.err().unwrap_or_else(|| "no questions".into());
+        trace(ctx, "research-plan", &why);
+        partial.push(if rate_limited(&why) {
+            "the model's rate limit was reached while planning, so only the request itself was searched".into()
+        } else {
+            "the research plan failed, so only the request itself was searched".into()
+        });
         return (vec![short(text, 200)], time_sensitive);
     }
     (questions, time_sensitive)
@@ -375,16 +424,63 @@ async fn within(
         .unwrap_or_else(|_| Err("the time limit was reached".into()))
 }
 
+/// The model provider's rate limit (Groq: 429, "Please try again in 7.5s").
+fn rate_limited(e: &str) -> bool {
+    e.starts_with("Model error (429")
+}
+
+/// How long a rate-limited model asks to wait: "7.5s", "1m2.5s" or "590ms".
+fn retry_after(e: &str) -> Option<Duration> {
+    if !rate_limited(e) {
+        return None;
+    }
+    let at = e.find("try again in ")? + "try again in ".len();
+    let token = e[at..]
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(['.', ',']);
+    let secs = match token.strip_suffix("ms") {
+        Some(ms) => ms.parse::<f64>().ok()? / 1000.0,
+        None => {
+            let token = token.strip_suffix('s')?;
+            let (min, sec) = token.split_once('m').unwrap_or(("0", token));
+            min.parse::<f64>().ok()? * 60.0 + sec.parse::<f64>().ok()?
+        }
+    };
+    Duration::try_from_secs_f64(secs).ok()
+}
+
 /// News first when asked for; an empty or failed news search falls back to the web.
-async fn search(ctx: &Ctx, query: &str, news: bool) -> Result<Vec<Hit>, String> {
+async fn search(
+    shared: &Shared,
+    query: &str,
+    news: bool,
+    until: Instant,
+) -> Result<Vec<Hit>, String> {
     if news {
-        if let Ok(hits) = web::run_search(&ctx.shared, query, true).await {
+        if let Ok(hits) = search_once_more(shared, query, true, until).await {
             if !hits.is_empty() {
                 return Ok(hits);
             }
         }
     }
-    web::run_search(&ctx.shared, query, false).await
+    search_once_more(shared, query, false, until).await
+}
+
+/// A search Brave rate-limited is tried once more after a pause, in time.
+async fn search_once_more(
+    shared: &Shared,
+    query: &str,
+    news: bool,
+    until: Instant,
+) -> Result<Vec<Hit>, String> {
+    match web::run_search(shared, query, news).await {
+        Err(e) if e.ends_with(web::RATE_LIMITED) && Instant::now() + BRAVE_WAIT < until => {
+            tokio::time::sleep(BRAVE_WAIT).await;
+            web::run_search(shared, query, news).await
+        }
+        other => other,
+    }
 }
 
 /// ponytail: a fixed domain list and "ago"/year snippet hints, not a real
@@ -500,35 +596,43 @@ fn read_claims(
     }
 }
 
-fn numbers(text: &str) -> BTreeSet<String> {
-    text.split(|c: char| !(c.is_ascii_digit() || c == '.'))
-        .map(|n| n.trim_matches('.').to_string())
-        .filter(|n| n.chars().any(|c| c.is_ascii_digit()))
-        .collect()
+/// The one number a claim states, years (1900-2100) aside; None for none or several.
+fn number(text: &str) -> Option<f64> {
+    let mut found = text
+        .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == ','))
+        .map(|n| n.trim_matches(['.', ',']))
+        .filter(|n| {
+            n.chars().any(|c| c.is_ascii_digit())
+                && !(n.len() == 4 && n.parse::<u32>().is_ok_and(|y| (1900..=2100).contains(&y)))
+        })
+        .map(|n| n.replace(',', "").parse::<f64>());
+    let one = found.next()?.ok()?;
+    found.next().is_none().then_some(one)
 }
 
-/// Claims on the same topic from different sources that state different numbers.
+/// ponytail: one differing number per claim on the same topic is only a hint
+/// (units, dates and scope differ), so it is offered as one to check.
 fn numeric_conflicts(claims: &[Claim]) -> Vec<String> {
-    let mut by_topic: HashMap<&str, Vec<&Claim>> = HashMap::new();
-    for c in claims
-        .iter()
-        .filter(|c| !c.topic.is_empty() && !numbers(&c.text).is_empty())
-    {
-        by_topic.entry(c.topic.as_str()).or_default().push(c);
+    let mut by_topic: HashMap<&str, Vec<(&Claim, f64)>> = HashMap::new();
+    for c in claims.iter().filter(|c| !c.topic.is_empty()) {
+        if let Some(n) = number(&c.text) {
+            by_topic.entry(c.topic.as_str()).or_default().push((c, n));
+        }
     }
     let mut out = Vec::new();
     for (topic, group) in by_topic {
-        let differs = group.iter().any(|a| {
-            group
-                .iter()
-                .any(|b| a.source != b.source && numbers(&a.text) != numbers(&b.text))
-        });
+        let differs = group
+            .iter()
+            .any(|(a, x)| group.iter().any(|(b, y)| a.source != b.source && x != y));
         if differs {
             let said: Vec<String> = group
                 .iter()
-                .map(|c| format!("[{}] \"{}\"", c.source, c.text))
+                .map(|(c, _)| format!("[{}] \"{}\"", c.source, c.text))
                 .collect();
-            out.push(format!("Sources disagree on {topic}: {}", said.join("; ")));
+            out.push(format!(
+                "Possible disagreement on {topic} (check): {}",
+                said.join("; ")
+            ));
         }
     }
     out.sort();
@@ -583,7 +687,8 @@ fn notes_report(claims: &[Claim]) -> String {
     out
 }
 
-/// Drops citations to sources that do not exist.
+/// Drops citations to sources that do not exist; bracketed numbers past 99,
+/// like [2024], are text and stay.
 fn valid_citations(text: &str, max: usize) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -593,7 +698,10 @@ fn valid_citations(text: &str, max: usize) -> String {
         let cite = rest[1..].find(']').map(|e| (&rest[1..1 + e], e + 2));
         match cite {
             Some((n, len)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
-                if n.parse::<usize>().is_ok_and(|n| (1..=max).contains(&n)) {
+                let invalid = n
+                    .parse::<usize>()
+                    .is_ok_and(|n| n <= 99 && !(1..=max).contains(&n));
+                if !invalid {
                     out.push_str(&rest[..len]);
                 }
                 rest = &rest[len..];
@@ -615,16 +723,19 @@ fn finish(
     unread: usize,
     total: usize,
 ) -> String {
-    // Our Sources list replaces any the model wrote anyway.
+    // Our Sources list replaces any the model wrote anyway, under a heading
+    // or a bold label.
     let mut lines: Vec<&str> = Vec::new();
     for line in body.trim().lines() {
-        let l = line
-            .trim()
-            .trim_start_matches('#')
-            .trim()
-            .trim_matches('*')
-            .trim();
-        if line.trim_start().starts_with('#') && l.eq_ignore_ascii_case("sources") {
+        let start = line.trim_start();
+        let label = (start.starts_with('#') || start.starts_with("**")).then(|| {
+            start
+                .trim_start_matches('#')
+                .trim_matches(|c: char| c == '*' || c == ':' || c.is_whitespace())
+        });
+        if label.is_some_and(|l| {
+            l.eq_ignore_ascii_case("sources") || l.eq_ignore_ascii_case("references")
+        }) {
             break;
         }
         lines.push(line);
@@ -862,7 +973,7 @@ mod tests {
             .unwrap();
         let uncertain = report.split("## What's uncertain").nth(1).expect(&report);
         assert!(
-            uncertain.contains("Sources disagree on death toll"),
+            uncertain.contains("Possible disagreement on death toll (check)"),
             "{report}"
         );
         assert!(
@@ -1044,6 +1155,206 @@ mod tests {
         assert_eq!(
             valid_citations("a [1] b [4][2] [x] [] c[0]", 2),
             "a [1] b [2] [x] [] c"
+        );
+        assert_eq!(
+            valid_citations("in [2024] and [100], not [99]", 2),
+            "in [2024] and [100], not "
+        );
+    }
+
+    #[test]
+    fn numeric_conflicts_skip_years_and_several_numbers_and_say_check() {
+        let claim = |source: usize, text: &str| Claim {
+            source,
+            topic: "toll".into(),
+            text: text.into(),
+            analysis: false,
+        };
+        // Same toll, different years; several numbers are not comparable.
+        let calm = [
+            claim(1, "In 2024 the toll was 40."),
+            claim(2, "The toll reached 40 by March 2025."),
+            claim(3, "Between 30 and 50 died."),
+        ];
+        assert!(numeric_conflicts(&calm).is_empty());
+        let split = [
+            claim(1, "The toll was 1,200."),
+            claim(2, "About 1,350 died."),
+        ];
+        assert_eq!(
+            numeric_conflicts(&split),
+            ["Possible disagreement on toll (check): [1] \"The toll was 1,200.\"; [2] \"About 1,350 died.\""]
+        );
+    }
+
+    #[test]
+    fn a_model_written_sources_or_references_list_is_replaced() {
+        let sources = [Source {
+            title: "A".into(),
+            url: "https://a.test/".into(),
+            text: String::new(),
+        }];
+        for tail in ["**Sources:**", "### References", "**References**"] {
+            let body = format!("# R\n\n## What's uncertain\n- x [1]\n\n{tail}\n1. made up");
+            let report = finish(&body, &sources, &[], &[], 0, 1);
+            assert!(!report.contains("made up"), "{report}");
+            assert!(
+                report.ends_with("## Sources\n1. [A](https://a.test/)\n"),
+                "{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_model_rate_limit_says_how_long_to_wait() {
+        let e = |wait: &str| {
+            format!("Model error (429 Too Many Requests): Rate limit reached. Please try again in {wait}. Need more tokens?")
+        };
+        assert_eq!(retry_after(&e("7.5s")), Some(Duration::from_millis(7500)));
+        assert_eq!(retry_after(&e("1m2s")), Some(Duration::from_secs(62)));
+        assert_eq!(retry_after(&e("590ms")), Some(Duration::from_millis(590)));
+        assert_eq!(retry_after(&e("soon")), None);
+        assert_eq!(retry_after("Model error (500): try again in 2s"), None);
+    }
+
+    /// Two questions, two pages each: four sources, two extraction batches.
+    fn four_sources(line: &str, base: &str) -> Option<(&'static str, String)> {
+        if line.contains("/web/search") {
+            let p = if line.contains("one") {
+                ["p1", "p2"]
+            } else {
+                ["p3", "p4"]
+            };
+            return Some(("200 OK", brave(base, &p.map(|p| (p, p)))));
+        }
+        (!line.starts_with("POST")).then(|| ("200 OK", "<p>page</p>".into()))
+    }
+
+    const LIMITED: &str = "429 Too Many Requests";
+
+    fn limited(wait: &str) -> String {
+        json!({ "error": { "message": format!("Rate limit reached for model m. Please try again in {wait}. Need more tokens?") } }).to_string()
+    }
+
+    #[tokio::test]
+    async fn a_model_rate_limit_stops_extraction_and_is_coded_when_nothing_was_read() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let extracts = Arc::new(AtomicUsize::new(0));
+        let n = extracts.clone();
+        let (base, _rx) = serve(move |line, body, base| {
+            if let Some(answer) = four_sources(line, base) {
+                return answer;
+            }
+            if body.contains("You plan web research") {
+                return ("200 OK", said(PLAN));
+            }
+            if body.contains("Extract claims") {
+                return match n.fetch_add(1, Ordering::SeqCst) {
+                    // Waited out once (it fits the budget), then fine.
+                    0 => (LIMITED, limited("0.2s")),
+                    1 => (
+                        "200 OK",
+                        said(
+                            r#"{"claims":[{"source":1,"topic":"t","claim":"A fact.","kind":"fact"}]}"#,
+                        ),
+                    ),
+                    // Too long to wait: the run stops here.
+                    _ => (LIMITED, limited("9m0s")),
+                };
+            }
+            ("200 OK", said("# R\n\n## Summary\n**Fact:** A fact [1]."))
+        });
+        let (llm, mut c) = setup(&base, Some("k"));
+        let report = run(&llm, &mut c, "research alpha").await.unwrap();
+        assert!(
+            report.contains(
+                "the model's rate limit was reached, so sources 4 to 4 were not analysed"
+            ),
+            "{report}"
+        );
+        assert_eq!(extracts.load(Ordering::SeqCst), 3);
+
+        // Every extraction rate limited: a coded error, not the provider's text.
+        let (base, _rx) = serve(|line, body, base| {
+            if let Some(answer) = four_sources(line, base) {
+                return answer;
+            }
+            if body.contains("You plan web research") {
+                return ("200 OK", said(PLAN));
+            }
+            (LIMITED, limited("9m0s"))
+        });
+        let (llm, mut c) = setup(&base, Some("k"));
+        let e = run(&llm, &mut c, "research alpha").await.unwrap_err();
+        assert!(
+            e.starts_with("MODEL_RATE_LIMITED: The model's rate limit was reached"),
+            "{e}"
+        );
+        assert!(!e.contains("Need more tokens"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_rate_limited_search_and_a_failed_plan_label_the_report_partial() {
+        let (base, rx) = serve(|line, body, base| {
+            if line.starts_with("POST") {
+                return (
+                    "200 OK",
+                    if body.contains("You plan web research") {
+                        said(PLAN)
+                    } else if body.contains("Extract claims") {
+                        said(
+                            r#"{"claims":[{"source":1,"topic":"t","claim":"A fact.","kind":"fact"}]}"#,
+                        )
+                    } else {
+                        said("# R\n\n## Summary\n**Fact:** A fact [1].")
+                    },
+                );
+            }
+            if line.contains("/web/search?q=alpha+two") {
+                return ("429 Too Many Requests", "{}".into());
+            }
+            four_sources(line, base).unwrap()
+        });
+        let (llm, mut c) = setup(&base, Some("k"));
+        let report = run(&llm, &mut c, "research alpha").await.unwrap();
+        assert!(
+            report
+                .starts_with("> **Partial results:** 1 of 2 searches failed (Brave's rate limit)"),
+            "{report}"
+        );
+        let retried = requests(&rx)
+            .iter()
+            .filter(|r| r.contains("/web/search?q=alpha+two"))
+            .count();
+        assert_eq!(retried, 2, "a rate-limited search is tried once more");
+
+        // A plan the model could not make: the request itself is searched, and said so.
+        let (base, _rx) = serve(|line, body, base| {
+            if body.contains("You plan web research") {
+                return ("500 Internal Server Error", "{}".into());
+            }
+            if line.starts_with("POST") {
+                return (
+                    "200 OK",
+                    if body.contains("Extract claims") {
+                        said(
+                            r#"{"claims":[{"source":1,"topic":"t","claim":"A fact.","kind":"fact"}]}"#,
+                        )
+                    } else {
+                        said("# R\n\n## Summary\n**Fact:** A fact [1].")
+                    },
+                );
+            }
+            if line.contains("/web/search") {
+                return ("200 OK", brave(base, &[("p1", "p1")]));
+            }
+            ("200 OK", "<p>page</p>".into())
+        });
+        let (llm, mut c) = setup(&base, Some("k"));
+        let report = run(&llm, &mut c, "research alpha").await.unwrap();
+        assert!(
+            report.contains("the research plan failed, so only the request itself was searched"),
+            "{report}"
         );
     }
 }

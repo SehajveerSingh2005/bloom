@@ -5,7 +5,8 @@
 //!
 //! Off by default and per source. `context-index.json` keeps, per item, the
 //! people, places, times and events found in it and a short evidence snippet
-//! (at most 200 characters), never whole messages. WhatsApp messages wait in
+//! (the first 200 characters). New items (title and snippet) go to the
+//! user's model provider in hourly batches for extraction. WhatsApp messages wait in
 //! `context-whatsapp.jsonl` until the next lookup indexes them: the one place
 //! WhatsApp text reaches the disk, and only while the user has ticked it.
 //! Nothing runs on a timer: local sources are read on each lookup, mail at
@@ -39,8 +40,9 @@ const NOTE_PARTS: usize = 200;
 /// drains the queue; rotate instead if people hit it.
 const QUEUE_BYTES: u64 = 1024 * 1024;
 const QUEUE_TEXT: usize = 1000;
+/// Items per extraction call, one call per lookup at most.
 const BATCH: usize = 20;
-const BATCHES: usize = 3;
+const EXTRACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const HOUR: i64 = 3600;
 const DAY: i64 = 24 * HOUR;
 const HITS: usize = 8;
@@ -75,7 +77,7 @@ impl Sources {
         };
         Sources {
             on: flag("bloom-ai-context", false),
-            contacts: flag("bloom-ai-context-contacts", true),
+            contacts: flag("bloom-ai-context-contacts", false),
             email: flag("bloom-ai-context-email", false),
             whatsapp: flag("bloom-ai-context-whatsapp", false),
             calendar: flag("bloom-ai-context-calendar", false),
@@ -380,9 +382,10 @@ fn push_unique(list: &mut Vec<String>, value: &str) {
     }
 }
 
-/// A name the user knows: folded for matching, as saved for showing.
+/// A name the user knows: folded and padded (" neha ") for matching, as
+/// saved for showing.
 struct Known {
-    folded: String,
+    padded: String,
     name: String,
 }
 
@@ -396,7 +399,7 @@ fn known_names(all: &[Person]) -> Vec<Known> {
             let folded = fold(name);
             if folded.len() >= 2 {
                 out.push(Known {
-                    folded,
+                    padded: format!(" {folded} "),
                     name: p.name.clone(),
                 });
             }
@@ -408,9 +411,10 @@ fn known_names(all: &[Person]) -> Vec<Known> {
         }
     }
     for (first, names) in firsts {
-        if names.len() == 1 && !out.iter().any(|k| k.folded == first) {
+        let padded = format!(" {first} ");
+        if names.len() == 1 && !out.iter().any(|k| k.padded == padded) {
             out.push(Known {
-                folded: first,
+                padded,
                 name: names[0].to_string(),
             });
         }
@@ -545,7 +549,7 @@ fn caps_run(toks: &[Tok], start: usize) -> (String, usize) {
 fn heuristics(text: &str, known: &[Known], item: &mut Item) {
     let folded = format!(" {} ", fold(text));
     for k in known {
-        if folded.contains(&format!(" {} ", k.folded)) {
+        if folded.contains(&k.padded) {
             push_unique(&mut item.people, &k.name);
         }
     }
@@ -753,9 +757,11 @@ fn note_parts(text: &str) -> Vec<String> {
     parts
 }
 
-/// Re-reads changed notes files and drops the items of files gone.
+/// Re-reads changed notes files (newest first) and drops the items of files
+/// gone. Stops at `MAX_ITEMS` notes items, the most the index keeps.
 fn sync_notes(index: &mut Index, root: &Path, known: &[Known]) {
-    let found = note_files(root);
+    let mut found = note_files(root);
+    found.sort_by_key(|(_, at)| std::cmp::Reverse(*at));
     let present: HashSet<String> = found
         .iter()
         .map(|(p, _)| p.to_string_lossy().into_owned())
@@ -764,14 +770,20 @@ fn sync_notes(index: &mut Index, root: &Path, known: &[Known]) {
     index
         .items
         .retain(|i| i.source != "notes" || present.contains(note_path(&i.id)));
+    let mut kept = index.items.iter().filter(|i| i.source == "notes").count();
     for (path, at) in found {
         let name = path.to_string_lossy().into_owned();
         if index.files.get(&name) == Some(&at) {
             continue;
         }
+        if kept >= MAX_ITEMS {
+            break;
+        }
+        let before = index.items.len();
         index
             .items
             .retain(|i| i.source != "notes" || note_path(&i.id) != name);
+        kept -= before - index.items.len();
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
@@ -783,8 +795,10 @@ fn sync_notes(index: &mut Index, root: &Path, known: &[Known]) {
         let items: Vec<Item> = note_parts(&text)
             .iter()
             .enumerate()
+            .take(MAX_ITEMS.saturating_sub(kept))
             .map(|(n, part)| new_item("notes", format!("{name}#{n}"), at, &title, part, known))
             .collect();
+        kept += items.len();
         merge(index, items);
         index.files.insert(name, at);
     }
@@ -1183,38 +1197,43 @@ pub async fn refresh(
         let signed_in = crate::secrets::get("outlook-refresh").is_some();
         notes.push(if signed_in { CALENDAR_LATER } else { CALENDAR }.into());
     }
-    let all = people::load(&dir).unwrap_or_default();
-    let known = known_names(&all);
     let settings = shared.settings_path.clone();
-    let more = update(&dir, Some(since), |index| {
-        // The user may have changed the settings meanwhile.
-        let src = Sources::load(&settings);
-        prune(index, &src);
-        let mut notes = Vec::new();
-        if let Some(mails) = mail.filter(|_| src.wants("email")) {
-            index.mailed = now;
-            merge(index, mail_items(mails, &known));
-        }
-        if src.wants("contacts") {
-            index.items.retain(|i| i.source != "contacts");
-            merge(index, contact_items(&all));
-        }
-        if src.wants("whatsapp") {
-            let queued = drain_queue(&dir);
-            merge(index, queued.iter().map(|q| whatsapp_item(q, &known)));
-        } else {
-            let _ = std::fs::remove_file(dir.join(QUEUE));
-        }
-        if src.wants("notes") {
-            let root = Path::new(&src.notes_dir);
-            if src.notes_dir.is_empty() || !root.is_dir() {
-                notes.push("Notes: pick a folder in Settings > AI > Context.".to_string());
-            } else {
-                sync_notes(index, root, &known);
+    // Files and up to a thousand notes: off the async workers.
+    let more = tokio::task::spawn_blocking(move || {
+        let all = people::load(&dir).unwrap_or_default();
+        let known = known_names(&all);
+        update(&dir, Some(since), |index| {
+            // The user may have changed the settings meanwhile.
+            let src = Sources::load(&settings);
+            prune(index, &src);
+            let mut notes = Vec::new();
+            if let Some(mails) = mail.filter(|_| src.wants("email")) {
+                index.mailed = now;
+                merge(index, mail_items(mails, &known));
             }
-        }
-        notes
-    })?;
+            if src.wants("contacts") {
+                index.items.retain(|i| i.source != "contacts");
+                merge(index, contact_items(&all));
+            }
+            if src.wants("whatsapp") {
+                let queued = drain_queue(&dir);
+                merge(index, queued.iter().map(|q| whatsapp_item(q, &known)));
+            } else {
+                let _ = std::fs::remove_file(dir.join(QUEUE));
+            }
+            if src.wants("notes") {
+                let root = Path::new(&src.notes_dir);
+                if src.notes_dir.is_empty() || !root.is_dir() {
+                    notes.push("Notes: pick a folder in Settings > AI > Context.".to_string());
+                } else {
+                    sync_notes(index, root, &known);
+                }
+            }
+            notes
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     notes.extend(more.unwrap_or_default());
     Ok(notes)
 }
@@ -1243,37 +1262,21 @@ fn strings(v: &Value) -> Vec<String> {
     out
 }
 
-/// One JSON-mode call for a batch: what the model found per item id.
+/// One JSON-mode call for a batch, 20 seconds at most: what the model found
+/// per item id.
 async fn ask(llm: &Llm, batch: &[Item]) -> Result<Vec<(String, Found)>, String> {
     let lines: String = batch
         .iter()
         .enumerate()
         .map(|(n, i)| format!("{}. [{}] {}: {}\n", n + 1, i.source, i.title, i.snippet))
         .collect();
-    let body = json!({
-        "model": llm.model,
-        "response_format": { "type": "json_object" },
-        "messages": [
-            { "role": "system", "content": EXTRACT_PROMPT },
-            { "role": "user", "content": lines },
-        ],
-    });
-    let res = llm
-        .http
-        .post(format!("{}/chat/completions", llm.base_url))
-        .bearer_auth(&llm.key)
-        .json(&body)
-        .send()
+    let messages = [
+        json!({ "role": "system", "content": EXTRACT_PROMPT }),
+        json!({ "role": "user", "content": lines }),
+    ];
+    let parsed = tokio::time::timeout(EXTRACT_TIMEOUT, llm.json(&messages))
         .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("Model error ({})", res.status()));
-    }
-    let reply: Value = res.json().await.map_err(|e| e.to_string())?;
-    let content = reply["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or_default();
-    let parsed: Value = serde_json::from_str(content).map_err(|e| e.to_string())?;
+        .map_err(|_| "The model took too long.".to_string())??;
     Ok(parsed["items"]
         .as_array()
         .into_iter()
@@ -1292,9 +1295,8 @@ async fn ask(llm: &Llm, batch: &[Item]) -> Result<Vec<(String, Found)>, String> 
         .collect())
 }
 
-/// At most once an hour: the newest items the model has not read, in up to
-/// three batches of 20. A failed call stops the run; the hour still counts.
-/// Returns how many items it read.
+/// At most once an hour: the newest 20 items the model has not read, in one
+/// call. A failed call still counts the hour. Returns how many items it read.
 pub async fn extract_due(dir: &Path, llm: &Llm, now: i64) -> Result<usize, String> {
     let index = load(dir)?;
     if now - index.extracted < HOUR {
@@ -1304,24 +1306,20 @@ pub async fn extract_due(dir: &Path, llm: &Llm, now: i64) -> Result<usize, Strin
         .items
         .iter()
         .filter(|i| !i.done)
-        .take(BATCH * BATCHES)
+        .take(BATCH)
         .cloned()
         .collect();
     if todo.is_empty() {
         return Ok(0);
     }
     let since = deletes(dir);
-    let mut read = HashSet::new();
-    let mut found: HashMap<String, Found> = HashMap::new();
-    for batch in todo.chunks(BATCH) {
-        match ask(llm, batch).await {
-            Ok(got) => {
-                read.extend(batch.iter().map(|i| i.id.clone()));
-                found.extend(got);
-            }
-            Err(_) => break,
-        }
-    }
+    let (read, mut found): (HashSet<String>, HashMap<String, Found>) = match ask(llm, &todo).await {
+        Ok(got) => (
+            todo.iter().map(|i| i.id.clone()).collect(),
+            got.into_iter().collect(),
+        ),
+        Err(_) => Default::default(),
+    };
     let count = read.len();
     update(dir, Some(since), |index| {
         index.extracted = now;
@@ -1517,14 +1515,14 @@ pub fn tool_schema() -> Value {
 // ---- Settings ----
 
 /// Settings > AI > Context: `action` is status, apply (a setting changed),
-/// sync (index now, mail included) or delete. Answers with counts only.
+/// sync (index now, mail included) or delete. Status applies the settings
+/// too, so an index left behind while off is deleted. Answers with counts only.
 pub async fn settings_action(shared: &Shared, action: &str) -> Out {
     let dir = &shared.data_dir;
     let src = Sources::load(&shared.settings_path);
     let mut message = None;
     let done = match action {
-        "status" => Ok(()),
-        "apply" => apply(dir, &src),
+        "status" | "apply" => apply(dir, &src),
         "delete" => delete(dir).map(|()| message = Some("Index deleted.".to_string())),
         "sync" if !src.on => Err(DISABLED.to_string()),
         "sync" => {
@@ -1893,12 +1891,73 @@ mod tests {
     #[test]
     fn sources_parse_and_default_off() {
         let s = Sources::from_map(&HashMap::new());
-        assert!(!s.on && s.contacts && !s.email && !s.wants("contacts"));
+        assert!(!s.on && !s.contacts && !s.email && !s.wants("contacts"));
         let mut m = HashMap::new();
         m.insert("bloom-ai-context".to_string(), json!("true"));
         m.insert("bloom-ai-context-calendar".to_string(), json!(true));
         let s = Sources::from_map(&m);
-        assert!(s.wants("contacts") && s.wants("calendar") && !s.wants("email") && !s.wants("x"));
+        // Contacts too is indexed only once the user ticks it.
+        assert!(!s.wants("contacts") && s.wants("calendar") && !s.wants("email") && !s.wants("x"));
+    }
+
+    #[tokio::test]
+    async fn status_deletes_an_index_left_behind_while_off() {
+        let mut c = ctx_with(&ON);
+        boba(&c);
+        ask_tool(&mut c, "boba").await.unwrap();
+        assert!(c.shared.data_dir.join(FILE).exists());
+        // Turned off while Settings was closed: the next status cleans up.
+        settings(&c.shared.data_dir, &[("bloom-ai-context", "false")]);
+        match settings_action(&c.shared, "status").await {
+            Out::ContextStatus { on, counts, .. } => assert!(!on && counts.is_empty()),
+            other => panic!("{other:?}"),
+        }
+        assert!(context_files(&c.shared.data_dir).is_empty());
+    }
+
+    #[tokio::test]
+    async fn one_lookup_sends_one_batch_of_20() {
+        let dir = temp_dir();
+        let items = (0..25).map(|n| Item {
+            id: format!("notes:{n}"),
+            source: "notes".into(),
+            at: n,
+            snippet: format!("line {n}"),
+            ..Item::default()
+        });
+        update(&dir, None, |i| merge(i, items)).unwrap();
+        let reply = r#"{"choices":[{"message":{"content":"{\"items\":[]}"}}]}"#;
+        let (url, requests) = mock_server(vec![reply.into()]);
+        let llm = Llm {
+            http: http(),
+            base_url: url,
+            model: "m".into(),
+            key: "k".into(),
+        };
+        assert_eq!(extract_due(&dir, &llm, 10_000).await.unwrap(), BATCH);
+        let sent = requests.recv().unwrap();
+        assert!(
+            sent.contains("20. [notes]") && !sent.contains("21. [notes]"),
+            "{sent}"
+        );
+        assert!(requests.try_recv().is_err(), "one call");
+        let index = load(&dir).unwrap();
+        assert_eq!(index.items.iter().filter(|i| !i.done).count(), 5);
+    }
+
+    #[test]
+    fn notes_stop_at_the_index_limit() {
+        let root = temp_dir();
+        let file = "p\n\n".repeat(NOTE_PARTS);
+        let files = MAX_ITEMS / NOTE_PARTS + 1;
+        for n in 0..files {
+            std::fs::write(root.join(format!("{n}.md")), &file).unwrap();
+        }
+        let mut index = Index::default();
+        sync_notes(&mut index, &root, &[]);
+        assert_eq!(index.items.len(), MAX_ITEMS);
+        // The file left out is not marked read, so it is tried again later.
+        assert_eq!(index.files.len(), files - 1);
     }
 
     #[test]

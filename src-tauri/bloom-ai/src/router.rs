@@ -158,6 +158,7 @@ const KEYWORDS: &[(Intent, &[&str])] = &[
             "shut down",
             "restart",
             "screenshot",
+            "remind",
         ],
     ),
     (
@@ -237,18 +238,47 @@ fn research_score(w: &str) -> f32 {
     }
 }
 
+/// Whether the request, past any polite words, starts with a research verb or phrase.
+fn opens_with_research(w: &str) -> bool {
+    let rest: Vec<&str> = w
+        .split_whitespace()
+        .skip_while(|x| POLITE.contains(x))
+        .collect();
+    let rest = format!(" {} ", rest.join(" "));
+    RESEARCH_VERBS
+        .iter()
+        .chain(RESEARCH_PHRASES)
+        .any(|p| rest.starts_with(&format!(" {p} ")))
+}
+
 /// The heuristic pass: an intent and how sure it is (0..1).
 pub fn heuristic(text: &str) -> (Intent, f32) {
     let w = words(text);
     let research = research_score(&w);
-    if research >= SURE {
-        return (Intent::DeepResearch, research);
-    }
-    if let Some((intent, _)) = KEYWORDS
+    let keyword = KEYWORDS
         .iter()
         .find(|(_, list)| list.iter().any(|k| has(&w, k)))
-    {
-        return (*intent, 0.8);
+        .map(|(intent, _)| *intent);
+    if research >= SURE {
+        // "email Sam the research on batteries": an action that mentions
+        // research is the model's call, unless the request opens with it.
+        let action = matches!(
+            keyword,
+            Some(
+                Intent::ContactUpdate
+                    | Intent::ContactLookup
+                    | Intent::EmailAction
+                    | Intent::MessageAction
+                    | Intent::PcAction
+            )
+        );
+        return match keyword {
+            Some(intent) if action && !opens_with_research(&w) => (intent, 0.55),
+            _ => (Intent::DeepResearch, research),
+        };
+    }
+    if let Some(intent) = keyword {
+        return (intent, 0.8);
     }
     if research > 0.0 {
         return (Intent::DeepResearch, research);
@@ -344,6 +374,31 @@ mod tests {
         ] {
             assert_eq!(heuristic(text).0, want, "{text}");
         }
+    }
+
+    #[test]
+    fn actions_that_mention_research_are_left_to_the_model() {
+        for (text, want) in [
+            ("email Sam the research on batteries", Intent::EmailAction),
+            ("send Neha the research on WhatsApp", Intent::MessageAction),
+            ("remind me to research the flights", Intent::PcAction),
+        ] {
+            let (intent, confidence) = heuristic(text);
+            assert_eq!(intent, want, "{text}");
+            assert!(
+                (UNSURE_FROM..SURE).contains(&confidence),
+                "{text}: {confidence}"
+            );
+        }
+        // Opening with research keeps it sure, actions or not.
+        assert_eq!(
+            heuristic("Do deep research on the open source movement"),
+            (Intent::DeepResearch, 0.9)
+        );
+        assert_eq!(
+            heuristic("research how email spam filters work"),
+            (Intent::DeepResearch, 0.9)
+        );
     }
 
     #[tokio::test]

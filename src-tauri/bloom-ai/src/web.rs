@@ -209,6 +209,9 @@ fn parse_results(html: &str) -> Vec<Hit> {
     hits
 }
 
+/// Brave's free tier allows about one request a second.
+pub(crate) const RATE_LIMITED: &str = "Brave Search is rate limiting this key; try again in a minute.";
+
 const BLOCKED: &str = "DuckDuckGo is blocking automated searches from this PC. Add a free Brave Search key in Settings > AI to search the web.";
 
 pub(crate) fn search_key(web: &WebCfg) -> Option<String> {
@@ -285,12 +288,7 @@ async fn brave(shared: &Shared, key: &str, query: &str, news: bool) -> Result<Ve
                 "Brave rejected the search key; check your Brave key in Settings > AI.",
             ))
         }
-        429 => {
-            return Err(coded(
-                SEARCH_FAILED,
-                "Brave Search is rate limiting this key; try again in a minute.",
-            ))
-        }
+        429 => return Err(coded(SEARCH_FAILED, RATE_LIMITED)),
         s if !(200..300).contains(&s) => {
             return Err(failed(shared, "Brave Search had a problem. Try again in a minute.", &format!("brave status {s}")))
         }

@@ -262,6 +262,25 @@ async fn ask(shared: &Shared, id: u64, question: &str) -> Option<Open> {
     Some(open)
 }
 
+/// `text` cut to one message. A research report loses the end of its body
+/// instead of its Sources list.
+fn fit(text: &str) -> String {
+    const CUT: &str = "\n\n[Report shortened to fit WhatsApp.]";
+    let text = text.trim();
+    if text.chars().count() <= MAX_TEXT {
+        return text.to_string();
+    }
+    if let Some(at) = text.rfind("\n\n## Sources\n") {
+        let (body, sources) = text.split_at(at);
+        let room = MAX_TEXT.saturating_sub(sources.chars().count() + CUT.chars().count());
+        if room > 0 {
+            let body: String = body.chars().take(room).collect();
+            return format!("{}{CUT}{sources}", body.trim_end());
+        }
+    }
+    text.chars().take(MAX_TEXT).collect()
+}
+
 /// Writes in the user's own chat. Never starts with the assistant's name, so
 /// it can't read as a request.
 async fn say(shared: &Shared, text: &str) {
@@ -270,7 +289,7 @@ async fn say(shared: &Shared, text: &str) {
         return;
     };
     let name = Config::load(&shared.settings_path).name;
-    let mut text: String = text.trim().chars().take(MAX_TEXT).collect();
+    let mut text = fit(text);
     if text.is_empty() {
         return;
     }
@@ -320,6 +339,20 @@ mod tests {
         }
         assert!(is_request("émile: hi", "Émile"));
         assert!(is_phone(FIRST_TASK) && !is_phone(crate::wake::FIRST_TASK));
+    }
+
+    #[test]
+    fn a_long_report_keeps_its_sources_on_the_phone() {
+        let sources = "\n\n## Sources\n1. [A](https://a.test/)\n2. [B](https://b.test/)\n";
+        let report = format!("# R\n\n{}{sources}", "word ".repeat(2000));
+        let sent = fit(&report);
+        assert!(sent.chars().count() <= MAX_TEXT);
+        assert!(sent.starts_with("# R\n\nword"));
+        assert!(sent.ends_with("2. [B](https://b.test/)"), "{sent}");
+        assert!(sent.contains("[Report shortened to fit WhatsApp.]\n\n## Sources"));
+        // Anything else is cut at the limit; short text is untouched.
+        assert_eq!(fit(&"x".repeat(MAX_TEXT + 5)).chars().count(), MAX_TEXT);
+        assert_eq!(fit("  hi  "), "hi");
     }
 
     /// A Shared with these settings, linked as ME.
