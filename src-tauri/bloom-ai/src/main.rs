@@ -7,6 +7,7 @@ mod agent;
 mod autoreply;
 mod bridge;
 mod config;
+mod context_index;
 mod debug;
 mod email;
 mod errors;
@@ -104,6 +105,8 @@ async fn serve(shared: Arc<Shared>) {
     // Waits on incoming WhatsApp messages; idle while none arrive.
     tokio::spawn(autoreply::run(shared.clone()));
     tokio::spawn(selfchat::run(shared.clone()));
+    // Queues WhatsApp messages for the context index, only while allowed.
+    tokio::spawn(context_index::run(shared.clone()));
     let mut current: Current = None;
     let mut recorder: Option<voice::Recorder> = None;
     // Requests recording or running; the wake word is ignored while any are.
@@ -347,6 +350,13 @@ async fn serve(shared: Arc<Shared>) {
                 // Its own task: a mail scan takes a while.
                 tokio::spawn(async move {
                     emit(&tools::contacts(&s, &action, &id, &value, &label).await);
+                });
+            }
+            In::Context { action } => {
+                let s = shared.clone();
+                // Its own task: Index now reads the mail.
+                tokio::spawn(async move {
+                    emit(&context_index::settings_action(&s, &action).await);
                 });
             }
             In::WhatsappOn => whatsapp::on(&shared),

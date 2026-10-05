@@ -245,6 +245,8 @@ fn main() {
             #[cfg(windows)]
             ai::ai_contacts,
             #[cfg(windows)]
+            ai::ai_context,
+            #[cfg(windows)]
             ai::ai_open,
             #[cfg(windows)]
             ai::ai_delete

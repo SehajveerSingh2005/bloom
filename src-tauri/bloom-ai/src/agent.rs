@@ -325,6 +325,9 @@ fn system_prompt(name: &str, data_dir: &std::path::Path, whatsapp: bool) -> Stri
          When a tool result starts with an UPPER_CASE code (SEARCH_BLOCKED, SEARCH_FAILED, \
          SEARCH_NOT_CONFIGURED), tell the user its message plainly, including what to do; \
          never say \"tool call error\".\n\
+         For questions about the user's own plans, people and events (\"who am I going \
+         with\", \"when is dinner with Sam\"), call context_lookup with the question and answer \
+         from its evidence, naming the source.\n\
          When done, reply in one or two short sentences.{whatsapp}{known}"
     )
 }
@@ -435,6 +438,7 @@ mod tests {
         assert!(p.contains("find_contact first"));
         assert!(p.contains("Use remember for stable personal facts"));
         assert!(p.contains("never store secrets"));
+        assert!(p.contains("call context_lookup with the question"));
         assert!(!p.contains("What you know about the user"));
         let d = crate::testutil::temp_dir();
         crate::facts::remember(&d, "my manager is Sam").unwrap();

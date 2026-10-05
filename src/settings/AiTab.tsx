@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { BookOpen, Bot, Globe, Cpu, Keyboard, KeyRound, Mail, MessageCircle, Mic, AudioLines, Plug, QrCode, Server, Shield, Sparkles, Trash2, Users } from "lucide-react";
 import qrcode from "qrcode-generator";
 import { SettingRow } from "./SettingRow";
+import { AiContext } from "./AiContext";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import { cleanAiName, isValidAiName } from "../ai/aiName";
 import "./AiTab.css";
@@ -166,7 +167,7 @@ function Qr({ text }: { text: string }) {
 }
 
 /** One bloom-ai-* setting: localStorage for first paint, settings.json as the truth. */
-function useAiSetting(key: string, fallback: string): [string, (value: string) => void] {
+export function useAiSetting(key: string, fallback: string): [string, (value: string) => void] {
 	const [value, setValue] = useState(() => localStorage.getItem(key) ?? fallback);
 	useSettingsSync({ [key]: (v) => setValue(String(v)) });
 	const save = (next: string) => {
@@ -1036,6 +1037,8 @@ export function AiTab() {
 					</div>
 					{book?.error && <p className="ai-warning">{book.error}</p>}
 					{!book?.error && book?.message && <p className="ai-warning">{book.message}</p>}
+
+					<AiContext name={aiName} />
 				</>
 			)}
 

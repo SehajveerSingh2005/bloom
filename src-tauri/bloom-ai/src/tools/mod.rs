@@ -186,6 +186,7 @@ pub fn schema() -> Value {
             }),
             &["chat"],
         ),
+        crate::context_index::tool_schema(),
         tool(
             "list_whatsapp_chats",
             "List recent WhatsApp chats, newest first, with unread counts.",
@@ -236,6 +237,7 @@ pub fn describe(name: &str, args: &Value) -> String {
         "list_whatsapp_chats" => "Checking WhatsApp".into(),
         "list_whatsapp_groups" => "Checking WhatsApp groups".into(),
         "send_whatsapp" => format!("Messaging {} on WhatsApp", arg("to")),
+        "context_lookup" => "Checking your messages, mail and notes".into(),
         _ if name.starts_with("mcp_") => format!("Using {}", &name[4..]),
         _ => format!("Working ({name})"),
     }
@@ -324,6 +326,7 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         "list_whatsapp_chats" => whatsapp::list(ctx),
         "list_whatsapp_groups" => whatsapp::list_groups(ctx),
         "send_whatsapp" => whatsapp::send(ctx, str_arg(args, "to")?, str_arg(args, "text")?).await,
+        "context_lookup" => crate::context_index::lookup(ctx, str_arg(args, "question")?).await,
         _ if name.starts_with("mcp_") => crate::mcp::call(ctx, name, args).await,
         _ => Err(format!("unknown tool {name}")),
     }

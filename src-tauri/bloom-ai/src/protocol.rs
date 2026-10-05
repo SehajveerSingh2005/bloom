@@ -41,6 +41,11 @@ pub enum In {
         #[serde(default)]
         label: String,
     },
+    /// Settings > AI > Context: status, apply, sync or delete.
+    Context {
+        #[serde(default)]
+        action: String,
+    },
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone, Copy)]
@@ -158,6 +163,15 @@ pub enum Out {
         people: Vec<crate::people::Person>,
         mail: usize,
         outlook: bool,
+        message: Option<String>,
+        error: Option<String>,
+    },
+    /// Settings > AI > Context: whether indexing is on, items per source and
+    /// WhatsApp messages waiting (counts only, no content).
+    ContextStatus {
+        on: bool,
+        counts: std::collections::BTreeMap<String, usize>,
+        pending: usize,
         message: Option<String>,
         error: Option<String>,
     },

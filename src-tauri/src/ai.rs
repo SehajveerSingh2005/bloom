@@ -626,6 +626,14 @@ pub fn ai_contacts(
     )
 }
 
+/// Settings > AI > Context: `action` is status, apply (a setting changed),
+/// sync (index now) or delete. `context_status` follows as an `ai-event`
+/// (counts only).
+#[tauri::command]
+pub fn ai_context(app: AppHandle, action: String) -> Result<(), String> {
+    send(&app, json!({ "type": "context", "action": action }))
+}
+
 /// The dock's AI button: show the panel with its text box.
 #[tauri::command]
 pub fn ai_open(app: AppHandle) {
