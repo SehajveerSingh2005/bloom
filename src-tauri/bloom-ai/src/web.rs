@@ -144,10 +144,10 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 }
 
 #[derive(Debug)]
-struct Hit {
-    title: String,
-    url: String,
-    snippet: String,
+pub(crate) struct Hit {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
 }
 
 /// ponytail: scraping DuckDuckGo's HTML page is fragile and now bot-challenged;
@@ -211,7 +211,7 @@ fn parse_results(html: &str) -> Vec<Hit> {
 
 const BLOCKED: &str = "DuckDuckGo is blocking automated searches from this PC. Add a free Brave Search key in Settings > AI to search the web.";
 
-fn search_key(web: &WebCfg) -> Option<String> {
+pub(crate) fn search_key(web: &WebCfg) -> Option<String> {
     if !web.use_store {
         return web.key.clone().filter(|k| !k.trim().is_empty());
     }
@@ -334,7 +334,7 @@ async fn ddg(shared: &Shared, query: &str) -> Result<Vec<Hit>, String> {
 }
 
 /// Keyed provider when configured, else DuckDuckGo. News needs the key.
-async fn run_search(shared: &Shared, query: &str, news: bool) -> Result<Vec<Hit>, String> {
+pub(crate) async fn run_search(shared: &Shared, query: &str, news: bool) -> Result<Vec<Hit>, String> {
     match search_key(&shared.web) {
         Some(key) => brave(shared, &key, query, news).await,
         None if news => Err(coded(

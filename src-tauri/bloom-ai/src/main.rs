@@ -22,6 +22,8 @@ mod phones;
 mod policy;
 mod powershell;
 mod protocol;
+mod research;
+mod router;
 mod secrets;
 mod selfchat;
 mod skills;

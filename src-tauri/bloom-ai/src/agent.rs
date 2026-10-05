@@ -165,7 +165,11 @@ pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, St
         }
     };
     log("request", text);
-    let result = steps(llm, ctx, text).await;
+    // The router only picks the workflow; everything but research is the tool loop.
+    let result = match crate::router::route(llm, text).await {
+        crate::router::Intent::DeepResearch => crate::research::run(llm, ctx, text).await,
+        _ => steps(llm, ctx, text).await,
+    };
     match &result {
         Ok(reply) => {
             log("reply", reply);
