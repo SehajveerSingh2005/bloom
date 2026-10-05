@@ -6,7 +6,7 @@ import { BookOpen, Bot, Globe, Cpu, Keyboard, KeyRound, Mail, MessageCircle, Mic
 import qrcode from "qrcode-generator";
 import { SettingRow } from "./SettingRow";
 import { AiContext } from "./AiContext";
-import { useSettingsSync } from "../hooks/useSettingsSync";
+import { useAiSetting } from "./useAiSetting";
 import { cleanAiName, isValidAiName } from "../ai/aiName";
 import "./AiTab.css";
 
@@ -166,21 +166,9 @@ function Qr({ text }: { text: string }) {
 	);
 }
 
-/** One bloom-ai-* setting: localStorage for first paint, settings.json as the truth. */
-export function useAiSetting(key: string, fallback: string): [string, (value: string) => void] {
-	const [value, setValue] = useState(() => localStorage.getItem(key) ?? fallback);
-	useSettingsSync({ [key]: (v) => setValue(String(v)) });
-	const save = (next: string) => {
-		setValue(next);
-		localStorage.setItem(key, next);
-		invoke("save_setting", { key, value: next }).catch(console.error);
-	};
-	return [value, save];
-}
-
 /** Saves on blur or Enter, not on every keystroke. `onSave` returning false
  *  rejects the value and puts the saved one back. */
-function Field(props: { value: string; onSave: (v: string) => boolean | void; placeholder: string; multiline?: boolean }) {
+function Field(props: { value: string; onSave: (v: string) => boolean | void | Promise<void>; placeholder: string; multiline?: boolean }) {
 	const [draft, setDraft] = useState(props.value);
 	useEffect(() => setDraft(props.value), [props.value]);
 	const common = {
