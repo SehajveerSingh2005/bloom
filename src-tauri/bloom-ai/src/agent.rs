@@ -202,7 +202,15 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
     ctx.allowed_urls.extend(crate::web::urls_in(text));
     messages.push(json!({ "role": "user", "content": text }));
     for _ in 0..MAX_STEPS {
-        let message = llm.chat(&messages, &tools).await?;
+        // A malformed tool call gets one retry of the same step with a reminder.
+        let message = match llm.chat(&messages, &tools).await {
+            Err(e) if crate::llm::is_tool_call_failure(&e) => {
+                let mut again = messages.clone();
+                again.push(json!({ "role": "system", "content": "Your last tool call was malformed. Call tools with valid JSON arguments that match the tool's schema." }));
+                llm.chat(&again, &tools).await?
+            }
+            other => other?,
+        };
         let calls = message["tool_calls"]
             .as_array()
             .cloned()
@@ -230,6 +238,7 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
             }
             let result = match tools::call(ctx, name, &args).await {
                 Ok(result) => result,
+                Err(e) if crate::errors::is_coded(&e) => e,
                 Err(e) => format!("Error: {e}"),
             };
             if ctx.cfg.debug {
@@ -289,6 +298,9 @@ fn system_prompt(name: &str, data_dir: &std::path::Path, whatsapp: bool) -> Stri
          For current events, prices, or anything after your training, call web_search and \
          answer with the key facts and the source names; read a page with web_fetch only when \
          the snippets are not enough, and still never open a browser to answer.\n\
+         When a tool result starts with an UPPER_CASE code (SEARCH_BLOCKED, SEARCH_FAILED, \
+         SEARCH_NOT_CONFIGURED), tell the user its message plainly, including what to do; \
+         never say \"tool call error\".\n\
          When done, reply in one or two short sentences.{whatsapp}{known}"
     )
 }
@@ -514,5 +526,53 @@ mod tests {
             run_with(&llm, &mut ctx(), "x").await,
             Err("The model sent no message.".into())
         );
+    }
+
+    fn llm_at(url: String) -> Llm {
+        Llm {
+            http: http(),
+            base_url: url,
+            model: "m".into(),
+            key: "k".into(),
+        }
+    }
+
+    const GROQ_400: &str = r#"{"error":{"message":"Failed to call a function.","type":"invalid_request_error","code":"tool_use_failed","failed_generation":"<function=x>"}}"#;
+
+    #[tokio::test]
+    async fn broken_tool_call_is_retried_once_then_succeeds() {
+        let ok = r#"{"choices":[{"message":{"role":"assistant","content":"Fine."}}]}"#;
+        let (url, requests) = crate::testutil::mock_server_each(
+            "Content-Type: application/json\r\n",
+            vec![("400 Bad Request", GROQ_400.into()), ("200 OK", ok.into())],
+        );
+        let r = run_with(&llm_at(url), &mut ctx(), "hi").await;
+        assert_eq!(r, Ok("Fine.".into()));
+        assert!(!requests.recv().unwrap().contains("valid JSON arguments"));
+        assert!(requests.recv().unwrap().contains("valid JSON arguments"));
+    }
+
+    #[tokio::test]
+    async fn broken_tool_call_twice_is_model_tool_call_failed() {
+        let (url, _r) = crate::testutil::mock_server_each(
+            "Content-Type: application/json\r\n",
+            vec![
+                ("400 Bad Request", GROQ_400.into()),
+                ("400 Bad Request", GROQ_400.into()),
+            ],
+        );
+        let e = run_with(&llm_at(url), &mut ctx(), "hi").await.unwrap_err();
+        assert!(e.starts_with("MODEL_TOOL_CALL_FAILED: The model sent a broken tool call twice."), "{e}");
+        assert!(e.contains("llama-3.3-70b-versatile or openai/gpt-oss-120b"));
+    }
+
+    #[tokio::test]
+    async fn other_400s_are_not_hidden_or_retried() {
+        let (url, _r) = crate::testutil::mock_server_status(
+            "400 Bad Request",
+            vec![r#"{"error":{"message":"bad model"}}"#.into()],
+        );
+        let e = run_with(&llm_at(url), &mut ctx(), "hi").await.unwrap_err();
+        assert!(e.contains("bad model"), "{e}");
     }
 }

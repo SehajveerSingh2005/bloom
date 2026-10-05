@@ -1,7 +1,8 @@
-//! web_search (DuckDuckGo's HTML page, no key) and web_fetch (a page as text).
+//! web_search (Brave Search with a key, else DuckDuckGo's HTML page) and web_fetch (a page as text).
 
-use crate::agent::Ctx;
+use crate::agent::{Ctx, Shared};
 use crate::config::Tier;
+use crate::errors::{coded, SEARCH_BLOCKED, SEARCH_FAILED, SEARCH_NOT_CONFIGURED};
 use crate::protocol::ConfirmKind;
 use reqwest::Url;
 use std::net::IpAddr;
@@ -17,6 +18,9 @@ const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Bloom-Janice/1.0";
 /// may reach 127.0.0.1; nothing the model sends can change either.
 pub struct WebCfg {
     pub search_url: String,
+    pub brave_url: String,
+    /// Tests set a key here; otherwise it comes from Credential Manager.
+    pub key: Option<String>,
     pub allow_loopback: bool,
     /// Never follows redirects: `fetch` follows them itself, checking each hop.
     pub http: reqwest::Client,
@@ -26,6 +30,8 @@ impl WebCfg {
     pub fn new() -> WebCfg {
         WebCfg {
             search_url: "https://html.duckduckgo.com/html/".into(),
+            brave_url: "https://api.search.brave.com/res/v1".into(),
+            key: None,
             allow_loopback: false,
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -134,6 +140,7 @@ fn attr(tag: &str, name: &str) -> Option<String> {
     Some(decode_entities(&tag[at..at + end]))
 }
 
+#[derive(Debug)]
 struct Hit {
     title: String,
     url: String,
@@ -199,24 +206,142 @@ fn parse_results(html: &str) -> Vec<Hit> {
     hits
 }
 
-pub async fn search(ctx: &mut Ctx, query: &str) -> Result<String, String> {
-    ctx.tainted = true;
-    let url = Url::parse_with_params(&ctx.shared.web.search_url, [("q", query)])
-        .map_err(|e| e.to_string())?;
-    let res = ctx
-        .shared
+const BLOCKED: &str = "DuckDuckGo is blocking automated searches from this PC. Add a free Brave Search key in Settings > AI to search the web.";
+
+fn search_key(web: &WebCfg) -> Option<String> {
+    web.key
+        .clone()
+        .or_else(|| crate::secrets::get("search-key"))
+        .filter(|k| !k.trim().is_empty())
+}
+
+/// Brave answers `web.results[]` (or `results[]` for news); descriptions carry
+/// `<strong>` tags and entities.
+fn parse_brave(json: &serde_json::Value, news: bool) -> Vec<Hit> {
+    let list = if news {
+        &json["results"]
+    } else {
+        &json["web"]["results"]
+    };
+    let field = |r: &serde_json::Value, k: &str| text_of(r[k].as_str().unwrap_or_default());
+    list.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|r| {
+                    let url = r["url"].as_str()?.to_string();
+                    let mut snippet = field(r, "description");
+                    let age = field(r, if r["age"].is_string() { "age" } else { "page_age" });
+                    if news && !age.is_empty() {
+                        snippet = format!("({age}) {snippet}");
+                    }
+                    Some(Hit {
+                        title: field(r, "title"),
+                        url,
+                        snippet,
+                    })
+                })
+                .take(MAX_RESULTS)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn brave(shared: &Shared, key: &str, query: &str, news: bool) -> Result<Vec<Hit>, String> {
+    let path = if news { "news/search" } else { "web/search" };
+    let url = Url::parse_with_params(
+        &format!("{}/{path}", shared.web.brave_url),
+        [("q", query), ("count", "8")],
+    )
+    .map_err(|e| coded(SEARCH_FAILED, &e.to_string()))?;
+    let res = shared
+        .http
+        .get(url)
+        .header("Accept", "application/json")
+        .header("X-Subscription-Token", key)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| coded(SEARCH_FAILED, &format!("Can't reach Brave Search: {e}")))?;
+    match res.status().as_u16() {
+        401 | 403 => {
+            return Err(coded(
+                SEARCH_NOT_CONFIGURED,
+                "Brave rejected the search key; check your Brave key in Settings > AI.",
+            ))
+        }
+        429 => {
+            return Err(coded(
+                SEARCH_FAILED,
+                "Brave Search is rate limiting this key; try again in a minute.",
+            ))
+        }
+        s if !(200..300).contains(&s) => {
+            return Err(coded(SEARCH_FAILED, &format!("Brave Search error ({s}).")))
+        }
+        _ => {}
+    }
+    let json: serde_json::Value = res.json().await.map_err(|e| {
+        coded(SEARCH_FAILED, &format!("Brave Search sent something unreadable: {e}"))
+    })?;
+    Ok(parse_brave(&json, news))
+}
+
+async fn ddg(shared: &Shared, query: &str) -> Result<Vec<Hit>, String> {
+    let url = Url::parse_with_params(&shared.web.search_url, [("q", query)])
+        .map_err(|e| coded(SEARCH_FAILED, &e.to_string()))?;
+    let res = shared
         .http
         .get(url)
         .header("User-Agent", UA)
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Can't reach the search service: {e}"))?;
-    if !res.status().is_success() {
-        return Err(format!("Search service error ({})", res.status()));
+        .map_err(|e| coded(SEARCH_FAILED, &format!("Can't reach the search service: {e}")))?;
+    let status = res.status();
+    // The bot challenge answers 202 with an anomaly page and no results.
+    if status.as_u16() == 202 {
+        return Err(coded(SEARCH_BLOCKED, BLOCKED));
     }
-    let html = res.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(coded(SEARCH_FAILED, &format!("Search service error ({status}).")));
+    }
+    let html = res.text().await.map_err(|e| coded(SEARCH_FAILED, &e.to_string()))?;
     let hits = parse_results(&html);
+    let lower = html.to_ascii_lowercase();
+    // An honest zero-result page says so; anything else with no results is a challenge.
+    if hits.is_empty()
+        && (lower.contains("anomaly") || lower.contains("captcha") || !lower.contains("no-results"))
+    {
+        return Err(coded(SEARCH_BLOCKED, BLOCKED));
+    }
+    Ok(hits)
+}
+
+/// Keyed provider when configured, else DuckDuckGo. News needs the key.
+async fn run_search(shared: &Shared, query: &str, news: bool) -> Result<Vec<Hit>, String> {
+    match search_key(&shared.web) {
+        Some(key) => brave(shared, &key, query, news).await,
+        None if news => Err(coded(
+            SEARCH_NOT_CONFIGURED,
+            "News search needs a free Brave Search key. Add one in Settings > AI.",
+        )),
+        None => ddg(shared, query).await,
+    }
+}
+
+/// Settings > Web search > Test: one query, the result count or the error.
+pub async fn probe(shared: &Shared) -> Result<String, String> {
+    let keyed = search_key(&shared.web).is_some();
+    let n = run_search(shared, "weather", false).await?.len();
+    Ok(format!(
+        "{n} results from {}.",
+        if keyed { "Brave Search" } else { "DuckDuckGo" }
+    ))
+}
+
+pub async fn search(ctx: &mut Ctx, query: &str, news: bool) -> Result<String, String> {
+    ctx.tainted = true;
+    let hits = run_search(&ctx.shared, query, news).await?;
     if hits.is_empty() {
         return Ok("No results found.".into());
     }
@@ -310,9 +435,11 @@ async fn read_capped(mut res: reqwest::Response) -> Result<Vec<u8>, String> {
 
 pub async fn fetch(ctx: &mut Ctx, url: &str) -> Result<String, String> {
     let u = parse_http(url)?;
-    // Exfiltration guard: once outside text is in play, only open pages the
+    // Exfiltration guard (conservative only; competent has full web access):
+    // once outside text is in play, only open pages the
     // user or a search result named, or ask.
-    let unknown = ctx.tainted && !ctx.allowed_urls.contains(url);
+    let unknown =
+        ctx.cfg.tier == Tier::Conservative && ctx.tainted && !ctx.allowed_urls.contains(url);
     if !crate::tools::confirm_persist(ctx, ConfirmKind::Web, unknown, "Open this page?", url).await
     {
         return Ok("The user chose not to open it.".into());
@@ -405,7 +532,7 @@ mod tests {
             mock_server_full("200 OK", "Content-Type: text/html\r\n", vec![DDG.into()]);
         let mut c = local_ctx();
         Arc::get_mut(&mut c.shared).unwrap().web.search_url = url;
-        let out = search(&mut c, "q").await.unwrap();
+        let out = search(&mut c, "q", false).await.unwrap();
         assert!(
             out.contains("1. Example & Co\n   https://example.com/a?x=1&y=2\n   The first snippet"),
             "{out}"
@@ -539,5 +666,94 @@ mod tests {
         c.allowed_urls.clear();
         c.cfg.tier = Tier::CarteBlanche;
         assert_eq!(fetch(&mut c, &url).await.unwrap(), "hello");
+    }
+
+    fn with_search(c: &mut Ctx, url: String, key: Option<&str>) {
+        let w = &mut Arc::get_mut(&mut c.shared).unwrap().web;
+        w.search_url = url.clone();
+        w.brave_url = url;
+        w.key = key.map(str::to_string);
+    }
+
+    #[tokio::test]
+    async fn ddg_bot_challenge_is_blocked_not_no_results() {
+        for (status, body) in [
+            ("202 Accepted", "<html><script src=\"/anomaly.js\"></script></html>"),
+            ("200 OK", "<html>Please complete the captcha</html>"),
+            ("200 OK", "<html><body>nothing here</body></html>"),
+        ] {
+            let (url, _rx) = mock_server_full(status, "Content-Type: text/html\r\n", vec![body.into()]);
+            let mut c = local_ctx();
+            with_search(&mut c, url, None);
+            let e = search(&mut c, "q", false).await.unwrap_err();
+            assert!(e.starts_with("SEARCH_BLOCKED: DuckDuckGo is blocking"), "{e}");
+        }
+        let page = r#"<div class="no-results">No results.</div>"#;
+        let (url, _rx) = mock_server_full("200 OK", "", vec![page.into()]);
+        let mut c = local_ctx();
+        with_search(&mut c, url, None);
+        assert_eq!(search(&mut c, "q", false).await.unwrap(), "No results found.");
+    }
+
+    #[tokio::test]
+    async fn brave_json_parses_and_strips_markup() {
+        let json = r#"{"web":{"results":[{"title":"Rust &amp; Co","url":"https://r.test/a","description":"The <strong>best</strong> lang"}]}}"#;
+        let (url, rx) = mock_server_full("200 OK", "Content-Type: application/json\r\n", vec![json.into()]);
+        let mut c = local_ctx();
+        with_search(&mut c, url, Some("k"));
+        let out = search(&mut c, "rust", false).await.unwrap();
+        assert!(out.contains("1. Rust & Co\n   https://r.test/a\n   The best lang"), "{out}");
+        assert!(c.tainted && c.allowed_urls.contains("https://r.test/a"));
+        drop(rx);
+    }
+
+    #[tokio::test]
+    async fn brave_news_shows_age_and_bad_keys_and_limits_have_codes() {
+        let news = r#"{"results":[{"title":"T","url":"https://n.test/","description":"d","age":"2 hours ago"}]}"#;
+        let (url, _rx) = mock_server_full("200 OK", "", vec![news.into()]);
+        let mut c = local_ctx();
+        with_search(&mut c, url, Some("k"));
+        let out = search(&mut c, "q", true).await.unwrap();
+        assert!(out.contains("(2 hours ago) d"), "{out}");
+        for (status, code, hint) in [
+            ("401 Unauthorized", "SEARCH_NOT_CONFIGURED", "check your Brave key"),
+            ("403 Forbidden", "SEARCH_NOT_CONFIGURED", "check your Brave key"),
+            ("429 Too Many Requests", "SEARCH_FAILED", "try again in a minute"),
+        ] {
+            let (url, _rx) = mock_server_full(status, "", vec!["{}".into()]);
+            let mut c = local_ctx();
+            with_search(&mut c, url, Some("k"));
+            let e = search(&mut c, "q", false).await.unwrap_err();
+            assert!(e.starts_with(code) && e.contains(hint), "{e}");
+        }
+    }
+
+    #[tokio::test]
+    async fn news_without_a_key_is_not_configured() {
+        let mut c = local_ctx();
+        with_search(&mut c, "http://127.0.0.1:1".into(), None);
+        // No stored key exists for the test service.
+        if crate::secrets::get("search-key").is_none() {
+            let e = search(&mut c, "q", true).await.unwrap_err();
+            assert!(e.starts_with("SEARCH_NOT_CONFIGURED: News search needs"), "{e}");
+        }
+    }
+
+    #[tokio::test]
+    async fn competent_fetch_of_unknown_url_never_asks_conservative_does() {
+        let (url, _rx) = mock_server_full("200 OK", "Content-Type: text/plain\r\n", vec!["hi".into()]);
+        let mut c = local_ctx();
+        c.tainted = true;
+        c.cfg.tier = Tier::Competent;
+        assert_eq!(fetch(&mut c, &url).await.unwrap(), "hi");
+    }
+
+    /// Documents why keyless search needs a key: DDG answers bots with 202.
+    #[tokio::test]
+    #[ignore = "network: hits duckduckgo.com"]
+    async fn live_ddg_blocks_automated_requests() {
+        let c = ctx();
+        let e = ddg(&c.shared, "rust").await.unwrap_err();
+        assert!(e.starts_with("SEARCH_BLOCKED"), "{e}");
     }
 }

@@ -9,6 +9,7 @@ mod bridge;
 mod config;
 mod debug;
 mod email;
+mod errors;
 mod facts;
 mod imap_lookup;
 mod journal;
@@ -199,15 +200,26 @@ async fn serve(shared: Arc<Shared>) {
                 }),
             },
             In::SecretStatus => {
-                let [llm_key, stt_key, email_password, outlook] =
+                let [llm_key, stt_key, email_password, outlook, search_key] =
                     tokio::task::spawn_blocking(secrets::status)
                         .await
-                        .unwrap_or([false; 4]);
+                        .unwrap_or([false; 5]);
                 emit(&Out::SecretStatus {
                     llm_key,
                     stt_key,
                     email_password,
                     outlook,
+                    search_key,
+                });
+            }
+            In::SearchTest => {
+                let s = shared.clone();
+                tokio::spawn(async move {
+                    let (ok, message) = match web::probe(&s).await {
+                        Ok(m) => (true, m),
+                        Err(e) => (false, e),
+                    };
+                    emit(&Out::SearchTest { ok, message });
                 });
             }
             In::LibraryStatus => emit_library_status(&shared),

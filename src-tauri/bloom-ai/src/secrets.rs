@@ -12,7 +12,13 @@ const SERVICE: &str = "bloom-ai";
 #[cfg(test)]
 const SERVICE: &str = "bloom-ai-test";
 
-pub const NAMES: [&str; 4] = ["llm-key", "stt-key", "email-password", "outlook-refresh"];
+pub const NAMES: [&str; 5] = [
+    "llm-key",
+    "stt-key",
+    "email-password",
+    "outlook-refresh",
+    "search-key",
+];
 
 /// Credential Manager refuses values over about 1280 characters, and
 /// Microsoft refresh tokens can be longer, so long values are stored in parts:
@@ -65,7 +71,7 @@ pub fn set(name: &str, value: &str) -> Result<(), String> {
 }
 
 /// Which credentials exist, as booleans only: a value never leaves `get`.
-pub fn status() -> [bool; 4] {
+pub fn status() -> [bool; 5] {
     NAMES.map(|name| part(name, 1).get_password().is_ok())
 }
 
@@ -118,9 +124,9 @@ mod tests {
     fn status_reports_existence_only() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         wipe();
-        assert_eq!(status(), [false; 4]);
+        assert_eq!(status(), [false; 5]);
         set("stt-key", "abc").unwrap();
-        assert_eq!(status(), [false, true, false, false]);
+        assert_eq!(status(), [false, true, false, false, false]);
         wipe();
     }
 
@@ -172,7 +178,7 @@ mod tests {
     fn status_reports_chunked_values() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         set("outlook-refresh", &"x".repeat(2500)).unwrap();
-        assert_eq!(status(), [false, false, false, true]);
+        assert_eq!(status(), [false, false, false, true, false]);
         wipe();
     }
 

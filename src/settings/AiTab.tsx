@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { BookOpen, Bot, Cpu, Keyboard, KeyRound, Mail, MessageCircle, Mic, AudioLines, Plug, QrCode, Server, Shield, Sparkles, Trash2 } from "lucide-react";
+import { BookOpen, Bot, Globe, Cpu, Keyboard, KeyRound, Mail, MessageCircle, Mic, AudioLines, Plug, QrCode, Server, Shield, Sparkles, Trash2 } from "lucide-react";
 import qrcode from "qrcode-generator";
 import { SettingRow } from "./SettingRow";
 import { useSettingsSync } from "../hooks/useSettingsSync";
@@ -188,6 +188,8 @@ export function AiTab() {
 	const [login, setLogin] = useState<{ url: string; code: string } | null>(null);
 	const [message, setMessage] = useState("");
 	const [testing, setTesting] = useState(false);
+	const [searchTesting, setSearchTesting] = useState(false);
+	const [searchNote, setSearchNote] = useState("");
 	const [wake, setWake] = useAiSetting("bloom-ai-wake", "false");
 	const [enrolling, setEnrolling] = useState(false);
 	const [next, setNext] = useState(1);
@@ -214,6 +216,15 @@ export function AiTab() {
 		invoke("ai_test_email").catch((e) => {
 			setTesting(false);
 			setMessage(String(e));
+		});
+	};
+
+	const testSearch = () => {
+		setSearchTesting(true);
+		setSearchNote("");
+		invoke("ai_test_search").catch((e) => {
+			setSearchTesting(false);
+			setSearchNote(String(e));
 		});
 	};
 
@@ -257,6 +268,7 @@ export function AiTab() {
 					"llm-key": payload.llm_key,
 					"stt-key": payload.stt_key,
 					"email-password": payload.email_password,
+					"search-key": payload.search_key,
 				}));
 			if (payload.type === "library_status") {
 				setReloading(false);
@@ -269,6 +281,10 @@ export function AiTab() {
 			if (payload.type === "login_done") {
 				setLogin(null);
 				setMessage(payload.message);
+			}
+			if (payload.type === "search_test") {
+				setSearchTesting(false);
+				setSearchNote(payload.message);
 			}
 			if (payload.type === "email_test") {
 				setTesting(false);
@@ -453,6 +469,22 @@ export function AiTab() {
 						</SettingRow>
 						<SettingRow icon={KeyRound} label="API key" desc="Kept in Windows Credential Manager" divider={false}>
 							<SecretField name="llm-key" saved={!!saved["llm-key"]} placeholder="paste key" />
+						</SettingRow>
+					</div>
+
+					<div className="setting-group-label">Web search</div>
+					<div className="setting-group">
+						<SettingRow
+							icon={Globe}
+							label="Brave Search key"
+							desc={saved["search-key"] ? "Searching with Brave Search" : "No key: DuckDuckGo, which now blocks most PCs. Free key at brave.com/search/api"}
+							divider={false}
+						>
+							<SecretField name="search-key" saved={!!saved["search-key"]} placeholder="paste key" />
+							<button className="ai-btn" disabled={searchTesting} onClick={testSearch}>
+								{searchTesting ? "Testing..." : "Test"}
+							</button>
+							{searchNote && <span className="ai-note">{searchNote}</span>}
 						</SettingRow>
 					</div>
 

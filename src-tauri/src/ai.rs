@@ -521,6 +521,12 @@ pub fn ai_test_email(app: AppHandle) -> Result<(), String> {
     send(&app, json!({ "type": "test_email" }))
 }
 
+/// Runs one search with the configured provider; `search_test` follows.
+#[tauri::command]
+pub fn ai_test_search(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "search_test" }))
+}
+
 /// Records "Hey <name>" sample `index` (1 starts over); `enroll_saved` follows.
 #[tauri::command]
 pub fn ai_enroll_sample(app: AppHandle, index: u32) -> Result<(), String> {

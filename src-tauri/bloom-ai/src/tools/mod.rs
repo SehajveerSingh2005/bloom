@@ -122,8 +122,8 @@ pub fn schema() -> Value {
         ),
         tool(
             "web_search",
-            "Search the web (DuckDuckGo) for current events, prices, or anything after your training. Returns titles, links and snippets.",
-            json!({ "query": { "type": "string" } }),
+            "Search the web for current events, prices, or anything after your training. Returns titles, links and snippets. Set news to true for time-sensitive news (needs a Brave key).",
+            json!({ "query": { "type": "string" }, "news": { "type": "boolean" } }),
             &["query"],
         ),
         tool(
@@ -271,7 +271,9 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
             })
         }
         "forget" => forget(ctx, args["id"].as_u64().ok_or("missing id")?).await,
-        "web_search" => web::search(ctx, str_arg(args, "query")?).await,
+        "web_search" => {
+            web::search(ctx, str_arg(args, "query")?, args["news"].as_bool() == Some(true)).await
+        }
         "web_fetch" => web::fetch(ctx, str_arg(args, "url")?).await,
         // Skill folders are third-party content: what they say is data.
         "use_skill" => {

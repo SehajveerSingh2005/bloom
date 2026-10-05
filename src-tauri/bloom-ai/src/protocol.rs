@@ -16,6 +16,7 @@ pub enum In {
     SetSecret { name: String, value: String },
     OutlookLogin,
     TestEmail,
+    SearchTest,
     SecretStatus,
     WakeOn,
     WakeOff,
@@ -85,6 +86,7 @@ pub enum Out {
         stt_key: bool,
         email_password: bool,
         outlook: bool,
+        search_key: bool,
     },
     SecretSaved {
         name: String,
@@ -94,6 +96,10 @@ pub enum Out {
         code: String,
     },
     LoginDone {
+        ok: bool,
+        message: String,
+    },
+    SearchTest {
         ok: bool,
         message: String,
     },

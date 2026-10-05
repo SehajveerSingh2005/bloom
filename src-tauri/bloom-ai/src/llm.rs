@@ -1,7 +1,21 @@
 //! One call to an OpenAI-compatible chat-completions endpoint. Not streamed:
 //! replies are short, and one event per reply keeps the UI idle meanwhile.
 
+use crate::errors::{coded, MODEL_TOOL_CALL_FAILED};
 use serde_json::{json, Value};
+
+const TOOL_FAILED: &str = "The model sent a broken tool call twice. Try again, or pick a model with reliable tool calling (for Groq: llama-3.3-70b-versatile or openai/gpt-oss-120b).";
+
+/// Groq answers 400 `tool_use_failed`; other OpenAI-compatible servers word it differently.
+fn is_bad_tool_call(error: &Value) -> bool {
+    let said = format!("{} {}", error["code"].as_str().unwrap_or_default(), error["message"].as_str().unwrap_or_default()).to_ascii_lowercase();
+    said.contains("tool_use_failed") || said.contains("invalid_tool_call") || said.contains("invalid tool call") || said.contains("failed to call a function") || !error["failed_generation"].is_null()
+}
+
+/// True for the error `chat` returns when the model twice-over cannot call tools.
+pub fn is_tool_call_failure(e: &str) -> bool {
+    e.starts_with(MODEL_TOOL_CALL_FAILED)
+}
 
 pub struct Llm {
     pub http: reqwest::Client,
@@ -32,6 +46,9 @@ impl Llm {
             .await
             .map_err(|e| format!("The model sent something unreadable: {e}"))?;
         if !status.is_success() {
+            if status.as_u16() == 400 && is_bad_tool_call(&reply["error"]) {
+                return Err(coded(MODEL_TOOL_CALL_FAILED, TOOL_FAILED));
+            }
             let detail = reply["error"]["message"]
                 .as_str()
                 .unwrap_or("request failed");

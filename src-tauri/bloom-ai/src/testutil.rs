@@ -29,11 +29,19 @@ pub fn mock_server_full(
     headers: &'static str,
     bodies: Vec<String>,
 ) -> (String, mpsc::Receiver<String>) {
+    mock_server_each(headers, bodies.into_iter().map(|b| (status, b)).collect())
+}
+
+/// Like `mock_server_full`, with a status line per answer.
+pub fn mock_server_each(
+    headers: &'static str,
+    bodies: Vec<(&'static str, String)>,
+) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        for body in bodies {
+        for (status, body) in bodies {
             let (mut stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut len = 0usize;
