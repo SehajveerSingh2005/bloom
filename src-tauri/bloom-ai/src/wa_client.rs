@@ -7,8 +7,9 @@
 //! Contacts: history sync stays off, but app-state sync is on (the library
 //! does it on link). On connect the groups the user is in are fetched and,
 //! at most once a day, the address book (`critical_unblock_low`) is synced
-//! afresh; later address-book changes arrive as `ContactUpdate`s. Both land
-//! in whatsapp\contacts.json (wa_contacts.rs).
+//! afresh from the server (no phone needed); later address-book changes
+//! arrive as `ContactUpdate`s. Both land in whatsapp\contacts.json
+//! (wa_contacts.rs).
 
 use crate::wa_contacts::{self, Contact, Group};
 use crate::whatsapp::{remove_session, Event, Link, Message, Status};
@@ -21,7 +22,9 @@ use tokio::sync::{mpsc, oneshot};
 use whatsapp_rust::pair_code::PairCodeOptions;
 use whatsapp_rust::prelude::*;
 use whatsapp_rust::sync_task::MajorSyncTask;
+use whatsapp_rust::wacore::appstate::hash::HashState;
 use whatsapp_rust::wacore::appstate::patch_decode::WAPatchName;
+use whatsapp_rust::wacore::types::LearningSource;
 use whatsapp_rust::wacore::store::DevicePropsOverride;
 
 enum Cmd {
@@ -139,6 +142,8 @@ struct Seen {
     groups: HashMap<String, String>,
     /// Address-book entries not saved yet: (phone number or LID, name).
     pending: Vec<(Jid, String)>,
+    /// (LID, phone number) pairs those entries carried, for the library.
+    links: Vec<(String, String)>,
     /// The connect-time sync is running: updates wait for it.
     refreshing: bool,
 }
@@ -249,10 +254,21 @@ impl Conn {
         });
         let full = wa_contacts::stale(&self.dir);
         if full {
+            // Once the collection has a version, the library drops the
+            // snapshot a full sync returns as stale (not newer than what it
+            // holds), so no names would ever come again. Forgetting the
+            // version makes it apply, as on link. If the sync fails, version
+            // 0 makes the library's own retry fetch a snapshot too.
+            let name = WAPatchName::CriticalUnblockLow;
+            let _ = client
+                .persistence_manager()
+                .backend()
+                .set_version(name.as_str(), HashState::default())
+                .await;
             // Names arrive through `Book` while this runs. A failed sync is
             // retried by the library, and its names arrive the same way.
             let task = MajorSyncTask::AppStateSync {
-                name: WAPatchName::CriticalUnblockLow,
+                name,
                 full_sync: true,
             };
             client.process_sync_task(task).await;
@@ -263,15 +279,25 @@ impl Conn {
 
     /// Saves what `Book` recorded. `full`: it is the whole address book.
     async fn save(&self, client: &Arc<Client>, full: bool, groups: Option<Vec<Group>>) {
-        let pending = {
+        let (pending, links) = {
             let mut seen = self.seen.lock().unwrap();
             if seen.refreshing {
                 return;
             }
-            std::mem::take(&mut seen.pending)
+            (
+                std::mem::take(&mut seen.pending),
+                std::mem::take(&mut seen.links),
+            )
         };
         if pending.is_empty() && groups.is_none() {
             return;
+        }
+        // Lets LID-only chats with these people resolve to their numbers.
+        // "Other" only seeds LIDs the library doesn't know yet.
+        if !links.is_empty() {
+            let _ = client
+                .add_lid_pn_mappings(links, LearningSource::Other)
+                .await;
         }
         let mut contacts = Vec::new();
         for (jid, name) in pending {
@@ -358,7 +384,9 @@ impl EventHandler for Book {
     fn handle_event(&self, event: Arc<whatsapp_rust::prelude::Event>) {
         if let whatsapp_rust::prelude::Event::ContactUpdate(u) = &*event {
             if let Some(entry) = address_entry(&u.jid, &u.action) {
-                self.0.seen.lock().unwrap().pending.push(entry);
+                let mut seen = self.0.seen.lock().unwrap();
+                seen.pending.push(entry);
+                seen.links.extend(lid_pn(&u.jid, &u.action));
             }
         }
     }
@@ -384,6 +412,21 @@ fn address_entry(
         .and_then(|p| p.parse::<Jid>().ok())
         .filter(Jid::is_pn);
     Some((pn.unwrap_or_else(|| jid.clone()), name.to_string()))
+}
+
+/// (LID, phone number) user parts when the entry links the two: address-book
+/// entries now come keyed by LID with the number in `pn_jid`.
+fn lid_pn(
+    jid: &Jid,
+    action: &wa::sync_action_value::ContactAction,
+) -> Option<(String, String)> {
+    let other = |s: &Option<String>| s.as_deref().and_then(|s| s.parse::<Jid>().ok());
+    let pick = |is: fn(&Jid) -> bool, s: &Option<String>| {
+        Some(jid.clone()).filter(is).or_else(|| other(s).filter(is))
+    };
+    let lid = pick(Jid::is_lid, &action.lid_jid)?;
+    let pn = pick(Jid::is_pn, &action.pn_jid)?;
+    Some((lid.user_base().to_string(), pn.user_base().to_string()))
 }
 
 /// (contacts, groups) for Settings.
@@ -816,6 +859,57 @@ mod tests {
             Some((lid.clone(), "Sam".into()))
         );
         assert_eq!(address_entry(&lid, &ContactAction::default()), None);
+    }
+
+    /// What `save` does with an entry, minus the library's LID lookup (which
+    /// knows nothing here): a LID-keyed entry needs `pn_jid` for a number.
+    fn saved(jid: &Jid, action: &wa::sync_action_value::ContactAction) -> wa_contacts::Book {
+        let (key, name) = address_entry(jid, action).unwrap();
+        let number = direct_key(&key, None, None, None).unwrap_or(key.to_non_ad_string());
+        let dir = crate::testutil::temp_dir();
+        wa_contacts::update(&dir, true, vec![Contact { name, number }], None).unwrap()
+    }
+
+    #[test]
+    fn a_lid_keyed_contact_saves_its_pn_jid_number() {
+        use wa::sync_action_value::ContactAction;
+        let lid = Jid::lid("12345");
+        let papa = ContactAction {
+            full_name: Some("Papa".into()),
+            pn_jid: Some("6594551453@s.whatsapp.net".into()),
+            ..Default::default()
+        };
+        let book = saved(&lid, &papa);
+        assert_eq!(book.name_of("+6594551453"), Some("Papa"));
+        assert!(book.synced_at.is_some(), "a full sync that brought names");
+        assert_eq!(
+            lid_pn(&lid, &papa),
+            Some(("12345".into(), "6594551453".into()))
+        );
+        // Keyed by number with the LID given: the same pair.
+        let by_pn = ContactAction {
+            full_name: Some("Papa".into()),
+            lid_jid: Some("12345@lid".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            lid_pn(&Jid::pn("6594551453"), &by_pn),
+            Some(("12345".into(), "6594551453".into()))
+        );
+    }
+
+    #[test]
+    fn a_lid_keyed_contact_with_no_number_is_skipped() {
+        use wa::sync_action_value::ContactAction;
+        let lid = Jid::lid("12345");
+        let bare = ContactAction {
+            full_name: Some("Papa".into()),
+            ..Default::default()
+        };
+        let book = saved(&lid, &bare);
+        assert!(book.contacts.is_empty());
+        assert_eq!(book.synced_at, None, "nothing usable came: still stale");
+        assert_eq!(lid_pn(&lid, &bare), None);
     }
 
     #[test]

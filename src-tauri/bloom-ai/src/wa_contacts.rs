@@ -63,7 +63,7 @@ fn stale_at(dir: &Path, now: i64) -> bool {
 }
 
 /// Applies a sync and saves it. `full`: `contacts` is the whole address book
-/// and replaces the old one (unless empty: that is a failed sync, which
+/// and replaces the old one (unless none is usable: a failed sync, which
 /// leaves the book stale); otherwise they are added or renamed by number.
 /// `groups`, when given, replaces the group list. An unreadable file is left
 /// as it is. Returns the saved book.
@@ -74,14 +74,16 @@ pub fn update(
     groups: Option<Vec<Group>>,
 ) -> Result<Book, String> {
     let mut book = load(dir)?;
+    // Nameless or number-less (an unresolved LID) entries never count.
+    let contacts: Vec<Contact> = contacts
+        .into_iter()
+        .filter(|c| !c.name.trim().is_empty() && c.number.starts_with('+'))
+        .collect();
     if full && !contacts.is_empty() {
         book.contacts.clear();
         book.synced_at = Some(chrono::Utc::now().timestamp());
     }
     for c in contacts {
-        if c.name.trim().is_empty() || !c.number.starts_with('+') {
-            continue;
-        }
         book.contacts.retain(|o| o.number != c.number);
         book.contacts.push(c);
     }
