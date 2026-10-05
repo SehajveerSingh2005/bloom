@@ -30,6 +30,17 @@ pub enum In {
     WhatsappOff,
     WhatsappPairCode { phone: String },
     WhatsappUnlink,
+    /// Settings > Contacts: `action` is list, add_tag, remove_tag, add_email,
+    /// delete or harvest; `id` picks the person, `value` is the tag or address.
+    Contacts {
+        action: String,
+        #[serde(default)]
+        id: String,
+        #[serde(default)]
+        value: String,
+        #[serde(default)]
+        label: String,
+    },
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone, Copy)]
@@ -140,6 +151,16 @@ pub enum Out {
     },
     /// A request from the user's phone started (a toast, no message text).
     WhatsappRequest,
+    /// people.json for Settings > Contacts (Settings only), how many people
+    /// the mail scan found, whether the account is a Microsoft one (not
+    /// scanned), and what the last change did.
+    Contacts {
+        people: Vec<crate::people::Person>,
+        mail: usize,
+        outlook: bool,
+        message: Option<String>,
+        error: Option<String>,
+    },
 }
 
 /// Writes one message to Bloom. A failed write means Bloom is gone; the stdin
@@ -288,6 +309,30 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Out::WhatsappRequest).unwrap(),
             r#"{"type":"whatsapp_request"}"#
+        );
+    }
+
+    #[test]
+    fn contacts_messages() {
+        assert_eq!(
+            parse(r#"{"type":"contacts","action":"list"}"#),
+            Ok(In::Contacts {
+                action: "list".into(),
+                id: String::new(),
+                value: String::new(),
+                label: String::new()
+            })
+        );
+        let out = Out::Contacts {
+            people: vec![],
+            mail: 3,
+            outlook: false,
+            message: None,
+            error: Some("x".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&out).unwrap(),
+            r#"{"type":"contacts","people":[],"mail":3,"outlook":false,"message":null,"error":"x"}"#
         );
     }
 

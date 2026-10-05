@@ -116,3 +116,65 @@
 	gap: 6px;
 	cursor: pointer;
 }
+
+/* Settings > Contacts: one card per saved person. */
+.ai-person {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 14px;
+	border-top: 1px solid rgba(255, 255, 255, 0.06);
+	font-size: 12px;
+}
+
+.ai-person-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.ai-person-line {
+	overflow-wrap: anywhere;
+	opacity: 0.85;
+}
+
+.ai-person .ai-secret {
+	justify-content: flex-start;
+}
+
+.ai-tags {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+
+.ai-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	padding: 1px 4px 1px 8px;
+	border-radius: 10px;
+	background: rgba(255, 255, 255, 0.1);
+	font-size: 11px;
+}
+
+.ai-tag button {
+	padding: 0 3px;
+	border: none;
+	background: none;
+	color: inherit;
+	opacity: 0.7;
+	cursor: pointer;
+}
+
+.ai-field.ai-small {
+	flex: 0 1 96px;
+	width: 96px;
+}
+
+.ai-more {
+	margin: 6px 14px;
+	white-space: normal;
+}

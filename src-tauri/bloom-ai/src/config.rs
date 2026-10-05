@@ -41,7 +41,7 @@ pub struct Config {
     pub enabled: bool,
     /// Automatic WhatsApp replies (autoreply.rs).
     pub auto_reply: bool,
-    /// Numbers that get them; "*" is anyone in phones.json.
+    /// Numbers that get them; "*" is anyone the user saved a number for.
     pub auto_to: Vec<String>,
     /// "How to reply", in the user's words.
     pub auto_style: String,

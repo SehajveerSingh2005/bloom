@@ -16,6 +16,28 @@ impl imap::Authenticator for XOAuth2<'_> {
     }
 }
 
+pub type Session = imap::Session<native_tls::TlsStream<std::net::TcpStream>>;
+
+/// Blocking: a logged-in IMAP session (port 993, TLS).
+pub fn connect(server: &Server, user: &str, secret: &str) -> Result<Session, String> {
+    let tls = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
+    let client = imap::connect((server.imap.as_str(), 993), &server.imap, &tls)
+        .map_err(|e| format!("Can't reach {}: {e}", server.imap))?;
+    if server.oauth {
+        client
+            .authenticate(
+                "XOAUTH2",
+                &XOAuth2 {
+                    user,
+                    token: secret,
+                },
+            )
+            .map_err(|(e, _)| e.to_string())
+    } else {
+        client.login(user, secret).map_err(|(e, _)| e.to_string())
+    }
+}
+
 /// Blocking: call from spawn_blocking. Returns (display name, address) pairs
 /// from the 20 most recent sent messages that match.
 pub fn sent_to(
@@ -32,36 +54,20 @@ pub fn sent_to(
     let Some(first) = words.first() else {
         return Ok(Vec::new());
     };
-    let tls = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
-    let client = imap::connect((server.imap.as_str(), 993), &server.imap, &tls)
-        .map_err(|e| format!("Can't reach {}: {e}", server.imap))?;
-    let mut session = if server.oauth {
-        client
-            .authenticate(
-                "XOAUTH2",
-                &XOAuth2 {
-                    user,
-                    token: secret,
-                },
-            )
-            .map_err(|(e, _)| e.to_string())?
-    } else {
-        client.login(user, secret).map_err(|(e, _)| e.to_string())?
-    };
+    let mut session = connect(server, user, secret)?;
     let result = search(&mut session, first, &words);
     let _ = session.logout();
     result
 }
 
-fn search<T: std::io::Read + std::io::Write>(
+/// The Sent folder's name: the one flagged \Sent, else a usual name.
+pub fn sent_folder<T: std::io::Read + std::io::Write>(
     session: &mut imap::Session<T>,
-    first: &str,
-    words: &[String],
-) -> Result<Vec<(String, String)>, String> {
+) -> Result<String, String> {
     let folders = session
         .list(Some(""), Some("*"))
         .map_err(|e| e.to_string())?;
-    let sent = folders
+    folders
         .iter()
         .find(|f| {
             f.attributes()
@@ -77,7 +83,15 @@ fn search<T: std::io::Read + std::io::Write>(
             })
         })
         .map(|f| f.name().to_string())
-        .ok_or("No Sent folder found.")?;
+        .ok_or_else(|| "No Sent folder found.".to_string())
+}
+
+fn search<T: std::io::Read + std::io::Write>(
+    session: &mut imap::Session<T>,
+    first: &str,
+    words: &[String],
+) -> Result<Vec<(String, String)>, String> {
+    let sent = sent_folder(session)?;
     session.examine(&sent).map_err(|e| e.to_string())?;
     let safe: String = first.chars().filter(|c| !matches!(c, '"' | '\\')).collect();
     let mut ids: Vec<u32> = session
@@ -110,7 +124,7 @@ fn search<T: std::io::Read + std::io::Write>(
             .to_lowercase();
             let name = address
                 .name
-                .map(|n| String::from_utf8_lossy(n).into_owned())
+                .map(|n| crate::mail_harvest::decode_words(&String::from_utf8_lossy(n)))
                 .unwrap_or_default();
             if matches_all(&name, &addr, words) && !found.iter().any(|(_, a)| a == &addr) {
                 found.push((name, addr));

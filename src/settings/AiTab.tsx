@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { BookOpen, Bot, Globe, Cpu, Keyboard, KeyRound, Mail, MessageCircle, Mic, AudioLines, Plug, QrCode, Server, Shield, Sparkles, Trash2 } from "lucide-react";
+import { BookOpen, Bot, Globe, Cpu, Keyboard, KeyRound, Mail, MessageCircle, Mic, AudioLines, Plug, QrCode, Server, Shield, Sparkles, Trash2, Users } from "lucide-react";
 import qrcode from "qrcode-generator";
 import { SettingRow } from "./SettingRow";
 import { useSettingsSync } from "../hooks/useSettingsSync";
@@ -48,6 +48,105 @@ interface WaStatus {
 	/** How many are in whatsapp\contacts.json, once synced. */
 	contacts?: number | null;
 	groups?: number | null;
+}
+
+/** One person in the agent's people.json. */
+interface Person {
+	id: string;
+	name: string;
+	emails: { address: string; label: string; source: string; primary: boolean }[];
+	phones: { number: string; label: string; source: string; primary: boolean }[];
+	tags: string[];
+}
+
+/** The agent's `contacts` answer (Settings only). */
+interface Contacts {
+	people: Person[];
+	/** How many people the mail-header scan found. */
+	mail: number;
+	/** A Microsoft account: its mail is not scanned. */
+	outlook: boolean;
+	message: string | null;
+	error: string | null;
+}
+
+const SOURCES: Record<string, string> = { user: "saved by you", mail: "from mail", whatsapp: "from WhatsApp", outlook: "from Outlook" };
+
+const CONTACTS_SHOWN = 50;
+
+type ContactAction = (action: string, id?: string, value?: string, label?: string) => void;
+
+function ContactCard({ person, run }: { person: Person; run: ContactAction }) {
+	const [tag, setTag] = useState("");
+	const [email, setEmail] = useState("");
+	const [label, setLabel] = useState("");
+	const [deleting, setDeleting] = useState(false);
+	const addTag = () => {
+		if (!tag.trim()) return;
+		run("add_tag", person.id, tag.trim());
+		setTag("");
+	};
+	const addEmail = () => {
+		run("add_email", person.id, email.trim(), label.trim());
+		setEmail("");
+		setLabel("");
+	};
+	const note = (source: string, primary: boolean) => `${SOURCES[source] ?? source}${primary ? ", main" : ""}`;
+	return (
+		<div className="ai-person">
+			<div className="ai-person-head">
+				<span className="setting-label">{person.name}</span>
+				<button
+					className="ai-btn"
+					onBlur={() => setDeleting(false)}
+					onClick={() => {
+						if (!deleting) return setDeleting(true);
+						setDeleting(false);
+						run("delete", person.id);
+					}}
+				>
+					{deleting ? "Delete? Yes" : "Delete"}
+				</button>
+			</div>
+			{person.emails.map((e) => (
+				<div className="ai-person-line" key={e.address}>
+					{e.address}
+					{e.label && ` (${e.label})`} <span className="ai-note">{note(e.source, e.primary)}</span>
+				</div>
+			))}
+			{person.phones.map((p) => (
+				<div className="ai-person-line" key={p.number}>
+					{p.number}
+					{p.label && ` (${p.label})`} <span className="ai-note">{note(p.source, p.primary)}</span>
+				</div>
+			))}
+			<div className="ai-tags">
+				{person.tags.map((t) => (
+					<span className="ai-tag" key={t}>
+						{t}
+						<button aria-label={`Remove tag ${t}`} title="Remove tag" onClick={() => run("remove_tag", person.id, t)}>
+							×
+						</button>
+					</span>
+				))}
+				<input
+					className="ai-field ai-small"
+					value={tag}
+					placeholder="add tag"
+					onChange={(e) => setTag(e.target.value)}
+					onKeyDown={(e) => e.key === "Enter" && addTag()}
+					onBlur={addTag}
+				/>
+			</div>
+			<div className="ai-secret">
+				<input className="ai-field" value={email} placeholder="another email" onChange={(e) => setEmail(e.target.value)} />
+				<input className="ai-field ai-small" value={label} placeholder="label: work" onChange={(e) => setLabel(e.target.value)} />
+				<button className="ai-btn" disabled={!email.trim()} onClick={addEmail}>
+					Add email
+				</button>
+			</div>
+		</div>
+	);
 }
 
 /** The pairing string as a QR code, drawn here: it never leaves the PC. */
@@ -209,6 +308,15 @@ export function AiTab() {
 	const [sign, setSign] = useAiSetting("bloom-ai-whatsapp-sign", "true");
 	const [selfChat, setSelfChat] = useAiSetting("bloom-ai-whatsapp-selfchat", "false");
 	const [contacts, setContacts] = useState<[string, string][]>([]);
+	const [book, setBook] = useState<Contacts | null>(null);
+	const [contactQuery, setContactQuery] = useState("");
+	const [scanning, setScanning] = useState(false);
+
+	const runContacts: ContactAction = (action, id, value, label) =>
+		invoke("ai_contacts", { action, id, value, label }).catch((e) => {
+			setScanning(false);
+			setMessage(String(e));
+		});
 
 	const testEmail = () => {
 		setTesting(true);
@@ -239,6 +347,7 @@ export function AiTab() {
 		if (enabled === "true") {
 			invoke("ai_secret_status").catch(() => {});
 			invoke("ai_library_status").catch(() => {});
+			invoke("ai_contacts", { action: "list" }).catch(() => {});
 		}
 	}, [enabled]);
 
@@ -314,9 +423,15 @@ export function AiTab() {
 		});
 		// Only Settings gets this event: it carries the QR and link code.
 		const offWa = listen<WaStatus>("ai-whatsapp", ({ payload }) => setWa(payload));
+		// Settings only too: names, addresses and numbers.
+		const offContacts = listen<Contacts>("ai-contacts", ({ payload }) => {
+			setBook(payload);
+			setScanning(false);
+		});
 		return () => {
 			off.then((f) => f());
 			offWa.then((f) => f());
+			offContacts.then((f) => f());
 		};
 	}, []);
 
@@ -421,6 +536,15 @@ export function AiTab() {
 	const auto = parseAutoTo(autoTo);
 	const toggleNumber = (n: string) =>
 		setAutoTo(JSON.stringify(auto.numbers.includes(n) ? auto.numbers.filter((x) => x !== n) : [...auto.numbers, n]));
+	const q = contactQuery.trim().toLowerCase();
+	const matchingContacts = [...(book?.people ?? [])].sort((a, b) => a.name.localeCompare(b.name)).filter(
+		(p) =>
+			!q ||
+			[p.name, ...p.emails.map((e) => e.address), ...p.phones.map((x) => x.number), ...p.tags].some((s) =>
+				s.toLowerCase().includes(q)
+			)
+	);
+	const shownContacts = matchingContacts.slice(0, CONTACTS_SHOWN);
 	const vk = Number(hotkey) || 165;
 	const typingKey = vk === 0x20 || (vk >= 0x30 && vk <= 0x5a);
 
@@ -865,6 +989,53 @@ export function AiTab() {
 							</>
 						)}
 					</div>
+
+					<div className="setting-group-label">Contacts</div>
+					<div className="setting-group">
+						<SettingRow
+							icon={Mail}
+							label={`${book?.mail ?? 0} contacts found in your mail`}
+							desc={
+								book?.outlook
+									? "Microsoft accounts aren't scanned: their contacts will come from Outlook sync"
+									: "Names and addresses from your last 2000 sent and 2000 received emails (headers only). Scanned after a Test, and at most once a day when a name isn't found."
+							}
+						>
+							<button
+								className="ai-btn"
+								disabled={scanning || !!book?.outlook || !email}
+								onClick={() => {
+									setScanning(true);
+									runContacts("harvest");
+								}}
+							>
+								{scanning ? "Scanning..." : "Refresh"}
+							</button>
+						</SettingRow>
+						<SettingRow
+							icon={Users}
+							label={`Saved contacts: ${book?.people.length ?? 0}`}
+							desc={`People ${aiName} saved for you. Deleting one here doesn't touch your mail or WhatsApp, so their next sync may add the person back.`}
+							divider={!!book?.people.length}
+						>
+							<input
+								className="ai-field"
+								value={contactQuery}
+								placeholder="Search"
+								onChange={(e) => setContactQuery(e.target.value)}
+							/>
+						</SettingRow>
+						{shownContacts.map((p) => (
+							<ContactCard key={p.id} person={p} run={runContacts} />
+						))}
+						{matchingContacts.length > CONTACTS_SHOWN && (
+							<p className="ai-note ai-more">
+								Showing {CONTACTS_SHOWN} of {matchingContacts.length}. Search to narrow it down.
+							</p>
+						)}
+					</div>
+					{book?.error && <p className="ai-warning">{book.error}</p>}
+					{!book?.error && book?.message && <p className="ai-warning">{book.message}</p>}
 				</>
 			)}
 

@@ -14,8 +14,10 @@ mod facts;
 mod imap_lookup;
 mod journal;
 mod llm;
+mod mail_harvest;
 mod mcp;
 mod outlook;
+mod people;
 mod phones;
 mod policy;
 mod powershell;
@@ -279,6 +281,10 @@ async fn serve(shared: Arc<Shared>) {
                         Err(e) => (false, e),
                     };
                     emit(&Out::EmailTest { ok, message });
+                    // A working login: scan the mail headers for contacts.
+                    if ok {
+                        emit(&tools::contacts(&s, "harvest", "", "", "").await);
+                    }
                 });
             }
             In::RecordStart => {
@@ -329,6 +335,18 @@ async fn serve(shared: Arc<Shared>) {
                             message,
                         }),
                     }
+                });
+            }
+            In::Contacts {
+                action,
+                id,
+                value,
+                label,
+            } => {
+                let s = shared.clone();
+                // Its own task: a mail scan takes a while.
+                tokio::spawn(async move {
+                    emit(&tools::contacts(&s, &action, &id, &value, &label).await);
                 });
             }
             In::WhatsappOn => whatsapp::on(&shared),

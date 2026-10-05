@@ -3,10 +3,12 @@
 pub mod files;
 
 use crate::agent::Ctx;
+use crate::errors::{coded, CONTACT_AMBIGUOUS, CONTACT_NOT_FOUND};
+use crate::people::{self, Found, Person};
 use crate::protocol::ConfirmKind;
 use crate::{
-    email, facts, imap_lookup, journal, outlook, phones, policy, powershell, secrets, skills,
-    weather, web, whatsapp,
+    email, facts, imap_lookup, journal, mail_harvest, outlook, phones, policy, powershell, secrets,
+    skills, weather, web, whatsapp,
 };
 use serde_json::{json, Value};
 
@@ -74,16 +76,35 @@ pub fn schema() -> Value {
         ),
         tool(
             "find_contact",
-            "Look up a person by name in the user's contacts and return their email address and phone \
-             number. Call this whenever a person is mentioned, and before send_email.",
+            "Look up a person in the user's contacts and return all their email addresses, phone \
+             numbers and tags. A first name, last name, nickname, misspelling, email or number \
+             works. Call this whenever a person is mentioned, and before send_email.",
             json!({ "name": { "type": "string" } }),
             &["name"],
         ),
         tool(
             "save_contact",
-            "Remember a person's email address the user just gave you.",
-            json!({ "name": { "type": "string" }, "email": { "type": "string" } }),
-            &["name", "email"],
+            "Save a person's email address and/or phone number the user just gave you. Adds to \
+             what is saved; changing a saved address asks the user. A person with more than one \
+             email needs at least one tag (like work or personal): pass tags to keep both.",
+            json!({
+                "name": { "type": "string" },
+                "email": { "type": "string" },
+                "phone": { "type": "string" },
+                "label": { "type": "string", "description": "What this address or number is, e.g. work, personal, home" },
+                "tags": { "type": "array", "items": { "type": "string" }, "description": "Single lowercase words, e.g. work, family" }
+            }),
+            &["name"],
+        ),
+        tool(
+            "tag_contact",
+            "Add or remove tags (single lowercase words like work, family, gym) on a saved contact.",
+            json!({
+                "name": { "type": "string" },
+                "add": { "type": "array", "items": { "type": "string" } },
+                "remove": { "type": "array", "items": { "type": "string" } }
+            }),
+            &["name"],
         ),
         tool(
             "save_phone",
@@ -200,6 +221,7 @@ pub fn describe(name: &str, args: &Value) -> String {
         "find_contact" => format!("Looking up {}", arg("name")),
         "save_contact" => format!("Saving {}", arg("name")),
         "save_phone" => format!("Saving {}'s number", arg("name")),
+        "tag_contact" => format!("Tagging {}", arg("name")),
         "send_email" => format!("Emailing {}", arg("to")),
         "run_powershell" => "Running a PowerShell script".into(),
         "remember" => "Remembering that".into(),
@@ -256,7 +278,11 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         "get_weather" => weather::get(ctx, args["city"].as_str()).await,
         "find_contact" => find_contact(ctx, str_arg(args, "name")?).await,
         "save_contact" => save_contact(ctx, args).await,
-        "save_phone" => save_phone(ctx, args).await,
+        "save_phone" => {
+            let name = str_arg(args, "name")?;
+            save_number(ctx, name, str_arg(args, "phone")?, "").await
+        }
+        "tag_contact" => tag_contact(ctx, args),
         "send_email" => send_email(ctx, args).await,
         "remember" => remember(ctx, str_arg(args, "text")?).await,
         "recall" => {
@@ -272,7 +298,12 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         }
         "forget" => forget(ctx, args["id"].as_u64().ok_or("missing id")?).await,
         "web_search" => {
-            web::search(ctx, str_arg(args, "query")?, args["news"].as_bool() == Some(true)).await
+            web::search(
+                ctx,
+                str_arg(args, "query")?,
+                args["news"].as_bool() == Some(true),
+            )
+            .await
         }
         "web_fetch" => web::fetch(ctx, str_arg(args, "url")?).await,
         // Skill folders are third-party content: what they say is data.
@@ -464,29 +495,141 @@ fn list(matches: &[(String, String)]) -> String {
         .join("\n")
 }
 
-async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
-    let matches = email::find(&email::load_contacts(&ctx.shared.data_dir), name);
-    let numbers = phones::find(&ctx.shared.data_dir, name)?;
-    let mut phone_lines: String = numbers
-        .iter()
-        .map(|(n, p)| format!("\n{n} phone: {p}"))
-        .collect();
-    // The user's own files first; WhatsApp's synced names only if they have
-    // no one.
-    let synced = matches.is_empty() && numbers.is_empty() && ctx.cfg.whatsapp;
-    if synced {
-        phone_lines = whatsapp::synced_lines(&ctx.shared.data_dir, name);
+/// A list argument the model may send as an array or as "a, b".
+fn list_arg(args: &Value, key: &str) -> Vec<String> {
+    match &args[key] {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(String::from)
+            .collect(),
+        Value::String(s) => s
+            .split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(String::from)
+            .collect(),
+        _ => Vec::new(),
     }
-    if !matches.is_empty() {
-        return Ok(format!("{}{phone_lines}", list(&matches)));
+}
+
+/// What find_contact searches: people.json, then the mail harvest and (with
+/// WhatsApp on) the synced address book, merged in with their source.
+fn contact_view(dir: &std::path::Path, whatsapp: bool) -> Result<Vec<Person>, String> {
+    let mut all = people::load(dir)?;
+    for p in mail_harvest::people(dir) {
+        people::merge(&mut all, p);
     }
-    // Not saved yet: look through mail the user sent before. Any failure here
-    // (no email set up, offline) just falls through to asking the user.
+    if whatsapp {
+        for c in whatsapp::book(dir).contacts {
+            let mut p = Person::new(&c.name, people::WHATSAPP);
+            p.add_phone(&c.number, "", people::WHATSAPP);
+            people::merge(&mut all, p);
+        }
+    }
+    Ok(all)
+}
+
+/// Anything shown that the user did not save themselves: outside data.
+fn synced(p: &Person) -> bool {
+    !p.is_user()
+        || p.emails.iter().any(|e| e.source != people::USER)
+        || p.phones.iter().any(|x| x.source != people::USER)
+}
+
+fn source_note(source: &str, label: &str) -> String {
+    match source {
+        people::MAIL if label == "sent" => {
+            " (from the user's mail; they have written to it)".into()
+        }
+        people::MAIL => " (from the user's mail)".into(),
+        people::WHATSAPP => " (from WhatsApp)".into(),
+        people::OUTLOOK => " (from Outlook)".into(),
+        _ if label.is_empty() => String::new(),
+        _ => format!(" ({label})"),
+    }
+}
+
+/// Every address and number of one person, then their tags.
+fn person_lines(p: &Person) -> String {
+    let emails = p.emails.iter().map(|e| {
+        format!(
+            "{} <{}>{}",
+            p.name,
+            e.address,
+            source_note(&e.source, &e.label)
+        )
+    });
+    let phones = p.phones.iter().map(|x| {
+        format!(
+            "{} phone: {}{}",
+            p.name,
+            x.number,
+            source_note(&x.source, &x.label)
+        )
+    });
+    let tags = (!p.tags.is_empty()).then(|| format!("{} tags: {}", p.name, p.tags.join(", ")));
+    emails
+        .chain(phones)
+        .chain(tags)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+async fn find_contact(ctx: &mut Ctx, query: &str) -> Result<String, String> {
+    let dir = ctx.shared.data_dir.clone();
+    let mut view = contact_view(&dir, ctx.cfg.whatsapp)?;
+    // A miss may mean the mail has new people: scan it, at most once a day.
+    if matches!(people::lookup(&view, query), Found::None) && refresh_mail_if_due(ctx).await {
+        view = contact_view(&dir, ctx.cfg.whatsapp)?;
+    }
+    match people::lookup(&view, query) {
+        Found::One(p, by_other_name) => {
+            ctx.tainted |= by_other_name || synced(p);
+            let mut out = person_lines(p);
+            if p.emails.is_empty() {
+                out += &format!(
+                    "\nNo saved email for {}. Ask the user for the address, then call save_contact.",
+                    p.name
+                );
+            } else if !p.is_user() {
+                out += "\nIf the user confirms, save it with save_contact.";
+            }
+            return Ok(out);
+        }
+        Found::Many(list) => {
+            ctx.tainted |= list.iter().any(|p| synced(p));
+            let names: Vec<&str> = list.iter().map(|p| p.name.as_str()).collect();
+            let question = match names.as_slice() {
+                [one] => format!("Did you mean {one}? Ask the user to confirm."),
+                [rest @ .., last] => {
+                    let count = match names.len() {
+                        2 => "two".to_string(),
+                        3 => "three".to_string(),
+                        n => n.to_string(),
+                    };
+                    format!(
+                        "I found {count} contacts matching {query}: {} or {last}? Ask the user which one they mean.",
+                        rest.join(", ")
+                    )
+                }
+                [] => unreachable!("Many is never empty"),
+            };
+            let details: Vec<String> = list.iter().map(|p| person_lines(p)).collect();
+            return Ok(coded(
+                CONTACT_AMBIGUOUS,
+                &format!("{question}\n{}", details.join("\n")),
+            ));
+        }
+        Found::None => {}
+    }
+    // Not saved and not in the scanned mail: look through older Sent mail.
+    // Any failure here (no email set up, offline) just falls through.
     if let Ok(server) = email::server_for(&ctx.cfg) {
         if let Ok(secret) = mail_secret(&ctx.shared.http, &server).await {
-            let (user, query) = (ctx.cfg.email.clone(), name.to_string());
+            let (user, q) = (ctx.cfg.email.clone(), query.to_string());
             let found = tokio::task::spawn_blocking(move || {
-                imap_lookup::sent_to(&server, &user, &secret, &query)
+                imap_lookup::sent_to(&server, &user, &secret, &q)
             })
             .await
             .map_err(|e| e.to_string())?;
@@ -495,73 +638,213 @@ async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
                     // Display names come from the mailbox: outside content.
                     ctx.tainted = true;
                     return Ok(format!(
-                        "{}\n(Found in the user's Sent mail. If the user confirms one, save it with save_contact.){phone_lines}",
+                        "{}\n(Found in the user's Sent mail. If the user confirms one, save it with save_contact.)",
                         list(&found)
                     ));
                 }
             }
         }
     }
-    if !numbers.is_empty() {
-        return Ok(format!(
-            "No saved email for {name}. Ask the user for the address, then call save_contact.{phone_lines}"
-        ));
-    }
-    if !phone_lines.is_empty() {
-        // Names from WhatsApp (group subjects anyone in them can set): outside
-        // data. The Sent-mail answer above is tainted already.
+    let groups = if ctx.cfg.whatsapp {
+        whatsapp::group_lines(&dir, query)
+    } else {
+        String::new()
+    };
+    if !groups.is_empty() {
+        // Group subjects anyone in them can set: outside data.
         ctx.tainted = true;
         return Ok(format!(
-            "No saved contact matches {name}. In the user's WhatsApp:{phone_lines}"
+            "No saved contact matches {query}. In the user's WhatsApp:{groups}"
         ));
     }
-    Ok(format!(
-        "No saved contact matches {name}. Ask the user for the address, then call save_contact."
+    Ok(coded(
+        CONTACT_NOT_FOUND,
+        &format!(
+            "No saved contact matches {query}. Ask the user for the address, then call save_contact."
+        ),
     ))
 }
 
-async fn save_contact(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
-    let name = str_arg(args, "name")?;
-    let address = str_arg(args, "email")?;
-    let trimmed_address = address.trim().to_lowercase();
-    let contacts = email::load_contacts(&ctx.shared.data_dir);
-    if let Some(old_address) = email::contact_needs_confirm(&contacts, name, &trimmed_address) {
-        if !ctx
-            .shared
-            .bridge
-            .confirm(
-                ctx.task,
-                ConfirmKind::Email,
-                format!("Change {}'s address to {}?", name, trimmed_address),
-                format!(
-                    "Saved address: {}\nNew address: {}",
-                    old_address, trimmed_address
-                ),
-            )
-            .await
-        {
-            return Ok("The user kept the saved address.".into());
-        }
+/// After a find_contact miss: scans the mail headers if it was not tried
+/// today. True when the scan worked.
+async fn refresh_mail_if_due(ctx: &Ctx) -> bool {
+    let Ok(server) = email::server_for(&ctx.cfg) else {
+        return false;
+    };
+    if server.oauth || !mail_harvest::try_now(&ctx.shared.data_dir, people::now()) {
+        return false;
     }
-    email::save_contact(&ctx.shared.data_dir, name, address)?;
-    ctx.saved_this_task.insert(trimmed_address);
-    Ok(format!("Saved {name} <{}>.", address.trim()))
+    harvest_mail(&ctx.shared, &ctx.cfg).await.is_ok()
 }
 
-async fn save_phone(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
+pub const OUTLOOK_HARVEST: &str =
+    "Microsoft accounts are not scanned here: their contacts will come from Outlook sync.";
+
+/// Scans the user's mail headers (IMAP envelopes only) into
+/// mail-contacts.json. Returns how many people it found.
+pub async fn harvest_mail(
+    shared: &crate::agent::Shared,
+    cfg: &crate::config::Config,
+) -> Result<usize, String> {
+    let server = email::server_for(cfg)?;
+    if server.oauth {
+        return Err(OUTLOOK_HARVEST.into());
+    }
+    let secret = mail_secret(&shared.http, &server).await?;
+    let (dir, user) = (shared.data_dir.clone(), cfg.email.clone());
+    tokio::task::spawn_blocking(move || {
+        let mut mailbox = mail_harvest::Imap(imap_lookup::connect(&server, &user, &secret)?);
+        let found = mail_harvest::run(&dir, &mut mailbox, &user);
+        let _ = mailbox.0.logout();
+        found
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Competent mode emails these without asking: addresses the user saved, and
+/// ones they have written to before (from the mail scan).
+fn known_recipient(dir: &std::path::Path, address: &str) -> bool {
+    let saved = people::load(dir).is_ok_and(|all| {
+        all.iter().any(|p| {
+            p.emails
+                .iter()
+                .any(|e| e.source == people::USER && e.address == address)
+        })
+    });
+    saved || mail_harvest::sent_to(dir, address)
+}
+
+async fn save_contact(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
     let name = str_arg(args, "name")?.trim();
     if name.is_empty() {
         return Err("name is empty".into());
     }
-    let number = phones::normalize(str_arg(args, "phone")?)?;
-    let dir = &ctx.shared.data_dir;
-    let already = phones::load(dir)
+    let text = |key: &str| args[key].as_str().map(str::trim).filter(|s| !s.is_empty());
+    let label = text("label").unwrap_or_default();
+    let tags = list_arg(args, "tags");
+    let mut said = Vec::new();
+    if let Some(address) = text("email") {
+        said.push(save_address(ctx, name, address, label, &tags).await?);
+    } else if !tags.is_empty() {
+        said.push(retag(&ctx.shared.data_dir, name, &tags, &[])?);
+    }
+    if let Some(phone) = text("phone") {
+        said.push(save_number(ctx, name, phone, label).await?);
+    }
+    if said.is_empty() {
+        return Err("Give an email address, a phone number or tags to save.".into());
+    }
+    Ok(said.join("\n"))
+}
+
+/// Adds an address to `name`. A different address for someone untagged is a
+/// change, so it asks; with tags both are kept. The same address under
+/// another name is the same person: nothing changes.
+async fn save_address(
+    ctx: &mut Ctx,
+    name: &str,
+    raw: &str,
+    label: &str,
+    tags: &[String],
+) -> Result<String, String> {
+    let address = people::norm_email(raw);
+    if !email::is_email(&address) {
+        return Err(format!("{address} is not an email address"));
+    }
+    for t in tags {
+        people::norm_tag(t)?;
+    }
+    let dir = ctx.shared.data_dir.clone();
+    let saved = people::load(&dir)?;
+    let key = people::fold(name);
+    if let Some(owner) = saved
         .iter()
-        .any(|(k, n)| k.eq_ignore_ascii_case(name) && *n == number);
-    let ask = if let Some(old) = phones::needs_confirm(dir, name, &number) {
+        .find(|p| p.has_email(&address) && people::fold(&p.name) != key)
+    {
+        return Ok(format!(
+            "{address} is already saved for {}; nothing changed.",
+            owner.name
+        ));
+    }
+    let person = saved
+        .iter()
+        .find(|p| people::fold(&p.name) == key && p.is_user());
+    let old = person
+        .filter(|p| !p.has_email(&address))
+        .and_then(|p| p.emails.iter().find(|e| e.primary).or(p.emails.first()))
+        .map(|e| e.address.clone());
+    let keep_both = !tags.is_empty() || person.is_some_and(|p| !p.tags.is_empty());
+    // Similar names alone never merge: say so instead.
+    let similar: Vec<&str> = if person.is_none() {
+        saved
+            .iter()
+            .filter(|p| people::score(name, p).0 >= people::SURE)
+            .map(|p| p.name.as_str())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    match old {
+        Some(old) if !keep_both => {
+            let approved = ctx
+                .shared
+                .bridge
+                .confirm(
+                    ctx.task,
+                    ConfirmKind::Email,
+                    format!("Change {name}'s address to {address}?"),
+                    format!("Saved address: {old}\nNew address: {address}"),
+                )
+                .await;
+            if !approved {
+                return Ok("The user kept the saved address.".into());
+            }
+            email::save_contact(&dir, name, &address)?;
+        }
+        _ => people::update(&dir, |all| {
+            if people::named(all, name).is_none() {
+                all.push(Person::new(name, people::USER));
+            }
+            let p = people::named(all, name).expect("just added");
+            p.add_tags(tags)?;
+            p.add_email(&address, label, people::USER);
+            Ok(())
+        })?,
+    }
+    ctx.saved_this_task.insert(address.clone());
+    let mut out = format!("Saved {name} <{address}>.");
+    if !similar.is_empty() {
+        out += &format!(
+            " Kept apart from the similar {} (similar names are never merged; the same email or phone is).",
+            similar.join(", ")
+        );
+    }
+    Ok(out)
+}
+
+/// Sets `name`'s number. A different saved number asks first; so does a new
+/// one while outside text is in the request.
+async fn save_number(ctx: &mut Ctx, name: &str, raw: &str, label: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("name is empty".into());
+    }
+    let number = phones::normalize(raw)?;
+    let dir = ctx.shared.data_dir.clone();
+    let saved = people::load(&dir)?;
+    let key = people::fold(name);
+    let mine: Vec<&people::Phone> = saved
+        .iter()
+        .filter(|p| people::fold(&p.name) == key && p.is_user())
+        .flat_map(|p| p.phones.iter().filter(|x| x.source == people::USER))
+        .collect();
+    let already = mine.iter().any(|x| x.number == number);
+    let old = mine.iter().find(|x| x.primary).or(mine.first());
+    let ask = if let Some(old) = old.filter(|_| !already) {
         Some((
             format!("Change {name}'s number to {number}?"),
-            format!("Saved number: {old}\nNew number: {number}"),
+            format!("Saved number: {}\nNew number: {number}", old.number),
             "The user kept the saved number.",
         ))
     } else if ctx.tainted && !already && ctx.cfg.tier != crate::config::Tier::CarteBlanche {
@@ -585,10 +868,153 @@ async fn save_phone(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
             return Ok(declined.into());
         }
     }
-    phones::save(&ctx.shared.data_dir, name, &number)?;
+    phones::save(&dir, name, &number)?;
+    if !label.is_empty() {
+        people::update(&dir, |all| {
+            if let Some(x) = people::named(all, name)
+                .and_then(|p| p.phones.iter_mut().find(|x| x.number == number))
+            {
+                x.label = label.to_lowercase();
+            }
+            Ok(())
+        })?;
+    }
     // Not a known number for send_whatsapp until the next request.
     ctx.saved_this_task.insert(number.clone());
     Ok(format!("Saved {name} {number}."))
+}
+
+fn tag_contact(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
+    retag(
+        &ctx.shared.data_dir,
+        str_arg(args, "name")?,
+        &list_arg(args, "add"),
+        &list_arg(args, "remove"),
+    )
+}
+
+/// Adds and removes tags on a saved contact: the exact name, else one clear
+/// fuzzy match.
+fn retag(
+    dir: &std::path::Path,
+    name: &str,
+    add: &[String],
+    remove: &[String],
+) -> Result<String, String> {
+    let remove: Vec<String> = remove
+        .iter()
+        .filter_map(|t| people::norm_tag(t).ok())
+        .collect();
+    people::update(dir, |all| {
+        let key = people::fold(name);
+        let i =
+            match all.iter().position(|p| people::fold(&p.name) == key) {
+                Some(i) => i,
+                None => match people::lookup(all, name) {
+                    Found::One(p, _) => {
+                        let id = p.id.clone();
+                        all.iter().position(|q| q.id == id).expect("listed")
+                    }
+                    Found::Many(list) => {
+                        let names: Vec<&str> = list.iter().map(|p| p.name.as_str()).collect();
+                        return Err(coded(
+                            CONTACT_AMBIGUOUS,
+                            &format!(
+                                "Several saved contacts match {name}: {}. Ask the user which one.",
+                                names.join(", ")
+                            ),
+                        ));
+                    }
+                    Found::None => return Err(coded(
+                        CONTACT_NOT_FOUND,
+                        &format!(
+                            "No saved contact matches {name}. Save them first with save_contact."
+                        ),
+                    )),
+                },
+            };
+        let p = &mut all[i];
+        p.add_tags(add)?;
+        p.tags.retain(|t| !remove.contains(t));
+        Ok(if p.tags.is_empty() {
+            format!("{} has no tags now.", p.name)
+        } else {
+            format!("{} tags: {}.", p.name, p.tags.join(", "))
+        })
+    })
+}
+
+/// Settings > Contacts: one change to people.json, through the same rules as
+/// the tools, then the list. `action`: list, add_tag, remove_tag, add_email,
+/// delete or harvest (scan the mail now).
+pub async fn contacts(
+    shared: &crate::agent::Shared,
+    action: &str,
+    id: &str,
+    value: &str,
+    label: &str,
+) -> crate::protocol::Out {
+    let dir = &shared.data_dir;
+    let cfg = crate::config::Config::load(&shared.settings_path);
+    let edit = |change: &dyn Fn(&mut Person) -> Result<(), String>| {
+        people::update(dir, |all| {
+            let p = all
+                .iter_mut()
+                .find(|p| p.id == id)
+                .ok_or("That contact is gone. Reopen the list.")?;
+            change(p)
+        })
+    };
+    let mut message = None;
+    let done = match action {
+        "list" => Ok(()),
+        "add_tag" => edit(&|p| p.add_tags(&[value.to_string()])),
+        "remove_tag" => edit(&|p| {
+            p.tags.retain(|t| t != value);
+            Ok(())
+        }),
+        "add_email" => {
+            let address = people::norm_email(value);
+            if email::is_email(&address) {
+                people::update(dir, |all| {
+                    if let Some(o) = all.iter().find(|p| p.has_email(&address) && p.id != id) {
+                        return Err(format!("{address} is already saved for {}.", o.name));
+                    }
+                    let p = all
+                        .iter_mut()
+                        .find(|p| p.id == id)
+                        .ok_or("That contact is gone. Reopen the list.")?;
+                    p.add_email(&address, label, people::USER);
+                    Ok(())
+                })
+            } else {
+                Err(format!("{address} is not an email address"))
+            }
+        }
+        "delete" => people::update(dir, |all| {
+            all.retain(|p| p.id != id);
+            Ok(())
+        }),
+        "harvest" => match harvest_mail(shared, &cfg).await {
+            Ok(n) => {
+                message = Some(format!("Found {n} people in your mail."));
+                Ok(())
+            }
+            Err(e) => Err(e),
+        },
+        other => Err(format!("unknown contacts action {other}")),
+    };
+    let (list, unreadable) = match people::load(dir) {
+        Ok(list) => (list, None),
+        Err(e) => (Vec::new(), Some(e)),
+    };
+    crate::protocol::Out::Contacts {
+        people: list,
+        mail: mail_harvest::load(dir).map_or(0, |m| m.len()),
+        outlook: email::server_for(&cfg).is_ok_and(|s| s.oauth),
+        message,
+        error: done.err().or(unreadable),
+    }
 }
 
 /// The password or token SMTP needs for the sender's account.
@@ -623,8 +1049,7 @@ async fn send_email(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
         ));
     }
     let server = email::server_for(&ctx.cfg)?;
-    let known = email::is_known(&email::load_contacts(&ctx.shared.data_dir), &to)
-        && !ctx.saved_this_task.contains(&to);
+    let known = known_recipient(&ctx.shared.data_dir, &to) && !ctx.saved_this_task.contains(&to);
     let detail = format!("to {to}: {subject}");
     let ask = policy::email_needs_confirm(ctx.cfg.tier, known, ctx.tainted);
     if ask
@@ -1126,7 +1551,8 @@ mod tests {
             out.contains("save_contact") && out.contains("+14155550100"),
             "{out}"
         );
-        std::fs::write(ctx.shared.data_dir.join("phones.json"), "{bad").unwrap();
+        // people.json is the store now (phones.json stays only as a backup).
+        std::fs::write(ctx.shared.data_dir.join("people.json"), "{bad").unwrap();
         let err = call(&mut ctx, "find_contact", &json!({ "name": "Sam" }))
             .await
             .unwrap_err();
@@ -1265,5 +1691,247 @@ mod tests {
             Some(&"alice@new.com".to_string()),
             "New entry with new casing should be present"
         );
+    }
+
+    /// Runs one tool call, answering any confirm with `approve`. Returns the
+    /// result, whether it asked, and the Ctx.
+    async fn run(
+        mut c: Ctx,
+        name: &str,
+        args: Value,
+        approve: bool,
+    ) -> (Result<String, String>, bool, Ctx) {
+        let shared = c.shared.clone();
+        let name = name.to_string();
+        let running = tokio::spawn(async move {
+            let r = call(&mut c, &name, &args).await;
+            (r, c)
+        });
+        tokio::task::yield_now().await;
+        let asked = shared.bridge.answer_pending(Answer::Confirm(approve));
+        let (r, c) = running.await.unwrap();
+        (r, asked, c)
+    }
+
+    fn person(dir: &std::path::Path, name: &str) -> Person {
+        let key = people::fold(name);
+        people::load(dir)
+            .unwrap()
+            .into_iter()
+            .find(|p| people::fold(&p.name) == key)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn save_contact_appends_with_tags_and_asks_to_change_without() {
+        let c = ctx();
+        let dir = c.shared.data_dir.clone();
+        let args = json!({ "name": "Ben Tan", "email": "ben@home.com" });
+        let (out, asked, c) = run(c, "save_contact", args, true).await;
+        assert!(!asked && out.unwrap() == "Saved Ben Tan <ben@home.com>.");
+        // A second address with no tags is a change: it asks, and a no keeps one.
+        let args = json!({ "name": "ben tan", "email": "ben@work.com" });
+        let (out, asked, c) = run(c, "save_contact", args, false).await;
+        assert!(asked);
+        assert_eq!(out.unwrap(), "The user kept the saved address.");
+        assert_eq!(person(&dir, "Ben Tan").emails.len(), 1);
+        // With tags both are kept, without asking.
+        let args = json!({ "name": "Ben Tan", "email": "ben@work.com", "label": "Work", "tags": ["work", "Gym Buddies"] });
+        let (out, asked, c) = run(c, "save_contact", args, false).await;
+        assert!(!asked, "{out:?}");
+        let p = person(&dir, "Ben Tan");
+        assert_eq!(
+            p.emails
+                .iter()
+                .map(|e| e.address.as_str())
+                .collect::<Vec<_>>(),
+            ["ben@home.com", "ben@work.com"]
+        );
+        assert_eq!(p.emails[1].label, "work");
+        assert_eq!(p.tags, ["work", "gym-buddies"]);
+        // Tags come off one at a time, but never the last of a two-address person.
+        let args = json!({ "name": "ben", "remove": ["gym buddies"], "add": "family" });
+        let (out, _, c) = run(c, "tag_contact", args, true).await;
+        assert_eq!(out.unwrap(), "Ben Tan tags: work, family.");
+        let args = json!({ "name": "Ben Tan", "remove": ["work", "family"] });
+        let (out, _, c) = run(c, "tag_contact", args, true).await;
+        assert!(out.unwrap_err().contains("need at least one tag"));
+        assert_eq!(person(&dir, "Ben Tan").tags, ["work", "family"]);
+        // Same email under another name: the same person, nothing changes.
+        let args = json!({ "name": "Benny", "email": "BEN@work.com" });
+        let (out, _, c) = run(c, "save_contact", args, true).await;
+        assert!(out.unwrap().contains("already saved for Ben Tan"));
+        assert_eq!(people::load(&dir).unwrap().len(), 1);
+        // A similar name alone is a new person, and the reply says so.
+        let args = json!({ "name": "Ben", "email": "other.ben@x.com" });
+        let (out, _, c) = run(c, "save_contact", args, true).await;
+        assert!(out.unwrap().contains("Kept apart from the similar Ben Tan"));
+        assert_eq!(people::load(&dir).unwrap().len(), 2);
+        // An email and a phone in one call.
+        let args = json!({ "name": "Sam", "email": "sam@x.org", "phone": "+1 415 555 0100", "label": "mobile" });
+        let (out, _, c) = run(c, "save_contact", args, true).await;
+        assert_eq!(
+            out.unwrap(),
+            "Saved Sam <sam@x.org>.\nSaved Sam +14155550100."
+        );
+        assert_eq!(person(&dir, "sam").phones[0].label, "mobile");
+        let (out, _, _) = run(
+            c,
+            "tag_contact",
+            json!({ "name": "Nobody", "add": ["x"] }),
+            true,
+        )
+        .await;
+        assert!(out.unwrap_err().starts_with("CONTACT_NOT_FOUND: "));
+    }
+
+    #[tokio::test]
+    async fn find_contact_is_fuzzy_and_lists_ambiguous_people() {
+        let mut c = ctx();
+        let dir = c.shared.data_dir.clone();
+        people::update(&dir, |all| {
+            for (name, address) in [
+                ("Benjamin Tan", "ben@tan.com"),
+                ("Alex Tan", "alex@tan.com"),
+                ("Alex Lim", "alex@lim.com"),
+            ] {
+                let mut p = Person::new(name, people::USER);
+                p.add_email(address, "", people::USER);
+                all.push(p);
+            }
+            let ben = people::named(all, "Benjamin Tan").unwrap();
+            ben.add_tags(&["work".into()])?;
+            ben.add_email("benjamin@corp.com", "work", people::USER);
+            Ok(())
+        })
+        .unwrap();
+        for q in ["Ben", "Benjamin", "Ben Tan", "bent tan", "Benny"] {
+            let out = call(&mut c, "find_contact", &json!({ "name": q }))
+                .await
+                .unwrap();
+            assert!(
+                out.contains("Benjamin Tan <ben@tan.com>")
+                    && out.contains("Benjamin Tan <benjamin@corp.com> (work)")
+                    && out.contains("Benjamin Tan tags: work"),
+                "{q}: {out}"
+            );
+        }
+        let out = call(&mut c, "find_contact", &json!({ "name": "Alex" }))
+            .await
+            .unwrap();
+        assert!(
+            out.starts_with(
+                "CONTACT_AMBIGUOUS: I found two contacts matching Alex: Alex Tan or Alex Lim?"
+            ),
+            "{out}"
+        );
+        assert!(out.contains("alex@tan.com") && out.contains("alex@lim.com"));
+        assert!(!c.tainted, "only the user's own contacts");
+        let out = call(&mut c, "find_contact", &json!({ "name": "Zed" }))
+            .await
+            .unwrap();
+        assert!(out.starts_with("CONTACT_NOT_FOUND: "), "{out}");
+    }
+
+    fn harvested(dir: &std::path::Path) {
+        let rows = json!([
+            { "name": "Priya Raman", "email": "priya@x.com", "sent": true, "count": 4, "last": 1 },
+            { "name": "Priya Shop", "email": "priya@shop.com", "sent": false, "count": 9, "last": 1 },
+            { "name": "Neha Mail", "email": "neha@example.com", "sent": false, "count": 1, "last": 1 }
+        ]);
+        std::fs::write(dir.join("mail-contacts.json"), rows.to_string()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn find_contact_searches_the_mail_scan_after_own_contacts() {
+        let mut c = ctx();
+        let dir = c.shared.data_dir.clone();
+        email::save_contact(&dir, "Neha", "neha@example.com").unwrap();
+        harvested(&dir);
+        // The user's own contact; the scan's name for the same address is not shown.
+        let out = call(&mut c, "find_contact", &json!({ "name": "neha" }))
+            .await
+            .unwrap();
+        assert_eq!(out, "Neha <neha@example.com>");
+        assert!(!c.tainted);
+        // Two Priyas from the mail: sent-to listed first.
+        let out = call(&mut c, "find_contact", &json!({ "name": "priya" }))
+            .await
+            .unwrap();
+        assert!(out.starts_with("CONTACT_AMBIGUOUS: I found two contacts matching priya: Priya Raman or Priya Shop?"), "{out}");
+        assert!(c.tainted, "names from mail are outside data");
+        c.tainted = false;
+        let out = call(&mut c, "find_contact", &json!({ "name": "Priya Raman" }))
+            .await
+            .unwrap();
+        assert!(
+            out.contains(
+                "Priya Raman <priya@x.com> (from the user's mail; they have written to it)"
+            ) && out.contains("save_contact"),
+            "{out}"
+        );
+        assert!(c.tainted);
+    }
+
+    #[tokio::test]
+    async fn competent_emails_people_the_user_has_written_to_without_asking() {
+        use crate::config::Tier;
+        for (to, asks) in [
+            ("priya@x.com", false),
+            ("priya@shop.com", true),
+            ("neha@example.com", true),
+        ] {
+            let mut c = ctx();
+            c.cfg.email = "me@mycompany.com".into();
+            c.cfg.smtp_host = "smtp.invalid".into();
+            c.cfg.tier = Tier::Competent;
+            harvested(&c.shared.data_dir);
+            let args = json!({ "to": to, "subject": "s", "body": "b" });
+            let (_, asked, _) = run(c, "send_email", args, false).await;
+            assert_eq!(asked, asks, "{to}");
+        }
+    }
+
+    #[tokio::test]
+    async fn settings_edits_go_through_the_same_rules() {
+        let c = ctx();
+        let dir = c.shared.data_dir.clone();
+        email::save_contact(&dir, "Neha", "neha@example.com").unwrap();
+        let id = person(&dir, "Neha").id;
+        let s = &c.shared;
+        let error = |out: crate::protocol::Out| match out {
+            crate::protocol::Out::Contacts { error, .. } => error,
+            _ => unreachable!(),
+        };
+        let e = error(contacts(s, "add_email", &id, "neha@work.com", "work").await);
+        assert!(e.unwrap().contains("need at least one tag"));
+        assert!(error(contacts(s, "add_tag", &id, "Work", "").await).is_none());
+        assert!(error(contacts(s, "add_email", &id, "Neha@Work.com", "Work").await).is_none());
+        let p = person(&dir, "Neha");
+        assert_eq!(
+            (p.tags.len(), p.emails.len(), p.emails[1].label.as_str()),
+            (1, 2, "work")
+        );
+        assert!(error(contacts(s, "remove_tag", &id, "work", "").await).is_some());
+        assert!(error(contacts(s, "add_email", &id, "bad", "").await)
+            .unwrap()
+            .contains("not an email"));
+        match contacts(s, "delete", &id, "", "").await {
+            crate::protocol::Out::Contacts {
+                people,
+                mail,
+                outlook,
+                error,
+                ..
+            } => {
+                assert!(people.is_empty() && mail == 0 && !outlook && error.is_none());
+            }
+            _ => unreachable!(),
+        }
+        assert!(error(contacts(s, "add_tag", &id, "x", "").await)
+            .unwrap()
+            .contains("gone"));
+        let e = error(contacts(s, "harvest", "", "", "").await).unwrap();
+        assert!(e.contains("Set up email"), "{e}");
     }
 }

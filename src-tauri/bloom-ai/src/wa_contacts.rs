@@ -1,7 +1,7 @@
 //! whatsapp\contacts.json: the names and numbers WhatsApp syncs from the
 //! phone's address book, and the groups the user is in. Names, numbers,
 //! group subjects and ids only, never message text. A lower-priority source:
-//! phones.json and contacts.json always win and are never written from here,
+//! the user's own people.json entries always win, it is never copied there,
 //! and nothing here widens the automatic-reply allow-list. It lives in the
 //! session folder, so Unlink removes it with the session.
 

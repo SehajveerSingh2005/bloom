@@ -232,8 +232,11 @@ fn relay(app: AppHandle, stdout: ChildStdout, pid: u32) {
             // The WhatsApp QR and link code are credentials: Settings only, on
             // an event no other window listens to (an `ai-event` sent to one
             // window still reaches every window's catch-all listener).
+            // The contact list is personal data: Settings only too.
             let _ = if message["type"] == "whatsapp_status" {
                 app.emit_to("settings", "ai-whatsapp", message)
+            } else if message["type"] == "contacts" {
+                app.emit_to("settings", "ai-contacts", message)
             } else {
                 app.emit("ai-event", message)
             };
@@ -570,15 +573,57 @@ pub fn ai_whatsapp_unlink(app: AppHandle) -> Result<(), String> {
     send(&app, json!({ "type": "whatsapp_unlink" }))
 }
 
-/// Saved phone contacts (`phones.json`: name to number) for Settings >
-/// Auto-reply, sorted by name. Empty when there are none.
+/// Saved phone contacts for Settings > Auto-reply, sorted by name. Empty when
+/// there are none.
 #[tauri::command]
 pub fn ai_whatsapp_contacts(app: AppHandle) -> Vec<(String, String)> {
-    let phones: std::collections::BTreeMap<String, String> = ai_dir(&app)
-        .and_then(|d| std::fs::read_to_string(d.join("phones.json")).ok())
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default();
-    phones.into_iter().collect()
+    ai_dir(&app).map(|d| saved_numbers(&d)).unwrap_or_default()
+}
+
+/// Numbers the user saved themselves: people.json entries with source "user"
+/// (synced ones never count for auto-reply), or phones.json before the agent
+/// has built people.json.
+fn saved_numbers(dir: &std::path::Path) -> Vec<(String, String)> {
+    let read = |file: &str| std::fs::read_to_string(dir.join(file)).ok();
+    let mut found: Vec<(String, String)> = match read("people.json") {
+        Some(c) => serde_json::from_str::<Vec<Value>>(&c)
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|p| {
+                let name = p["name"].as_str().unwrap_or_default().to_string();
+                p["phones"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|x| x["source"].as_str().is_none_or(|s| s == "user"))
+                    .filter_map(move |x| Some((name.clone(), x["number"].as_str()?.to_string())))
+            })
+            .collect(),
+        None => read("phones.json")
+            .and_then(|c| serde_json::from_str::<std::collections::BTreeMap<String, String>>(&c).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+    };
+    found.sort_by_key(|(name, _)| name.to_lowercase());
+    found
+}
+
+/// Settings > Contacts: `action` is list, add_tag, remove_tag, add_email,
+/// delete or harvest. The agent answers with the list (`ai-contacts`, Settings
+/// only).
+#[tauri::command]
+pub fn ai_contacts(
+    app: AppHandle,
+    action: String,
+    id: Option<String>,
+    value: Option<String>,
+    label: Option<String>,
+) -> Result<(), String> {
+    send(
+        &app,
+        json!({ "type": "contacts", "action": action, "id": id.unwrap_or_default(), "value": value.unwrap_or_default(), "label": label.unwrap_or_default() }),
+    )
 }
 
 /// The dock's AI button: show the panel with its text box.
@@ -690,6 +735,23 @@ mod tests {
         assert_eq!(number(&json!("inf")), None);
         assert_eq!(flag(&json!("On")), Some(true));
         assert_eq!(flag(&json!("OFF")), Some(false));
+    }
+
+    #[test]
+    fn auto_reply_lists_only_numbers_the_user_saved() {
+        let dir = std::env::temp_dir().join(format!("bloom-people-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("phones.json"), r#"{"Old": "+491"}"#).unwrap();
+        assert_eq!(saved_numbers(&dir), [("Old".to_string(), "+491".to_string())]);
+        let people = json!([
+            { "name": "zed", "phones": [{ "number": "+492", "source": "user" }] },
+            { "name": "Ann", "phones": [{ "number": "+493", "source": "user" }, { "number": "+494", "source": "whatsapp" }] },
+            { "name": "Synced", "phones": [{ "number": "+495", "source": "whatsapp" }] }
+        ]);
+        std::fs::write(dir.join("people.json"), people.to_string()).unwrap();
+        let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(saved_numbers(&dir), [pair("Ann", "+493"), pair("zed", "+492")]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

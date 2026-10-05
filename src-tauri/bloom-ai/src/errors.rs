@@ -5,6 +5,8 @@ pub const SEARCH_FAILED: &str = "SEARCH_FAILED";
 pub const SEARCH_BLOCKED: &str = "SEARCH_BLOCKED";
 pub const SEARCH_NOT_CONFIGURED: &str = "SEARCH_NOT_CONFIGURED";
 pub const MODEL_TOOL_CALL_FAILED: &str = "MODEL_TOOL_CALL_FAILED";
+pub const CONTACT_NOT_FOUND: &str = "CONTACT_NOT_FOUND";
+pub const CONTACT_AMBIGUOUS: &str = "CONTACT_AMBIGUOUS";
 
 pub fn coded(code: &str, message: &str) -> String {
     format!("{code}: {message}")

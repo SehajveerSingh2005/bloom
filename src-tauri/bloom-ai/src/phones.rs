@@ -1,4 +1,5 @@
-//! Phone contacts: phones.json maps a display name to an E.164 number.
+//! Phone numbers: E.164 normalising, and the one-number-per-name view of
+//! people.json (people.rs) that phones.json used to be.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -83,19 +84,14 @@ pub fn normalize_in(raw: &str, region: Option<&str>) -> Result<String, String> {
     Ok(format!("+{full}"))
 }
 
-/// phones.json: display name to number.
+/// Name to primary number the user saved (people.json, as phones.json was).
 pub fn load(dir: &Path) -> BTreeMap<String, String> {
     try_load(dir).unwrap_or_default()
 }
 
-/// Like `load`, but a present file that is not valid JSON is an error.
+/// Like `load`, but an unreadable store is an error.
 pub fn try_load(dir: &Path) -> Result<BTreeMap<String, String>, String> {
-    match std::fs::read_to_string(dir.join("phones.json")) {
-        Ok(c) => serde_json::from_str(&c)
-            .map_err(|_| "phones.json is not valid JSON; fix or delete it".to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
-        Err(e) => Err(format!("Cannot read phones.json: {e}")),
-    }
+    crate::people::user_phones(dir)
 }
 
 /// Saved numbers whose name or number contains every word of the query.
@@ -104,31 +100,15 @@ pub fn find(dir: &Path, query: &str) -> Result<Vec<(String, String)>, String> {
 }
 
 /// The saved number if this name already has a different one.
+#[cfg(test)]
 pub fn needs_confirm(dir: &Path, name: &str, number: &str) -> Option<String> {
     crate::email::contact_needs_confirm(&load(dir), name, number)
 }
 
-/// Save an already normalised number. Never overwrites an unreadable file.
+/// Save an already normalised number as `name`'s (replacing the old one).
+/// Never overwrites an unreadable file.
 pub fn save(dir: &Path, name: &str, number: &str) -> Result<(), String> {
-    let path = dir.join("phones.json");
-    if path.exists() {
-        let content =
-            std::fs::read_to_string(&path).map_err(|e| format!("Cannot read phones.json: {e}"))?;
-        if serde_json::from_str::<BTreeMap<String, String>>(&content).is_err() {
-            return Err("phones.json is unreadable; fix or delete it".into());
-        }
-    }
-    let mut phones = load(dir);
-    let name = name.trim();
-    phones.retain(|k, _| !k.eq_ignore_ascii_case(name));
-    phones.insert(name.to_string(), number.to_string());
-    let json = serde_json::to_string_pretty(&phones).map_err(|e| e.to_string())?;
-    let tmp = dir.join("phones.json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })
+    crate::people::set_phone(dir, name, number)
 }
 
 #[cfg(test)]

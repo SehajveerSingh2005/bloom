@@ -204,7 +204,8 @@ fn triggers(m: &Message, now: i64) -> bool {
 
 /// The settings, and the contact's saved name, when `chat` may get automatic
 /// replies: AI, WhatsApp and Auto-reply on, and the number chosen (or anyone
-/// saved in phones.json for "*"). Read every time, so changes apply at once.
+/// the user saved a number for in people.json, for "*"). Read every time, so
+/// changes apply at once.
 fn allowed(shared: &Shared, chat: &str) -> Option<(Config, Option<String>)> {
     let cfg = Config::load(&shared.settings_path);
     if !(cfg.enabled && cfg.whatsapp && cfg.auto_reply) {

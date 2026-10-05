@@ -313,19 +313,18 @@ fn saved_name<'a>(saved: &'a BTreeMap<String, String>, number: &str) -> Option<&
 
 /// whatsapp\contacts.json; empty when missing or unreadable (Settings says
 /// why).
-fn book(data_dir: &Path) -> Book {
+pub fn book(data_dir: &Path) -> Book {
     wa_contacts::load(&data_dir.join("whatsapp")).unwrap_or_default()
 }
 
-/// find_contact's lines from the synced address book and groups (at most 10
-/// of each); empty if none match.
-pub fn synced_lines(data_dir: &Path, query: &str) -> String {
-    let book = book(data_dir);
-    let people = book.people(query).into_iter().take(10);
-    let groups = book.groups_named(query).into_iter().take(10);
-    people
-        .map(|c| format!("\n{} phone: {} (from WhatsApp)", c.name, c.number))
-        .chain(groups.map(|g| format!("\n{} (WhatsApp group)", g.subject)))
+/// find_contact's lines for synced groups (at most 10); empty if none match.
+/// Synced people reach find_contact through people::merge.
+pub fn group_lines(data_dir: &Path, query: &str) -> String {
+    book(data_dir)
+        .groups_named(query)
+        .into_iter()
+        .take(10)
+        .map(|g| format!("\n{} (WhatsApp group)", g.subject))
         .collect()
 }
 

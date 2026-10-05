@@ -84,55 +84,25 @@ pub fn is_email(s: &str) -> bool {
     }
 }
 
-/// contacts.json: display name to address.
+/// Name to primary email the user saved (people.json, as contacts.json was).
+/// Only the old one-email-per-name tests still read it this way.
+#[cfg(test)]
 pub fn load_contacts(dir: &Path) -> BTreeMap<String, String> {
-    std::fs::read_to_string(dir.join("contacts.json"))
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default()
+    crate::people::user_emails(dir).unwrap_or_default()
 }
 
+/// Sets `name`'s saved address (replacing the old one) in people.json. Never
+/// overwrites an unreadable file.
 pub fn save_contact(dir: &Path, name: &str, address: &str) -> Result<(), String> {
     let address = address.trim().to_lowercase();
     if !is_email(&address) {
         return Err(format!("{address} is not an email address"));
     }
-    let path = dir.join("contacts.json");
-    // Check if file exists but is unparseable (data loss protection).
-    if path.exists() {
-        match std::fs::read_to_string(&path) {
-            Ok(content) => {
-                if serde_json::from_str::<BTreeMap<String, String>>(&content).is_err() {
-                    return Err("contacts.json is unreadable; fix or delete it".into());
-                }
-            }
-            Err(e) => return Err(format!("Cannot read contacts.json: {e}")),
-        }
-    }
-    let mut contacts = load_contacts(dir);
-    let trimmed_name = name.trim();
-    // Find and remove any existing key that matches case-insensitively.
-    if let Some(existing_key) = contacts
-        .keys()
-        .find(|k| k.eq_ignore_ascii_case(trimmed_name))
-        .cloned()
-    {
-        contacts.remove(&existing_key);
-    }
-    contacts.insert(trimmed_name.to_string(), address);
-    let json = serde_json::to_string_pretty(&contacts).map_err(|e| e.to_string())?;
-    let tmp_path = dir.join("contacts.json.tmp");
-    std::fs::write(&tmp_path, json)
-        .map_err(|e| e.to_string())
-        .and_then(|_| {
-            std::fs::rename(&tmp_path, &path).map_err(|e| {
-                let _ = std::fs::remove_file(&tmp_path);
-                e.to_string()
-            })
-        })
+    crate::people::set_email(dir, name, &address)
 }
 
 /// Check if a contact name exists with a different address.
+#[cfg(test)]
 pub fn contact_needs_confirm(
     contacts: &BTreeMap<String, String>,
     name: &str,
@@ -167,6 +137,7 @@ pub fn find(contacts: &BTreeMap<String, String>, query: &str) -> Vec<(String, St
         .collect()
 }
 
+#[cfg(test)]
 pub fn is_known(contacts: &BTreeMap<String, String>, address: &str) -> bool {
     contacts.values().any(|a| a.eq_ignore_ascii_case(address))
 }
