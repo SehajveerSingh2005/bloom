@@ -32,11 +32,36 @@ impl Llm {
         if tools.as_array().is_some_and(|t| !t.is_empty()) {
             body["tools"] = tools.clone();
         }
+        self.post(&body).await
+    }
+
+    /// One JSON-mode completion without tools, its content parsed as a JSON
+    /// object. A server that rejects JSON mode (400) is asked once without it.
+    pub async fn json(&self, messages: &[Value]) -> Result<Value, String> {
+        let mut body = json!({ "model": self.model, "messages": messages, "response_format": { "type": "json_object" } });
+        let message = match self.post(&body).await {
+            Err(e) if e.starts_with("Model error (400") => {
+                if let Some(b) = body.as_object_mut() {
+                    b.remove("response_format");
+                }
+                self.post(&body).await?
+            }
+            other => other?,
+        };
+        let text = message["content"].as_str().unwrap_or_default();
+        // Some models still wrap the object in prose or a code fence.
+        let (Some(a), Some(b)) = (text.find('{'), text.rfind('}')) else {
+            return Err("The model sent no JSON.".into());
+        };
+        serde_json::from_str(&text[a..=b]).map_err(|_| "The model sent broken JSON.".into())
+    }
+
+    async fn post(&self, body: &Value) -> Result<Value, String> {
         let res = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.key)
-            .json(&body)
+            .json(body)
             .send()
             .await
             .map_err(|e| format!("Can't reach the model: {e}"))?;
