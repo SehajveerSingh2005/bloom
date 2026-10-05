@@ -43,8 +43,11 @@ export function AiOrb({
 	const motion = useRef<OrbMotion | null>(null);
 	motion.current ??= new OrbMotion(float ? "idle" : target, reduced);
 	const raf = useRef(0);
+	// The frame loop outlives renders: everything it reads goes through refs.
 	const onHiddenRef = useRef(onHidden);
 	onHiddenRef.current = onHidden;
+	const sizeRef = useRef(size);
+	sizeRef.current = size;
 
 	const draw = () => {
 		const f = motion.current!.frame();
@@ -55,7 +58,7 @@ export function AiOrb({
 		glow.current!.style.opacity = f.glow.toFixed(4);
 		core.current!.style.opacity = f.core.toFixed(4);
 		tint.current!.style.opacity = f.tint.toFixed(4);
-		const spread = f.spread * size;
+		const spread = f.spread * sizeRef.current;
 		SHELLS.forEach((s, i) => {
 			const el = shells.current[i]!;
 			const a = f.spin * s.rate;
@@ -76,6 +79,8 @@ export function AiOrb({
 		m.setReduced(reduced);
 		m.setState(target);
 		if (raf.current) return;
+		// Compositor layers only while moving (orb.css), not for a resting orb.
+		root.current?.classList.add("aio-live");
 		let last = performance.now();
 		const tick = (now: number) => {
 			m.step((now - last) / 1000);
@@ -83,6 +88,7 @@ export function AiOrb({
 			draw();
 			if (m.settled()) {
 				raf.current = 0;
+				root.current?.classList.remove("aio-live");
 				if (m.state === "idle") onHiddenRef.current?.();
 				return;
 			}

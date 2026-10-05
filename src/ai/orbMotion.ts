@@ -42,7 +42,7 @@ export const TARGETS: Record<Target, Values> = {
 	error: { opacity: 0.92, scale: 0.97, glow: 0.55, shells: 0.7, core: 0.6, tint: 1, spin: 0, breathe: 0, breatheRate: 1, spread: 0, tilt: 0 }
 };
 
-/** Motion parameters; reduced motion pins them so only fades remain. */
+/** Motion parameters: reduced motion holds them still, so only fades remain. */
 const MOVING: OrbParam[] = ["scale", "spin", "breathe", "breatheRate", "spread", "tilt"];
 const STILL: Partial<Values> = { scale: 1, spin: 0, breathe: 0, spread: 0, tilt: 0 };
 const LIVE_STATES: Target[] = ["listening", "thinking", "speaking"];
@@ -135,7 +135,9 @@ export class OrbMotion {
 			if (this.hold <= 0) this.current = this.pending;
 		}
 		const goal = this.goal();
-		if (this.reduced) for (const p of MOVING) (this.x[p] = goal[p]), (this.v[p] = 0);
+		// Reduced motion: parked while invisible; if it turns on mid-flight, the
+		// springs carry the motion to a stop instead of snapping it.
+		if (this.reduced && this.x.opacity < 0.002) for (const p of MOVING) (this.x[p] = goal[p]), (this.v[p] = 0);
 		for (let left = dt; left > 1e-9; left -= SUBSTEP) {
 			const h = Math.min(SUBSTEP, left);
 			for (const p of PARAMS) {

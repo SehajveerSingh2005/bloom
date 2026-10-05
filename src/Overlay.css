@@ -565,8 +565,9 @@ body,
 /* ─── Bloom AI Orb ──────────────────────────────────────────────────────── */
 
 /* "Hey <name>": the orb floats just under the notch (44px collapsed), or just
-   above the merged dock (53px, as the add-app popup), centred. Zoomed by
-   bloom-scale like the HUDs; click-through like the rest of the overlay. */
+   above the merged dock (53px, as the add-app popup), centred. Scaled by
+   bloom-scale like the HUDs (--ai-zoom here, zoom on the orb and the card in
+   Overlay.tsx); click-through like the rest of the overlay. */
 .ai-orb-float {
 	position: fixed;
 	left: 0;
@@ -577,25 +578,25 @@ body,
 }
 
 .ai-orb-float.notch {
-	top: 56px;
+	top: calc(56px * var(--ai-zoom, 1));
 }
 
 .ai-orb-float.dock {
-	bottom: 65px;
+	bottom: calc(65px * var(--ai-zoom, 1));
 }
 
 .ai-orb-float-card {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 10px;
+	gap: calc(10px * var(--ai-zoom, 1));
 }
 
-.ai-orb-float.notch .ai-orb-float-card {
+.ai-orb-float.notch .ai-orb-caption-wrap {
 	transform-origin: top center;
 }
 
-.ai-orb-float.dock .ai-orb-float-card {
+.ai-orb-float.dock .ai-orb-caption-wrap {
 	transform-origin: bottom center;
 }
 

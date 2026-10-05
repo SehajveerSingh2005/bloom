@@ -14,7 +14,6 @@
 	flex-shrink: 0;
 	width: var(--aio-size);
 	height: var(--aio-size);
-	will-change: transform, opacity;
 }
 
 .aio-glow,
@@ -38,9 +37,14 @@
 	perspective: calc(var(--aio-size) * 4);
 }
 
+/* Set by AiOrb only while its frame loop runs. */
+.aio-live,
+.aio-live .aio-shell {
+	will-change: transform, opacity;
+}
+
 /* Every shell fades out before its rim, so no hard edge shows when it tilts. */
 .aio-shell {
-	will-change: transform;
 	-webkit-mask-image: radial-gradient(circle closest-side, #000 45%, transparent);
 	mask-image: radial-gradient(circle closest-side, #000 45%, transparent);
 }

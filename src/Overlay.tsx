@@ -1,4 +1,4 @@
-import { StrictMode, useState, useEffect, useRef, useCallback, useLayoutEffect, lazy, Suspense } from "react";
+import { StrictMode, useState, useEffect, useRef, useCallback, useLayoutEffect, lazy, Suspense, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { listen, emit } from "@tauri-apps/api/event";
@@ -811,7 +811,9 @@ function OverlayApp() {
 	// confirm), so the orb lets go of it; a finished one fades after 5 s.
 	const ai = useAi(() => {});
 	const { phase, wake } = ai.state;
-	const orbShown = ai.enabled && wake && phase !== "idle" && phase !== "confirm";
+	// A splash or update screen hides it too: it fades out like any other end.
+	const orbShown =
+		ai.enabled && wake && phase !== "idle" && phase !== "confirm" && mode !== "splash" && mode !== "updating";
 	// Mounted from the first show until the orb reports it has faded out, so it
 	// never vanishes mid-motion; showing it again mid-fade just retargets it.
 	const [orbMounted, setOrbMounted] = useState(false);
@@ -1020,31 +1022,44 @@ function OverlayApp() {
 			</AnimatePresence>
 
 			{/* Bloom AI orb: under the notch, or above the dock when merged */}
-			{orbMounted && mode !== "splash" && mode !== "updating" && (
-				<div className={`ai-orb-float ${merged ? "dock" : "notch"}`} style={{ zoom: scale }}>
+			{orbMounted && (
+				<div
+					className={`ai-orb-float ${merged ? "dock" : "notch"}`}
+					style={{ "--ai-zoom": scale } as CSSProperties}
+				>
+					{/* bloom-scale zooms inside each motion wrapper, never around one:
+					    framer measures and moves them in unzoomed pixels, and a zoomed
+					    ancestor would scale its layout correction a second time. */}
 					<div className="ai-orb-float-card">
 						{/* Above the dock a growing card pushes the orb up: it glides there. */}
 						<motion.div layout={reduceMotion ? false : "position"} transition={CARD_SPRING}>
-							<AiOrb phase={phase} size={64} float shown={orbShown} onHidden={unmountOrb} />
+							<div style={{ zoom: scale }}>
+								<AiOrb phase={phase} size={64} float shown={orbShown} onHidden={unmountOrb} />
+							</div>
 						</motion.div>
 						<AnimatePresence mode="popLayout" initial={false}>
 							{orbShown && caption && (
 								<motion.div
 									key={answered ? "reply" : "heard"}
-									ref={captionRef}
-									className={`ai-orb-caption ${phase}${phase === "done" ? " answer" : ""}`}
+									className="ai-orb-caption-wrap"
 									initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: merged ? 8 : -8, scale: 0.92 }}
 									animate={{ opacity: 1, y: 0, scale: 1 }}
 									exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: merged ? 6 : -6, scale: 0.94 }}
 									transition={CARD_SPRING}
 								>
-									{phase === "done" ? (
-										<Suspense fallback={<p>{plainText(caption)}</p>}>
-											<Markdown text={caption} />
-										</Suspense>
-									) : (
-										caption
-									)}
+									<div
+										ref={captionRef}
+										className={`ai-orb-caption ${phase}${phase === "done" ? " answer" : ""}`}
+										style={{ zoom: scale }}
+									>
+										{phase === "done" ? (
+											<Suspense fallback={<p>{plainText(caption)}</p>}>
+												<Markdown text={caption} />
+											</Suspense>
+										) : (
+											caption
+										)}
+									</div>
 								</motion.div>
 							)}
 						</AnimatePresence>

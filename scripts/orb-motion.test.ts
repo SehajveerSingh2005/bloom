@@ -15,8 +15,10 @@ function run(m: OrbMotion, seconds: number) {
 			const d = Math.abs(m.x[p as OrbParam] - before[p as OrbParam]);
 			if (d > max!) throw new Error(`${p} jumped ${d.toFixed(3)} in one frame (state ${m.state})`);
 		}
-		// Rotation only moves at the current (spring-driven) speed.
-		expect(m.spinAngle - before.spin).toBeLessThanOrEqual(5 * FRAME);
+		// Rotation only moves forward, at the current (spring-driven) speed.
+		const turned = m.spinAngle - before.spin;
+		expect(turned).toBeGreaterThanOrEqual(-1e-9);
+		expect(turned).toBeLessThanOrEqual(5 * FRAME);
 	}
 }
 
@@ -183,4 +185,50 @@ test("a long frame gap does not teleport", () => {
 	m.setState("listening");
 	m.step(2); // the window was hidden for two seconds
 	expect(m.x.opacity).toBeLessThan(0.5);
+});
+
+test("idle during the entry burst fades straight back out", () => {
+	const m = new OrbMotion("idle");
+	m.setState("listening");
+	run(m, 0.1);
+	expect(m.state).toBe("activating");
+	m.setState("idle");
+	expect(m.state).toBe("settling");
+	run(m, 0.5); // well past the burst: it must not resume listening
+	expect(m.state).not.toBe("listening");
+	run(m, 1.5);
+	expect(m.state).toBe("idle");
+	expect(m.settled()).toBe(true);
+});
+
+test("reduced motion turning on mid-flight eases to a stop", () => {
+	const m = new OrbMotion("idle");
+	m.setState("thinking");
+	run(m, 1.2);
+	expect(m.x.spread).toBeGreaterThan(0.05);
+	m.setReduced(true);
+	run(m, 3); // checks every frame for jumps, scale and spread included
+	near(m, "scale", 1, 0.005);
+	near(m, "spread", 0, 0.005);
+	near(m, "breathe", 0, 0.005);
+	expect(m.settled()).toBe(true);
+	const angle = m.spinAngle;
+	run(m, 0.5);
+	expect(m.spinAngle - angle).toBeLessThan(0.01);
+});
+
+test("error to a new request: the red fades as it comes alive", () => {
+	const m = new OrbMotion("idle");
+	m.setState("thinking");
+	run(m, 1);
+	m.setState("error");
+	run(m, 2);
+	near(m, "tint", 1);
+	m.setState("listening");
+	expect(m.state).toBe("listening");
+	run(m, 0.1);
+	expect(m.x.tint).toBeGreaterThan(0.5);
+	run(m, 2);
+	near(m, "tint", 0);
+	expect(m.settled()).toBe(false);
 });
