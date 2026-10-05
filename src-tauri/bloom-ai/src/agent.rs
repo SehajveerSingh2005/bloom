@@ -207,7 +207,16 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
             Err(e) if crate::llm::is_tool_call_failure(&e) => {
                 let mut again = messages.clone();
                 again.push(json!({ "role": "system", "content": "Your last tool call was malformed. Call tools with valid JSON arguments that match the tool's schema." }));
-                llm.chat(&again, &tools).await?
+                llm.chat(&again, &tools).await.map_err(|e| {
+                    if crate::llm::is_tool_call_failure(&e) {
+                        crate::errors::coded(
+                            crate::errors::MODEL_TOOL_CALL_FAILED,
+                            "The model sent a broken tool call twice. Try again, or pick a model with reliable tool calling (for Groq: llama-3.3-70b-versatile or openai/gpt-oss-120b).",
+                        )
+                    } else {
+                        e
+                    }
+                })?
             }
             other => other?,
         };
@@ -238,7 +247,13 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
             }
             let result = match tools::call(ctx, name, &args).await {
                 Ok(result) => result,
-                Err(e) if crate::errors::is_coded(&e) => e,
+                Err(e) if crate::errors::is_coded(&e) => {
+                    // The model may paraphrase; the panel and orb still show the message.
+                    if let Some(ev) = coded_notice(ctx.task, &e) {
+                        emit(&ev);
+                    }
+                    e
+                }
                 Err(e) => format!("Error: {e}"),
             };
             if ctx.cfg.debug {
@@ -255,6 +270,14 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
         }
     }
     Err("Stopped after too many steps without finishing.".into())
+}
+
+/// The activity line for a coded tool error (none for requests from the phone).
+fn coded_notice(task: u64, error: &str) -> Option<Out> {
+    (!crate::selfchat::is_phone(task)).then(|| Out::Activity {
+        task,
+        text: error.to_string(),
+    })
 }
 
 fn system_prompt(name: &str, data_dir: &std::path::Path, whatsapp: bool) -> String {
@@ -574,5 +597,16 @@ mod tests {
         );
         let e = run_with(&llm_at(url), &mut ctx(), "hi").await.unwrap_err();
         assert!(e.contains("bad model"), "{e}");
+    }
+
+    #[test]
+    fn coded_tool_errors_become_an_activity_line() {
+        let text = "SEARCH_BLOCKED: DuckDuckGo is blocking automated searches from this PC.";
+        assert!(crate::errors::is_coded(text));
+        match coded_notice(1, text) {
+            Some(Out::Activity { task: 1, text: t }) => assert_eq!(t, text),
+            other => panic!("{other:?}"),
+        }
+        assert!(!crate::errors::is_coded("Error: missing query"));
     }
 }

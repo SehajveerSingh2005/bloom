@@ -4,7 +4,7 @@
 use crate::errors::{coded, MODEL_TOOL_CALL_FAILED};
 use serde_json::{json, Value};
 
-const TOOL_FAILED: &str = "The model sent a broken tool call twice. Try again, or pick a model with reliable tool calling (for Groq: llama-3.3-70b-versatile or openai/gpt-oss-120b).";
+const TOOL_FAILED: &str = "The model sent a broken tool call. Try again, or pick a model with reliable tool calling (for Groq: llama-3.3-70b-versatile or openai/gpt-oss-120b).";
 
 /// Groq answers 400 `tool_use_failed`; other OpenAI-compatible servers word it differently.
 fn is_bad_tool_call(error: &Value) -> bool {

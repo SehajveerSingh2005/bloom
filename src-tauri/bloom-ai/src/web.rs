@@ -19,7 +19,9 @@ const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Bloom-Janice/1.0";
 pub struct WebCfg {
     pub search_url: String,
     pub brave_url: String,
-    /// Tests set a key here; otherwise it comes from Credential Manager.
+    /// Credential Manager holds the key unless a test turns the store off and
+    /// sets `key` (None means no key).
+    pub use_store: bool,
     pub key: Option<String>,
     pub allow_loopback: bool,
     /// Never follows redirects: `fetch` follows them itself, checking each hop.
@@ -31,6 +33,7 @@ impl WebCfg {
         WebCfg {
             search_url: "https://html.duckduckgo.com/html/".into(),
             brave_url: "https://api.search.brave.com/res/v1".into(),
+            use_store: true,
             key: None,
             allow_loopback: false,
             http: reqwest::Client::builder()
@@ -147,8 +150,8 @@ struct Hit {
     snippet: String,
 }
 
-/// ponytail: scraping DuckDuckGo's HTML page is fragile; swap in a keyed
-/// provider (Brave, Tavily) when the markup changes and this returns nothing.
+/// ponytail: scraping DuckDuckGo's HTML page is fragile and now bot-challenged;
+/// it is only the keyless fallback. The keyed provider is Brave (see `brave`).
 fn parse_results(html: &str) -> Vec<Hit> {
     let marks: Vec<usize> = html.match_indices("result__a").map(|(i, _)| i).collect();
     let mut hits = Vec::new();
@@ -209,10 +212,10 @@ fn parse_results(html: &str) -> Vec<Hit> {
 const BLOCKED: &str = "DuckDuckGo is blocking automated searches from this PC. Add a free Brave Search key in Settings > AI to search the web.";
 
 fn search_key(web: &WebCfg) -> Option<String> {
-    web.key
-        .clone()
-        .or_else(|| crate::secrets::get("search-key"))
-        .filter(|k| !k.trim().is_empty())
+    if !web.use_store {
+        return web.key.clone().filter(|k| !k.trim().is_empty());
+    }
+    crate::secrets::get("search-key").filter(|k| !k.trim().is_empty())
 }
 
 /// Brave answers `web.results[]` (or `results[]` for news); descriptions carry
@@ -246,13 +249,26 @@ fn parse_brave(json: &serde_json::Value, news: bool) -> Vec<Hit> {
         .unwrap_or_default()
 }
 
+/// Users get a clean `SEARCH_FAILED` message; the raw error goes to debug.log
+/// (cut to 300 chars) when debug is on.
+fn failed(shared: &Shared, user: &str, raw: &str) -> String {
+    if crate::config::Config::load(&shared.settings_path).debug {
+        crate::debug::log(
+            &shared.data_dir,
+            "search-error",
+            &crate::debug::cut(raw, crate::debug::RESULT_CHARS),
+        );
+    }
+    coded(SEARCH_FAILED, user)
+}
+
 async fn brave(shared: &Shared, key: &str, query: &str, news: bool) -> Result<Vec<Hit>, String> {
     let path = if news { "news/search" } else { "web/search" };
     let url = Url::parse_with_params(
         &format!("{}/{path}", shared.web.brave_url),
         [("q", query), ("count", "8")],
     )
-    .map_err(|e| coded(SEARCH_FAILED, &e.to_string()))?;
+    .map_err(|e| failed(shared, "Couldn't build the search request.", &e.to_string()))?;
     let res = shared
         .http
         .get(url)
@@ -261,7 +277,7 @@ async fn brave(shared: &Shared, key: &str, query: &str, news: bool) -> Result<Ve
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| coded(SEARCH_FAILED, &format!("Can't reach Brave Search: {e}")))?;
+        .map_err(|e| failed(shared, "Couldn't reach Brave Search. Check your internet connection and try again.", &e.to_string()))?;
     match res.status().as_u16() {
         401 | 403 => {
             return Err(coded(
@@ -276,19 +292,19 @@ async fn brave(shared: &Shared, key: &str, query: &str, news: bool) -> Result<Ve
             ))
         }
         s if !(200..300).contains(&s) => {
-            return Err(coded(SEARCH_FAILED, &format!("Brave Search error ({s}).")))
+            return Err(failed(shared, "Brave Search had a problem. Try again in a minute.", &format!("brave status {s}")))
         }
         _ => {}
     }
     let json: serde_json::Value = res.json().await.map_err(|e| {
-        coded(SEARCH_FAILED, &format!("Brave Search sent something unreadable: {e}"))
+        failed(shared, "Brave Search sent an unreadable answer. Try again in a minute.", &e.to_string())
     })?;
     Ok(parse_brave(&json, news))
 }
 
 async fn ddg(shared: &Shared, query: &str) -> Result<Vec<Hit>, String> {
     let url = Url::parse_with_params(&shared.web.search_url, [("q", query)])
-        .map_err(|e| coded(SEARCH_FAILED, &e.to_string()))?;
+        .map_err(|e| failed(shared, "Couldn't build the search request.", &e.to_string()))?;
     let res = shared
         .http
         .get(url)
@@ -296,16 +312,16 @@ async fn ddg(shared: &Shared, query: &str) -> Result<Vec<Hit>, String> {
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| coded(SEARCH_FAILED, &format!("Can't reach the search service: {e}")))?;
+        .map_err(|e| failed(shared, "Couldn't reach the search service. Check your internet connection and try again.", &e.to_string()))?;
     let status = res.status();
-    // The bot challenge answers 202 with an anomaly page and no results.
-    if status.as_u16() == 202 {
+    // The bot challenge answers 202 with an anomaly page and no results; 403/429 mean the same.
+    if matches!(status.as_u16(), 202 | 403 | 429) {
         return Err(coded(SEARCH_BLOCKED, BLOCKED));
     }
     if !status.is_success() {
-        return Err(coded(SEARCH_FAILED, &format!("Search service error ({status}).")));
+        return Err(failed(shared, "The search service had a problem. Try again in a minute.", &format!("ddg status {status}")));
     }
-    let html = res.text().await.map_err(|e| coded(SEARCH_FAILED, &e.to_string()))?;
+    let html = res.text().await.map_err(|e| failed(shared, "The search service sent an unreadable answer. Try again in a minute.", &e.to_string()))?;
     let hits = parse_results(&html);
     let lower = html.to_ascii_lowercase();
     // An honest zero-result page says so; anything else with no results is a challenge.
@@ -673,6 +689,7 @@ mod tests {
         w.search_url = url.clone();
         w.brave_url = url;
         w.key = key.map(str::to_string);
+        w.use_store = false;
     }
 
     #[tokio::test]
@@ -704,17 +721,22 @@ mod tests {
         let out = search(&mut c, "rust", false).await.unwrap();
         assert!(out.contains("1. Rust & Co\n   https://r.test/a\n   The best lang"), "{out}");
         assert!(c.tainted && c.allowed_urls.contains("https://r.test/a"));
-        drop(rx);
+        let req = rx.recv().unwrap().to_ascii_lowercase();
+        assert!(req.starts_with("get /web/search?q=rust&count=8 "), "{req}");
+        assert!(req.contains("x-subscription-token: k"), "{req}");
+        assert!(req.contains("accept: application/json"), "{req}");
     }
 
     #[tokio::test]
     async fn brave_news_shows_age_and_bad_keys_and_limits_have_codes() {
         let news = r#"{"results":[{"title":"T","url":"https://n.test/","description":"d","age":"2 hours ago"}]}"#;
-        let (url, _rx) = mock_server_full("200 OK", "", vec![news.into()]);
+        let (url, rx) = mock_server_full("200 OK", "", vec![news.into()]);
         let mut c = local_ctx();
         with_search(&mut c, url, Some("k"));
         let out = search(&mut c, "q", true).await.unwrap();
         assert!(out.contains("(2 hours ago) d"), "{out}");
+        let req = rx.recv().unwrap().to_ascii_lowercase();
+        assert!(req.starts_with("get /news/search?q=q&count=8 "), "{req}");
         for (status, code, hint) in [
             ("401 Unauthorized", "SEARCH_NOT_CONFIGURED", "check your Brave key"),
             ("403 Forbidden", "SEARCH_NOT_CONFIGURED", "check your Brave key"),
@@ -732,15 +754,41 @@ mod tests {
     async fn news_without_a_key_is_not_configured() {
         let mut c = local_ctx();
         with_search(&mut c, "http://127.0.0.1:1".into(), None);
-        // No stored key exists for the test service.
-        if crate::secrets::get("search-key").is_none() {
-            let e = search(&mut c, "q", true).await.unwrap_err();
-            assert!(e.starts_with("SEARCH_NOT_CONFIGURED: News search needs"), "{e}");
+        let e = search(&mut c, "q", true).await.unwrap_err();
+        assert!(e.starts_with("SEARCH_NOT_CONFIGURED: News search needs"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn transport_errors_are_clean_and_logged_only_with_debug() {
+        for debug in [false, true] {
+            let mut c = local_ctx();
+            with_search(&mut c, "http://127.0.0.1:1".into(), Some("k"));
+            let dir = c.shared.data_dir.clone();
+            if debug {
+                let p = dir.join("settings.json");
+                std::fs::write(&p, r#"{"bloom-ai-debug":"true"}"#).unwrap();
+                Arc::get_mut(&mut c.shared).unwrap().settings_path = p;
+            }
+            let e = search(&mut c, "q", false).await.unwrap_err();
+            assert_eq!(e, "SEARCH_FAILED: Couldn't reach Brave Search. Check your internet connection and try again.");
+            assert_eq!(dir.join("debug.log").exists(), debug);
         }
     }
 
     #[tokio::test]
-    async fn competent_fetch_of_unknown_url_never_asks_conservative_does() {
+    async fn ddg_403_and_429_are_blocked() {
+        for status in ["403 Forbidden", "429 Too Many Requests"] {
+            let (url, _rx) = mock_server_full(status, "", vec!["x".into()]);
+            let mut c = local_ctx();
+            with_search(&mut c, url, None);
+            let e = search(&mut c, "q", false).await.unwrap_err();
+            assert!(e.starts_with("SEARCH_BLOCKED") && e.contains("Brave Search key"), "{e}");
+        }
+    }
+
+    #[tokio::test]
+    // The conservative half is `tainted_fetch_of_unknown_url_asks_known_does_not`.
+    async fn competent_fetch_of_unknown_url_never_asks() {
         let (url, _rx) = mock_server_full("200 OK", "Content-Type: text/plain\r\n", vec!["hi".into()]);
         let mut c = local_ctx();
         c.tainted = true;

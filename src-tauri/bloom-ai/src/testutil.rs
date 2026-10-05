@@ -45,9 +45,11 @@ pub fn mock_server_each(
             let (mut stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut len = 0usize;
+            let mut head = String::new();
             loop {
                 let mut line = String::new();
                 reader.read_line(&mut line).unwrap();
+                head.push_str(&line);
                 if line == "\r\n" || line.is_empty() {
                     break;
                 }
@@ -57,7 +59,9 @@ pub fn mock_server_each(
             }
             let mut request = vec![0; len];
             reader.read_exact(&mut request).unwrap();
-            tx.send(String::from_utf8_lossy(&request).into_owned())
+            // A request with no body (GET) yields its request line and headers.
+            let seen = if len == 0 { head } else { String::from_utf8_lossy(&request).into_owned() };
+            tx.send(seen)
                 .unwrap();
             // The client may hang up early (body cap tests).
             let _ = write!(
