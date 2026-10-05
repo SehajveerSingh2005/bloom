@@ -27,6 +27,7 @@
 - Add a news vertical for time-sensitive queries when the provider supports it (Brave `/news/search`), used by research (Task 4).
 - `llm.rs`: recognise Groq/OpenAI-style `tool_use_failed` / invalid tool call errors; retry the same step once with a short system reminder to call tools with valid JSON arguments; if it fails again return `MODEL_TOOL_CALL_FAILED` with an actionable message (suggest a model with good tool calling). Do not hide other errors.
 - The panel and orb show the actionable message for tool/integration errors (not "Tool call error").
+- User decision (2026-10-05): web search has full access on the competent tier. `web_fetch` no longer asks for any URL on competent or carte blanche, tainted or not; only conservative keeps the tainted exfiltration confirm. Private/loopback/link-local hosts stay refused unless carte blanche (unchanged). The `open` tool's tainted confirm is unchanged.
 - Settings: "Web search" row with provider status and a key field + Test button (runs one query, reports result count or the error code).
 - Tests: 202/anomaly page → SEARCH_BLOCKED; real-looking DDG page parses; Brave JSON parses (mock server); missing key path; tool_use_failed retry then success; retry then failure → MODEL_TOOL_CALL_FAILED. One `#[ignore]` live test against DDG documenting the 202 behaviour.
 
