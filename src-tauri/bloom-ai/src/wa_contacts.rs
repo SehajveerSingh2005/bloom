@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 const FILE: &str = "contacts.json";
+/// How long a full address-book sync is good for.
+const FRESH_FOR: i64 = 24 * 3600;
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct Book {
@@ -16,6 +18,9 @@ pub struct Book {
     pub contacts: Vec<Contact>,
     #[serde(default)]
     pub groups: Vec<Group>,
+    /// Unix seconds of the last full address-book sync that brought names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synced_at: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -47,9 +52,19 @@ pub fn load(dir: &Path) -> Result<Book, String> {
     }
 }
 
+/// Whether the address book wants a full sync: never done, or a day old. An
+/// unreadable file would not take one.
+pub fn stale(dir: &Path) -> bool {
+    stale_at(dir, chrono::Utc::now().timestamp())
+}
+
+fn stale_at(dir: &Path, now: i64) -> bool {
+    load(dir).is_ok_and(|b| b.synced_at.is_none_or(|t| now - t >= FRESH_FOR))
+}
+
 /// Applies a sync and saves it. `full`: `contacts` is the whole address book
-/// and replaces the old one (unless empty: that is a failed sync); otherwise
-/// they are added or renamed by number.
+/// and replaces the old one (unless empty: that is a failed sync, which
+/// leaves the book stale); otherwise they are added or renamed by number.
 /// `groups`, when given, replaces the group list. An unreadable file is left
 /// as it is. Returns the saved book.
 pub fn update(
@@ -61,6 +76,7 @@ pub fn update(
     let mut book = load(dir)?;
     if full && !contacts.is_empty() {
         book.contacts.clear();
+        book.synced_at = Some(chrono::Utc::now().timestamp());
     }
     for c in contacts {
         if c.name.trim().is_empty() || !c.number.starts_with('+') {
@@ -186,6 +202,26 @@ pub mod tests {
     }
 
     #[test]
+    fn only_a_full_sync_that_brought_names_counts_as_fresh() {
+        let dir = temp_dir();
+        assert!(stale(&dir), "never synced");
+        // Groups, updates and a failed (empty) full sync leave it stale.
+        update(&dir, false, vec![person("Sam", "+491")], Some(vec![])).unwrap();
+        update(&dir, true, Vec::new(), None).unwrap();
+        assert!(stale(&dir));
+        let book = update(&dir, true, vec![person("Sam", "+491")], None).unwrap();
+        let at = book.synced_at.unwrap();
+        assert!(!stale(&dir));
+        assert!(!stale_at(&dir, at + FRESH_FOR - 1));
+        assert!(stale_at(&dir, at + FRESH_FOR), "a day old");
+        // Later updates keep the time.
+        let book = update(&dir, false, vec![person("Neha", "+492")], None).unwrap();
+        assert_eq!(book.synced_at, Some(at));
+        std::fs::write(dir.join(FILE), "{bad").unwrap();
+        assert!(!stale(&dir), "unreadable: no sync to lose");
+    }
+
+    #[test]
     fn a_corrupt_file_is_never_overwritten() {
         let dir = temp_dir();
         std::fs::write(dir.join(FILE), "{bad").unwrap();
@@ -202,6 +238,7 @@ pub mod tests {
                 group("Family", "1@g.us", None),
                 group("Work Friends", "2@g.us", None),
             ],
+            synced_at: None,
         };
         assert_eq!(book.people("sharma neha").len(), 1);
         assert_eq!(book.people("+492")[0].name, "Sam");

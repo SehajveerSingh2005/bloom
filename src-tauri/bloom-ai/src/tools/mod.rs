@@ -474,8 +474,6 @@ async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
     let synced = matches.is_empty() && numbers.is_empty() && ctx.cfg.whatsapp;
     if synced {
         phone_lines = whatsapp::synced_lines(&ctx.shared.data_dir, name);
-        // Names people chose themselves: outside data.
-        ctx.tainted |= !phone_lines.is_empty();
     }
     if !matches.is_empty() {
         return Ok(format!("{}{phone_lines}", list(&matches)));
@@ -508,6 +506,9 @@ async fn find_contact(ctx: &mut Ctx, name: &str) -> Result<String, String> {
         ));
     }
     if !phone_lines.is_empty() {
+        // Names from WhatsApp (group subjects anyone in them can set): outside
+        // data. The Sent-mail answer above is tainted already.
+        ctx.tainted = true;
         return Ok(format!(
             "No saved contact matches {name}. In the user's WhatsApp:{phone_lines}"
         ));
@@ -1097,6 +1098,12 @@ mod tests {
             "{out}"
         );
         assert!(ctx.tainted, "names from WhatsApp are outside data");
+        ctx.tainted = false;
+        let out = call(&mut ctx, "find_contact", &json!({ "name": "Nobody" }))
+            .await
+            .unwrap();
+        assert!(out.contains("save_contact"), "{out}");
+        assert!(!ctx.tainted, "nothing from WhatsApp in the answer");
         let out = call(&mut ctx, "find_contact", &json!({ "name": "family" }))
             .await
             .unwrap();

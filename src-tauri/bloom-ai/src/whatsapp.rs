@@ -118,6 +118,17 @@ pub trait Link: Send + Sync {
     async fn unlink(&self) -> Result<bool, String>;
 }
 
+/// Where a name beyond phones.json was found.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Source {
+    /// The phone's address book (synced).
+    Contact,
+    /// A group subject: any member can change it.
+    Group,
+    /// The name someone gave themselves on WhatsApp.
+    Chat,
+}
+
 #[derive(Default)]
 struct Chat {
     /// Group subject, or the other person's WhatsApp name.
@@ -189,35 +200,71 @@ impl Chats {
         Some((chat.name.clone(), None))
     }
 
-    /// The chats a name means beyond phones.json: synced contacts and groups,
-    /// group chats and (with `people`) the names people gave themselves.
-    /// Exact names win over partial ones.
-    fn others(&self, book: &Book, query: &str, people: bool) -> Vec<String> {
+    /// The chats a name means beyond phones.json: synced contacts, groups
+    /// (synced or seen) and, with `people`, the names people gave
+    /// themselves. An exact name beats partial ones only within its own
+    /// source: a renamed group or a chosen name never hides an address-book
+    /// entry, the caller asks which instead.
+    fn others(&self, book: &Book, query: &str, people: bool) -> Vec<(String, Source)> {
         let q = query.trim().to_lowercase();
-        let mut found: Vec<(&str, &str)> = book
-            .people(query)
-            .into_iter()
-            .map(|c| (c.number.as_str(), c.name.as_str()))
-            .collect();
-        found.extend(
-            book.groups_named(query)
-                .into_iter()
-                .map(|g| (g.jid.as_str(), g.subject.as_str())),
-        );
-        found.extend(
+        let exact = |found: &mut Vec<(&str, &str)>| {
+            if found.iter().any(|(_, n)| n.trim().to_lowercase() == q) {
+                found.retain(|(_, n)| n.trim().to_lowercase() == q);
+            }
+        };
+        let chats = |group: bool| -> Vec<(&str, &str)> {
             self.map
                 .iter()
-                .filter(|(_, c)| (people || c.group) && !c.name.is_empty())
+                .filter(|(_, c)| c.group == group && !c.name.is_empty())
                 .filter(|(_, c)| c.name.to_lowercase().contains(&q))
-                .map(|(k, c)| (k.as_str(), c.name.as_str())),
-        );
-        if found.iter().any(|(_, n)| n.to_lowercase() == q) {
-            found.retain(|(_, n)| n.to_lowercase() == q);
+                .map(|(k, c)| (k.as_str(), c.name.as_str()))
+                .collect()
+        };
+        let contacts = book.people(query).into_iter();
+        let mut groups: Vec<(&str, &str)> = book
+            .groups_named(query)
+            .into_iter()
+            .map(|g| (g.jid.as_str(), g.subject.as_str()))
+            .collect();
+        groups.extend(chats(true));
+        let sources = [
+            (
+                Source::Contact,
+                contacts
+                    .map(|c| (c.number.as_str(), c.name.as_str()))
+                    .collect(),
+            ),
+            (Source::Group, groups),
+            (Source::Chat, if people { chats(false) } else { Vec::new() }),
+        ];
+        let mut found: Vec<(String, Source)> = Vec::new();
+        for (source, mut names) in sources {
+            exact(&mut names);
+            for (key, _) in names {
+                if !found.iter().any(|(k, _)| k == key) {
+                    found.push((key.to_string(), source));
+                }
+            }
         }
-        let mut keys: Vec<String> = found.into_iter().map(|(k, _)| k.to_string()).collect();
-        keys.sort();
-        keys.dedup();
-        keys
+        found
+    }
+
+    /// "Several match ...", naming what each one is.
+    fn which(&self, book: &Book, query: &str, found: &[(String, Source)]) -> String {
+        let names: Vec<String> = found
+            .iter()
+            .map(|(key, source)| match source {
+                Source::Group => self.label(&BTreeMap::new(), book, key),
+                Source::Contact => {
+                    format!("{} (contact, {key})", book.name_of(key).unwrap_or(key))
+                }
+                Source::Chat => format!(
+                    "{} (WhatsApp name, {key})",
+                    self.map.get(key).map_or("", |c| &c.name)
+                ),
+            })
+            .collect();
+        format!("Several match {query}: {}. Which one?", names.join(", "))
     }
 
     /// The chat a name, number or group name means.
@@ -227,28 +274,23 @@ impl Chats {
             return Ok(number);
         }
         let saved = phones::find(dir, q)?;
+        if saved.is_empty() {
+            return match self.others(book, q, true).as_slice() {
+                [(key, _)] => Ok(key.clone()),
+                [] => Err(format!("No WhatsApp chat or saved number matches {query}.")),
+                many => Err(self.which(book, query, many)),
+            };
+        }
         let mut keys: Vec<String> = saved.iter().map(|(_, n)| n.clone()).collect();
         keys.sort();
         keys.dedup();
         if keys.len() > 1 {
             keys.retain(|k| self.map.contains_key(k));
         }
-        if keys.is_empty() && saved.is_empty() {
-            keys = self.others(book, q, true);
-        }
         match keys.len() {
             1 => Ok(keys.remove(0)),
-            0 if saved.is_empty() => {
-                Err(format!("No WhatsApp chat or saved number matches {query}."))
-            }
             _ => {
-                let names = if saved.is_empty() {
-                    keys.iter()
-                        .map(|k| self.label(&BTreeMap::new(), book, k))
-                        .collect::<Vec<_>>()
-                } else {
-                    saved.iter().map(|(n, p)| format!("{n} ({p})")).collect()
-                };
+                let names: Vec<String> = saved.iter().map(|(n, p)| format!("{n} ({p})")).collect();
                 Err(format!(
                     "Several match {query}: {}. Which one?",
                     names.join(", ")
@@ -713,7 +755,7 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
             [] => {
                 let chats = state.chats.lock().unwrap();
                 match chats.others(&book, to, false).as_slice() {
-                    [key] => {
+                    [(key, _)] => {
                         let name = match chats.group(&book, key) {
                             Some((subject, _)) => subject,
                             None => book.name_of(key).unwrap_or(key).to_string(),
@@ -728,12 +770,7 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
                     many => {
                         // The names come from WhatsApp: outside data.
                         ctx.tainted = true;
-                        let names: Vec<String> =
-                            many.iter().map(|k| chats.label(&saved, &book, k)).collect();
-                        return Err(format!(
-                            "Several match {to}: {}. Which one?",
-                            names.join(", ")
-                        ));
+                        return Err(chats.which(&book, to, many));
                     }
                 }
             }
@@ -755,11 +792,11 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
         ));
     }
     let group = state.chats.lock().unwrap().group(&book, &number);
-    // Groups the user is in (as synced) are known, like saved numbers.
-    let known = match group {
-        Some(_) => book.group(&number).is_some(),
-        None => saved_name(&saved, &number).is_some(),
-    } && !ctx.saved_this_task.contains(&number);
+    // A group is found by its subject, which any member can change: below
+    // carte blanche that always asks, even for a group the user is in.
+    let known = group.is_none()
+        && saved_name(&saved, &number).is_some()
+        && !ctx.saved_this_task.contains(&number);
     // No message text in actions.log: messages stay in RAM.
     let detail = format!("to {name} {number} ({} chars)", text.chars().count());
     let ask = policy::email_needs_confirm(ctx.cfg.tier, known, ctx.tainted);
@@ -1059,16 +1096,16 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn group_sends_go_to_the_group_and_its_members_are_known() {
+    async fn group_sends_go_to_the_group_and_always_ask() {
         let mut c = ctx();
         c.cfg.tier = Tier::Competent;
         sync_book(&c.shared.data_dir);
         let fake = link(&c);
         let shared = c.shared.clone();
-        // The exact subject wins over "Family Trip"; a group the user is in
-        // is known, so the competent tier sends without asking.
-        let (out, asked, c) = send_ctx(c, "FAMILY", None).await;
-        assert!(!asked);
+        // The exact subject wins over "Family Trip". Any member can rename a
+        // group, so even one the user is in asks on the competent tier.
+        let (out, asked, c) = send_ctx(c, "FAMILY", Some(true)).await;
+        assert!(asked);
         assert_eq!(out.unwrap(), "Sent to Family.");
         assert_eq!(
             fake.sent.lock().unwrap()[0],
@@ -1077,9 +1114,13 @@ pub mod tests {
         assert!(c.tainted, "the subject came back in the result");
         let kept = shared.whatsapp.recent("1@g.us", 5);
         assert!(kept[0].from_me);
-        // Once tainted, the next one asks.
-        let (_, asked, _) = send_ctx(c, "family trip", Some(false)).await;
+        let (_, asked, c) = send_ctx(c, "family trip", Some(false)).await;
         assert!(asked);
+        // Carte blanche never asks.
+        let mut c = c;
+        c.cfg.tier = Tier::CarteBlanche;
+        let (_, asked, _) = send_ctx(c, "family trip", None).await;
+        assert!(!asked);
         assert_eq!(
             confirm_text("Family", "1@g.us", Some(Some(5)), "hi"),
             (
@@ -1091,8 +1132,8 @@ pub mod tests {
             confirm_text("Trip", "2@g.us", Some(None), "hi").1,
             "Group\n\nhi"
         );
-        // The send counts toward the hourly limit like any other.
-        assert_eq!(shared.whatsapp.sends.lock().unwrap().len(), 1);
+        // Sends count toward the hourly limit like any other.
+        assert_eq!(shared.whatsapp.sends.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -1128,6 +1169,70 @@ pub mod tests {
         assert!(fake.sent.lock().unwrap().is_empty());
         let (out, _, _) = send_ctx(c, "Bob", None).await;
         assert!(out.unwrap_err().contains("save_phone"));
+    }
+
+    /// A group renamed "Mom" by one of its members, and the address book's
+    /// "Mom Sharma".
+    fn mom_book(data_dir: &Path) {
+        use crate::wa_contacts::tests::{group, person};
+        wa_contacts::update(
+            &data_dir.join("whatsapp"),
+            true,
+            vec![person("Mom Sharma", "+4917000000009")],
+            Some(vec![group("Mom", "7@g.us", Some(40))]),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_group_named_like_a_contact_never_wins_by_itself() {
+        let mut c = ctx();
+        c.cfg.tier = Tier::Competent;
+        mom_book(&c.shared.data_dir);
+        let fake = link(&c);
+        let (out, asked, c) = send_ctx(c, "Mom", None).await;
+        assert!(!asked);
+        let err = out.unwrap_err();
+        assert!(
+            err.contains("Mom (group)") && err.contains("Mom Sharma (contact, +4917000000009)"),
+            "{err}"
+        );
+        assert!(c.tainted);
+        assert!(fake.sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_strangers_chosen_name_never_wins_by_itself() {
+        let mut c = ctx();
+        mom_book(&c.shared.data_dir);
+        link(&c);
+        feed(&c, msg("+4915550000666", "Mom", 1, "it's me, new number"));
+        let err = read(&mut c, "mom", None).unwrap_err();
+        assert!(
+            err.contains("Mom (WhatsApp name, +4915550000666)")
+                && err.contains("Mom Sharma (contact, +4917000000009)")
+                && err.contains("Mom (group)"),
+            "{err}"
+        );
+        assert!(c.tainted);
+    }
+
+    #[test]
+    fn exact_names_win_within_one_source_ignoring_spaces() {
+        use crate::wa_contacts::tests::group;
+        let book = Book {
+            groups: vec![
+                group(" Family ", "1@g.us", None),
+                group("Family Trip", "2@g.us", None),
+            ],
+            ..Book::default()
+        };
+        let chats = Chats::default();
+        assert_eq!(
+            chats.others(&book, " family ", false),
+            [("1@g.us".to_string(), Source::Group)]
+        );
+        assert_eq!(chats.others(&book, "fam", false).len(), 2);
     }
 
     #[tokio::test]

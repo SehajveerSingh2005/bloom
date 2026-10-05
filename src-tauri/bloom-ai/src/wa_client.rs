@@ -196,8 +196,9 @@ impl Conn {
                 offline(client).await;
                 self.refresh(client).await;
             }
-            // Recorded by `Book`; a change made on the phone is saved at once.
-            E::ContactUpdate(u) if !u.from_full_sync => self.save(client, false, None).await,
+            // Recorded by `Book`: a change made on the phone, or the library's
+            // own (re)sync, is merged at once unless `refresh` is running.
+            E::ContactUpdate(_) => self.save(client, false, None).await,
             // The library goes "online" once it learns the user's name, too.
             E::SelfPushNameUpdated(u) => {
                 let name = Some(u.new_name.clone()).filter(|n| !n.is_empty());
@@ -246,7 +247,7 @@ impl Conn {
                 })
                 .collect()
         });
-        let full = stale(&self.dir);
+        let full = wa_contacts::stale(&self.dir);
         if full {
             // Names arrive through `Book` while this runs. A failed sync is
             // retried by the library, and its names arrive the same way.
@@ -388,15 +389,6 @@ fn address_entry(
 /// (contacts, groups) for Settings.
 fn counts(book: &wa_contacts::Book) -> (usize, usize) {
     (book.contacts.len(), book.groups.len())
-}
-
-/// The saved address book is missing or a day old.
-fn stale(dir: &Path) -> bool {
-    std::fs::metadata(dir.join("contacts.json"))
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.elapsed().ok())
-        .is_none_or(|age| age >= Duration::from_secs(24 * 3600))
 }
 
 /// Without this the phone stops showing notifications while Bloom is linked.
@@ -824,21 +816,6 @@ mod tests {
             Some((lid.clone(), "Sam".into()))
         );
         assert_eq!(address_entry(&lid, &ContactAction::default()), None);
-    }
-
-    #[test]
-    fn the_address_book_is_synced_afresh_once_a_day() {
-        let dir = crate::testutil::temp_dir();
-        assert!(stale(&dir), "never synced");
-        wa_contacts::update(&dir, true, Vec::new(), Some(Vec::new())).unwrap();
-        assert!(!stale(&dir));
-        let old = std::time::SystemTime::now() - Duration::from_secs(25 * 3600);
-        let file = std::fs::File::options()
-            .write(true)
-            .open(dir.join("contacts.json"))
-            .unwrap();
-        file.set_modified(old).unwrap();
-        assert!(stale(&dir));
     }
 
     #[test]
