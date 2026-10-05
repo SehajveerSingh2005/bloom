@@ -18,6 +18,8 @@ import "./ai/ai.css";
 
 // Loaded on the first answer, like the panel does, so the overlay starts light.
 const Markdown = lazy(() => import("./ai/Markdown"));
+// The caption card's spring, close to the orb's own so they move as one.
+const CARD_SPRING = { type: "spring", stiffness: 260, damping: 26, mass: 0.9 } as const;
 
 // ─── App Volume Mixer ───────────────────────────────────────────────────────
 
@@ -810,6 +812,11 @@ function OverlayApp() {
 	const ai = useAi(() => {});
 	const { phase, wake } = ai.state;
 	const orbShown = ai.enabled && wake && phase !== "idle" && phase !== "confirm";
+	// Mounted from the first show until the orb reports it has faded out, so it
+	// never vanishes mid-motion; showing it again mid-fade just retargets it.
+	const [orbMounted, setOrbMounted] = useState(false);
+	if (orbShown && !orbMounted) setOrbMounted(true);
+	const unmountOrb = useCallback(() => setOrbMounted(false), []);
 	// The whole reply, rendered like the panel. The overlay is click-through, so
 	// it can't scroll: a reply too tall for the card opens in the panel instead.
 	const answered = phase === "done" || phase === "error";
@@ -867,7 +874,7 @@ function OverlayApp() {
 					hideWindowTimeoutRef.current = null;
 				}
 
-				if (mode === "idle" && !orbShown) {
+				if (mode === "idle" && !orbMounted) {
 					// Wait for exit animation to finish before hiding
 					hideWindowTimeoutRef.current = setTimeout(async () => {
 						await appWindow.hide();
@@ -889,7 +896,7 @@ function OverlayApp() {
 		return () => {
 			if (hideWindowTimeoutRef.current) clearTimeout(hideWindowTimeoutRef.current);
 		};
-	}, [mode, orbShown]);
+	}, [mode, orbMounted]);
 
 	// ── Volume Controls ──
 	const sendVolume = useTrailingThrottle((newVol: number) => {
@@ -1013,50 +1020,37 @@ function OverlayApp() {
 			</AnimatePresence>
 
 			{/* Bloom AI orb: under the notch, or above the dock when merged */}
-			<AnimatePresence>
-				{orbShown && mode !== "splash" && mode !== "updating" && (
-					<div
-						key="ai-orb"
-						className={`ai-orb-float ${merged ? "dock" : "notch"}`}
-						style={{ zoom: scale }}
-					>
-						<motion.div
-							className="ai-orb-float-card"
-							initial={{ scale: reduceMotion ? 1 : 0.5, opacity: 0 }}
-							animate={{ scale: 1, opacity: 1 }}
-							exit={{
-								scale: reduceMotion ? 1 : 0.8,
-								opacity: 0,
-								transition: { duration: 0.2, ease: [0.32, 0.72, 0, 1] }
-							}}
-							transition={{ type: "spring", stiffness: 450, damping: 25, mass: 0.7 }}
-						>
-							<AiOrb phase={phase} size={64} />
-							<AnimatePresence mode="popLayout" initial={false}>
-								{caption && (
-									<motion.div
-										key={answered ? "reply" : "heard"}
-										ref={captionRef}
-										className={`ai-orb-caption ${phase}${phase === "done" ? " answer" : ""}`}
-										initial={{ opacity: 0, y: reduceMotion ? 0 : merged ? 6 : -6 }}
-										animate={{ opacity: 1, y: 0 }}
-										exit={{ opacity: 0, transition: { duration: 0.15 } }}
-										transition={{ type: "spring", stiffness: 450, damping: 32 }}
-									>
-										{phase === "done" ? (
-											<Suspense fallback={<p>{plainText(caption)}</p>}>
-												<Markdown text={caption} />
-											</Suspense>
-										) : (
-											caption
-										)}
-									</motion.div>
-								)}
-							</AnimatePresence>
+			{orbMounted && mode !== "splash" && mode !== "updating" && (
+				<div className={`ai-orb-float ${merged ? "dock" : "notch"}`} style={{ zoom: scale }}>
+					<div className="ai-orb-float-card">
+						{/* Above the dock a growing card pushes the orb up: it glides there. */}
+						<motion.div layout={reduceMotion ? false : "position"} transition={CARD_SPRING}>
+							<AiOrb phase={phase} size={64} float shown={orbShown} onHidden={unmountOrb} />
 						</motion.div>
+						<AnimatePresence mode="popLayout" initial={false}>
+							{orbShown && caption && (
+								<motion.div
+									key={answered ? "reply" : "heard"}
+									ref={captionRef}
+									className={`ai-orb-caption ${phase}${phase === "done" ? " answer" : ""}`}
+									initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: merged ? 8 : -8, scale: 0.92 }}
+									animate={{ opacity: 1, y: 0, scale: 1 }}
+									exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: merged ? 6 : -6, scale: 0.94 }}
+									transition={CARD_SPRING}
+								>
+									{phase === "done" ? (
+										<Suspense fallback={<p>{plainText(caption)}</p>}>
+											<Markdown text={caption} />
+										</Suspense>
+									) : (
+										caption
+									)}
+								</motion.div>
+							)}
+						</AnimatePresence>
 					</div>
-				)}
-			</AnimatePresence>
+				</div>
+			)}
 
 			{/* Volume / Brightness Overlay */}
 			{mode !== "splash" && mode !== "updating" && (

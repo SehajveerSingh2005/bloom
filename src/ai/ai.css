@@ -48,21 +48,8 @@
 	line-height: 1.4;
 }
 
-/* ── Thinking: the orb swells and glows, dots pulse after the label and a
-   light sweeps under the status line. Transform and opacity only. */
-.ai-status .aio {
-	transition:
-		opacity 0.6s ease,
-		transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.ai-panel[data-thinking] .ai-status .aio {
-	transform: scale(1.25);
-}
-
-.ai-panel[data-thinking] .ai-status .aio-glow {
-	opacity: 0.7;
-}
+/* ── Thinking: the orb swirls (orbMotion.ts), dots pulse after the label and
+   a light sweeps under the status line. Transform and opacity only. */
 
 /* Always mounted: fades in and out with the sweep, and only pulses while shown. */
 .ai-dots {
@@ -163,9 +150,6 @@
 	}
 	.ai-panel[data-thinking] .ai-sweep {
 		opacity: 0.4;
-	}
-	.ai-status .aio {
-		transition: opacity 0.6s ease;
 	}
 }
 
