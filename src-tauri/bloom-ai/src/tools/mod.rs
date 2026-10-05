@@ -580,8 +580,13 @@ async fn find_contact(ctx: &mut Ctx, query: &str) -> Result<String, String> {
     let dir = ctx.shared.data_dir.clone();
     let mut view = contact_view(&dir, ctx.cfg.whatsapp)?;
     // A miss may mean the mail has new people: scan it, at most once a day.
-    if matches!(people::lookup(&view, query), Found::None) && refresh_mail_if_due(ctx).await {
-        view = contact_view(&dir, ctx.cfg.whatsapp)?;
+    let mut slow = false;
+    if matches!(people::lookup(&view, query), Found::None) {
+        match refresh_mail_if_due(ctx).await {
+            Scan::Done => view = contact_view(&dir, ctx.cfg.whatsapp)?,
+            Scan::Slow => slow = true,
+            Scan::Skipped | Scan::Background => {}
+        }
     }
     match people::lookup(&view, query) {
         Found::One(p, by_other_name) => {
@@ -622,6 +627,17 @@ async fn find_contact(ctx: &mut Ctx, query: &str) -> Result<String, String> {
             ));
         }
         Found::None => {}
+    }
+    if slow {
+        // The server is slow: no Sent search on top of the running scan.
+        return Ok(coded(
+            CONTACT_NOT_FOUND,
+            &format!(
+                "No saved contact matches {query}. The first scan of the user's mail for \
+                 contacts is still running in the background; try again in a minute, or ask \
+                 the user for the address and call save_contact."
+            ),
+        ));
     }
     // Not saved and not in the scanned mail: look through older Sent mail.
     // Any failure here (no email set up, offline) just falls through.
@@ -665,16 +681,54 @@ async fn find_contact(ctx: &mut Ctx, query: &str) -> Result<String, String> {
     ))
 }
 
+/// What a find_contact miss did about the mail scan.
+#[derive(Debug, PartialEq)]
+enum Scan {
+    /// Not due, not set up, or it failed.
+    Skipped,
+    /// The first scan finished: look again.
+    Done,
+    /// A scan exists: the day's refresh runs on its own, answer from it.
+    Background,
+    /// The first scan is still running after `FIRST_SCAN_WAIT`.
+    Slow,
+}
+
+/// How long a request waits for the very first mail scan.
+const FIRST_SCAN_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// After a find_contact miss: scans the mail headers if it was not tried
-/// today. True when the scan worked.
-async fn refresh_mail_if_due(ctx: &Ctx) -> bool {
+/// today.
+async fn refresh_mail_if_due(ctx: &Ctx) -> Scan {
     let Ok(server) = email::server_for(&ctx.cfg) else {
-        return false;
+        return Scan::Skipped;
     };
     if server.oauth || !mail_harvest::try_now(&ctx.shared.data_dir, people::now()) {
-        return false;
+        return Scan::Skipped;
     }
-    harvest_mail(&ctx.shared, &ctx.cfg).await.is_ok()
+    let (shared, cfg) = (ctx.shared.clone(), ctx.cfg.clone());
+    let scan = async move { harvest_mail(&shared, &cfg).await };
+    scan_on_miss(&ctx.shared.data_dir, scan, FIRST_SCAN_WAIT).await
+}
+
+/// Runs a due scan without making the request wait on it: in the background
+/// when there is a scan to answer from, else for at most `wait` (a scan
+/// that takes longer keeps going and saves when done).
+async fn scan_on_miss<F>(dir: &std::path::Path, scan: F, wait: std::time::Duration) -> Scan
+where
+    F: std::future::Future<Output = Result<usize, String>> + Send + 'static,
+{
+    if mail_harvest::exists(dir) {
+        tokio::spawn(async move {
+            let _ = scan.await;
+        });
+        return Scan::Background;
+    }
+    match tokio::time::timeout(wait, scan).await {
+        Ok(Ok(_)) => Scan::Done,
+        Ok(Err(_)) => Scan::Skipped,
+        Err(_) => Scan::Slow,
+    }
 }
 
 pub const OUTLOOK_HARVEST: &str =
@@ -801,16 +855,45 @@ async fn save_address(
                 return Ok("The user kept the saved address.".into());
             }
             email::save_contact(&dir, name, &address)?;
-        }
-        _ => people::update(&dir, |all| {
-            if people::named(all, name).is_none() {
-                all.push(Person::new(name, people::USER));
+            if !label.is_empty() {
+                people::update(&dir, |all| {
+                    let p = people::named(all, name).ok_or("contact vanished")?;
+                    if let Some(e) = p.emails.iter_mut().find(|e| e.address == address) {
+                        e.label = label.to_lowercase();
+                    }
+                    Ok(())
+                })?;
             }
-            let p = people::named(all, name).expect("just added");
-            p.add_tags(tags)?;
-            p.add_email(&address, label, people::USER);
-            Ok(())
-        })?,
+        }
+        _ => {
+            // Outside text may be asking: a saved address becomes a known
+            // recipient that competent mode emails without asking.
+            let new = person.is_none_or(|p| !p.has_email(&address));
+            let ask = new && ctx.tainted && ctx.cfg.tier != crate::config::Tier::CarteBlanche;
+            if ask
+                && !ctx
+                    .shared
+                    .bridge
+                    .confirm(
+                        ctx.task,
+                        ConfirmKind::Email,
+                        format!("Save {name}'s address {address}?"),
+                        format!("{name}\n{address}"),
+                    )
+                    .await
+            {
+                return Ok("The user chose not to save it.".into());
+            }
+            people::update(&dir, |all| {
+                if people::named(all, name).is_none() {
+                    all.push(Person::new(name, people::USER));
+                }
+                let p = people::named(all, name).expect("just added");
+                p.add_tags(tags)?;
+                p.add_email(&address, label, people::USER);
+                Ok(())
+            })?
+        }
     }
     ctx.saved_this_task.insert(address.clone());
     let mut out = format!("Saved {name} <{address}>.");
@@ -907,32 +990,33 @@ fn retag(
         .collect();
     people::update(dir, |all| {
         let key = people::fold(name);
-        let i =
-            match all.iter().position(|p| people::fold(&p.name) == key) {
-                Some(i) => i,
-                None => match people::lookup(all, name) {
-                    Found::One(p, _) => {
-                        let id = p.id.clone();
-                        all.iter().position(|q| q.id == id).expect("listed")
-                    }
-                    Found::Many(list) => {
-                        let names: Vec<&str> = list.iter().map(|p| p.name.as_str()).collect();
-                        return Err(coded(
-                            CONTACT_AMBIGUOUS,
-                            &format!(
-                                "Several saved contacts match {name}: {}. Ask the user which one.",
-                                names.join(", ")
-                            ),
-                        ));
-                    }
-                    Found::None => return Err(coded(
+        let i = match all.iter().position(|p| people::fold(&p.name) == key) {
+            Some(i) => i,
+            None => match people::lookup(all, name) {
+                Found::One(p, _) => {
+                    let id = p.id.clone();
+                    all.iter().position(|q| q.id == id).expect("listed")
+                }
+                Found::Many(list) => {
+                    let names: Vec<&str> = list.iter().map(|p| p.name.as_str()).collect();
+                    return Err(coded(
+                        CONTACT_AMBIGUOUS,
+                        &format!(
+                            "Several saved contacts match {name}: {}. Ask the user which one.",
+                            names.join(", ")
+                        ),
+                    ));
+                }
+                Found::None => {
+                    return Err(coded(
                         CONTACT_NOT_FOUND,
                         &format!(
                             "No saved contact matches {name}. Save them first with save_contact."
                         ),
-                    )),
-                },
-            };
+                    ))
+                }
+            },
+        };
         let p = &mut all[i];
         p.add_tags(add)?;
         p.tags.retain(|t| !remove.contains(t));
@@ -995,13 +1079,13 @@ pub async fn contacts(
             all.retain(|p| p.id != id);
             Ok(())
         }),
-        "harvest" => match harvest_mail(shared, &cfg).await {
-            Ok(n) => {
+        // After a Test or Refresh, a miss later today does not scan again.
+        "harvest" => {
+            mail_harvest::mark(dir, people::now());
+            harvest_mail(shared, &cfg).await.map(|n| {
                 message = Some(format!("Found {n} people in your mail."));
-                Ok(())
-            }
-            Err(e) => Err(e),
-        },
+            })
+        }
         other => Err(format!("unknown contacts action {other}")),
     };
     let (list, unreadable) = match people::load(dir) {
@@ -1933,5 +2017,122 @@ mod tests {
             .contains("gone"));
         let e = error(contacts(s, "harvest", "", "", "").await).unwrap();
         assert!(e.contains("Set up email"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_new_address_while_tainted_asks_unless_carte_blanche() {
+        use crate::config::Tier;
+        for (tier, approve, asks, saved) in [
+            (Tier::Competent, false, true, false),
+            (Tier::Competent, true, true, true),
+            (Tier::CarteBlanche, false, false, true),
+        ] {
+            let mut c = ctx();
+            let dir = c.shared.data_dir.clone();
+            email::save_contact(&dir, "Boss", "boss@corp.com").unwrap();
+            c.cfg.tier = tier;
+            c.tainted = true;
+            // Injected text asking to add a second, tagged address.
+            let args = json!({ "name": "Boss", "email": "x@evil.test", "tags": ["work"] });
+            let (out, asked, _) = run(c, "save_contact", args, approve).await;
+            assert_eq!(asked, asks, "{tier:?}");
+            assert_eq!(
+                person(&dir, "Boss").has_email("x@evil.test"),
+                saved,
+                "{tier:?}"
+            );
+            if !saved {
+                assert_eq!(out.unwrap(), "The user chose not to save it.");
+                assert!(!known_recipient(&dir, "x@evil.test"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_number_or_address_someone_else_has_is_refused() {
+        let c = ctx();
+        let dir = c.shared.data_dir.clone();
+        phones::save(&dir, "Neha", "+919876543210").unwrap();
+        email::save_contact(&dir, "Neha", "neha@example.com").unwrap();
+        let args = json!({ "name": "Bob", "phone": "+91 98765 43210" });
+        let (out, _, c) = run(c, "save_phone", args, true).await;
+        assert_eq!(out.unwrap_err(), "+919876543210 is already saved for Neha.");
+        let bob = json!({ "name": "Bob", "email": "bob@x.com" });
+        let (_, _, c) = run(c, "save_contact", bob, true).await;
+        let id = person(&dir, "Bob").id;
+        let error = match contacts(&c.shared, "add_email", &id, "neha@example.com", "").await {
+            crate::protocol::Out::Contacts { error, .. } => error.unwrap(),
+            _ => unreachable!(),
+        };
+        assert_eq!(error, "neha@example.com is already saved for Neha.");
+        assert!(!person(&dir, "Bob").has_email("neha@example.com"));
+    }
+
+    #[tokio::test]
+    async fn an_approved_change_keeps_its_label() {
+        let c = ctx();
+        let dir = c.shared.data_dir.clone();
+        email::save_contact(&dir, "Alice", "alice@old.com").unwrap();
+        let args = json!({ "name": "Alice", "email": "alice@new.com", "label": "Work" });
+        let (out, asked, _) = run(c, "save_contact", args, true).await;
+        assert!(asked && out.is_ok());
+        let p = person(&dir, "Alice");
+        assert_eq!(p.emails.len(), 1);
+        assert_eq!(
+            (p.emails[0].address.as_str(), p.emails[0].label.as_str()),
+            ("alice@new.com", "work")
+        );
+    }
+
+    #[tokio::test]
+    async fn with_a_scan_on_disk_a_miss_refreshes_in_the_background() {
+        let dir = crate::testutil::temp_dir();
+        std::fs::write(dir.join("mail-contacts.json"), "[]").unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let scan = async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let _ = tx.send(());
+            Ok(1)
+        };
+        let started = std::time::Instant::now();
+        assert_eq!(
+            scan_on_miss(&dir, scan, FIRST_SCAN_WAIT).await,
+            Scan::Background
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(40),
+            "did not wait"
+        );
+        rx.await.expect("the scan still ran");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_first_scan_waits_at_most_15_seconds() {
+        let dir = crate::testutil::temp_dir();
+        let slow = async {
+            tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            Ok(1)
+        };
+        let started = tokio::time::Instant::now();
+        assert_eq!(scan_on_miss(&dir, slow, FIRST_SCAN_WAIT).await, Scan::Slow);
+        assert_eq!(started.elapsed(), FIRST_SCAN_WAIT);
+        assert_eq!(
+            scan_on_miss(&dir, async { Ok(3) }, FIRST_SCAN_WAIT).await,
+            Scan::Done
+        );
+        let failed = async { Err("Can't reach imap.example.com".to_string()) };
+        assert_eq!(
+            scan_on_miss(&dir, failed, FIRST_SCAN_WAIT).await,
+            Scan::Skipped
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refresh_counts_as_todays_scan() {
+        let c = ctx();
+        let dir = c.shared.data_dir.clone();
+        // Fails (no email set up), but it was a try: no rescan on a miss today.
+        contacts(&c.shared, "harvest", "", "", "").await;
+        assert!(!mail_harvest::try_now(&dir, people::now()));
     }
 }

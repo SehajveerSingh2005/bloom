@@ -16,7 +16,7 @@ use crate::config::Config;
 use crate::llm::Llm;
 use crate::protocol::{emit, Out};
 use crate::whatsapp::{stamp, Message};
-use crate::{debug, journal, phones, secrets};
+use crate::{debug, journal, secrets};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -211,7 +211,9 @@ fn allowed(shared: &Shared, chat: &str) -> Option<(Config, Option<String>)> {
     if !(cfg.enabled && cfg.whatsapp && cfg.auto_reply) {
         return None;
     }
-    let saved = phones::load(&shared.data_dir)
+    // Every number the user saved, as the Settings picker lists them.
+    let saved = crate::people::user_phones(&shared.data_dir)
+        .unwrap_or_default()
         .into_iter()
         .find(|(_, n)| n == chat)
         .map(|(name, _)| name);
@@ -431,6 +433,7 @@ async fn reply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::phones;
     use crate::testutil::{ctx, http, mock_server};
     use crate::whatsapp::tests::{feed_state, link_state, msg, Fake};
 
@@ -670,6 +673,21 @@ mod tests {
         assert!(allowed(&any, "+4917000000003").is_none());
         assert!(allowed(&any, "1@g.us").is_none());
         assert!(allowed(&any, NEHA).is_some(), "phones.json still counts");
+    }
+
+    #[test]
+    fn anyone_covers_every_number_the_user_saved_not_only_the_primary() {
+        let any = shared(on(json!("*")));
+        crate::people::update(&any.data_dir, |all| {
+            let neha = crate::people::named(all, "Neha").unwrap();
+            neha.add_phone("+4917055555555", "work", crate::people::USER);
+            neha.add_phone("+4917066666666", "", crate::people::WHATSAPP);
+            Ok(())
+        })
+        .unwrap();
+        let second = allowed(&any, "+4917055555555").unwrap();
+        assert_eq!(second.1.as_deref(), Some("Neha"));
+        assert!(allowed(&any, "+4917066666666").is_none(), "synced number");
     }
 
     #[tokio::test]

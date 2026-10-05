@@ -1015,7 +1015,7 @@ export function AiTab() {
 						<SettingRow
 							icon={Users}
 							label={`Saved contacts: ${book?.people.length ?? 0}`}
-							desc={`People ${aiName} saved for you. Deleting one here doesn't touch your mail or WhatsApp, so their next sync may add the person back.`}
+							desc={`People ${aiName} saved for you. Deleting one removes only this saved entry: if their address or number is in your scanned mail or WhatsApp, ${aiName} still finds them there.`}
 							divider={!!book?.people.length}
 						>
 							<input

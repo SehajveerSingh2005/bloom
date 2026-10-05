@@ -85,13 +85,19 @@ pub fn normalize_in(raw: &str, region: Option<&str>) -> Result<String, String> {
 }
 
 /// Name to primary number the user saved (people.json, as phones.json was).
+#[cfg(test)]
 pub fn load(dir: &Path) -> BTreeMap<String, String> {
     try_load(dir).unwrap_or_default()
 }
 
-/// Like `load`, but an unreadable store is an error.
+/// Like `load` (each name's primary number), but an unreadable store is an
+/// error.
 pub fn try_load(dir: &Path) -> Result<BTreeMap<String, String>, String> {
-    crate::people::user_phones(dir)
+    let mut primary = BTreeMap::new();
+    for (name, number) in crate::people::user_phones(dir)? {
+        primary.entry(name).or_insert(number);
+    }
+    Ok(primary)
 }
 
 /// Saved numbers whose name or number contains every word of the query.

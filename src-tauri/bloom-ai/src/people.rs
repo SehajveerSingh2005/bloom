@@ -74,6 +74,10 @@ pub struct Person {
     /// Unix seconds of the last change.
     #[serde(default)]
     pub updated: i64,
+    /// Other names the user saved for this person (two old contacts.json
+    /// names with one address, say). Matched like the name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
     /// Lookup only: names other sources know this person by.
     #[serde(skip)]
     pub aka: Vec<String>,
@@ -275,12 +279,27 @@ fn migrate(dir: &Path) -> Result<Vec<Person>, String> {
     let mut names: HashMap<String, usize> = HashMap::new();
     let mut place = |name: &str, people: &mut Vec<Person>, same: Option<usize>| {
         let key = fold(name);
-        let i = same
-            .or_else(|| names.get(&key).copied())
-            .unwrap_or_else(|| {
+        let i = match same.or_else(|| names.get(&key).copied()) {
+            Some(i) => {
+                // Merged by a shared value under another name: the fuller
+                // spelling is the name, the other stays findable as an alias.
+                let p = &mut people[i];
+                if fold(&p.name) != key && !p.aliases.iter().any(|a| fold(a) == key) {
+                    let name = name.trim().to_string();
+                    if fullness(&name) > fullness(&p.name) {
+                        let old = std::mem::replace(&mut p.name, name);
+                        p.aliases.push(old);
+                    } else {
+                        p.aliases.push(name);
+                    }
+                }
+                i
+            }
+            None => {
                 people.push(Person::new(name, USER));
                 people.len() - 1
-            });
+            }
+        };
         names.insert(key, i);
         i
     };
@@ -307,20 +326,49 @@ fn migrate(dir: &Path) -> Result<Vec<Person>, String> {
         let i = place(&name, &mut people, same);
         people[i].add_phone(&number, "", USER);
     }
+    // Ids depend only on the old files, so they stay the same if the first
+    // write fails and the migration runs again.
     let now = now();
     for (n, p) in people.iter_mut().enumerate() {
-        p.id = format!("p{now}-{n}");
+        p.id = format!("m{n}");
         p.updated = now;
     }
     Ok(people)
+}
+
+/// Letters in words longer than an initial: "Neha Aggarwal" beats "N. Aggarwal".
+fn fullness(name: &str) -> usize {
+    fold(name)
+        .split(' ')
+        .filter(|w| w.chars().count() > 1)
+        .map(str::len)
+        .sum()
 }
 
 pub fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// Every write to people.json, the first migration included, holds this: a
+/// tool and a Settings edit at once must not lose either change.
+/// ponytail: one lock for every data dir; per-dir locks if that ever matters.
+static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// The store; built from the old files when people.json is missing.
 pub fn load(dir: &Path) -> Result<Vec<Person>, String> {
+    if dir.join(FILE).exists() {
+        return load_locked(dir);
+    }
+    let _held = lock();
+    load_locked(dir)
+}
+
+/// `load` for a caller that holds the lock (or only reads an existing file).
+fn load_locked(dir: &Path) -> Result<Vec<Person>, String> {
     match std::fs::read_to_string(dir.join(FILE)) {
         Ok(c) => {
             let mut people: Vec<Person> =
@@ -345,8 +393,10 @@ pub fn load(dir: &Path) -> Result<Vec<Person>, String> {
 
 /// Temp file + rename, so a crash never leaves half a file.
 fn write(dir: &Path, people: &[Person]) -> Result<(), String> {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let json = serde_json::to_string_pretty(people).map_err(|e| e.to_string())?;
-    let tmp = dir.join("people.json.tmp");
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!("people.json.{}-{n}.tmp", std::process::id()));
     std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, dir.join(FILE)).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
@@ -360,11 +410,8 @@ pub fn update<T>(
     dir: &Path,
     change: impl FnOnce(&mut Vec<Person>) -> Result<T, String>,
 ) -> Result<T, String> {
-    // A tool and a Settings edit at once must not lose either change.
-    // ponytail: one lock for every data dir; per-dir locks if that ever matters.
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _held = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut people = load(dir)?;
+    let _held = lock();
+    let mut people = load_locked(dir)?;
     let before = people.clone();
     let out = change(&mut people)?;
     for p in &mut people {
@@ -386,10 +433,38 @@ pub fn update<T>(
             p.updated = now();
         }
     }
+    unique(&before, &people)?;
     if people != before {
         write(dir, &people)?;
     }
     Ok(out)
+}
+
+/// One email or number belongs to one person. A clash that was already in
+/// the file (a hand edit) is left alone; a new one is refused, naming the
+/// person who already had it.
+fn unique(before: &[Person], after: &[Person]) -> Result<(), String> {
+    let holders = |people: &[Person], v: &str| -> usize {
+        people
+            .iter()
+            .filter(|p| p.has_email(v) || p.has_phone(v))
+            .count()
+    };
+    let values = after.iter().flat_map(|p| {
+        let emails = p.emails.iter().map(|e| e.address.as_str());
+        emails.chain(p.phones.iter().map(|x| x.number.as_str()))
+    });
+    for v in values {
+        if holders(after, v) > 1 && holders(before, v) <= 1 {
+            let owner = before
+                .iter()
+                .chain(after)
+                .find(|p| p.has_email(v) || p.has_phone(v))
+                .map_or("someone else", |p| p.name.as_str());
+            return Err(format!("{v} is already saved for {owner}."));
+        }
+    }
+    Ok(())
 }
 
 fn new_id(taken: &[Person]) -> String {
@@ -481,17 +556,16 @@ pub fn user_emails(dir: &Path) -> Result<BTreeMap<String, String>, String> {
         .collect())
 }
 
-/// Name to primary user-saved number, as phones.json used to be. Only these
-/// count for the automatic-reply "anyone in my contacts".
-pub fn user_phones(dir: &Path) -> Result<BTreeMap<String, String>, String> {
-    Ok(load(dir)?
-        .into_iter()
-        .filter_map(|p| {
-            let mut mine = p.phones.iter().filter(|x| x.source == USER);
-            let x = mine.clone().find(|x| x.primary).or_else(|| mine.next())?;
-            Some((p.name.clone(), x.number.clone()))
-        })
-        .collect())
+/// Every user-saved number as (name, number), each person's primary first.
+/// Only these count for the automatic-reply "anyone in my contacts".
+pub fn user_phones(dir: &Path) -> Result<Vec<(String, String)>, String> {
+    let mut out = Vec::new();
+    for p in load(dir)? {
+        let mut mine: Vec<&Phone> = p.phones.iter().filter(|x| x.source == USER).collect();
+        mine.sort_by_key(|x| !x.primary);
+        out.extend(mine.iter().map(|x| (p.name.clone(), x.number.clone())));
+    }
+    Ok(out)
 }
 
 /// Adds a synced record to the lookup list. Same email or number means same
@@ -683,6 +757,10 @@ fn name_score(query: &str, name: &str) -> f32 {
 /// score 0.65 (the weakest signal: enough to ask, never to pick alone).
 pub fn score(query: &str, p: &Person) -> (f32, bool) {
     let mut best = (name_score(query, &p.name), false);
+    // The user's own other names for them count like the name.
+    for a in &p.aliases {
+        best.0 = best.0.max(name_score(query, a));
+    }
     for a in &p.aka {
         let s = name_score(query, a);
         if s > best.0 {
@@ -722,11 +800,13 @@ pub enum Found<'a> {
     None,
 }
 
-/// Resolves `query` among `people`. The user's own contacts come first: one of
-/// them wins when it is sure (at least `SURE`, `MARGIN` ahead of the next
-/// user contact) and nothing synced scores higher. Synced people are picked
-/// alone only when no user contact is even a maybe; otherwise every close
-/// candidate is listed, so a synced name never silently beats the user's.
+/// Resolves `query` among `people`. The user's own contacts, matched by a name
+/// the user saved, come first: one of them wins when it is sure (at least
+/// `SURE`, `MARGIN` ahead of the next one) and nothing else scores higher.
+/// A saved person matched only through a name from mail or WhatsApp counts as
+/// synced. Synced people are picked alone only when no user contact is even a
+/// maybe; otherwise every close candidate is listed, so a synced name never
+/// silently beats the user's.
 pub fn lookup<'a>(people: &'a [Person], query: &str) -> Found<'a> {
     let mut scored: Vec<(f32, bool, &Person)> = people
         .iter()
@@ -742,8 +822,9 @@ pub fn lookup<'a>(people: &'a [Person], query: &str) -> Found<'a> {
             .then(b.2.weight.cmp(&a.2.weight))
     });
     type Scored<'p> = (f32, bool, &'p Person);
-    let (user, synced): (Vec<&Scored>, Vec<&Scored>) =
-        scored.iter().partition(|(_, _, p)| p.is_user());
+    let (user, synced): (Vec<&Scored>, Vec<&Scored>) = scored
+        .iter()
+        .partition(|(_, by_aka, p)| p.is_user() && !by_aka);
     let sure = |list: &[&(f32, bool, &'a Person)]| -> Option<(&'a Person, bool)> {
         let first = list.first()?;
         let lead = list.get(1).map_or(1.0, |second| first.0 - second.0);
@@ -843,17 +924,27 @@ mod tests {
         std::fs::write(dir.join("phones.json"), phones).unwrap();
         let people = load(&dir).unwrap();
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
-        // Same address: one person (the first name, alphabetically, wins).
-        assert_eq!(names, ["N. Aggarwal", "Sam", "Bob"]);
+        // Same address: one person, under the fuller name; the other stays
+        // findable as an alias.
+        assert_eq!(names, ["Neha Aggarwal", "Sam", "Bob"]);
+        assert_eq!(people[0].aliases, ["N. Aggarwal"]);
         assert!(
             people[0].has_phone("+919876543210"),
             "the merged-away name still matches"
         );
+        for q in ["Neha Aggarwal", "N. Aggarwal", "n aggarwal"] {
+            assert!(
+                matches!(lookup(&people, q), Found::One(p, false) if p.name == "Neha Aggarwal"),
+                "{q}"
+            );
+        }
         assert_eq!(user_emails(&dir).unwrap()["Sam"], "sam@x.org");
-        assert_eq!(user_phones(&dir).unwrap()["Bob"], "+14155550100");
-        assert!(people
-            .iter()
-            .all(|p| p.sources == [USER] && !p.id.is_empty()));
+        assert!(user_phones(&dir)
+            .unwrap()
+            .contains(&("Bob".into(), "+14155550100".into())));
+        assert!(people.iter().all(|p| p.sources == [USER]));
+        let ids: Vec<&str> = people.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["m0", "m1", "m2"], "stable if the first write fails");
         assert!(dir.join("people.json").exists());
         // The old files stay as they were; later edits do not touch them.
         set_email(&dir, "Sam", "sam@new.org").unwrap();
@@ -997,5 +1088,80 @@ mod tests {
         again.add_phone("+491701234567", "", WHATSAPP);
         merge(&mut people, again);
         assert_eq!(people.len(), 2);
+    }
+
+    #[test]
+    fn an_email_or_number_belongs_to_one_person() {
+        let dir = temp_dir();
+        set_email(&dir, "Neha", "neha@example.com").unwrap();
+        set_phone(&dir, "Neha", "+919876543210").unwrap();
+        let err = set_email(&dir, "Sam", "neha@example.com").unwrap_err();
+        assert_eq!(err, "neha@example.com is already saved for Neha.");
+        let err = set_phone(&dir, "Bob", "+919876543210").unwrap_err();
+        assert_eq!(err, "+919876543210 is already saved for Neha.");
+        let err = update(&dir, |all| {
+            let mut p = Person::new("Eve", USER);
+            p.add_email("neha@example.com", "", USER);
+            all.push(p);
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(err.contains("already saved for Neha"), "{err}");
+        assert_eq!(load(&dir).unwrap().len(), 1, "nothing saved");
+        // A clash already in the file (a hand edit) does not block other edits.
+        let mut people = load(&dir).unwrap();
+        let mut twin = Person::new("Twin", USER);
+        twin.id = "t".into();
+        twin.add_email("neha@example.com", "", USER);
+        people.push(twin);
+        write(&dir, &people).unwrap();
+        set_email(&dir, "Sam", "sam@x.org").unwrap();
+        assert_eq!(load(&dir).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_saved_person_found_only_by_a_mail_name_does_not_win_alone() {
+        let mut people = vec![
+            person("Neha", &["neha@example.com"]),
+            person("Rajes", &["r@x.com"]),
+        ];
+        // The mail calls Neha's address "Rajesh".
+        let mut mail = Person::new("Rajesh", MAIL);
+        mail.add_email("neha@example.com", "", MAIL);
+        merge(&mut people, mail);
+        let rajes = score("Rajesh", &people[1]).0;
+        assert!((MAYBE..SURE).contains(&rajes), "{rajes}");
+        assert_eq!(picked(&people, "Rajesh"), "many: Neha, Rajes");
+        // With no other saved candidate the aka match still resolves (and is flagged).
+        let only: Vec<Person> = people
+            .iter()
+            .filter(|p| p.name == "Neha")
+            .cloned()
+            .collect();
+        assert!(matches!(lookup(&only, "Rajesh"), Found::One(_, true)));
+    }
+
+    #[test]
+    fn every_user_number_counts_not_only_the_primary() {
+        let dir = temp_dir();
+        update(&dir, |all| {
+            let mut p = Person::new("Neha", USER);
+            p.add_phone("+491", "", USER);
+            p.add_phone("+492", "work", USER);
+            p.add_phone("+493", "", WHATSAPP);
+            all.push(p);
+            Ok(())
+        })
+        .unwrap();
+        let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(
+            user_phones(&dir).unwrap(),
+            [pair("Neha", "+491"), pair("Neha", "+492")]
+        );
+        assert_eq!(
+            crate::phones::try_load(&dir).unwrap()["Neha"],
+            "+491",
+            "the primary"
+        );
     }
 }

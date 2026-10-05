@@ -18,11 +18,31 @@ impl imap::Authenticator for XOAuth2<'_> {
 
 pub type Session = imap::Session<native_tls::TlsStream<std::net::TcpStream>>;
 
-/// Blocking: a logged-in IMAP session (port 993, TLS).
+pub const NO_SENT: &str = "No Sent folder found.";
+
+/// A silent server fails a read or write after this, instead of hanging.
+const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Blocking: a logged-in IMAP session (port 993, TLS) whose socket times out.
 pub fn connect(server: &Server, user: &str, secret: &str) -> Result<Session, String> {
+    use std::net::ToSocketAddrs;
+    let host = server.imap.as_str();
+    let unreachable = |e: &dyn std::fmt::Display| format!("Can't reach {host}: {e}");
+    let addr = (host, 993)
+        .to_socket_addrs()
+        .map_err(|e| unreachable(&e))?
+        .next()
+        .ok_or_else(|| unreachable(&"no address"))?;
+    let tcp =
+        std::net::TcpStream::connect_timeout(&addr, IO_TIMEOUT).map_err(|e| unreachable(&e))?;
+    tcp.set_read_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| unreachable(&e))?;
+    tcp.set_write_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| unreachable(&e))?;
     let tls = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
-    let client = imap::connect((server.imap.as_str(), 993), &server.imap, &tls)
-        .map_err(|e| format!("Can't reach {}: {e}", server.imap))?;
+    let stream = tls.connect(host, tcp).map_err(|e| unreachable(&e))?;
+    let mut client = imap::Client::new(stream);
+    client.read_greeting().map_err(|e| unreachable(&e))?;
     if server.oauth {
         client
             .authenticate(
@@ -83,7 +103,7 @@ pub fn sent_folder<T: std::io::Read + std::io::Write>(
             })
         })
         .map(|f| f.name().to_string())
-        .ok_or_else(|| "No Sent folder found.".to_string())
+        .ok_or_else(|| NO_SENT.to_string())
 }
 
 fn search<T: std::io::Read + std::io::Write>(

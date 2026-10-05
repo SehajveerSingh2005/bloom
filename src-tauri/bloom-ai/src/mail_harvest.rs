@@ -68,9 +68,20 @@ pub fn try_now(dir: &Path, now: i64) -> bool {
         .and_then(|s| s.trim().parse::<i64>().ok())
         .is_none_or(|t| now - t >= DAY);
     if due {
-        let _ = std::fs::write(dir.join(TRIED), now.to_string());
+        mark(dir, now);
     }
     due
+}
+
+/// Records a scan (a Test or Refresh one too), so a miss later the same day
+/// does not scan again.
+pub fn mark(dir: &Path, now: i64) {
+    let _ = std::fs::write(dir.join(TRIED), now.to_string());
+}
+
+/// Whether a scan has ever been saved.
+pub fn exists(dir: &Path) -> bool {
+    dir.join(FILE).exists()
 }
 
 /// Addresses that only send automated mail.
@@ -252,8 +263,13 @@ pub fn collect(sent: &[Envelope], inbox: &[Envelope], own: &str) -> Vec<MailCont
 /// is never overwritten.
 pub fn run(dir: &Path, mailbox: &mut dyn Mailbox, own: &str) -> Result<usize, String> {
     load(dir)?;
-    // No Sent folder found: the Inbox alone still helps.
-    let sent = mailbox.envelopes(true, PER_FOLDER).unwrap_or_default();
+    // No Sent folder: the Inbox alone still helps. Any other failure stops
+    // the scan and leaves the last result as it is.
+    let sent = match mailbox.envelopes(true, PER_FOLDER) {
+        Ok(sent) => sent,
+        Err(e) if e == crate::imap_lookup::NO_SENT => Vec::new(),
+        Err(e) => return Err(e),
+    };
     let inbox = mailbox.envelopes(false, PER_FOLDER)?;
     let found = collect(&sent, &inbox, own);
     let json = serde_json::to_string_pretty(&found).map_err(|e| e.to_string())?;
@@ -537,9 +553,19 @@ mod tests {
         assert!(!dir.join(FILE).exists());
         // No Sent folder: the Inbox still counts.
         let mut mb = fake();
-        mb.sent = Err("No Sent folder found.".into());
+        mb.sent = Err(crate::imap_lookup::NO_SENT.into());
         assert_eq!(run(&dir, &mut mb, ME).unwrap(), 4);
         assert_eq!(mb.calls, 2);
+        // Any other Sent failure stops the scan; the last result stays.
+        let before = std::fs::read_to_string(dir.join(FILE)).unwrap();
+        let mut mb = fake();
+        mb.sent = Err("Can't reach imap.gmail.com: timed out".into());
+        assert!(run(&dir, &mut mb, ME).unwrap_err().contains("timed out"));
+        assert_eq!(mb.calls, 1, "the Inbox is not fetched");
+        assert_eq!(std::fs::read_to_string(dir.join(FILE)).unwrap(), before);
+        // A Test or Refresh scan counts as today's.
+        mark(&dir, 5 * DAY);
+        assert!(!try_now(&dir, 5 * DAY + 60));
     }
 
     #[test]
