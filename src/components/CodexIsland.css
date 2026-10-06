@@ -1,0 +1,257 @@
+.codex-island {
+	width: 100%;
+	height: 100%;
+	padding: 10px 4px 14px;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	font-size: 12px;
+	min-height: 0;
+}
+.codex-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 24px;
+}
+.codex-header strong {
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: -0.2px;
+}
+.codex-header-count {
+	margin-left: auto;
+	opacity: 0.6;
+	font-size: 11px;
+}
+.codex-island button {
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+	border: 0;
+	transition:
+		background 0.15s,
+		opacity 0.15s;
+}
+.codex-island button:disabled {
+	opacity: 0.5;
+	cursor: wait;
+}
+.codex-island button:focus-visible {
+	outline: 2px solid currentColor;
+	outline-offset: -2px;
+}
+.codex-icon-button {
+	background: transparent;
+	display: grid;
+	place-items: center;
+	width: 26px;
+	height: 26px;
+	border-radius: 7px;
+}
+.codex-icon-button:hover {
+	background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.codex-session-list {
+	flex: 1;
+	min-height: 42px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+	scrollbar-color: #7775 transparent;
+}
+.codex-session {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	width: 100%;
+	height: 39px;
+	padding: 0 9px;
+	background: transparent;
+	border-radius: 8px;
+	text-align: left;
+}
+.codex-session:hover {
+	background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.codex-session.selected {
+	background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.codex-session > svg,
+.codex-status-dot {
+	flex-shrink: 0;
+}
+.codex-session-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.codex-session-state {
+	font-size: 10px;
+	opacity: 0.7;
+}
+.codex-status-dot {
+	width: 5px;
+	height: 5px;
+	margin: 0 4px;
+	border-radius: 50%;
+	background: currentColor;
+	opacity: 0.5;
+}
+.codex-awaiting_approval > svg,
+.codex-awaiting_approval .codex-session-state,
+.codex-awaiting_approval .codex-detail-label {
+	color: #e9b65b;
+	opacity: 1;
+}
+.codex-running > svg,
+.codex-running .codex-detail-label {
+	color: #91c9ba;
+}
+.codex-completed > svg {
+	color: #91c9ba;
+}
+.codex-detail {
+	border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+	padding: 12px 5px 0;
+	flex-shrink: 0;
+}
+.codex-detail-label {
+	display: flex;
+	gap: 7px;
+	align-items: center;
+	font-weight: 500;
+}
+.codex-detail-label time {
+	margin-left: auto;
+	font-size: 10px;
+	opacity: 0.5;
+	color: var(--bloom-text, white);
+	font-variant-numeric: tabular-nums;
+}
+.codex-detail p {
+	opacity: 0.75;
+	white-space: normal;
+	line-height: 1.5;
+	margin: 8px 0 10px;
+	height: 36px;
+	overflow: hidden;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+}
+.codex-detail-footer {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.codex-detail-footer > span {
+	opacity: 0.45;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 11px;
+}
+.codex-open-button,
+.codex-approval-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 7px;
+	border-radius: 7px;
+	padding: 8px 11px;
+	background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.codex-island .codex-approval-button {
+	color: #201806;
+	background: #e9b65b;
+	font-weight: 600;
+}
+.codex-island .codex-open-button:hover {
+	background: color-mix(in srgb, currentColor 20%, transparent);
+}
+.codex-island .codex-approval-button:hover {
+	background: #f5cb7f;
+}
+.codex-empty {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-direction: column;
+	gap: 12px;
+	text-align: center;
+	padding: 12px 22px;
+}
+.codex-empty > svg {
+	opacity: 0.5;
+}
+.codex-empty strong {
+	font-size: 14px;
+	font-weight: 500;
+}
+.codex-empty p {
+	white-space: normal;
+	margin: 0;
+	opacity: 0.65;
+	line-height: 1.6;
+}
+.codex-empty > span {
+	font-size: 10px;
+	opacity: 0.45;
+}
+.codex-error {
+	white-space: normal;
+	font-size: 11px;
+	line-height: 1.4;
+	color: #e9b65b;
+}
+.codex-error button {
+	background: transparent;
+	text-decoration: underline;
+	margin-left: 5px;
+}
+.codex-compact {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	height: 36px;
+	font-size: 11px;
+}
+.codex-compact-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 500;
+}
+.codex-compact-state {
+	opacity: 0.65;
+	font-size: 10px;
+}
+.codex-compact.codex-awaiting_approval .codex-compact-state {
+	color: #e9b65b;
+	opacity: 1;
+}
+.codex-pending-count {
+	font-size: 10px;
+	color: #e9b65b;
+}
+.codex-spinner {
+	animation: codex-spin 1.7s linear infinite;
+}
+@keyframes codex-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.codex-spinner {
+		animation: none;
+	}
+}

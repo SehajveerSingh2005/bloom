@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod codex;
 mod services;
 mod state;
 mod types;
@@ -90,6 +91,9 @@ fn main() {
             Some(vec![]),
         ))
         .invoke_handler(tauri::generate_handler![
+            codex::get_codex_sessions,
+            codex::configure_codex_bridge,
+            codex::open_codex_chat,
             hide_native_osd,
             open_settings_window,
             open_wifi_settings,

@@ -56,6 +56,31 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | `bloom-music-mode-enabled`  | `"true"` / `"false"` | `"true"` | Enable interactive music media widget.                                |
 | `bloom-music-compact-notch` | `"true"` / `"false"` | `"true"` | Show compact music display (visualizer + artwork) in collapsed notch. |
 
+### Codex
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `bloom-codex-enabled` | `"true"` / `"false"` | `"true"` | Show the Codex notch mode and reveal local task/approval activity. Connect separately in Notch settings. |
+
+The Connect button adds informational lifecycle hooks to `%CODEX_HOME%/hooks.json`
+(default `%USERPROFILE%/.codex/hooks.json`), preserving existing hooks and saving a
+backup. Review/trust the new hooks in Codex and start or resume a local chat.
+Disconnect removes only Bloom's hooks. Turning the display off hides the mode;
+Disconnect also stops status reporting. Local Work is supported where lifecycle
+hooks are available; cloud chats are not monitored.
+
+Status files in `%APPDATA%/bloom/codex/` contain session IDs, project paths, tool
+names, approval descriptions and timestamps. Prompts, tool arguments, responses,
+and credentials are not copied. Recent titles are read best-effort from Codex's
+local session index, with a project/ID fallback. Hooks do not heartbeat: after
+15 minutes without an event, active states show "No recent signal". Finished
+sessions remain selectable for seven days (up to 24 recent sessions).
+
+An approval request reveals the Codex mode and offers **Review in Codex**. The
+island never returns approval decisions. Scroll over other notch modes to reach
+Codex while it is idle; if no sessions exist, the view offers a Connect button
+and guidance.
+
 ### Music Appearance
 
 | Key                                | Type                      | Default     | Description                                                                                     |
