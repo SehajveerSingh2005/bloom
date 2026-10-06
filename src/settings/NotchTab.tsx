@@ -12,6 +12,7 @@ import {
 	X
 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
+import { CodexSettings } from "./CodexSettings";
 import { StatusWidgetConfig } from "../components/StatusWidgetConfig";
 import type { WidgetConfig } from "./types";
 
@@ -89,6 +90,7 @@ export function NotchTab({
 }: NotchTabProps) {
 	return (
 		<>
+			<CodexSettings />
 			<div className="setting-group-label">Notch</div>
 			<div className="setting-group">
 				<SettingRow icon={PanelTop} label="Notch Behavior" desc="Choose how the notch appears">
