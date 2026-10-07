@@ -1421,6 +1421,20 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                 std::thread::sleep(std::time::Duration::from_millis(150));
                 continue;
             }
+            // Clicking Bloom's own overlay (e.g. the background-apps popup) makes it the
+            // foreground window. The scan below walks the z-order past Bloom windows
+            // with a short cap and can miss the real foreground app, which would report
+            // "no overlap" and slide the dock up. Keep the previous state instead.
+            let overlay_is_foreground = handle_visibility
+                .get_webview_window("overlay")
+                .and_then(|w| w.hwnd().ok())
+                .is_some_and(|overlay| unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() == overlay
+                });
+            if overlay_is_foreground {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                continue;
+            }
             unsafe {
                 let now = Instant::now();
                 if now.duration_since(last_monitor_update) > Duration::from_millis(1000) {
@@ -2107,6 +2121,22 @@ const TOP_EDGE_POLL_MS: u64 = 40;
 static MH_TOP_EDGE_ENTER_MS: AtomicI64 = AtomicI64::new(0);
 static MH_TOP_EDGE_ARMED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the cursor is over the background-apps button or its open popup. The
+/// frontend reports their union in overlay CSS pixels.
+fn cursor_in_tray_rect(monitor: &tauri::Monitor, x: i32, y: i32) -> bool {
+    let Some(r) = TRAY_BUTTON_RECT.try_lock().ok().and_then(|g| *g) else {
+        return false;
+    };
+    let sc = monitor.scale_factor();
+    let mp = monitor.position();
+    let pad = (5.0 * sc) as i32;
+    let rx = mp.x + (r.x as f64 * sc) as i32 - pad;
+    let ry = mp.y + (r.y as f64 * sc) as i32 - pad;
+    let rw = (r.width as f64 * sc) as i32 + pad * 2;
+    let rh = (r.height as f64 * sc) as i32 + pad * 2;
+    x >= rx && x <= rx + rw && y >= ry && y <= ry + rh
+}
+
 /// Physical bounds `(x, y, width, height)` of the expanded per-app volume
 /// mixer (notch + panel), if it is open. The frontend reports the card in
 /// overlay CSS pixels; scale and monitor offset convert it to virtual-desktop
@@ -2157,6 +2187,41 @@ fn setup_volume_mixer_watchdog(app_handle: AppHandle) {
         if !at_left_edge && MH_LAST_LEFT_EDGE_HOVER.swap(0, Ordering::Relaxed) != 0 {
             MH_LEFT_EXPIRY_MS.store(0, Ordering::Relaxed);
             let _ = app_handle.emit("volume-edge-hover", false);
+        }
+    });
+}
+
+/// Closes the background-apps popup once the cursor has been off it for a moment.
+/// The overlay is click-through and never focused, so the page cannot rely on DOM
+/// mouse-leave or blur events to know the cursor left.
+fn setup_tray_popup_watchdog(app_handle: AppHandle) {
+    std::thread::spawn(move || {
+        let mut outside_since: Option<Instant> = None;
+        loop {
+            std::thread::sleep(Duration::from_millis(100));
+            if SHUTTING_DOWN.load(Ordering::Relaxed) || !TRAY_POPUP_OPEN.load(Ordering::Relaxed) {
+                outside_since = None;
+                continue;
+            }
+            let mut pt = windows::Win32::Foundation::POINT::default();
+            if unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt) }.is_err() {
+                continue;
+            }
+            let inside = app_handle
+                .primary_monitor()
+                .ok()
+                .flatten()
+                .is_some_and(|m| cursor_in_tray_rect(&m, pt.x, pt.y));
+            if inside {
+                outside_since = None;
+            } else if let Some(since) = outside_since {
+                if since.elapsed() >= Duration::from_millis(700) {
+                    outside_since = None;
+                    let _ = app_handle.emit("tray-popup-close", ());
+                }
+            } else {
+                outside_since = Some(Instant::now());
+            }
         }
     });
 }
@@ -2269,6 +2334,7 @@ fn apply_capture_ui_state(app: &AppHandle, active: bool) {
 pub fn setup_mouse_hook(app_handle: AppHandle) {
     let _ = MOUSE_HOOK_APP_HANDLE.set(app_handle.clone());
     setup_volume_mixer_watchdog(app_handle.clone());
+    setup_tray_popup_watchdog(app_handle.clone());
     setup_top_edge_watchdog(app_handle);
     unsafe {
         SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0)
@@ -2764,7 +2830,19 @@ unsafe extern "system" fn mouse_hook_proc(
                     && cursor.y >= mon_y
                     && cursor.y <= (mon_y + mon_h);
 
-                if at_right_edge {
+                // The background-apps button sits below the brightness notch, off the
+                // edge band: keep the hover alive over it so the HUD does not hide
+                // before the click lands.
+                // While the popup is open the HUD stays up wherever the cursor is.
+                let over_tray = TRAY_POPUP_OPEN.load(Ordering::Relaxed)
+                    || (MH_LAST_RIGHT_EDGE_HOVER.load(Ordering::Relaxed) != 0
+                        && app_handle
+                            .primary_monitor()
+                            .ok()
+                            .flatten()
+                            .is_some_and(|m| cursor_in_tray_rect(&m, cursor.x, cursor.y)));
+
+                if at_right_edge || over_tray {
                     MH_RIGHT_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
                 }
 
@@ -2831,7 +2909,13 @@ unsafe extern "system" fn mouse_hook_proc(
                         false
                     };
 
-                    let should_ignore = !(over_left || over_right);
+                    let over_tray = ov_win
+                        .primary_monitor()
+                        .ok()
+                        .flatten()
+                        .is_some_and(|m| cursor_in_tray_rect(&m, cursor.x, cursor.y));
+
+                    let should_ignore = !(over_left || over_right || over_tray);
                     let prev = MH_LAST_OV_IGNORE.load(Ordering::Relaxed);
                     let new_val = if should_ignore { 1 } else { 0 };
                     if prev != new_val {

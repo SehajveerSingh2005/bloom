@@ -87,3 +87,16 @@ pub struct AudioSessionInfo {
     pub volume: f32,
     pub is_muted: bool,
 }
+
+#[derive(Serialize, Clone)]
+pub struct TrayApp {
+    pub id: String,
+    pub name: String,
+    pub tooltip: String,
+    pub path: String,
+    pub icon: Option<String>,
+    pub hwnd: isize,
+    pub uid: u32,
+    pub callback_message: u32,
+    pub overflow: bool,
+}

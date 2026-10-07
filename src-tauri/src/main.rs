@@ -3,6 +3,7 @@
 mod commands;
 mod services;
 mod state;
+mod tray;
 mod types;
 mod updater;
 mod utils;
@@ -96,6 +97,10 @@ fn main() {
             open_sound_settings,
             open_notification_center,
             open_system_tray,
+            get_tray_apps,
+            update_tray_button_rect,
+            open_tray_app,
+            close_tray_app,
             set_ignore_cursor_events,
             set_window_height,
             resize_settings_window,

@@ -74,6 +74,7 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | `bloom-volume-edge-enabled`        | `"true"` / `"false"` | `"true"` | Trigger volume HUD by hovering the left screen edge.                     |
 | `bloom-brightness-overlay-enabled` | `"true"` / `"false"` | `"true"` | Show Bloom brightness HUD when brightness changes.                       |
 | `bloom-brightness-edge-enabled`    | `"true"` / `"false"` | `"true"` | Trigger brightness HUD by hovering the right screen edge.                |
+| `bloom-tray-button-enabled`        | `"true"` / `"false"` | `"true"` | Show the background-apps (tray) button below the brightness HUD.         |
 
 ### Appearance
 

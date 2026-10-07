@@ -216,6 +216,8 @@ function SettingsApp() {
 							toggleBrightnessOverlay={settings.toggleBrightnessOverlay}
 							brightnessEdgeEnabled={settings.brightnessEdgeEnabled}
 							toggleBrightnessEdge={settings.toggleBrightnessEdge}
+							trayButtonEnabled={settings.trayButtonEnabled}
+							toggleTrayButton={settings.toggleTrayButton}
 						/>
 					)}
 					{activeTab === "about" && (
