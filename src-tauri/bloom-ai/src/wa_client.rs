@@ -12,7 +12,7 @@
 //! (wa_contacts.rs).
 
 use crate::wa_contacts::{self, Contact, Group};
-use crate::whatsapp::{remove_session, Event, Link, Message, Status};
+use crate::whatsapp::{remove_session, Event, Link, MediaKind, Message, Outgoing, Status};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,7 @@ use whatsapp_rust::wacore::store::DevicePropsOverride;
 
 enum Cmd {
     Send(String, String, oneshot::Sender<Result<(), String>>),
+    File(String, Outgoing, oneshot::Sender<Result<(), String>>),
     Typing(String, bool, oneshot::Sender<Result<(), String>>),
     PairCode(String),
     Unlink(oneshot::Sender<Result<bool, String>>),
@@ -51,6 +52,13 @@ impl Link for Real {
     async fn send_text(&self, chat: &str, text: &str) -> Result<(), String> {
         let (chat, text) = (chat.to_string(), text.to_string());
         self.ask(|tx| Cmd::Send(chat, text, tx))
+            .await
+            .unwrap_or(Err(GONE.into()))
+    }
+
+    async fn send_file(&self, chat: &str, file: Outgoing) -> Result<(), String> {
+        let chat = chat.to_string();
+        self.ask(|tx| Cmd::File(chat, file, tx))
             .await
             .unwrap_or(Err(GONE.into()))
     }
@@ -540,6 +548,58 @@ fn jid(chat: &str) -> Result<Jid, String> {
     }
 }
 
+/// Encrypts and uploads the file, then sends it as an image, a video or a
+/// document (with its name, mimetype and, from the upload, length and
+/// hashes).
+async fn upload_and_send(client: &Arc<Client>, chat: &str, file: Outgoing) -> Result<(), String> {
+    use whatsapp_rust::media::{self, DocumentOptions, ImageOptions, VideoOptions};
+    use whatsapp_rust::wacore::download::MediaType;
+    use whatsapp_rust::UploadOptions;
+    let to = jid(chat)?;
+    let media_type = match file.kind {
+        MediaKind::Image => MediaType::Image,
+        MediaKind::Video => MediaType::Video,
+        MediaKind::Document => MediaType::Document,
+    };
+    let up = client
+        .upload(file.data, media_type, UploadOptions::new())
+        .await
+        .map_err(|e| format!("Couldn't upload the file: {e}"))?;
+    let mimetype = Some(file.mime.to_string());
+    let msg = match file.kind {
+        MediaKind::Image => media::image_message(
+            up,
+            ImageOptions {
+                caption: file.caption,
+                mimetype,
+                ..Default::default()
+            },
+        ),
+        MediaKind::Video => media::video_message(
+            up,
+            VideoOptions {
+                caption: file.caption,
+                mimetype,
+                ..Default::default()
+            },
+        ),
+        MediaKind::Document => media::document_message(
+            up,
+            DocumentOptions {
+                mimetype,
+                file_name: Some(file.name),
+                caption: file.caption,
+                ..Default::default()
+            },
+        ),
+    };
+    client
+        .send_message(to, msg)
+        .await
+        .map(drop)
+        .map_err(|e| e.to_string())
+}
+
 /// Between connections: waits out `wait` (forever if None) while answering
 /// commands. Returns the exit, or None to connect. `paired`: the session
 /// is linked on the phone.
@@ -566,7 +626,7 @@ async fn between(
                     *pair = Some(phone);
                     return None;
                 }
-                Some(Cmd::Send(_, _, done) | Cmd::Typing(_, _, done)) => {
+                Some(Cmd::Send(_, _, done) | Cmd::File(_, _, done) | Cmd::Typing(_, _, done)) => {
                     let _ = done.send(Err("WhatsApp isn't connected right now.".into()));
                 }
             }
@@ -656,6 +716,12 @@ async fn supervise(
                                 Err(e) => Err(e),
                             };
                             let _ = done.send(sent);
+                        });
+                    }
+                    Some(Cmd::File(chat, file, done)) => {
+                        let c = client.clone();
+                        tokio::spawn(async move {
+                            let _ = done.send(upload_and_send(&c, &chat, file).await);
                         });
                     }
                     Some(Cmd::Typing(chat, on, done)) => {

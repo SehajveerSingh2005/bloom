@@ -14,9 +14,11 @@
 use crate::agent::{Ctx, Shared};
 use crate::protocol::{emit, ConfirmKind, Out};
 use crate::wa_contacts::{self, Book};
+use crate::config::Tier;
+use crate::tools::files;
 use crate::{journal, phones, policy};
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -33,12 +35,15 @@ const GROUPS_MAX: usize = 50;
 /// How long a text sent to the user's own chat counts as an echo.
 const ECHO_FOR: Duration = Duration::from_secs(60);
 /// Offered only while "Connect WhatsApp" is on.
-pub const TOOLS: [&str; 4] = [
+pub const TOOLS: [&str; 5] = [
     "read_whatsapp",
     "list_whatsapp_chats",
     "list_whatsapp_groups",
     "send_whatsapp",
+    "send_whatsapp_file",
 ];
+/// Largest file Janice sends.
+const MAX_FILE: u64 = 100 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
@@ -107,6 +112,8 @@ pub enum Event {
 pub trait Link: Send + Sync {
     /// `chat`: "+<number>" or a group id.
     async fn send_text(&self, chat: &str, text: &str) -> Result<(), String>;
+    /// Uploads `file` and sends it to `chat`.
+    async fn send_file(&self, chat: &str, file: Outgoing) -> Result<(), String>;
     /// The "typing..." indicator in `chat`.
     async fn typing(&self, chat: &str, on: bool) -> Result<(), String>;
     /// Asks WhatsApp for an 8-character link code for `phone` (digits with
@@ -116,6 +123,22 @@ pub trait Link: Send + Sync {
     /// connection and deletes the session. Ok(false): it may still be listed
     /// in WhatsApp > Linked devices (it was offline).
     async fn unlink(&self) -> Result<bool, String>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MediaKind {
+    Image,
+    Video,
+    Document,
+}
+
+/// A file on its way out. `data` is the file's bytes.
+pub struct Outgoing {
+    pub data: Vec<u8>,
+    pub kind: MediaKind,
+    pub mime: &'static str,
+    pub name: String,
+    pub caption: Option<String>,
 }
 
 /// Where a name beyond phones.json was found.
@@ -731,6 +754,54 @@ fn confirm_text(
     )
 }
 
+/// Who `to` means: (display name, "+<number>" or group id, `synced`: found by
+/// a name from WhatsApp, not the user's own files).
+fn recipient(
+    ctx: &mut Ctx,
+    saved: &BTreeMap<String, String>,
+    book: &Book,
+    to: &str,
+) -> Result<(String, String, bool), String> {
+    let dir = ctx.shared.data_dir.clone();
+    let shared = ctx.shared.clone();
+    let state = &shared.whatsapp;
+    Ok(match as_number(to) {
+        Some(n) => (saved_name(saved, &n).unwrap_or(&n).to_string(), n, false),
+        None => match phones::find(&dir, to)?.as_slice() {
+            [(name, number)] => (name.clone(), number.clone(), false),
+            [] => {
+                let chats = state.chats.lock().unwrap();
+                match chats.others(book, to, false).as_slice() {
+                    [(key, _)] => {
+                        let name = match chats.group(book, key) {
+                            Some((subject, _)) => subject,
+                            None => book.name_of(key).unwrap_or(key).to_string(),
+                        };
+                        (name, key.clone(), true)
+                    }
+                    [] => {
+                        return Err(format!(
+                            "No saved number for {to}. Ask the user for it, then call save_phone."
+                        ))
+                    }
+                    many => {
+                        // The names come from WhatsApp: outside data.
+                        ctx.tainted = true;
+                        return Err(chats.which(book, to, many));
+                    }
+                }
+            }
+            many => {
+                let names: Vec<String> = many.iter().map(|(n, p)| format!("{n} ({p})")).collect();
+                return Err(format!(
+                    "Several match {to}: {}. Which one?",
+                    names.join(", ")
+                ));
+            }
+        },
+    })
+}
+
 /// send_whatsapp: to a saved name, a number, or (after phones.json) a synced
 /// contact or group, on the user's request.
 pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String> {
@@ -746,42 +817,7 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
     let book = book(&dir);
     let shared = ctx.shared.clone();
     let state = &shared.whatsapp;
-    // `synced`: found by a name from WhatsApp, not the user's own files.
-    let (name, number, synced) = match as_number(to) {
-        Some(n) => (saved_name(&saved, &n).unwrap_or(&n).to_string(), n, false),
-        None => match phones::find(&dir, to)?.as_slice() {
-            [(name, number)] => (name.clone(), number.clone(), false),
-            [] => {
-                let chats = state.chats.lock().unwrap();
-                match chats.others(&book, to, false).as_slice() {
-                    [(key, _)] => {
-                        let name = match chats.group(&book, key) {
-                            Some((subject, _)) => subject,
-                            None => book.name_of(key).unwrap_or(key).to_string(),
-                        };
-                        (name, key.clone(), true)
-                    }
-                    [] => {
-                        return Err(format!(
-                            "No saved number for {to}. Ask the user for it, then call save_phone."
-                        ))
-                    }
-                    many => {
-                        // The names come from WhatsApp: outside data.
-                        ctx.tainted = true;
-                        return Err(chats.which(&book, to, many));
-                    }
-                }
-            }
-            many => {
-                let names: Vec<String> = many.iter().map(|(n, p)| format!("{n} ({p})")).collect();
-                return Err(format!(
-                    "Several match {to}: {}. Which one?",
-                    names.join(", ")
-                ));
-            }
-        },
-    };
+    let (name, number, synced) = recipient(ctx, &saved, &book, to)?;
     if state.link().is_none() || !state.linked() {
         return Err(NOT_LINKED.into());
     }
@@ -845,6 +881,220 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
     sent.map(|()| format!("Sent to {name}."))
 }
 
+/// Downloads, Documents and Desktop: where a bare file name is looked for.
+fn user_folders() -> Vec<PathBuf> {
+    ["downloads", "documents", "desktop"]
+        .iter()
+        .filter_map(|n| files::folder(n).ok())
+        .collect()
+}
+
+/// The local file `path` means: an absolute path, or a name (or relative
+/// path) found in `folders`. Several matches are listed, never guessed.
+fn find_file(path: &str, folders: &[PathBuf]) -> Result<PathBuf, String> {
+    let path = path.trim();
+    let mut found: Vec<String> = Vec::new();
+    if Path::new(path).is_absolute() {
+        found.push(files::resolve_local(path)?);
+    } else {
+        for folder in folders {
+            if let Ok(p) = files::resolve_local(&folder.join(path).to_string_lossy()) {
+                if !found.contains(&p) {
+                    found.push(p);
+                }
+            }
+        }
+    }
+    found.retain(|p| Path::new(p).is_file());
+    match found.len() {
+        0 => Err(format!(
+            "No file {path} found (looked in Downloads, Documents and Desktop)."
+        )),
+        1 => Ok(PathBuf::from(found.remove(0))),
+        _ => Err(format!(
+            "Several files match {path}: {}. Which one?",
+            found.join(", ")
+        )),
+    }
+}
+
+/// True when `path` is inside the AI data dir (settings, memory, the
+/// WhatsApp session): never sent.
+fn in_data_dir(path: &Path, data_dir: &Path) -> bool {
+    let norm = |p: &Path| {
+        let s = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let s = s.to_string_lossy().to_lowercase();
+        PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s))
+    };
+    norm(path).starts_with(norm(data_dir))
+}
+
+/// How WhatsApp should show the file: images and mp4 inline, the rest as a
+/// document with the original name.
+fn media_of(name: &str) -> (MediaKind, &'static str) {
+    let ext = Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "jpg" | "jpeg" => (MediaKind::Image, "image/jpeg"),
+        "png" => (MediaKind::Image, "image/png"),
+        "webp" => (MediaKind::Image, "image/webp"),
+        "mp4" => (MediaKind::Video, "video/mp4"),
+        "pdf" => (MediaKind::Document, "application/pdf"),
+        "txt" => (MediaKind::Document, "text/plain"),
+        "zip" => (MediaKind::Document, "application/zip"),
+        "docx" => (
+            MediaKind::Document,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        "xlsx" => (
+            MediaKind::Document,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        "pptx" => (
+            MediaKind::Document,
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ),
+        _ => (MediaKind::Document, "application/octet-stream"),
+    }
+}
+
+fn size_text(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{} KB", bytes.div_ceil(1024))
+    }
+}
+
+/// send_whatsapp_file: a local file to a contact, number or group.
+pub async fn send_file(
+    ctx: &mut Ctx,
+    to: &str,
+    path: &str,
+    caption: Option<&str>,
+) -> Result<String, String> {
+    send_file_in(ctx, to, path, caption, &user_folders()).await
+}
+
+async fn send_file_in(
+    ctx: &mut Ctx,
+    to: &str,
+    path: &str,
+    caption: Option<&str>,
+    folders: &[PathBuf],
+) -> Result<String, String> {
+    let caption = caption.map(str::trim).filter(|c| !c.is_empty());
+    if caption.is_some_and(|c| c.chars().count() > MAX_TEXT) {
+        return Err(format!("The caption is longer than {MAX_TEXT} characters."));
+    }
+    let dir = ctx.shared.data_dir.clone();
+    let saved = phones::try_load(&dir)?;
+    let book = book(&dir);
+    let shared = ctx.shared.clone();
+    let state = &shared.whatsapp;
+    let (name, number, synced) = recipient(ctx, &saved, &book, to)?;
+    if state.link().is_none() || !state.linked() {
+        return Err(NOT_LINKED.into());
+    }
+    if !state.can_send(Instant::now()) {
+        return Err(format!(
+            "Already sent {SENDS_PER_HOUR} WhatsApp messages in the last hour. Try again later."
+        ));
+    }
+    let file = find_file(path, folders).inspect_err(|e| {
+        // File names come from the disk, maybe from a download: outside data.
+        ctx.tainted |= e.starts_with("Several");
+    })?;
+    if in_data_dir(&file, &dir) {
+        return Err("That file belongs to Bloom's AI data and is never sent.".into());
+    }
+    let size = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
+    if size == 0 {
+        return Err("The file is empty.".into());
+    }
+    if size > MAX_FILE {
+        return Err(format!(
+            "The file is {}, over the {} limit.",
+            size_text(size),
+            size_text(MAX_FILE)
+        ));
+    }
+    let file_name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let group = state.chats.lock().unwrap().group(&book, &number);
+    let known = group.is_none()
+        && saved_name(&saved, &number).is_some()
+        && !ctx.saved_this_task.contains(&number);
+    // File contents leave the PC: always asked below carte blanche. No
+    // contents in actions.log, only the name and size.
+    let detail = format!("file {file_name} ({size} bytes) to {name} {number}");
+    let ask = ctx.cfg.tier != Tier::CarteBlanche
+        || policy::email_needs_confirm(ctx.cfg.tier, known, ctx.tainted);
+    ctx.tainted |= synced;
+    let (_, mut body) = confirm_text(&name, &number, group.map(|g| g.1), &size_text(size));
+    if let Some(c) = caption {
+        body += &format!("\n\nCaption: {c}");
+    }
+    let title = format!("Send {file_name} to {name}?");
+    if ask
+        && !ctx
+            .shared
+            .bridge
+            .confirm(ctx.task, ConfirmKind::Message, title, body)
+            .await
+    {
+        journal::record(&dir, "whatsapp", &detail, "declined");
+        return Ok("The user chose not to send it.".into());
+    }
+    let started = if ask {
+        "approved-started"
+    } else {
+        "auto-started"
+    };
+    journal::record(&dir, "whatsapp", &detail, started);
+    let failed = |reason: &str| {
+        journal::record_with(&dir, "whatsapp", &detail, "failed", Some(reason));
+        Err(reason.to_string())
+    };
+    let Some(link) = state.link() else {
+        return failed("WhatsApp is off.");
+    };
+    let data = match std::fs::read(&file) {
+        Ok(d) => d,
+        Err(e) => return failed(&format!("Couldn't read the file: {e}")),
+    };
+    let (kind, mime) = media_of(&file_name);
+    state.note_send(Instant::now());
+    let sent = link
+        .send_file(
+            &number,
+            Outgoing {
+                data,
+                kind,
+                mime,
+                name: file_name.clone(),
+                caption: caption.map(str::to_string),
+            },
+        )
+        .await;
+    let outcome = match (&sent, ask) {
+        (Err(_), _) => "failed",
+        (Ok(()), true) => "approved",
+        (Ok(()), false) => "auto",
+    };
+    let reason = sent.as_ref().err().map(String::as_str);
+    journal::record_with(&dir, "whatsapp", &detail, outcome, reason);
+    if sent.is_ok() {
+        state.record_sent(&number, &format!("[file] {file_name}"));
+    }
+    sent.map(|()| format!("Sent {file_name} to {name}."))
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -856,6 +1106,8 @@ pub mod tests {
     #[derive(Default)]
     pub struct Fake {
         pub sent: Mutex<Vec<(String, String)>>,
+        /// (chat, file, bytes sent).
+        pub files: Mutex<Vec<(String, Outgoing)>>,
         /// ("send" | "typing on" | "typing off", chat, when).
         pub log: Mutex<Vec<(&'static str, String, tokio::time::Instant)>>,
     }
@@ -866,6 +1118,10 @@ pub mod tests {
             self.sent.lock().unwrap().push((chat.into(), text.into()));
             let now = tokio::time::Instant::now();
             self.log.lock().unwrap().push(("send", chat.into(), now));
+            Ok(())
+        }
+        async fn send_file(&self, chat: &str, file: Outgoing) -> Result<(), String> {
+            self.files.lock().unwrap().push((chat.into(), file));
             Ok(())
         }
         async fn typing(&self, chat: &str, on: bool) -> Result<(), String> {
@@ -1428,6 +1684,160 @@ pub mod tests {
         );
         assert_eq!(as_number("Neha"), None);
         assert_eq!(as_number("Room 12"), None);
+    }
+
+    /// Runs send_file_in, answering a confirm with `answer` if one comes.
+    async fn file_send(
+        mut ctx: Ctx,
+        to: &str,
+        path: &str,
+        folders: &[PathBuf],
+        answer: bool,
+    ) -> (Result<String, String>, bool, Ctx) {
+        let shared = ctx.shared.clone();
+        let (to, path, folders) = (to.to_string(), path.to_string(), folders.to_vec());
+        let running = tokio::spawn(async move {
+            let out = send_file_in(&mut ctx, &to, &path, Some(" the file "), &folders).await;
+            (out, ctx)
+        });
+        tokio::task::yield_now().await;
+        let asked = shared.bridge.answer_pending(Answer::Confirm(answer));
+        let (out, ctx) = running.await.unwrap();
+        (out, asked, ctx)
+    }
+
+    /// A folder holding `name` with `bytes` of content.
+    fn folder_with(name: &str, bytes: &[u8]) -> PathBuf {
+        let dir = crate::testutil::temp_dir();
+        std::fs::write(dir.join(name), bytes).unwrap();
+        dir
+    }
+
+    #[test]
+    fn media_types_follow_the_extension() {
+        assert_eq!(media_of("a.JPG"), (MediaKind::Image, "image/jpeg"));
+        assert_eq!(media_of("a.jpeg"), (MediaKind::Image, "image/jpeg"));
+        assert_eq!(media_of("a.png"), (MediaKind::Image, "image/png"));
+        assert_eq!(media_of("a.webp"), (MediaKind::Image, "image/webp"));
+        assert_eq!(media_of("a.mp4"), (MediaKind::Video, "video/mp4"));
+        assert_eq!(media_of("a.pdf"), (MediaKind::Document, "application/pdf"));
+        assert_eq!(
+            media_of("noext"),
+            (MediaKind::Document, "application/octet-stream")
+        );
+        assert_eq!(size_text(1), "1 KB");
+        assert_eq!(size_text(3 * 1024 * 1024 / 2), "1.5 MB");
+    }
+
+    #[test]
+    fn files_are_found_by_path_or_by_name_in_the_user_folders() {
+        let (a, b) = (folder_with("cv.pdf", b"a"), folder_with("cv.pdf", b"b"));
+        let only = folder_with("notes.txt", b"n");
+        let folders = [a.clone(), b.clone(), only.clone()];
+        // Absolute: used as given (canonical).
+        let abs = find_file(&a.join("cv.pdf").to_string_lossy(), &[]).unwrap();
+        assert!(abs.ends_with("cv.pdf"));
+        // A bare name found in one folder.
+        let found = find_file("notes.txt", &folders).unwrap();
+        assert!(found.starts_with(std::fs::canonicalize(&only).unwrap()) || found.exists());
+        // In two folders: listed, not guessed.
+        let err = find_file("cv.pdf", &folders).unwrap_err();
+        assert!(err.starts_with("Several files match cv.pdf"), "{err}");
+        assert_eq!(err.matches("cv.pdf").count(), 3, "{err}");
+        assert!(find_file("nope.pdf", &folders).unwrap_err().contains("No file"));
+        // A folder is not a file.
+        assert!(find_file(&a.to_string_lossy(), &[]).is_err());
+        assert!(find_file("..\\..", &folders).is_err());
+    }
+
+    #[tokio::test]
+    async fn files_always_ask_below_carte_blanche_and_go_out_typed() {
+        let folders = [folder_with("Report 1.pdf", b"%PDF-data")];
+        for (tier, asks) in [
+            (Tier::Conservative, true),
+            (Tier::Competent, true),
+            (Tier::CarteBlanche, false),
+        ] {
+            let mut c = ctx();
+            c.cfg.tier = tier;
+            // A saved, untainted recipient: text would go unasked on competent.
+            phones::save(&c.shared.data_dir, "Neha", "+491701234567").unwrap();
+            let fake = link(&c);
+            let shared = c.shared.clone();
+            let dir = c.shared.data_dir.clone();
+            let (out, asked, _) = file_send(c, "neha", "report 1.pdf", &folders, true).await;
+            assert_eq!(asked, asks, "{tier:?}");
+            assert_eq!(out.unwrap(), "Sent Report 1.pdf to Neha.");
+            let files = fake.files.lock().unwrap();
+            let (chat, f) = &files[0];
+            assert_eq!(chat, "+491701234567");
+            assert_eq!(
+                (f.kind, f.mime, f.name.as_str(), f.data.as_slice()),
+                (
+                    MediaKind::Document,
+                    "application/pdf",
+                    "Report 1.pdf",
+                    &b"%PDF-data"[..]
+                )
+            );
+            assert_eq!(f.caption.as_deref(), Some("the file"));
+            let kept = shared.whatsapp.recent("+491701234567", 5);
+            assert_eq!(kept[0].text, "[file] Report 1.pdf");
+            assert_eq!(shared.whatsapp.sends.lock().unwrap().len(), 1);
+            let log = std::fs::read_to_string(dir.join("actions.log")).unwrap();
+            assert!(log.contains("Report 1.pdf") && log.contains("(9 bytes)"));
+            assert!(!log.contains("%PDF-data"));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_declined_file_sends_nothing_and_images_go_as_images() {
+        let folders = [folder_with("pic.png", b"png")];
+        let mut c = ctx();
+        c.cfg.tier = Tier::Competent;
+        let fake = link(&c);
+        let (out, asked, c) = file_send(c, "+491701234567", "pic.png", &folders, false).await;
+        assert!(asked);
+        assert_eq!(out.unwrap(), "The user chose not to send it.");
+        assert!(fake.files.lock().unwrap().is_empty());
+        let (out, _, _) = file_send(c, "+491701234567", "pic.png", &folders, true).await;
+        assert!(out.is_ok());
+        assert_eq!(fake.files.lock().unwrap()[0].1.kind, MediaKind::Image);
+    }
+
+    #[tokio::test]
+    async fn the_ai_data_dir_and_big_files_are_refused() {
+        let mut c = ctx();
+        c.cfg.tier = Tier::CarteBlanche;
+        let fake = link(&c);
+        let secret = c.shared.data_dir.join("whatsapp").join("session.db");
+        std::fs::create_dir_all(secret.parent().unwrap()).unwrap();
+        std::fs::write(&secret, "keys").unwrap();
+        let err = send_file_in(&mut c, "+491701234567", &secret.to_string_lossy(), None, &[])
+            .await
+            .unwrap_err();
+        assert!(err.contains("never sent"), "{err}");
+        // Also through a bare name looked up in a folder that is the data dir.
+        let dd = [c.shared.data_dir.clone()];
+        let err = send_file_in(&mut c, "+491701234567", "actions.log", None, &dd).await;
+        assert!(err.is_err());
+
+        let dir = crate::testutil::temp_dir();
+        let big = dir.join("big.bin");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(MAX_FILE + 1).unwrap();
+        let err = send_file_in(&mut c, "+491701234567", &big.to_string_lossy(), None, &[])
+            .await
+            .unwrap_err();
+        assert!(err.contains("limit"), "{err}");
+        f.set_len(0).unwrap();
+        let err = send_file_in(&mut c, "+491701234567", &big.to_string_lossy(), None, &[])
+            .await
+            .unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+        assert!(fake.files.lock().unwrap().is_empty());
+        // UNC paths are refused by resolve_local.
+        assert!(find_file(r"\\server\share\x.pdf", &[]).is_err());
     }
 
     #[test]

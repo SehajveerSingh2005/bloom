@@ -208,6 +208,17 @@ pub fn schema() -> Value {
             }),
             &["to", "text"],
         ),
+        tool(
+            "send_whatsapp_file",
+            "Send a file from this PC over WhatsApp as the user (up to 100 MB). Images go as \
+             photos, mp4 as video, anything else as a document. The user always confirms.",
+            json!({
+                "to": { "type": "string", "description": "Contact name, phone number or group name" },
+                "path": { "type": "string", "description": "Full path, or a file name in Downloads, Documents or Desktop" },
+                "caption": { "type": "string", "description": "Optional text shown with the file" }
+            }),
+            &["to", "path"],
+        ),
     ])
 }
 
@@ -237,6 +248,7 @@ pub fn describe(name: &str, args: &Value) -> String {
         "list_whatsapp_chats" => "Checking WhatsApp".into(),
         "list_whatsapp_groups" => "Checking WhatsApp groups".into(),
         "send_whatsapp" => format!("Messaging {} on WhatsApp", arg("to")),
+        "send_whatsapp_file" => format!("Sending {} to {} on WhatsApp", arg("path"), arg("to")),
         "context_lookup" => "Checking your messages, mail and notes".into(),
         _ if name.starts_with("mcp_") => format!("Using {}", &name[4..]),
         _ => format!("Working ({name})"),
@@ -326,6 +338,10 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         "list_whatsapp_chats" => whatsapp::list(ctx),
         "list_whatsapp_groups" => whatsapp::list_groups(ctx),
         "send_whatsapp" => whatsapp::send(ctx, str_arg(args, "to")?, str_arg(args, "text")?).await,
+        "send_whatsapp_file" => {
+            let caption = args["caption"].as_str();
+            whatsapp::send_file(ctx, str_arg(args, "to")?, str_arg(args, "path")?, caption).await
+        }
         "context_lookup" => crate::context_index::lookup(ctx, str_arg(args, "question")?).await,
         _ if name.starts_with("mcp_") => crate::mcp::call(ctx, name, args).await,
         _ => Err(format!("unknown tool {name}")),
