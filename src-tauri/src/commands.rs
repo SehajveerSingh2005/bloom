@@ -2996,30 +2996,37 @@ fn is_wlan_connected_sync() -> bool {
         if WlanEnumInterfaces(client_handle, None, &mut interface_list) == 0
             && !interface_list.is_null()
         {
-            let interfaces = std::slice::from_raw_parts(
-                (*interface_list).InterfaceInfo.as_ptr(),
-                (*interface_list).dwNumberOfItems as usize,
-            );
-            for interface in interfaces {
-                let mut data_size = 0u32;
-                let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
-                // Returns ERROR_INVALID_STATE when the interface is not
-                // associated, so a successful query means an active connection.
-                let result = WlanQueryInterface(
-                    client_handle,
-                    &interface.InterfaceGuid,
-                    wlan_intf_opcode_current_connection,
-                    None,
-                    &mut data_size,
-                    &mut data,
-                    None,
-                );
-                if !data.is_null() {
-                    WlanFreeMemory(data);
-                }
-                if result == 0 {
-                    connected = true;
-                    break;
+            // WLAN_INTERFACE_INFO_LIST ends in a C flexible array
+            // (InterfaceInfo[1] with dwNumberOfItems entries). Avoid forming
+            // a reference to it; read the count and build the slice from a
+            // raw pointer with a sanity bound so a corrupt length can't
+            // create an out-of-bounds slice.
+            let count =
+                std::ptr::addr_of!((*interface_list).dwNumberOfItems).read() as usize;
+            if count > 0 && count <= 64 {
+                let base = std::ptr::addr_of!((*interface_list).InterfaceInfo[0]);
+                let interfaces = std::slice::from_raw_parts(base, count);
+                for interface in interfaces {
+                    let mut data_size = 0u32;
+                    let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
+                    // Returns ERROR_INVALID_STATE when the interface is not
+                    // associated, so a successful query means an active connection.
+                    let result = WlanQueryInterface(
+                        client_handle,
+                        &interface.InterfaceGuid,
+                        wlan_intf_opcode_current_connection,
+                        None,
+                        &mut data_size,
+                        &mut data,
+                        None,
+                    );
+                    if !data.is_null() {
+                        WlanFreeMemory(data);
+                    }
+                    if result == 0 {
+                        connected = true;
+                        break;
+                    }
                 }
             }
             WlanFreeMemory(interface_list as *const _);
