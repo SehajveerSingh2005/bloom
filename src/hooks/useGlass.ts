@@ -34,10 +34,12 @@ export function useGlassEnabled(): boolean {
  * Real frosted glass under this window's surfaces (see glass.rs). Every frame
  * the boxes of the surfaces `getItems` returns go to the native blur windows,
  * only when they changed, so the glass follows every animation that grows it.
- * A shrinking one (a collapse) is different: DWM paints a resized blur window
- * black for a frame, which left a dark trail behind the closing panel. So the
- * blur steps aside as soon as the glass shrinks and comes back once the shape
- * has held still for a few frames.
+ * A real collapse (panel rolling into the bar, dock hiding to its pill) is
+ * different: DWM paints a resized blur window black for a frame, which left a
+ * dark trail behind the closing panel. So the blur steps aside on a large
+ * area drop and comes back once the shape has held still for a few frames.
+ * Small dips from spring overshoot stay live, or the glass would park through
+ * every reveal.
  * Hidden or faded-out elements are left out. Each box is pulled in from its
  * rounded edges so the blur never pokes out of a corner; an edge glued to the
  * top or bottom of the window (square, against the screen edge) stays put.
@@ -104,7 +106,14 @@ export function useGlass(getItems: () => GlassItem[], enabled: boolean) {
 			}
 			const key = JSON.stringify(rects);
 			const area = rects.reduce((a, r) => a + r.w * r.h, 0);
-			if (!settling && key !== shown && area < shownArea - 4) {
+			// A real collapse (the panel rolling back into the bar, the dock
+			// hiding to its pill): DWM paints a resized blur window black for
+			// a frame, which trailed the closing panel. So step aside at once
+			// and come back once the shape has held still. Anything smaller
+			// is spring overshoot or corner-inset jitter mid-reveal: parking
+			// on those left the glass flickering through every animation, so
+			// they stay live and track every frame.
+			if (!settling && shownArea > 0 && key !== shown && area < shownArea * 0.6) {
 				settling = true;
 				send([]);
 				candidate = key;

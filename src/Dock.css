@@ -1421,6 +1421,50 @@ html.glass:not(.no-blur) .ic-panel {
 		inset 0.5px 0 0 rgba(255, 255, 255, 0.16),
 		inset -0.5px 0 0 rgba(255, 255, 255, 0.16);
 }
+/* The concave feet have no blur beneath them (their blur window would halo),
+   so beside blurred glass they always draw a seam: under glass they hide,
+   leaving clean square outer corners. */
+html.glass:not(.no-blur) .dock.dock-expanded::before,
+html.glass:not(.no-blur) .dock.dock-expanded::after {
+	opacity: 0;
+}
+/* No-blur fallback: same translucent treatment as the notch, no frost. Feet
+   stay visible here (the hide above doesn't apply) with the matching cut. */
+html.glass.no-blur .dock,
+html.glass.no-blur .ic-panel {
+	background-color: color-mix(in srgb, var(--bloom-bg, rgba(0, 0, 0, 0.8)) 62%, transparent);
+	background-image: linear-gradient(
+		180deg,
+		rgba(255, 255, 255, 0.07) 0%,
+		rgba(255, 255, 255, 0.02) 40%,
+		rgba(255, 255, 255, 0) 100%
+	);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.2),
+		inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+}
+html.glass.no-blur .dock::before {
+	background:
+		radial-gradient(
+			circle at 0 0,
+			transparent 12px,
+			rgba(255, 255, 255, 0.1) 12.7px,
+			rgba(255, 255, 255, 0.1) 13.3px,
+			transparent 14px
+		),
+		color-mix(in srgb, var(--bloom-bg, rgba(0, 0, 0, 0.8)) 62%, transparent);
+}
+html.glass.no-blur .dock::after {
+	background:
+		radial-gradient(
+			circle at 13px 0,
+			transparent 12px,
+			rgba(255, 255, 255, 0.1) 12.7px,
+			rgba(255, 255, 255, 0.1) 13.3px,
+			transparent 14px
+		),
+		color-mix(in srgb, var(--bloom-bg, rgba(0, 0, 0, 0.8)) 62%, transparent);
+}
 html.glass:not(.no-blur) .dock.ic-open {
 	background-image: none;
 	box-shadow:
