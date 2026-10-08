@@ -2981,7 +2981,7 @@ fn is_wlan_connected_sync() -> bool {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::NetworkManagement::WiFi::{
         wlan_intf_opcode_current_connection, WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory,
-        WlanOpenHandle, WlanQueryInterface, WLAN_INTERFACE_INFO_LIST,
+        WlanOpenHandle, WlanQueryInterface, WLAN_INTERFACE_INFO, WLAN_INTERFACE_INFO_LIST,
     };
 
     unsafe {
@@ -2997,14 +2997,17 @@ fn is_wlan_connected_sync() -> bool {
             && !interface_list.is_null()
         {
             // WLAN_INTERFACE_INFO_LIST ends in a C flexible array
-            // (InterfaceInfo[1] with dwNumberOfItems entries). Avoid forming
-            // a reference to it; read the count and build the slice from a
-            // raw pointer with a sanity bound so a corrupt length can't
-            // create an out-of-bounds slice.
-            let count =
-                std::ptr::addr_of!((*interface_list).dwNumberOfItems).read() as usize;
+            // (InterfaceInfo[1] with dwNumberOfItems entries). dwNumberOfItems
+            // is the first u32 field (offset 0); read it and derive the entry
+            // address with pointer arithmetic so no reference to the trailing
+            // array is ever formed. The count is sanity-bounded so a corrupt
+            // length can't create an out-of-bounds slice.
+            let count = (interface_list as *const u32).read() as usize;
             if count > 0 && count <= 64 {
-                let base = std::ptr::addr_of!((*interface_list).InterfaceInfo[0]);
+                let base = (interface_list as *const u8).add(std::mem::offset_of!(
+                    WLAN_INTERFACE_INFO_LIST,
+                    InterfaceInfo
+                )) as *const WLAN_INTERFACE_INFO;
                 let interfaces = std::slice::from_raw_parts(base, count);
                 for interface in interfaces {
                     let mut data_size = 0u32;
