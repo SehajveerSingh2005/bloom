@@ -3,6 +3,12 @@ name: opencode
 # On-request PR reviews: comment `/oc review this PR` (or `/opencode ...`)
 # on a pull request, or on a specific line in the Files tab.
 # Issue comments are ignored — this workflow only runs for PRs.
+#
+# NOTE: the steps below inline anomalyco/opencode's `github` action
+# (upstream ref `latest` = 77fc88c8ade8e5a620ebbe1197f3a572d29ae91a)
+# because this repo requires every action — including transitive ones —
+# to be pinned to a full-length commit SHA, and the upstream action
+# uses the floating ref actions/cache@v4 internally.
 on:
   issue_comment:
     types: [created]
@@ -35,9 +41,33 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Get opencode version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(curl -sf https://api.github.com/repos/anomalyco/opencode/releases/latest | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
+          echo "version=${VERSION:-latest}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache opencode
+        id: cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.opencode/bin
+          key: opencode-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
+
+      - name: Install opencode
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: curl -fsSL https://opencode.ai/install | bash
+
+      - name: Add opencode to PATH
+        shell: bash
+        run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+
       - name: Run opencode
-        uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a # latest
+        id: run_opencode
+        shell: bash
+        run: opencode github run
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        with:
-          model: opencode/mimo-v2.6-flash-free
+          MODEL: opencode/mimo-v2.6-flash-free
