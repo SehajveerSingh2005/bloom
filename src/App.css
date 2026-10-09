@@ -1477,6 +1477,23 @@ img {
 	object-fit: cover;
 }
 
+.shelf-tile-text {
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+	padding: 6px 7px;
+	font-size: 9.5px;
+	line-height: 1.35;
+	text-align: left;
+	word-break: break-word;
+	overflow: hidden;
+	display: -webkit-box;
+	-webkit-line-clamp: 6;
+	-webkit-box-orient: vertical;
+	opacity: 0.9;
+	user-select: none;
+}
+
 .shelf-tile-name {
 	font-size: 11px;
 	overflow: hidden;

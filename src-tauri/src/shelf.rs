@@ -1,4 +1,4 @@
-//! OS file-drop target for the notch.
+//! OS drop target for the notch (files and selected text).
 //!
 //! Tauri/wry registers its own drop targets on the WebView2 child windows that
 //! exist when the webview is built. The notch window is created hidden and
@@ -17,13 +17,18 @@ use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::Com::{
     CoInitializeEx, COINIT_APARTMENTTHREADED, DVASPECT_CONTENT, FORMATETC, IDataObject, TYMED_HGLOBAL,
 };
+use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::{
-    CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE, IDropTarget, IDropTarget_Impl,
-    RegisterDragDrop, RevokeDragDrop,
+    CF_HDROP, CF_UNICODETEXT, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE, IDropTarget,
+    IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
 };
 use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
 use windows::Win32::UI::Shell::{DragFinish, DragQueryFileW, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::EnumChildWindows;
+
+/// Upper bound on accepted text drops (~128k UTF-16 units). Anything larger is
+/// treated as unsupported rather than truncated.
+const MAX_TEXT_UNITS: usize = 1 << 17;
 
 /// Keeps every registered target alive for as long as OLE holds it. The COM
 /// pointers are only ever used by OLE, which marshals calls itself.
@@ -31,6 +36,12 @@ struct TargetStore(#[allow(dead_code)] Vec<IDropTarget>);
 unsafe impl Send for TargetStore {}
 
 static SHELF_DROP_TARGETS: Mutex<Option<TargetStore>> = Mutex::new(None);
+
+/// What a drag carries that we accept.
+enum DragPayload {
+    Files(Vec<String>, HDROP),
+    Text(String),
+}
 
 #[implement(IDropTarget)]
 struct ShelfDropTarget {
@@ -41,10 +52,17 @@ struct ShelfDropTarget {
 }
 
 impl ShelfDropTarget {
-    /// Reads CF_HDROP from the drag data. `None` when the drag carries no
-    /// files (e.g. plain text), in which case the drag is not ours.
-    unsafe fn extract(data: Ref<'_, IDataObject>) -> Option<(Vec<String>, HDROP)> {
-        let data = data.as_ref()?;
+    /// Files first (CF_HDROP), then selected text (CF_UNICODETEXT). `None` when
+    /// the drag carries neither.
+    unsafe fn extract(data: &IDataObject) -> Option<DragPayload> {
+        if let Some((paths, hdrop)) = unsafe { Self::extract_files(data) } {
+            return Some(DragPayload::Files(paths, hdrop));
+        }
+        unsafe { Self::extract_text(data) }.map(DragPayload::Text)
+    }
+
+    /// Reads CF_HDROP from the drag data. `None` when the drag carries no files.
+    unsafe fn extract_files(data: &IDataObject) -> Option<(Vec<String>, HDROP)> {
         let format = FORMATETC {
             cfFormat: CF_HDROP.0,
             ptd: std::ptr::null_mut(),
@@ -65,6 +83,41 @@ impl ShelfDropTarget {
         Some((paths, hdrop))
     }
 
+    /// Reads CF_UNICODETEXT (selected text dragged from another app). `None`
+    /// when absent, empty, or unreasonably large.
+    unsafe fn extract_text(data: &IDataObject) -> Option<String> {
+        let format = FORMATETC {
+            cfFormat: CF_UNICODETEXT.0,
+            ptd: std::ptr::null_mut(),
+            dwAspect: DVASPECT_CONTENT.0,
+            lindex: -1,
+            tymed: TYMED_HGLOBAL.0 as u32,
+        };
+        let mut medium = data.GetData(&format).ok()?;
+        let ptr = GlobalLock(medium.u.hGlobal) as *const u16;
+        if ptr.is_null() {
+            ReleaseStgMedium(&mut medium);
+            return None;
+        }
+
+        let mut len = 0usize;
+        while len < MAX_TEXT_UNITS && *ptr.add(len) != 0 {
+            len += 1;
+        }
+        let text = if len >= MAX_TEXT_UNITS {
+            None
+        } else {
+            Some(String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len)))
+        };
+        let _ = GlobalUnlock(medium.u.hGlobal);
+        ReleaseStgMedium(&mut medium);
+
+        match text {
+            Some(t) if !t.trim().is_empty() => Some(t),
+            _ => None,
+        }
+    }
+
     unsafe fn client_point(&self, pt: &POINTL) -> POINT {
         let mut point = POINT { x: pt.x, y: pt.y };
         let _ = ScreenToClient(self.hwnd, &mut point);
@@ -81,7 +134,10 @@ impl IDropTarget_Impl for ShelfDropTarget_Impl {
         pt: &POINTL,
         effect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
-        let Some((paths, hdrop)) = (unsafe { ShelfDropTarget::extract(pdata) }) else {
+        let payload = pdata
+            .as_ref()
+            .and_then(|data| unsafe { ShelfDropTarget::extract(data) });
+        let Some(payload) = payload else {
             unsafe {
                 *self.enter_valid.get() = false;
                 *self.cursor_effect.get() = DROPEFFECT_NONE;
@@ -97,11 +153,21 @@ impl IDropTarget_Impl for ShelfDropTarget_Impl {
         }
 
         let point = unsafe { self.client_point(pt) };
-        let _ = self.app.emit(
-            "shelf-drag-enter",
-            serde_json::json!({ "paths": paths, "position": { "x": point.x, "y": point.y } }),
-        );
-        unsafe { DragFinish(hdrop) };
+        match payload {
+            DragPayload::Files(paths, hdrop) => {
+                let _ = self.app.emit(
+                    "shelf-drag-enter",
+                    serde_json::json!({ "paths": paths, "position": { "x": point.x, "y": point.y } }),
+                );
+                unsafe { DragFinish(hdrop) };
+            }
+            DragPayload::Text(text) => {
+                let _ = self.app.emit(
+                    "shelf-drag-enter",
+                    serde_json::json!({ "text": text, "position": { "x": point.x, "y": point.y } }),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -132,9 +198,22 @@ impl IDropTarget_Impl for ShelfDropTarget_Impl {
     ) -> windows::core::Result<()> {
         if unsafe { *self.enter_valid.get() } {
             unsafe { *self.enter_valid.get() = false };
-            if let Some((paths, hdrop)) = unsafe { ShelfDropTarget::extract(pdata) } {
-                let _ = self.app.emit("shelf-drag-drop", serde_json::json!({ "paths": paths }));
-                unsafe { DragFinish(hdrop) };
+            let payload = pdata
+                .as_ref()
+                .and_then(|data| unsafe { ShelfDropTarget::extract(data) });
+            match payload {
+                Some(DragPayload::Files(paths, hdrop)) => {
+                    let _ = self
+                        .app
+                        .emit("shelf-drag-drop", serde_json::json!({ "paths": paths }));
+                    unsafe { DragFinish(hdrop) };
+                }
+                Some(DragPayload::Text(text)) => {
+                    let _ = self
+                        .app
+                        .emit("shelf-drag-drop", serde_json::json!({ "text": text }));
+                }
+                None => {}
             }
         }
         Ok(())

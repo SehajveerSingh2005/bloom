@@ -15,6 +15,7 @@
 		"autostart:default",
 		"core:app:default",
 		"dialog:default",
-		"drag:default"
+		"drag:default",
+		"clipboard-manager:allow-write-text"
 	]
 }

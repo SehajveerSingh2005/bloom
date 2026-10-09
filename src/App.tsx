@@ -24,6 +24,7 @@ import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
 import { useAnnouncement } from "./hooks/useAnnouncement";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 import { openUrl, openPath } from "@tauri-apps/plugin-opener";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { WidgetConfig } from "./components/StatusWidgetConfig";
 import {
@@ -381,8 +382,10 @@ interface WifiStatus {
 
 interface ShelfItem {
 	id: string;
+	type: "file" | "text";
 	name: string;
-	path: string;
+	path?: string;
+	text?: string;
 	timestamp: number;
 }
 
@@ -1064,19 +1067,23 @@ function App() {
 	// Bloom mode state: 'music', 'calendar', 'command-center', 'announcement', 'shelf', or 'status'
 	const [bloomMode, setBloomMode] = useState<BloomMode>("status");
 
-	// Shelf: files stashed in the notch via drag-and-drop, stored as plain
-	// paths (references, never copies). Session-scoped by default; the
-	// bloom-shelf-persist setting keeps them in localStorage across restarts.
+	// Shelf: files and selected text stashed in the notch via drag-and-drop.
+	// Files are stored as plain paths (references, never copies). Session-scoped
+	// by default; the bloom-shelf-persist setting keeps items across restarts.
 	const [shelfItems, setShelfItems] = useState<ShelfItem[]>(() => {
 		if (localStorage.getItem("bloom-shelf-persist") !== "true") return [];
 		try {
 			const saved = localStorage.getItem("bloom-shelf-items");
 			const parsed = saved ? JSON.parse(saved) : [];
 			if (!Array.isArray(parsed)) return [];
-			return parsed.filter(
-				(i): i is ShelfItem =>
-					typeof i?.id === "string" && typeof i?.path === "string" && typeof i?.name === "string"
-			);
+			return parsed
+				.filter((i): i is ShelfItem => {
+					if (typeof i?.id !== "string" || typeof i?.name !== "string") return false;
+					// Items stored before text support have no `type`; treat as files.
+					if (i.type === "text") return typeof i.text === "string";
+					return typeof i.path === "string";
+				})
+				.map((i) => ({ ...i, type: i.type === "text" ? "text" : "file" }));
 		} catch {
 			return [];
 		}
@@ -1093,18 +1100,24 @@ function App() {
 		}
 	}, [shelfItems, shelfPersist]);
 
-	// Drop references whose files are gone (moved/deleted/drive unplugged) once
-	// at startup, so a persisted shelf does not accumulate dead entries.
+	// Drop file references whose files are gone (moved/deleted/drive unplugged)
+	// once at startup, so a persisted shelf does not accumulate dead entries.
+	// Text items are always kept.
 	const shelfPrunedRef = useRef(false);
 	useEffect(() => {
 		if (shelfPrunedRef.current) return;
 		shelfPrunedRef.current = true;
-		if (shelfItems.length === 0) return;
-		invoke<string[]>("shelf_prune", { paths: shelfItems.map((i) => i.path) })
+		const filePaths = shelfItems
+			.filter((i) => i.type === "file" && i.path)
+			.map((i) => i.path as string);
+		if (filePaths.length === 0) return;
+		invoke<string[]>("shelf_prune", { paths: filePaths })
 			.then((existing) => {
 				const alive = new Set(existing);
 				setShelfItems((prev) => {
-					const kept = prev.filter((i) => alive.has(i.path));
+					const kept = prev.filter(
+						(i) => i.type !== "file" || (i.path !== undefined && alive.has(i.path))
+					);
 					return kept.length === prev.length ? prev : kept;
 				});
 			})
@@ -1113,18 +1126,20 @@ function App() {
 	}, []);
 
 	// Thumbnails are generated lazily per path and cached; null means "no
-	// preview" (non-image or unreadable) and falls back to a file icon.
+	// preview" (non-image or unreadable) and falls back to a file icon. Text
+	// items render their content instead.
 	const [shelfThumbs, setShelfThumbs] = useState<Record<string, string | null>>({});
 	const shelfThumbPending = useRef<Set<string>>(new Set());
 	useEffect(() => {
 		for (const item of shelfItems) {
-			if (shelfThumbs[item.path] !== undefined || shelfThumbPending.current.has(item.path))
-				continue;
-			shelfThumbPending.current.add(item.path);
-			invoke<string | null>("shelf_thumbnail", { path: item.path })
-				.then((thumb) => setShelfThumbs((prev) => ({ ...prev, [item.path]: thumb })))
-				.catch(() => setShelfThumbs((prev) => ({ ...prev, [item.path]: null })))
-				.finally(() => shelfThumbPending.current.delete(item.path));
+			if (item.type !== "file" || !item.path) continue;
+			const path = item.path;
+			if (shelfThumbs[path] !== undefined || shelfThumbPending.current.has(path)) continue;
+			shelfThumbPending.current.add(path);
+			invoke<string | null>("shelf_thumbnail", { path })
+				.then((thumb) => setShelfThumbs((prev) => ({ ...prev, [path]: thumb })))
+				.catch(() => setShelfThumbs((prev) => ({ ...prev, [path]: null })))
+				.finally(() => shelfThumbPending.current.delete(path));
 		}
 	}, [shelfItems, shelfThumbs]);
 
@@ -1136,9 +1151,9 @@ function App() {
 			.catch(() => {});
 	}, []);
 
-	// Picking an item back up is a drag-out gesture: press, move past a small
+	// Picking a file back up is a drag-out gesture: press, move past a small
 	// threshold, and the OS takes over the drag. A press without movement is a
-	// plain click that opens the file.
+	// plain click that opens the file (or copies text items).
 	const shelfPointerRef = useRef<{ id: string; x: number; y: number; dragging: boolean } | null>(
 		null
 	);
@@ -1147,6 +1162,8 @@ function App() {
 	const shelfSelfDropAtRef = useRef(0);
 	const handleShelfPointerDown = (e: React.PointerEvent<HTMLDivElement>, item: ShelfItem) => {
 		if (e.button !== 0) return;
+		// Text items have no native drag-out; a click copies them.
+		if (item.type !== "file" || !item.path) return;
 		// The remove button must keep receiving its own click; capturing the
 		// pointer on the tile would retarget it.
 		if ((e.target as HTMLElement).closest(".shelf-tile-remove")) return;
@@ -1158,15 +1175,17 @@ function App() {
 		const st = shelfPointerRef.current;
 		if (!st || st.id !== item.id || st.dragging) return;
 		if (Math.hypot(e.clientX - st.x, e.clientY - st.y) < 6) return;
+		if (!item.path) return;
+		const path = item.path;
 		st.dragging = true;
-		const icon = shelfThumbs[item.path] ?? shelfDragIcon;
+		const icon = shelfThumbs[path] ?? shelfDragIcon;
 		if (!icon) return;
-		startDrag({ item: [item.path], icon }, (payload) => {
+		startDrag({ item: [path], icon }, (payload) => {
 			// Picked up and dropped somewhere — it leaves the shelf. Unless it
 			// was dropped back onto the notch, which re-stashes it.
 			const droppedOnSelf = Date.now() - shelfSelfDropAtRef.current < 800;
 			if (payload?.result === "Dropped" && !droppedOnSelf) removeShelfItem(item.id);
-		}).catch((err) => console.error("[shelf] drag out failed:", item.path, err));
+		}).catch((err) => console.error("[shelf] drag out failed:", path, err));
 	};
 	const handleShelfTileClick = (e: React.MouseEvent<HTMLDivElement>, item: ShelfItem) => {
 		e.stopPropagation();
@@ -1256,13 +1275,14 @@ function App() {
 	const addShelfItems = (paths: string[]) => {
 		if (paths.length === 0) return;
 		const prev = shelfItemsRef.current;
-		const existing = new Set(prev.map((i) => i.path));
+		const existing = new Set(prev.filter((i) => i.path).map((i) => i.path));
 		const fresh: ShelfItem[] = [];
 		for (const p of paths) {
 			if (existing.has(p)) continue;
 			existing.add(p);
 			fresh.push({
 				id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+				type: "file",
 				name: p.split("\\").pop()?.split("/").pop() || p,
 				path: p,
 				timestamp: Date.now()
@@ -1281,8 +1301,38 @@ function App() {
 		setShelfItems([...fresh.slice(0, room), ...prev]);
 	};
 
+	const addShelfText = (text: string) => {
+		const prev = shelfItemsRef.current;
+		if (prev.some((i) => i.type === "text" && i.text === text)) return;
+		if (prev.length >= SHELF_MAX_ITEMS) {
+			showShelfNotice(`Shelf is full (${SHELF_MAX_ITEMS}) — remove an item first`);
+			return;
+		}
+		setShelfItems([
+			{
+				id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+				type: "text",
+				name: text.trim().replace(/\s+/g, " ").slice(0, 48),
+				text,
+				timestamp: Date.now()
+			},
+			...prev
+		]);
+	};
+
+	// Files open in their default app; text items are copied to the clipboard
+	// so they can be pasted anywhere.
 	const openShelfItem = (item: ShelfItem) => {
-		openPath(item.path).catch((e) => console.error("[shelf] open failed:", item.path, e));
+		if (item.type === "text") {
+			if (!item.text) return;
+			writeText(item.text)
+				.then(() => showShelfNotice("Copied to clipboard"))
+				.catch((e) => console.error("[shelf] copy failed:", e));
+			return;
+		}
+		if (item.path) {
+			openPath(item.path).catch((e) => console.error("[shelf] open failed:", item.path, e));
+		}
 	};
 
 	// Shelf drag-and-drop plumbing. The backend registers its own OLE drop
@@ -1297,8 +1347,8 @@ function App() {
 		let unlisteners: (() => void)[] = [];
 		let cancelled = false;
 
-		const enter = (event: { payload: { paths?: string[] } }) => {
-			console.info("[shelf] drag-enter:", event.payload.paths);
+		const enter = (event: { payload: { paths?: string[]; text?: string } }) => {
+			console.info("[shelf] drag-enter:", event.payload.paths ?? event.payload.text);
 			setIsDragHovering(true);
 			setBloomMode((prev) => {
 				if (prev === "announcement" || prev === "shelf") return prev;
@@ -1315,23 +1365,24 @@ function App() {
 				setBloomMode((prev) => (prev === "shelf" ? restore : prev));
 			}
 		};
-		const drop = (event: { payload: { paths?: string[] } }) => {
+		const drop = (event: { payload: { paths?: string[]; text?: string } }) => {
 			setIsDragHovering(false);
 			shelfDragActiveRef.current = false;
 			shelfSelfDropAtRef.current = Date.now();
 			const paths = event.payload.paths ?? [];
-			console.info("[shelf] drop:", paths);
-			if (paths.length > 0) {
-				addShelfItems(paths);
-				setBloomMode((prev) => (prev === "announcement" ? prev : "shelf"));
-				collapseShelfSoon();
-			}
+			const text = event.payload.text;
+			console.info("[shelf] drop:", paths.length > 0 ? paths : text);
+			if (paths.length === 0 && !text) return;
+			if (paths.length > 0) addShelfItems(paths);
+			if (text) addShelfText(text);
+			setBloomMode((prev) => (prev === "announcement" ? prev : "shelf"));
+			collapseShelfSoon();
 		};
 
 		Promise.all([
-			listen<{ paths?: string[] }>("shelf-drag-enter", enter),
+			listen<{ paths?: string[]; text?: string }>("shelf-drag-enter", enter),
 			listen("shelf-drag-leave", leave),
-			listen<{ paths?: string[] }>("shelf-drag-drop", drop)
+			listen<{ paths?: string[]; text?: string }>("shelf-drag-drop", drop)
 		])
 			.then((fns) => {
 				if (cancelled) {
@@ -3268,23 +3319,25 @@ function App() {
 											{shelfNotice && <div className="shelf-notice">{shelfNotice}</div>}
 											{shelfItems.length === 0 ? (
 												<div className="shelf-empty">
-													<span>Drop files here to stash them</span>
+													<span>Drop files or selected text here</span>
 												</div>
 											) : (
 												<div className="shelf-items-grid" onWheel={handleShelfWheel}>
 													{shelfItems.map((item) => {
-														const thumb = shelfThumbs[item.path];
+														const thumb = item.path ? shelfThumbs[item.path] : undefined;
 														return (
 															<div
 																key={item.id}
 																className="shelf-tile"
-																title={item.path}
+																title={item.type === "text" ? item.text : item.path}
 																onPointerDown={(e) => handleShelfPointerDown(e, item)}
 																onPointerMove={(e) => handleShelfPointerMove(e, item)}
 																onClick={(e) => handleShelfTileClick(e, item)}
 															>
 																<div className="shelf-tile-preview">
-																	{thumb ? (
+																	{item.type === "text" ? (
+																		<div className="shelf-tile-text">{item.text}</div>
+																	) : thumb ? (
 																		<img src={thumb} alt="" draggable={false} />
 																	) : (
 																		<File size={26} strokeWidth={1.75} />
