@@ -2401,6 +2401,16 @@ fn update_main_interaction(
         MH_TOPBAR_EXPIRY_MS.store(now + 500, Ordering::Relaxed);
     }
 
+    // An OS file drag can only reach the webview's drop target when the
+    // window is not click-through: WS_EX_TRANSPARENT hides the entire window
+    // (and its webview children) from OLE hit-testing, which shows the
+    // no-drop cursor and never emits drag events. Detect a held left button
+    // so a drag over the notch can force interactivity.
+    let drag_held = unsafe {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+        (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0
+    };
+
     let mut is_click_interactive = false;
     let main_rect_val = MAIN_WINDOW_RECT.lock().ok().and_then(|g| *g);
 
@@ -2445,6 +2455,13 @@ fn update_main_interaction(
                 if (notch_visible || hover_active) && (in_notch_rect || in_top_span) {
                     is_click_interactive = true;
                 }
+
+                // A held left button means a possible OS drag: OLE cannot
+                // hit-test a click-through window, so force interactivity over
+                // the notch or the drop target is unreachable.
+                if drag_held && (in_notch_rect || in_top_span) {
+                    is_click_interactive = true;
+                }
             }
         }
     }
@@ -2478,9 +2495,17 @@ fn setup_top_edge_watchdog(app_handle: AppHandle) {
         if CAPTURE_UI_ACTIVE.load(Ordering::Relaxed) || SHUTTING_DOWN.load(Ordering::Relaxed) {
             continue;
         }
-        if MH_TOP_EDGE_ENTER_MS.load(Ordering::Relaxed) == 0
-            || MH_TOP_EDGE_ARMED.load(Ordering::Relaxed)
-        {
+        let dwell_pending = MH_TOP_EDGE_ENTER_MS.load(Ordering::Relaxed) != 0
+            && !MH_TOP_EDGE_ARMED.load(Ordering::Relaxed);
+        // The low-level hook can miss moves while another process runs an OLE
+        // drag loop, so also poll whenever the left button is held: a drag
+        // hovering the notch needs the window to flip interactive before the
+        // drop target becomes reachable.
+        let drag_held = unsafe {
+            use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+            (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0
+        };
+        if !dwell_pending && !drag_held {
             continue;
         }
         let mut pt = windows::Win32::Foundation::POINT::default();

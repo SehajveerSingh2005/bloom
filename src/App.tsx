@@ -23,7 +23,8 @@ import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
 import { useAnnouncement } from "./hooks/useAnnouncement";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, openPath } from "@tauri-apps/plugin-opener";
+import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { WidgetConfig } from "./components/StatusWidgetConfig";
 import {
 	Cpu,
@@ -35,6 +36,7 @@ import {
 	Pause,
 	RotateCcw,
 	Megaphone,
+	File,
 	X
 } from "lucide-react";
 
@@ -377,6 +379,18 @@ interface WifiStatus {
 	connected: boolean;
 }
 
+interface ShelfItem {
+	id: string;
+	name: string;
+	path: string;
+	timestamp: number;
+}
+
+type BloomMode = "music" | "calendar" | "command-center" | "announcement" | "status" | "shelf";
+
+// The shelf is a short-lived stash: one row, newest first, oldest evicted.
+const SHELF_MAX_ITEMS = 10;
+
 const MARQUEE_SPEED = 30; // px/s — constant for all titles
 const MARQUEE_MIN_DURATION = 5; // floor so short titles don't flicker
 
@@ -700,6 +714,9 @@ function App() {
 					if (visible) {
 						setStartupAnimating(true);
 						setIsReady(true);
+						// The window is shown here; WebView2 may only create its
+						// render child now, so refresh the drop targets.
+						invoke("setup_shelf_drop").catch(() => {});
 						setTimeout(() => {
 							setIsImpacted(true);
 							setIsExpanded(true);
@@ -791,6 +808,9 @@ function App() {
 	const [settingsMusicCompactNotch, setSettingsMusicCompactNotch] = useState(
 		() => localStorage.getItem("bloom-music-compact-notch") !== "false"
 	);
+	const [shelfPersist, setShelfPersist] = useState(
+		() => localStorage.getItem("bloom-shelf-persist") === "true"
+	);
 	const [settingsVisualizerEnabled, setSettingsVisualizerEnabled] = useState(
 		() => localStorage.getItem("bloom-visualizer-enabled") !== "false"
 	);
@@ -838,6 +858,7 @@ function App() {
 				setSettingsCalendarEnabled(getVal("bloom-calendar-enabled", "true") !== "false");
 				setSettingsTimerSoundEnabled(getVal("bloom-timer-sound-enabled", "true") !== "false");
 				setSettingsMusicModeEnabled(getVal("bloom-music-mode-enabled", "true") !== "false");
+				setShelfPersist(getVal("bloom-shelf-persist", "false") === "true");
 				setSettingsMusicCompactNotch(getVal("bloom-music-compact-notch", "true") !== "false");
 				const viz =
 					getVal("bloom-media-visualizer-enabled") ?? getVal("bloom-visualizer-enabled", "true");
@@ -976,6 +997,7 @@ function App() {
 			"bloom-calendar-enabled": setSettingsCalendarEnabled,
 			"bloom-timer-sound-enabled": setSettingsTimerSoundEnabled,
 			"bloom-music-mode-enabled": setSettingsMusicModeEnabled,
+			"bloom-shelf-persist": setShelfPersist,
 			"bloom-music-compact-notch": setSettingsMusicCompactNotch,
 			"bloom-media-visualizer-enabled": setSettingsVisualizerEnabled,
 			"bloom-visualizer-enabled": setSettingsVisualizerEnabled,
@@ -1039,10 +1061,296 @@ function App() {
 		invoke("change_notch_mode", { mode: notchMode });
 	}, [notchMode, windowLabel]);
 
-	// Bloom mode state: 'music', 'calendar', 'command-center', 'announcement', or 'status'
-	const [bloomMode, setBloomMode] = useState<
-		"music" | "calendar" | "command-center" | "announcement" | "status"
-	>("status");
+	// Bloom mode state: 'music', 'calendar', 'command-center', 'announcement', 'shelf', or 'status'
+	const [bloomMode, setBloomMode] = useState<BloomMode>("status");
+
+	// Shelf: files stashed in the notch via drag-and-drop, stored as plain
+	// paths (references, never copies). Session-scoped by default; the
+	// bloom-shelf-persist setting keeps them in localStorage across restarts.
+	const [shelfItems, setShelfItems] = useState<ShelfItem[]>(() => {
+		if (localStorage.getItem("bloom-shelf-persist") !== "true") return [];
+		try {
+			const saved = localStorage.getItem("bloom-shelf-items");
+			const parsed = saved ? JSON.parse(saved) : [];
+			if (!Array.isArray(parsed)) return [];
+			return parsed.filter(
+				(i): i is ShelfItem =>
+					typeof i?.id === "string" && typeof i?.path === "string" && typeof i?.name === "string"
+			);
+		} catch {
+			return [];
+		}
+	});
+	useEffect(() => {
+		try {
+			if (shelfPersist) {
+				localStorage.setItem("bloom-shelf-items", JSON.stringify(shelfItems));
+			} else {
+				localStorage.removeItem("bloom-shelf-items");
+			}
+		} catch {
+			/* storage full or unavailable — shelf just won't persist */
+		}
+	}, [shelfItems, shelfPersist]);
+
+	// Drop references whose files are gone (moved/deleted/drive unplugged) once
+	// at startup, so a persisted shelf does not accumulate dead entries.
+	const shelfPrunedRef = useRef(false);
+	useEffect(() => {
+		if (shelfPrunedRef.current) return;
+		shelfPrunedRef.current = true;
+		if (shelfItems.length === 0) return;
+		invoke<string[]>("shelf_prune", { paths: shelfItems.map((i) => i.path) })
+			.then((existing) => {
+				const alive = new Set(existing);
+				setShelfItems((prev) => {
+					const kept = prev.filter((i) => alive.has(i.path));
+					return kept.length === prev.length ? prev : kept;
+				});
+			})
+			.catch(() => {});
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
+
+	// Thumbnails are generated lazily per path and cached; null means "no
+	// preview" (non-image or unreadable) and falls back to a file icon.
+	const [shelfThumbs, setShelfThumbs] = useState<Record<string, string | null>>({});
+	const shelfThumbPending = useRef<Set<string>>(new Set());
+	useEffect(() => {
+		for (const item of shelfItems) {
+			if (shelfThumbs[item.path] !== undefined || shelfThumbPending.current.has(item.path))
+				continue;
+			shelfThumbPending.current.add(item.path);
+			invoke<string | null>("shelf_thumbnail", { path: item.path })
+				.then((thumb) => setShelfThumbs((prev) => ({ ...prev, [item.path]: thumb })))
+				.catch(() => setShelfThumbs((prev) => ({ ...prev, [item.path]: null })))
+				.finally(() => shelfThumbPending.current.delete(item.path));
+		}
+	}, [shelfItems, shelfThumbs]);
+
+	// Native drag preview for items without a thumbnail.
+	const [shelfDragIcon, setShelfDragIcon] = useState<string | null>(null);
+	useEffect(() => {
+		invoke<string | null>("shelf_drag_icon")
+			.then(setShelfDragIcon)
+			.catch(() => {});
+	}, []);
+
+	// Picking an item back up is a drag-out gesture: press, move past a small
+	// threshold, and the OS takes over the drag. A press without movement is a
+	// plain click that opens the file.
+	const shelfPointerRef = useRef<{ id: string; x: number; y: number; dragging: boolean } | null>(
+		null
+	);
+	// When a drag ends on the notch itself the drop listener re-stashes the
+	// item; remember when that happened so the drag callback does not remove it.
+	const shelfSelfDropAtRef = useRef(0);
+	const handleShelfPointerDown = (e: React.PointerEvent<HTMLDivElement>, item: ShelfItem) => {
+		if (e.button !== 0) return;
+		// The remove button must keep receiving its own click; capturing the
+		// pointer on the tile would retarget it.
+		if ((e.target as HTMLElement).closest(".shelf-tile-remove")) return;
+		e.stopPropagation();
+		e.currentTarget.setPointerCapture(e.pointerId);
+		shelfPointerRef.current = { id: item.id, x: e.clientX, y: e.clientY, dragging: false };
+	};
+	const handleShelfPointerMove = (e: React.PointerEvent<HTMLDivElement>, item: ShelfItem) => {
+		const st = shelfPointerRef.current;
+		if (!st || st.id !== item.id || st.dragging) return;
+		if (Math.hypot(e.clientX - st.x, e.clientY - st.y) < 6) return;
+		st.dragging = true;
+		const icon = shelfThumbs[item.path] ?? shelfDragIcon;
+		if (!icon) return;
+		startDrag({ item: [item.path], icon }, (payload) => {
+			// Picked up and dropped somewhere — it leaves the shelf. Unless it
+			// was dropped back onto the notch, which re-stashes it.
+			const droppedOnSelf = Date.now() - shelfSelfDropAtRef.current < 800;
+			if (payload?.result === "Dropped" && !droppedOnSelf) removeShelfItem(item.id);
+		}).catch((err) => console.error("[shelf] drag out failed:", item.path, err));
+	};
+	const handleShelfTileClick = (e: React.MouseEvent<HTMLDivElement>, item: ShelfItem) => {
+		e.stopPropagation();
+		const st = shelfPointerRef.current;
+		shelfPointerRef.current = null;
+		if (st?.dragging) return;
+		openShelfItem(item);
+	};
+
+	// Wheel scrolling for the shelf strip: ease towards a target instead of
+	// jumping, so wheel and trackpad input both feel fluid.
+	const shelfScrollTargetRef = useRef<number | null>(null);
+	const shelfScrollRafRef = useRef<number | null>(null);
+	const handleShelfWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+		const el = e.currentTarget;
+		const max = el.scrollWidth - el.clientWidth;
+		const base = shelfScrollTargetRef.current ?? el.scrollLeft;
+		shelfScrollTargetRef.current = Math.max(0, Math.min(max, base + e.deltaY + e.deltaX));
+		if (shelfScrollRafRef.current !== null) return;
+		const step = () => {
+			const target = shelfScrollTargetRef.current;
+			if (target === null) {
+				shelfScrollRafRef.current = null;
+				return;
+			}
+			const diff = target - el.scrollLeft;
+			if (Math.abs(diff) < 0.5) {
+				el.scrollLeft = target;
+				shelfScrollTargetRef.current = null;
+				shelfScrollRafRef.current = null;
+				return;
+			}
+			el.scrollLeft += diff * 0.22;
+			shelfScrollRafRef.current = requestAnimationFrame(step);
+		};
+		shelfScrollRafRef.current = requestAnimationFrame(step);
+	};
+
+	// The shelf closes itself shortly after a drop so the notch does not stay
+	// expanded. Hovering it cancels the timer; leaving collapses it.
+	const shelfCollapseTimer = useRef<number | null>(null);
+	const shelfRestingModeRef = useRef<BloomMode>("status");
+	shelfRestingModeRef.current =
+		mediaInfo.has_media && isPlaying && settingsMusicCompactNotch ? "music" : "status";
+
+	const clearShelfCollapse = () => {
+		if (shelfCollapseTimer.current !== null) {
+			window.clearTimeout(shelfCollapseTimer.current);
+			shelfCollapseTimer.current = null;
+		}
+	};
+
+	const collapseShelfSoon = (delay = 1800) => {
+		clearShelfCollapse();
+		shelfCollapseTimer.current = window.setTimeout(() => {
+			shelfCollapseTimer.current = null;
+			setBloomMode((prev) => (prev === "shelf" ? shelfRestingModeRef.current : prev));
+		}, delay);
+	};
+
+	const removeShelfItem = (id: string) => {
+		const next = shelfItems.filter((i) => i.id !== id);
+		setShelfItems(next);
+		if (next.length === 0) {
+			// Nothing left to show — fall back to status instead of an empty shelf.
+			clearShelfCollapse();
+			setBloomMode((mode) => (mode === "shelf" ? "status" : mode));
+		}
+	};
+
+	// A full shelf never evicts silently: whatever fits is added and the rest
+	// is reported. Reads through a ref so the drop listener (mounted once) sees
+	// the current list.
+	const shelfItemsRef = useRef<ShelfItem[]>(shelfItems);
+	shelfItemsRef.current = shelfItems;
+	const [shelfNotice, setShelfNotice] = useState<string | null>(null);
+	const shelfNoticeTimer = useRef<number | null>(null);
+	const showShelfNotice = (message: string) => {
+		setShelfNotice(message);
+		if (shelfNoticeTimer.current !== null) window.clearTimeout(shelfNoticeTimer.current);
+		shelfNoticeTimer.current = window.setTimeout(() => {
+			shelfNoticeTimer.current = null;
+			setShelfNotice(null);
+		}, 2600);
+	};
+
+	const addShelfItems = (paths: string[]) => {
+		if (paths.length === 0) return;
+		const prev = shelfItemsRef.current;
+		const existing = new Set(prev.map((i) => i.path));
+		const fresh: ShelfItem[] = [];
+		for (const p of paths) {
+			if (existing.has(p)) continue;
+			existing.add(p);
+			fresh.push({
+				id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+				name: p.split("\\").pop()?.split("/").pop() || p,
+				path: p,
+				timestamp: Date.now()
+			});
+		}
+		if (fresh.length === 0) return;
+
+		const room = Math.max(0, SHELF_MAX_ITEMS - prev.length);
+		if (room === 0) {
+			showShelfNotice(`Shelf is full (${SHELF_MAX_ITEMS}) — remove an item first`);
+			return;
+		}
+		if (fresh.length > room) {
+			showShelfNotice(`Shelf is full — added ${room} of ${fresh.length} items`);
+		}
+		setShelfItems([...fresh.slice(0, room), ...prev]);
+	};
+
+	const openShelfItem = (item: ShelfItem) => {
+		openPath(item.path).catch((e) => console.error("[shelf] open failed:", item.path, e));
+	};
+
+	// Shelf drag-and-drop plumbing. The backend registers its own OLE drop
+	// target (src-tauri/src/shelf.rs) because wry's target can go stale when
+	// WebView2 recreates its render child; it emits the shelf-drag-* events
+	// below. Drag-enter switches to the shelf panel (restoring the previous
+	// mode on cancel); drop stashes the real file paths.
+	const [isDragHovering, setIsDragHovering] = useState(false);
+	const shelfPrevModeRef = useRef<BloomMode>("status");
+	const shelfDragActiveRef = useRef(false);
+	useEffect(() => {
+		let unlisteners: (() => void)[] = [];
+		let cancelled = false;
+
+		const enter = (event: { payload: { paths?: string[] } }) => {
+			console.info("[shelf] drag-enter:", event.payload.paths);
+			setIsDragHovering(true);
+			setBloomMode((prev) => {
+				if (prev === "announcement" || prev === "shelf") return prev;
+				shelfPrevModeRef.current = prev;
+				shelfDragActiveRef.current = true;
+				return "shelf";
+			});
+		};
+		const leave = () => {
+			setIsDragHovering(false);
+			if (shelfDragActiveRef.current) {
+				shelfDragActiveRef.current = false;
+				const restore = shelfPrevModeRef.current;
+				setBloomMode((prev) => (prev === "shelf" ? restore : prev));
+			}
+		};
+		const drop = (event: { payload: { paths?: string[] } }) => {
+			setIsDragHovering(false);
+			shelfDragActiveRef.current = false;
+			shelfSelfDropAtRef.current = Date.now();
+			const paths = event.payload.paths ?? [];
+			console.info("[shelf] drop:", paths);
+			if (paths.length > 0) {
+				addShelfItems(paths);
+				setBloomMode((prev) => (prev === "announcement" ? prev : "shelf"));
+				collapseShelfSoon();
+			}
+		};
+
+		Promise.all([
+			listen<{ paths?: string[] }>("shelf-drag-enter", enter),
+			listen("shelf-drag-leave", leave),
+			listen<{ paths?: string[] }>("shelf-drag-drop", drop)
+		])
+			.then((fns) => {
+				if (cancelled) {
+					fns.forEach((fn) => fn());
+				} else {
+					unlisteners = fns;
+				}
+			})
+			.catch((e) => console.error("[shelf] drag-drop listener failed:", e));
+
+		invoke("setup_shelf_drop").catch((e) =>
+			console.error("[shelf] drop target setup failed:", e)
+		);
+
+		return () => {
+			cancelled = true;
+			unlisteners.forEach((fn) => fn());
+		};
+	}, []);
 
 	// Open the notch on an unseen announcement; stays open until dismissed.
 	useEffect(() => {
@@ -1065,7 +1373,7 @@ function App() {
 	const lastScrollTime = useRef(0);
 	const handleWheel = (e: React.WheelEvent) => {
 		const target = e.target as HTMLElement;
-		if (target.closest(".calendar-grid") || target.closest(".timer-column")) {
+		if (target.closest(".calendar-grid") || target.closest(".timer-column") || target.closest(".shelf-items-grid")) {
 			return;
 		}
 
@@ -1079,15 +1387,18 @@ function App() {
 		if (Math.abs(delta) < 5) return; // Ignore tiny movements
 
 		// Music shifts position based on playing state:
-		// Playing: command-center → music → status → calendar (active, near command-center)
-		// Paused:  command-center → status → music → calendar (secondary, after status)
+		// Playing: command-center → music → status → shelf → calendar (active, near command-center)
+		// Paused:  command-center → status → shelf → music → calendar (secondary, after status)
 		const musicBeforeStatus = isPlaying && mediaInfo.has_media && settingsMusicModeEnabled;
-		const modes: ("command-center" | "status" | "music" | "calendar")[] = musicBeforeStatus
-			? ["command-center", "music", "status", "calendar"]
-			: ["command-center", "status", "music", "calendar"];
+		const modes: BloomMode[] = musicBeforeStatus
+			? ["command-center", "music", "status", "shelf", "calendar"]
+			: ["command-center", "status", "shelf", "music", "calendar"];
 		const availableModes = modes.filter((m) => {
 			if (m === "music" && (!settingsMusicModeEnabled || !mediaInfo.has_media)) return false;
 			if (m === "calendar" && !settingsCalendarEnabled) return false;
+			// Shelf only appears in the cycle while it holds something (or a
+			// drag is hovering); drag-enter forces it directly regardless.
+			if (m === "shelf" && shelfItems.length === 0 && !isDragHovering) return false;
 			return true;
 		});
 
@@ -1865,6 +2176,7 @@ function App() {
 	const getDynamicWidth = () => {
 		if (bloomMode === "announcement" && announcement && !announcementDismissed) return 380;
 		if (isCalendarMode) return 480;
+		if (bloomMode === "shelf") return 380;
 		if (bloomMode === "command-center" && isHovered) return 350;
 		if (bloomMode === "status" && isHovered) {
 			const totalWidgets = statusWidgets.left.length + statusWidgets.right.length;
@@ -1897,6 +2209,9 @@ function App() {
 		}
 		// Sized to the calendar's week-row count plus the timer's fixed content.
 		if (bloomMode === "calendar") return calendarMonthRows >= 6 ? 305 : 273;
+		// Shelf expands on mode alone (no hover needed — there is no cursor
+		// hover during an OS drag) and is sized to exactly one row of tiles.
+		if (bloomMode === "shelf") return shelfItems.length > 0 ? 176 : 130;
 		if (bloomMode === "command-center") return isHovered ? 230 : 36;
 		if (bloomMode === "status") return 36;
 		if (isMusicMode && isHovered) {
@@ -1944,7 +2259,7 @@ function App() {
 			<div style={{ zoom: scale, width: "100%", display: "flex", justifyContent: "center" }}>
 				<motion.div
 					ref={bloomRef}
-					className={`bloom ${isHovered ? "expanded" : ""} ${isImpacted ? "is-impacted" : ""}`}
+					className={`bloom ${isHovered ? "expanded" : ""} ${isImpacted ? "is-impacted" : ""} ${isDragHovering ? "drag-hover" : ""}`}
 					onMouseEnter={() => setIsNotchHovered(true)}
 					onMouseLeave={() => setIsNotchHovered(false)}
 					onWheel={handleWheel}
@@ -1983,26 +2298,32 @@ function App() {
 					onClick={(e) => {
 						e.stopPropagation();
 					}}
-					onHoverStart={() => {
-						setIsHovered(true);
-						if (bloomMode !== "announcement") {
-							setBloomMode(mediaInfo.has_media && isPlaying ? "music" : "status");
-						}
-					}}
-					onHoverEnd={() => {
-						setIsHovered(false);
-						const targetMode =
-							mediaInfo.has_media && isPlaying && settingsMusicCompactNotch ? "music" : "status";
-						if (bloomMode === "music") {
-							setBloomMode(targetMode);
-						} else if (
-							bloomMode === "command-center" ||
-							bloomMode === "calendar" ||
-							bloomMode === "status"
-						) {
-							setBloomMode(targetMode);
-						}
-					}}
+				onHoverStart={() => {
+					setIsHovered(true);
+					// Shelf and announcement manage their own lifetime — hovering
+					// must not yank the island out from under them. Hovering the
+					// shelf also cancels its post-drop auto-close.
+					if (bloomMode === "shelf") {
+						clearShelfCollapse();
+					} else if (bloomMode !== "announcement") {
+						setBloomMode(mediaInfo.has_media && isPlaying ? "music" : "status");
+					}
+				}}
+				onHoverEnd={() => {
+					setIsHovered(false);
+					const targetMode =
+						mediaInfo.has_media && isPlaying && settingsMusicCompactNotch ? "music" : "status";
+					if (bloomMode === "music") {
+						setBloomMode(targetMode);
+					} else if (
+						bloomMode === "command-center" ||
+						bloomMode === "calendar" ||
+						bloomMode === "status" ||
+						bloomMode === "shelf"
+					) {
+						setBloomMode(targetMode);
+					}
+				}}
 					style={{ originY: 0 }}
 					transition={{
 						width: { type: "spring", stiffness: 400, damping: 31 },
@@ -2929,6 +3250,62 @@ function App() {
 													</div>
 												</div>
 											</div>
+										</motion.div>
+									)}
+								</AnimatePresence>
+
+								{/* Shelf Panel */}
+								<AnimatePresence>
+									{bloomMode === "shelf" && (
+										<motion.div
+											className="shelf-content"
+											onClick={(e) => e.stopPropagation()}
+											initial={{ opacity: 0 }}
+											animate={{ opacity: 1 }}
+											exit={{ opacity: 0, filter: "blur(4px)", transition: { duration: 0.1 } }}
+											transition={{ type: "spring", stiffness: 400, damping: 30 }}
+										>
+											{shelfNotice && <div className="shelf-notice">{shelfNotice}</div>}
+											{shelfItems.length === 0 ? (
+												<div className="shelf-empty">
+													<span>Drop files here to stash them</span>
+												</div>
+											) : (
+												<div className="shelf-items-grid" onWheel={handleShelfWheel}>
+													{shelfItems.map((item) => {
+														const thumb = shelfThumbs[item.path];
+														return (
+															<div
+																key={item.id}
+																className="shelf-tile"
+																title={item.path}
+																onPointerDown={(e) => handleShelfPointerDown(e, item)}
+																onPointerMove={(e) => handleShelfPointerMove(e, item)}
+																onClick={(e) => handleShelfTileClick(e, item)}
+															>
+																<div className="shelf-tile-preview">
+																	{thumb ? (
+																		<img src={thumb} alt="" draggable={false} />
+																	) : (
+																		<File size={26} strokeWidth={1.75} />
+																	)}
+																</div>
+																<span className="shelf-tile-name">{item.name}</span>
+																<button
+																	className="shelf-tile-remove"
+																	title="Remove from shelf"
+																	onClick={(e) => {
+																		e.stopPropagation();
+																		removeShelfItem(item.id);
+																	}}
+																>
+																	<X size={11} strokeWidth={2.5} />
+																</button>
+															</div>
+														);
+													})}
+												</div>
+											)}
 										</motion.div>
 									)}
 								</AnimatePresence>

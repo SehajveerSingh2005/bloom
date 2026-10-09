@@ -9,6 +9,7 @@ import {
 	Circle,
 	CloudSun,
 	Timer,
+	Archive,
 	X
 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
@@ -28,6 +29,8 @@ interface NotchTabProps {
 	toggleMusicMode: () => void;
 	musicCompactNotch: boolean;
 	toggleMusicCompactNotch: () => void;
+	shelfPersist: boolean;
+	toggleShelfPersist: () => void;
 	mediaLayout: "classic" | "compact";
 	toggleMediaLayout: (layout: "classic" | "compact") => void;
 	mediaAmbienceEnabled: boolean;
@@ -67,6 +70,8 @@ export function NotchTab({
 	toggleMusicMode,
 	musicCompactNotch,
 	toggleMusicCompactNotch,
+	shelfPersist,
+	toggleShelfPersist,
 	mediaLayout,
 	toggleMediaLayout,
 	mediaAmbienceEnabled,
@@ -214,6 +219,21 @@ export function NotchTab({
 						</SettingRow>
 					</>
 				)}
+			</div>
+
+			<div className="setting-group-label">Shelf</div>
+			<div className="setting-group">
+				<SettingRow
+					icon={Archive}
+					label="Keep Items"
+					desc="Keep shelf items after Bloom closes"
+					divider={false}
+				>
+					<label className="toggle-switch">
+						<input type="checkbox" checked={shelfPersist} onChange={toggleShelfPersist} />
+						<span className="slider"></span>
+					</label>
+				</SettingRow>
 			</div>
 
 			<div className="setting-group-label">Weather</div>

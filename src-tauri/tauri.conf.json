@@ -30,7 +30,7 @@
 				"skipTaskbar": true,
 				"shadow": false,
 				"visible": false,
-				"dragDropEnabled": false
+				"dragDropEnabled": true
 			},
 			{
 				"label": "settings",

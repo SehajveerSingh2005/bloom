@@ -14,6 +14,7 @@
 		"core:event:default",
 		"autostart:default",
 		"core:app:default",
-		"dialog:default"
+		"dialog:default",
+		"drag:default"
 	]
 }

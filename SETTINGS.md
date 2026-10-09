@@ -56,6 +56,12 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | `bloom-music-mode-enabled`  | `"true"` / `"false"` | `"true"` | Enable interactive music media widget.                                |
 | `bloom-music-compact-notch` | `"true"` / `"false"` | `"true"` | Show compact music display (visualizer + artwork) in collapsed notch. |
 
+### Shelf
+
+| Key                   | Type                 | Default   | Description                                                                                             |
+| --------------------- | -------------------- | --------- | ------------------------------------------------------------------------------------------------------- |
+| `bloom-shelf-persist` | `"true"` / `"false"` | `"false"` | Keep notch shelf items across restarts. Off = items are cleared when Bloom closes. Max 10 items, newest first. |
+
 ### Music Appearance
 
 | Key                                | Type                      | Default     | Description                                                                                     |

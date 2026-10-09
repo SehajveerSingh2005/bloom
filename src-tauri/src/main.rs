@@ -2,6 +2,7 @@
 
 mod commands;
 mod services;
+mod shelf;
 mod state;
 mod types;
 mod updater;
@@ -84,6 +85,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -119,6 +121,10 @@ fn main() {
             set_dock_hovered,
             set_notch_hovered,
             set_notch_visible,
+            setup_shelf_drop,
+            shelf_thumbnail,
+            shelf_drag_icon,
+            shelf_prune,
             get_active_windows,
             get_app_icon,
             get_installed_apps,

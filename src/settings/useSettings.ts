@@ -27,6 +27,9 @@ export function useSettings() {
 	);
 	const [musicModeEnabled, setMusicModeEnabled] = useState(true);
 	const [musicCompactNotch, setMusicCompactNotch] = useState(true);
+	const [shelfPersist, setShelfPersist] = useState(
+		() => localStorage.getItem("bloom-shelf-persist") === "true"
+	);
 	const [volumeOverlayEnabled, setVolumeOverlayEnabled] = useState(true);
 	const [volumeEdgeEnabled, setVolumeEdgeEnabled] = useState(
 		() => localStorage.getItem("bloom-volume-edge-enabled") !== "false"
@@ -147,6 +150,7 @@ export function useSettings() {
 			apply(getVal("bloom-timer-sound-enabled"), setTimerSoundEnabled, readBool);
 			apply(getVal("bloom-music-mode-enabled"), setMusicModeEnabled, readBool);
 			apply(getVal("bloom-music-compact-notch"), setMusicCompactNotch, readBool);
+			apply(getVal("bloom-shelf-persist"), setShelfPersist, readBool);
 			apply(getVal("bloom-volume-overlay-enabled"), setVolumeOverlayEnabled, readBool);
 			apply(getVal("bloom-brightness-overlay-enabled"), setBrightnessOverlayEnabled, readBool);
 			apply(getVal("bloom-media-ambience-enabled"), setMediaAmbienceEnabled, readBool);
@@ -398,6 +402,12 @@ export function useSettings() {
 		const next = !musicCompactNotch;
 		setMusicCompactNotch(next);
 		saveSetting("bloom-music-compact-notch", String(next));
+	};
+
+	const toggleShelfPersist = () => {
+		const next = !shelfPersist;
+		setShelfPersist(next);
+		saveSetting("bloom-shelf-persist", String(next));
 	};
 
 	const toggleMediaLayout = (layout: "classic" | "compact") => {
@@ -751,6 +761,8 @@ export function useSettings() {
 		toggleMusicMode,
 		musicCompactNotch,
 		toggleMusicCompactNotch,
+		shelfPersist,
+		toggleShelfPersist,
 		mediaLayout,
 		toggleMediaLayout,
 		mediaAmbienceEnabled,
