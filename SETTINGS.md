@@ -56,11 +56,12 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 
 ### Modules
 
-| Key                         | Type                 | Default  | Description                                                           |
-| --------------------------- | -------------------- | -------- | --------------------------------------------------------------------- |
-| `bloom-calendar-enabled`    | `"true"` / `"false"` | `"true"` | Enable calendar/timer mode in the notch.                              |
-| `bloom-music-mode-enabled`  | `"true"` / `"false"` | `"true"` | Enable interactive music media widget.                                |
-| `bloom-music-compact-notch` | `"true"` / `"false"` | `"true"` | Show compact music display (visualizer + artwork) in collapsed notch. |
+| Key                         | Type                              | Default  | Description                                                                                              |
+| --------------------------- | --------------------------------- | -------- | -------------------------------------------------------------------------------------------------------- |
+| `bloom-calendar-enabled`    | `"true"` / `"false"`              | `"true"` | Enable calendar/timer mode in the notch.                                                                 |
+| `bloom-music-mode-enabled`  | `"true"` / `"false"`              | `"true"` | Enable interactive music media widget.                                                                   |
+| `bloom-music-compact-notch` | `"true"` / `"false"`              | `"true"` | Show compact music display (visualizer + artwork) in collapsed notch.                                    |
+| `bloom-notch-last-panel`    | `"calendar"` / `"command-center"` | (unset)  | Panel a click opens the notch into: the one it was last left on. Unset opens the calendar. Set by Bloom. |
 
 ### Music Appearance
 
