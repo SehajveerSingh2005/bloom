@@ -1145,9 +1145,16 @@ function App() {
 			const path = item.path;
 			if (shelfThumbs[path] !== undefined || shelfThumbPending.current.has(path)) continue;
 			shelfThumbPending.current.add(path);
+			// The item may be removed while this is in flight; don't resurrect
+			// a stale cache entry.
+			const storeThumb = (thumb: string | null) =>
+				setShelfThumbs((prev) => {
+					if (!shelfItemsRef.current.some((i) => i.path === path)) return prev;
+					return { ...prev, [path]: thumb };
+				});
 			invoke<string | null>("shelf_thumbnail", { path })
-				.then((thumb) => setShelfThumbs((prev) => ({ ...prev, [path]: thumb })))
-				.catch(() => setShelfThumbs((prev) => ({ ...prev, [path]: null })))
+				.then(storeThumb)
+				.catch(() => storeThumb(null))
 				.finally(() => shelfThumbPending.current.delete(path));
 		}
 	}, [shelfItems, shelfThumbs]);
@@ -1181,8 +1188,9 @@ function App() {
 	const shelfPointerRef = useRef<{ id: string; x: number; y: number; dragging: boolean } | null>(
 		null
 	);
-	// When a drag ends on the notch itself the drop listener re-stashes the
-	// item; remember when that happened so the drag callback does not remove it.
+	// Timestamp of the last drop onto the notch. A drop recorded during our
+	// own drag-out means the item came back to the notch (pointer still over
+	// it), which decides whether the drag cleanup clears the hover flags.
 	const shelfSelfDropAtRef = useRef(0);
 	// True while our own drag-out is running, so the drag-enter we receive when
 	// it starts over the notch does not flash the hover outline or re-open it.
@@ -1211,23 +1219,20 @@ function App() {
 		// auto-close fire mid-drag.
 		clearShelfCollapse();
 		shelfSelfDragRef.current = true;
-		let droppedOnSelf = false;
-		startDrag({ item: [path], icon }, (payload) => {
-			// Picked up and dropped somewhere — it leaves the shelf. Unless it
-			// was dropped back onto the notch, which re-stashes it.
-			droppedOnSelf = Date.now() - shelfSelfDropAtRef.current < 800;
-			if (payload?.result === "Dropped" && !droppedOnSelf) removeShelfItem(item.id);
-		})
+		const dragStartedAt = Date.now();
+		startDrag({ item: [path], icon })
 			.catch((err) => console.error("[shelf] drag out failed:", path, err))
 			.finally(() => {
 				shelfSelfDragRef.current = false;
-				// The native drag owns the pointer, so the webview never sees
-				// it leave the notch. Clear the hover flags or peek/smart mode
-				// stays stuck expanded; the command also makes the backend
-				// re-evaluate its edge-hover state immediately.
+				// A drop recorded during this drag means it landed back on the
+				// notch, so the pointer is still over it. Otherwise the native
+				// drag owned the pointer and the webview never saw it leave —
+				// release the hover state (flags AND the resting mode) or the
+				// shelf panel stays expanded. The command also makes the
+				// backend re-evaluate its edge-hover state immediately.
+				const droppedOnSelf = shelfSelfDropAtRef.current >= dragStartedAt;
 				if (!droppedOnSelf) {
-					setIsHovered(false);
-					setIsNotchHovered(false);
+					releaseNotchHover();
 					invoke("set_notch_hovered", { hovered: false }).catch(() => {});
 				}
 			});
@@ -3426,7 +3431,11 @@ function App() {
 																		mass: 0.7
 																	}}
 																	className={`shelf-tile ${item.type === "text" ? "is-text" : ""}`}
-																	title={item.type === "text" ? item.text : item.path}
+																	title={
+																		item.type === "text"
+																			? item.text?.slice(0, 1000)
+																			: item.path
+																	}
 																	onPointerDown={(e) => handleShelfPointerDown(e, item)}
 																	onPointerMove={(e) => handleShelfPointerMove(e, item)}
 																	onClick={(e) => handleShelfTileClick(e, item)}

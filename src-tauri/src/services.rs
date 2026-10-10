@@ -2496,8 +2496,12 @@ fn update_main_interaction(
     let prev_ignore = MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed);
     let new_ignore = if final_ignore { 1 } else { 0 };
     if prev_ignore != new_ignore {
-        if let Ok(hwnd) = main_win.hwnd() {
-            re_assert_topmost(hwnd);
+        // Z-order re-assertion is a synchronous window operation; skip it
+        // while a drag may be active, where it can visibly hitch the drag.
+        if !drag_held {
+            if let Ok(hwnd) = main_win.hwnd() {
+                re_assert_topmost(hwnd);
+            }
         }
         let _ = main_win.set_ignore_cursor_events(final_ignore);
         MH_LAST_MAIN_IGNORE.store(new_ignore, Ordering::Relaxed);

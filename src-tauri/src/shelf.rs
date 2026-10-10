@@ -18,7 +18,7 @@ use windows::Win32::System::Com::{
     CoInitializeEx, IDataObject, COINIT_APARTMENTTHREADED, DVASPECT_CONTENT, FORMATETC,
     TYMED_HGLOBAL,
 };
-use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::{
     IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop, CF_HDROP,
     CF_UNICODETEXT, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE,
@@ -74,6 +74,10 @@ impl ShelfDropTarget {
         let medium = data.GetData(&format).ok()?;
         let hdrop = HDROP(medium.u.hGlobal.0 as _);
         let count = DragQueryFileW(hdrop, 0xFFFFFFFF, None);
+        if count == 0 {
+            unsafe { DragFinish(hdrop) };
+            return None;
+        }
         let mut paths = Vec::with_capacity(count as usize);
         for i in 0..count {
             let len = DragQueryFileW(hdrop, i, None) as usize;
@@ -101,11 +105,15 @@ impl ShelfDropTarget {
             return None;
         }
 
+        // Bound the scan by the allocation: a malformed data object could
+        // offer a buffer without a terminator.
+        let alloc_units = (GlobalSize(medium.u.hGlobal) / 2) as usize;
+        let max_units = alloc_units.min(MAX_TEXT_UNITS);
         let mut len = 0usize;
-        while len < MAX_TEXT_UNITS && *ptr.add(len) != 0 {
+        while len < max_units && *ptr.add(len) != 0 {
             len += 1;
         }
-        let text = if len >= MAX_TEXT_UNITS {
+        let text = if len >= MAX_TEXT_UNITS || len >= max_units {
             None
         } else {
             Some(String::from_utf16_lossy(std::slice::from_raw_parts(
