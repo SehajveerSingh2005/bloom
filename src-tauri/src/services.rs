@@ -2571,7 +2571,11 @@ fn update_main_interaction(
         MH_LAST_TOP_EDGE_HOVER.store(new_val, Ordering::Relaxed);
     }
 
-    let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
+    // Only the notch's own footprint takes clicks. MENU_IS_OPEN belongs to the
+    // dock's menus (Dock.tsx): letting it keep this window interactive turned
+    // the whole notch window (the top of the screen) into a click blocker
+    // whenever a dock menu was open or its flag was left set.
+    let final_ignore = !is_click_interactive;
     let prev_ignore = MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed);
     let new_ignore = if final_ignore { 1 } else { 0 };
     if prev_ignore != new_ignore {
@@ -2820,8 +2824,11 @@ pub(crate) fn handle_mouse_move(app_handle: &AppHandle, cursor: Cursor, now: i64
                 MH_LAST_EDGE_HOVER.store(new_val, Ordering::Relaxed);
             }
 
-            let should_ignore =
-                !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
+            // An open menu takes clicks only inside its own rect (added above);
+            // a click anywhere else reaches the app under it, and the dock's
+            // blur handler closes the menu. Making the whole dock window
+            // interactive here blocked most of the screen while merged.
+            let should_ignore = !is_click_interactive;
             let prev_ignore = MH_LAST_DOCK_IGNORE.load(Ordering::Relaxed);
             let new_ignore = if should_ignore { 1 } else { 0 };
             if prev_ignore != new_ignore {
