@@ -23,6 +23,16 @@ tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-updater = "2"
+tokio = { version = "1", features = ["time", "sync"] }
+image = "0.25"
+tauri-plugin-drag = "2.1.1"
+tauri-plugin-dialog = "2"
+rustfft = "6"
+
+[target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
 	"Win32_UI_Input_KeyboardAndMouse",
 	"Win32_UI_Shell",
@@ -55,19 +65,53 @@ windows = { version = "0.61", features = [
 	"Win32_Devices_FunctionDiscovery",
 	"Devices_Radios",
 	"System_Power",
+	"Win32_System_Power",
 	"Win32_NetworkManagement_IpHelper",
 	"Win32_NetworkManagement_Ndis",
-	"Win32_NetworkManagement_WiFi"
+	"Win32_NetworkManagement_WiFi",
+	"Win32_Media_KernelStreaming",
+	"Foundation",
+	"Foundation_Collections",
+	"Devices_WiFi",
+	"Devices_Enumeration",
+	"Networking_Connectivity",
+	"Security_Credentials"
 ] }
-base64 = "0.22"
-tauri-plugin-autostart = "2.5.1"
-tauri-plugin-updater = "2"
 window-vibrancy = "0.7.1"
+windows-collections = "0.2"
 wmi = "0.14"
-tokio = { version = "1", features = ["time", "sync"] }
 webview2-com = "0.38"
-image = "0.25"
-tauri-plugin-drag = "2.1.1"
-tauri-plugin-dialog = "2"
-rustfft = "6"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["xtest"] }
+zbus = "5"
+gtk = "0.18"
+raw-window-handle = "0.6"
+libc = "0.2"
+
+# Bloom's optional AI agent (see docs/superpowers/plans/2026-10-04-bloom-ai-sidecar.md).
+[workspace]
+members = ["bloom-ai"]
+
+# The WhatsApp library is large and not hot: optimised for size it keeps
+# bloom-ai.exe smaller. Only its own crates; everything else stays at 3.
+[profile.release.package.whatsapp-rust]
+opt-level = "s"
+[profile.release.package.whatsapp-rust-sqlite-storage]
+opt-level = "s"
+[profile.release.package.whatsapp-rust-tokio-transport]
+opt-level = "s"
+[profile.release.package.whatsapp-rust-ureq-http-client]
+opt-level = "s"
+[profile.release.package.wacore]
+opt-level = "s"
+[profile.release.package.wacore-appstate]
+opt-level = "s"
+[profile.release.package.wacore-binary]
+opt-level = "s"
+[profile.release.package.wacore-libsignal]
+opt-level = "s"
+[profile.release.package.wacore-noise]
+opt-level = "s"
+[profile.release.package.waproto]
+opt-level = "s"

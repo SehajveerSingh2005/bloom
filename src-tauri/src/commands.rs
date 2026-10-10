@@ -1,19 +1,28 @@
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, Window};
-use windows::core::Interface;
+#[cfg(windows)]
+use windows::core::{Interface, GUID};
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 
+#[cfg(windows)]
+use crate::services::enum_windows_proc;
 use crate::services::{
-    disable_dock_appbar, enum_windows_proc, register_dock_appbar, sync_overlays,
-    unregister_appbar_native,
+    disable_dock_appbar, register_dock_appbar, sync_overlays, unregister_appbar_native,
 };
 use crate::state::*;
-use crate::types::{
-    AppInfo, AudioSessionInfo, BrightnessChangeEvent, IntRect, VolumeChangeEvent, WifiStatus,
-};
+#[cfg(windows)]
+use crate::types::{AudioSessionInfo, VolumeChangeEvent, WifiStatus};
+use crate::types::{AppInfo, BrightnessChangeEvent, IntRect};
 use crate::utils::*;
 use std::collections::HashMap;
+
+#[cfg(target_os = "linux")]
+pub use crate::linux::cmds::*;
+#[cfg(target_os = "linux")]
+use crate::linux::{launch_path, wallpaper_path, WindowHandleExt, HWND};
 
 #[tauri::command]
 pub async fn set_menu_open(open: bool, rect: Option<IntRect>) {
@@ -133,6 +142,15 @@ pub async fn init_dock(app: AppHandle, mode: String) {
                                 continue;
                             }
                             let final_y = m_pos.y + m_size.height as i32 - ph;
+                            #[cfg(target_os = "linux")]
+                            crate::linux::place_window(
+                                &dock_clone,
+                                m_pos.x,
+                                final_y,
+                                m_size.width as i32,
+                                ph,
+                            );
+                            #[cfg(windows)]
                             unsafe {
                                 use windows::Win32::Foundation::HWND;
                                 use windows::Win32::UI::WindowsAndMessaging::{
@@ -273,6 +291,15 @@ pub async fn change_dock_mode(app: AppHandle, mode: String) {
                                     continue;
                                 }
                                 let final_y = m_pos.y + m_size.height as i32 - ph;
+                                #[cfg(target_os = "linux")]
+                                crate::linux::place_window(
+                                    &dock_clone,
+                                    m_pos.x,
+                                    final_y,
+                                    m_size.width as i32,
+                                    ph,
+                                );
+                                #[cfg(windows)]
                                 unsafe {
                                     use windows::Win32::Foundation::HWND;
                                     use windows::Win32::UI::WindowsAndMessaging::{
@@ -370,6 +397,7 @@ pub async fn change_notch_mode(app: AppHandle, mode: String) {
     }
 }
 
+#[cfg(windows)]
 fn get_uwp_launch_cmd(exe_path: &str) -> Option<String> {
     let path = std::path::Path::new(exe_path);
     let mut is_windows_apps = false;
@@ -410,8 +438,10 @@ fn get_uwp_launch_cmd(exe_path: &str) -> Option<String> {
 const START_TOGGLE_DEBOUNCE_MS: i64 = 80;
 /// Hold time for the Windows key so the shell registers a deliberate tap.
 /// A zero-length tap is dropped by the shell and never opens Start.
+#[cfg(windows)]
 const START_WIN_KEY_HOLD_MS: u64 = 40;
 
+#[cfg(windows)]
 fn send_key_tap(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY, hold_ms: u64) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP,
@@ -453,6 +483,7 @@ fn send_key_tap(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY, ho
 /// Depending on the Windows build it is hosted by StartMenuExperienceHost
 /// (older) or SearchHost (Windows 11 24H2+), so match both. The dock is
 /// WS_EX_NOACTIVATE, so clicking it never steals focus from an open menu.
+#[cfg(windows)]
 fn is_start_menu_open() -> bool {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
@@ -504,6 +535,9 @@ fn toggle_start_menu() {
     }
     LAST_START_TOGGLE_MS.store(now, Ordering::Relaxed);
 
+    #[cfg(target_os = "linux")]
+    tauri::async_runtime::spawn_blocking(crate::linux::tap_super_key);
+    #[cfg(windows)]
     tauri::async_runtime::spawn_blocking(move || {
         use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_LWIN};
         if is_start_menu_open() {
@@ -577,6 +611,7 @@ fn is_pwa_shortcut_for(app: &AppInfo, name: &str, host_exe: &str) -> bool {
 }
 
 /// Opens a file path, shortcut, or shell application id through the shell.
+#[cfg(windows)]
 fn launch_path(path: &str) {
     unsafe {
         use windows::Win32::UI::Shell::ShellExecuteW;
@@ -696,6 +731,7 @@ fn launch_path(path: &str) {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn get_active_windows() -> Vec<AppInfo> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -712,67 +748,7 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
             );
         }
 
-        let mut grouped: HashMap<String, AppInfo> = HashMap::new();
-
-        for app in apps {
-            let path = app.path.to_lowercase();
-            let name = app.name.to_lowercase();
-
-            // For host processes (Edge, Chrome, Brave, ApplicationFrameHost), use path + name
-            // so that different PWAs/UWP apps are separate dock items.
-            let key = if path.contains("msedge.exe")
-                || path.contains("chrome.exe")
-                || path.contains("brave.exe")
-                || path.contains("applicationframehost.exe")
-            {
-                format!("{}:{}", path, name)
-            } else if let Some(ref exe) = app.executable {
-                format!("{}:{}", path, exe.to_lowercase())
-            } else {
-                path.clone()
-            };
-
-            if let Some(existing) = grouped.get_mut(&key) {
-                if let Some(ref mut hwnds) = existing.all_hwnds {
-                    hwnds.push((app.hwnd.unwrap_or(0), app.name.clone()));
-                } else {
-                    existing.all_hwnds = Some(vec![
-                        (existing.hwnd.unwrap_or(0), existing.name.clone()),
-                        (app.hwnd.unwrap_or(0), app.name.clone()),
-                    ]);
-                }
-            } else {
-                let mut new_app = app.clone();
-                new_app.all_hwnds = Some(vec![(app.hwnd.unwrap_or(0), app.name.clone())]);
-                grouped.insert(key, new_app);
-            }
-        }
-
-        let focus_guard = if let Some(map) = crate::state::FOCUS_TIMESTAMPS.get() {
-            map.lock().ok()
-        } else {
-            None
-        };
-
-        let mut result_apps: Vec<AppInfo> = grouped.into_values().collect();
-
-        for app in &mut result_apps {
-            if let Some(ref mut hwnds) = app.all_hwnds {
-                hwnds.sort_by(|a, b| {
-                    let ts_a = focus_guard
-                        .as_ref()
-                        .and_then(|g| g.get(&a.0))
-                        .copied()
-                        .unwrap_or(0);
-                    let ts_b = focus_guard
-                        .as_ref()
-                        .and_then(|g| g.get(&b.0))
-                        .copied()
-                        .unwrap_or(0);
-                    ts_b.cmp(&ts_a)
-                });
-            }
-        }
+        let result_apps = group_windows(apps);
 
         if com_initialized {
             unsafe {
@@ -786,6 +762,75 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
     .unwrap_or_default()
 }
 
+/// Groups windows into dock items: one per app, with every window of the app in
+/// `all_hwnds`, most recently focused first.
+pub(crate) fn group_windows(apps: Vec<AppInfo>) -> Vec<AppInfo> {
+    let mut grouped: HashMap<String, AppInfo> = HashMap::new();
+
+    for app in apps {
+        let path = app.path.to_lowercase();
+        let name = app.name.to_lowercase();
+
+        // For host processes (Edge, Chrome, Brave, ApplicationFrameHost), use path + name
+        // so that different PWAs/UWP apps are separate dock items.
+        let key = if path.contains("msedge.exe")
+            || path.contains("chrome.exe")
+            || path.contains("brave.exe")
+            || path.contains("applicationframehost.exe")
+        {
+            format!("{}:{}", path, name)
+        } else if let Some(ref exe) = app.executable {
+            format!("{}:{}", path, exe.to_lowercase())
+        } else {
+            path.clone()
+        };
+
+        if let Some(existing) = grouped.get_mut(&key) {
+            if let Some(ref mut hwnds) = existing.all_hwnds {
+                hwnds.push((app.hwnd.unwrap_or(0), app.name.clone()));
+            } else {
+                existing.all_hwnds = Some(vec![
+                    (existing.hwnd.unwrap_or(0), existing.name.clone()),
+                    (app.hwnd.unwrap_or(0), app.name.clone()),
+                ]);
+            }
+        } else {
+            let mut new_app = app.clone();
+            new_app.all_hwnds = Some(vec![(app.hwnd.unwrap_or(0), app.name.clone())]);
+            grouped.insert(key, new_app);
+        }
+    }
+
+    let focus_guard = if let Some(map) = crate::state::FOCUS_TIMESTAMPS.get() {
+        map.lock().ok()
+    } else {
+        None
+    };
+
+    let mut result_apps: Vec<AppInfo> = grouped.into_values().collect();
+
+    for app in &mut result_apps {
+        if let Some(ref mut hwnds) = app.all_hwnds {
+            hwnds.sort_by(|a, b| {
+                let ts_a = focus_guard
+                    .as_ref()
+                    .and_then(|g| g.get(&a.0))
+                    .copied()
+                    .unwrap_or(0);
+                let ts_b = focus_guard
+                    .as_ref()
+                    .and_then(|g| g.get(&b.0))
+                    .copied()
+                    .unwrap_or(0);
+                ts_b.cmp(&ts_a)
+            });
+        }
+    }
+
+    result_apps
+}
+
+#[cfg(windows)]
 #[tauri::command]
 pub async fn focus_window(hwnd: isize) {
     tauri::async_runtime::spawn_blocking(move || unsafe {
@@ -852,6 +897,17 @@ pub async fn focus_window(hwnd: isize) {
 /// none of them in front, that one is activated; with one in front, the next
 /// window in a stable order is, so repeated clicks visit every window instead
 /// of flipping between the two most recent.
+pub(crate) fn next_app_window(hwnds: &[isize], foreground: isize) -> Option<isize> {
+    let &most_recent = hwnds.first()?;
+    let mut ring = hwnds.to_vec();
+    ring.sort_unstable();
+    Some(match ring.iter().position(|&h| h == foreground) {
+        Some(i) => ring[(i + 1) % ring.len()],
+        None => most_recent,
+    })
+}
+
+#[cfg(windows)]
 #[tauri::command]
 pub async fn focus_app_windows(hwnds: Vec<isize>) {
     tauri::async_runtime::spawn_blocking(move || unsafe {
@@ -859,15 +915,9 @@ pub async fn focus_app_windows(hwnds: Vec<isize>) {
             GetForegroundWindow, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow,
             SW_RESTORE, SW_SHOW,
         };
-        let Some(&most_recent) = hwnds.first() else {
-            return;
-        };
         let foreground = GetForegroundWindow().0 as isize;
-        let mut ring = hwnds.clone();
-        ring.sort_unstable();
-        let target = match ring.iter().position(|&h| h == foreground) {
-            Some(i) => ring[(i + 1) % ring.len()],
-            None => most_recent,
+        let Some(target) = next_app_window(&hwnds, foreground) else {
+            return;
         };
 
         let hwnd = HWND(target as *mut _);
@@ -925,6 +975,7 @@ fn sanitize_filename(key: &str) -> String {
 }
 
 /// Reads a `--flag=value` style argument from a command line, honoring quotes.
+#[cfg(windows)]
 fn extract_arg(args: &str, key: &str) -> Option<String> {
     let idx = args.find(key)?;
     let rest = &args[idx + key.len()..];
@@ -943,6 +994,7 @@ fn extract_arg(args: &str, key: &str) -> Option<String> {
 
 /// True for shell application ids (`PackageFamily!App`, `Company.Product`, ...)
 /// that are not real file system paths.
+#[cfg(windows)]
 pub fn is_aumid_path(path: &str) -> bool {
     let p = path.trim().trim_matches('"');
     if p.is_empty() || p.len() < 3 {
@@ -974,6 +1026,7 @@ fn is_browser_host_process(path: &str) -> bool {
 
 /// Resolves the icon of a shell application id (Store/UWP/packaged PWA) through
 /// `shell:AppsFolder`. `SHGetFileInfoW` cannot handle these; `IShellItemImageFactory` can.
+#[cfg(windows)]
 fn icon_from_aumid(aumid: &str) -> Option<String> {
     unsafe {
         use windows::Win32::Foundation::SIZE;
@@ -1012,6 +1065,7 @@ fn icon_from_aumid(aumid: &str) -> Option<String> {
 
 /// Derives the package family name (`Name_PublisherId`) from a WindowsApps exe path.
 /// Package folders look like `Name_Version_Architecture__PublisherId`.
+#[cfg(windows)]
 fn package_family_from_windows_apps_path(path: &str) -> Option<String> {
     let lower = path.to_lowercase();
     let idx = lower.find("\\windowsapps\\")?;
@@ -1027,6 +1081,7 @@ fn package_family_from_windows_apps_path(path: &str) -> Option<String> {
 
 /// Finds the exact AppUserModelID of an installed app from its package family name
 /// by enumerating `shell:AppsFolder` (the `!App` suffix is not guaranteed).
+#[cfg(windows)]
 fn find_aumid_by_family(family: &str) -> Option<String> {
     use windows::Win32::System::Com::CoTaskMemFree;
     use windows::Win32::UI::Shell::{
@@ -1095,6 +1150,7 @@ fn find_aumid_by_family(family: &str) -> Option<String> {
 
 /// Icon for executables that live inside an MSIX package (`\WindowsApps\...`).
 /// Those exes carry no app icon; the package manifest logo is the real icon.
+#[cfg(windows)]
 fn packaged_exe_icon(path: &str) -> Option<String> {
     let family = package_family_from_windows_apps_path(path)?;
     let aumid = find_aumid_by_family(&family)?;
@@ -1102,6 +1158,7 @@ fn packaged_exe_icon(path: &str) -> Option<String> {
 }
 
 /// Command line of a process, via WMI. Used to identify PWAs hosted inside browser processes.
+#[cfg(windows)]
 fn process_command_line(pid: u32) -> Option<String> {
     use serde::Deserialize;
     #[derive(Deserialize)]
@@ -1121,6 +1178,7 @@ fn process_command_line(pid: u32) -> Option<String> {
     results.into_iter().next().and_then(|p| p.command_line)
 }
 
+#[cfg(windows)]
 fn pwa_icon_from_command_line(process_path: &str, command_line: &str) -> Option<String> {
     // Store PWAs launched by Edge carry their package identity inline.
     if let Some(aumid) = extract_arg(command_line, "--ip-aumid=") {
@@ -1140,6 +1198,7 @@ fn pwa_icon_from_command_line(process_path: &str, command_line: &str) -> Option<
 }
 
 /// Browser web app ids are 32 characters from the range a-p.
+#[cfg(windows)]
 pub(crate) fn browser_web_app_id_from_aumid(id: &str) -> Option<String> {
     let is_web_app_id = |s: &str| s.len() == 32 && s.bytes().all(|b| (b'a'..=b'p').contains(&b));
     if let Some(segment) = id.rsplit('.').next() {
@@ -1149,12 +1208,27 @@ pub(crate) fn browser_web_app_id_from_aumid(id: &str) -> Option<String> {
     }
     if let Some(idx) = id.find("_crx_") {
         if let Some(segment) = id[idx + 5..].split('.').next() {
-            if is_web_app_id(segment) {
+            // Chrome also shortens it to the first 5 and last 10 characters
+            // ("Chrome._crx_cinhiknlkffjgod" is YouTube Music); the icon lookup
+            // matches that form against the profile's app folders.
+            let is_short_id =
+                segment.len() == 15 && segment.bytes().all(|b| (b'a'..=b'p').contains(&b));
+            if is_web_app_id(segment) || is_short_id {
                 return Some(segment.to_string());
             }
         }
     }
     None
+}
+
+/// The installed web app folder an app id names: the id itself, or the full
+/// id a shortened one (first 5 + last 10 characters) stands for.
+#[cfg(windows)]
+fn web_app_dir_matches(name: &str, app_id: &str) -> bool {
+    if name.eq_ignore_ascii_case(app_id) {
+        return true;
+    }
+    app_id.len() == 15 && name.len() == 32 && name.starts_with(&app_id[..5]) && name.ends_with(&app_id[5..])
 }
 
 /// True when a window AppUserModelID belongs to a browser-hosted app (installed
@@ -1163,10 +1237,12 @@ pub(crate) fn browser_web_app_id_from_aumid(id: &str) -> Option<String> {
 /// windows carry a web app id or a package AUMID. Browser-generated ids are not
 /// always the canonical 32-character form (Brave uses `Brave._crx_<id>` with a
 /// shortened id), so the `_crx_` marker is checked directly.
+#[cfg(windows)]
 pub(crate) fn is_browser_pwa_aumid(id: &str) -> bool {
     id.contains('!') || id.contains("_crx_") || browser_web_app_id_from_aumid(id).is_some()
 }
 
+#[cfg(windows)]
 unsafe fn pwa_icon_for_window(hwnd: HWND, process_path: &str) -> Option<String> {
     // The window's own AppUserModelID is the most reliable identity: it is always
     // present, unlike the process command line (Edge reuses its browser process).
@@ -1223,6 +1299,7 @@ unsafe fn pwa_icon_for_window(hwnd: HWND, process_path: &str) -> Option<String> 
 ///
 /// Current layout: `<profile>/Web Applications/Manifest Resources/<app-id>/Icons/*.png`.
 /// Older Chrome builds used `Web Applications/<app-id>` / `_crx_<app-id>` with an `icon_256.png`.
+#[cfg(windows)]
 fn find_browser_pwa_icon(executable_path: &str, args: &str) -> Option<String> {
     let app_id = extract_arg(args, "--app-id=")?;
     let local = std::env::var("LOCALAPPDATA").ok()?;
@@ -1270,10 +1347,18 @@ fn find_browser_pwa_icon(executable_path: &str, args: &str) -> Option<String> {
                 continue;
             }
 
+            let manifests = web_apps.join("Manifest Resources");
+            let full_id = std::fs::read_dir(&manifests)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .find(|name| web_app_dir_matches(name, &app_id))
+                .unwrap_or_else(|| app_id.clone());
             let candidates = [
-                web_apps.join("Manifest Resources").join(&app_id),
-                web_apps.join(&app_id),
-                web_apps.join(format!("_crx_{}", app_id)),
+                manifests.join(&full_id),
+                web_apps.join(&full_id),
+                web_apps.join(format!("_crx_{}", full_id)),
             ];
             for dir in candidates {
                 if let Some(icon) = find_largest_image_in_dir(&dir) {
@@ -1285,6 +1370,7 @@ fn find_browser_pwa_icon(executable_path: &str, args: &str) -> Option<String> {
     None
 }
 
+#[cfg(windows)]
 fn find_largest_image_in_dir(dir: &std::path::Path) -> Option<String> {
     if !dir.is_dir() {
         return None;
@@ -1294,6 +1380,7 @@ fn find_largest_image_in_dir(dir: &std::path::Path) -> Option<String> {
     best.map(|(_, path)| path)
 }
 
+#[cfg(windows)]
 fn collect_images(dir: &std::path::Path, depth: u32, best: &mut Option<(u64, String)>) {
     if depth > 3 {
         return;
@@ -1332,6 +1419,7 @@ fn collect_images(dir: &std::path::Path, depth: u32, best: &mut Option<(u64, Str
 }
 
 /// Scores an icon file by the pixel dimensions encoded in its name (e.g. `256.png`, `192x192.png`).
+#[cfg(windows)]
 fn image_size_score(path: &std::path::Path) -> u64 {
     let name = path
         .file_stem()
@@ -1427,6 +1515,42 @@ pub async fn get_app_icon(
         }
     }
 
+    #[cfg(target_os = "linux")]
+    return linux_app_icon(app, path, cache_key, hwnd, cache).await;
+    #[cfg(windows)]
+    return native_app_icon(app, path, cache_key, hwnd, cache).await;
+}
+
+/// Desktop entry icon (icon theme lookup), else the window's `_NET_WM_ICON`.
+#[cfg(target_os = "linux")]
+async fn linux_app_icon(
+    app: AppHandle,
+    path: String,
+    cache_key: String,
+    hwnd: Option<isize>,
+    cache: &'static std::sync::Mutex<HashMap<String, String>>,
+) -> Result<Option<String>, String> {
+    let icon = tauri::async_runtime::spawn_blocking(move || crate::linux::app_icon(&path, hwnd))
+        .await
+        .unwrap_or(None);
+    if let Some(ref base64) = icon {
+        if let Ok(mut c) = cache.lock() {
+            c.insert(cache_key, base64.clone());
+        }
+        schedule_icon_cache_save(app);
+    }
+    Ok(icon)
+}
+
+/// Strategies 2-4 of `get_app_icon`: shell, window and file icons.
+#[cfg(windows)]
+async fn native_app_icon(
+    app: AppHandle,
+    path: String,
+    cache_key: String,
+    hwnd: Option<isize>,
+    cache: &'static std::sync::Mutex<HashMap<String, String>>,
+) -> Result<Option<String>, String> {
     // Bare executable names (default pins such as "notepad.exe") are resolved first,
     // so a Store-package resolution can use the package logo instead of a System32 stub.
     let mut path = path;
@@ -1660,6 +1784,9 @@ pub async fn load_pinned_apps(app: AppHandle) -> Vec<AppInfo> {
             return apps;
         }
     }
+    #[cfg(target_os = "linux")]
+    return crate::linux::default_pinned_apps();
+    #[cfg(windows)]
     vec![
         AppInfo {
             name: "File Explorer".into(),
@@ -1882,6 +2009,7 @@ pub async fn get_installed_apps() -> Vec<AppInfo> {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn hide_native_osd() {
     unsafe {
@@ -1899,6 +2027,7 @@ pub fn open_settings_window(app: AppHandle) {
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
+        #[cfg(windows)]
         if let Ok(hwnd) = win.hwnd() {
             unsafe {
                 use windows::Win32::UI::WindowsAndMessaging::{
@@ -1939,11 +2068,32 @@ pub fn set_splash_fullscreen(app: AppHandle, fullscreen: bool) {
     }
 }
 
+/// The overlay reports when a volume or brightness HUD card is up.
 #[tauri::command]
-pub fn sync_overlay_position(app: AppHandle) {
-    crate::services::sync_overlays(&app);
+pub fn set_overlay_hud(up: bool) {
+    crate::state::OVERLAY_HUD_UP.store(up, Ordering::Relaxed);
 }
 
+/// Positions the overlay and shows it without activating it: a HUD or the AI
+/// orb popping up must never take focus from the app being typed in. Tauri's
+/// own show() uses SW_SHOW after the first time; once the window is visible
+/// that call is a no-op, so it only keeps Tauri's visible state in step.
+#[tauri::command]
+pub fn show_overlay(app: AppHandle) {
+    crate::services::sync_overlays(&app);
+    if let Some(win) = app.get_webview_window("overlay") {
+        #[cfg(windows)]
+        if let Ok(hwnd) = win.hwnd() {
+            use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+        }
+        let _ = win.show();
+    }
+}
+
+#[cfg(windows)]
 #[tauri::command]
 pub fn open_wifi_settings() {
     unsafe {
@@ -1961,6 +2111,7 @@ pub fn open_wifi_settings() {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn open_sound_settings() {
     unsafe {
@@ -1978,6 +2129,7 @@ pub fn open_sound_settings() {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn open_notification_center() {
     unsafe {
@@ -1995,6 +2147,7 @@ pub fn open_notification_center() {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn open_system_tray() {
     // The native taskbar is already available when the dock is disabled.
@@ -2260,6 +2413,7 @@ pub fn media_seek(position_ms: f64) {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn open_media_source_app() {
     unsafe {
@@ -2376,6 +2530,7 @@ pub fn set_volume(volume: f32) {
 }
 
 /// Full path of a running process, or `None` when it can't be opened.
+#[cfg(windows)]
 pub(crate) unsafe fn process_image_path(pid: u32) -> Option<String> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
@@ -2400,6 +2555,7 @@ pub(crate) unsafe fn process_image_path(pid: u32) -> Option<String> {
 /// Friendly name for an executable: the shell's `FileDescription` from version
 /// info ("Google Chrome"), falling back to the prettified file stem. Results are
 /// cached by path because the mixer polls while it is open.
+#[cfg(windows)]
 pub(crate) unsafe fn friendly_process_name(path: &str) -> String {
     let cache = PROCESS_NAME_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     if let Ok(guard) = cache.lock() {
@@ -2414,6 +2570,7 @@ pub(crate) unsafe fn friendly_process_name(path: &str) -> String {
     name
 }
 
+#[cfg(windows)]
 unsafe fn friendly_process_name_uncached(path: &str) -> String {
     use windows::Win32::Storage::FileSystem::{
         GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
@@ -2497,6 +2654,7 @@ unsafe fn friendly_process_name_uncached(path: &str) -> String {
 
 /// Calls `f` for every live audio session on every active render endpoint.
 /// Initializes COM on the calling thread and balances it before returning.
+#[cfg(windows)]
 unsafe fn for_each_audio_session<F: FnMut(&windows::Win32::Media::Audio::IAudioSessionControl2)>(
     mut f: F,
 ) -> Result<(), String> {
@@ -2556,6 +2714,7 @@ unsafe fn for_each_audio_session<F: FnMut(&windows::Win32::Media::Audio::IAudioS
 
 /// Active windows with an audio session on the default output device,
 /// de-duplicated by process and sorted with currently-playing apps first.
+#[cfg(windows)]
 #[tauri::command]
 pub async fn get_audio_sessions() -> Result<Vec<AudioSessionInfo>, String> {
     tauri::async_runtime::spawn_blocking(|| unsafe {
@@ -2614,6 +2773,7 @@ pub async fn get_audio_sessions() -> Result<Vec<AudioSessionInfo>, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn set_app_volume(pid: u32, volume: f32) -> Result<(), String> {
     let volume = volume.clamp(0.0, 1.0);
@@ -2636,6 +2796,7 @@ pub async fn set_app_volume(pid: u32, volume: f32) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn set_app_mute(pid: u32, muted: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || unsafe {
@@ -2726,6 +2887,7 @@ pub async fn restart_bloom(handle: AppHandle) {
     handle.restart();
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn close_window(hwnd: isize) {
     tauri::async_runtime::spawn_blocking(move || unsafe {
@@ -2818,6 +2980,7 @@ pub fn settings_file_readable(app: AppHandle) -> bool {
         })
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn capture_window_thumbnail(
     hwnd: isize,
@@ -2883,6 +3046,7 @@ pub async fn capture_window_thumbnail(
 // ── Radio helpers — Windows Runtime Windows.Devices.Radios ───────────────────
 // Replaces PowerShell -ExecutionPolicy Bypass scripts for WiFi/Bluetooth state.
 
+#[cfg(windows)]
 fn get_radio_state_sync(kind: windows::Devices::Radios::RadioKind) -> Result<bool, String> {
     use windows::Devices::Radios::{Radio, RadioState};
     unsafe {
@@ -2904,6 +3068,7 @@ fn get_radio_state_sync(kind: windows::Devices::Radios::RadioKind) -> Result<boo
     Ok(false)
 }
 
+#[cfg(windows)]
 fn set_radio_state_sync(
     kind: windows::Devices::Radios::RadioKind,
     enabled: bool,
@@ -2944,6 +3109,7 @@ pub fn get_volume() -> f32 {
 /// when the value differs from its last poll, and its first poll happens before
 /// the overlay webview can register listeners, so HUDs must seed themselves
 /// with this instead of the cached default.
+#[cfg(windows)]
 #[tauri::command]
 pub async fn get_volume_state() -> Result<VolumeChangeEvent, String> {
     tauri::async_runtime::spawn_blocking(|| unsafe {
@@ -2992,6 +3158,7 @@ pub fn get_brightness() -> u32 {
 // The radio state only says Wi-Fi is on, not whether it is connected, so the
 // notch quick settings needs a second bit to distinguish "on" from "connected".
 
+#[cfg(windows)]
 fn is_wlan_connected_sync() -> bool {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::NetworkManagement::WiFi::{
@@ -3054,6 +3221,7 @@ fn is_wlan_connected_sync() -> bool {
 /// Wi-Fi radio and association state, so the notch quick settings tile can show
 /// Off / On / Connected. `connected` is false while the radio is on but no
 /// network is associated.
+#[cfg(windows)]
 #[tauri::command]
 pub async fn get_wifi_status() -> Result<WifiStatus, String> {
     tauri::async_runtime::spawn_blocking(|| -> Result<WifiStatus, String> {
@@ -3065,6 +3233,7 @@ pub async fn get_wifi_status() -> Result<WifiStatus, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn set_wifi_state(enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -3074,6 +3243,7 @@ pub async fn set_wifi_state(enabled: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn get_bluetooth_state() -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -3083,6 +3253,7 @@ pub async fn get_bluetooth_state() -> Result<bool, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn set_bluetooth_state(enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -3094,6 +3265,7 @@ pub async fn set_bluetooth_state(enabled: bool) -> Result<(), String> {
 
 // Settings openers — use ShellExecuteA directly instead of spawning powershell
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn open_bluetooth_settings() {
     unsafe {
@@ -3110,6 +3282,7 @@ pub fn open_bluetooth_settings() {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn open_airplane_mode_settings() {
     unsafe {
@@ -3140,35 +3313,158 @@ pub fn set_brightness(app: AppHandle, brightness: u32) {
     }
 }
 
-#[tauri::command]
-pub async fn get_battery_saver_state() -> Result<bool, String> {
-    // Uses Windows Runtime PowerManager — no PowerShell required.
-    tauri::async_runtime::spawn_blocking(|| {
-        unsafe {
-            let _ = windows::Win32::System::Com::CoInitializeEx(
-                None,
-                windows::Win32::System::Com::COINIT_MULTITHREADED,
-            );
-        }
-        use windows::System::Power::{EnergySaverStatus, PowerManager};
-        match PowerManager::EnergySaverStatus() {
-            Ok(status) => Ok(status == EnergySaverStatus::On),
-            Err(_) => Ok(false), // No battery / not supported on this device
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
+// --- Power mode ---
+// Windows 11 "Power mode" is a powrprof overlay scheme on top of the power plan.
+// Same GUIDs Settings writes (also used by g-helper's PowerNative.cs); Balanced
+// is "no overlay". Order is the click cycle.
+#[cfg(windows)]
+const POWER_MODES: [(&str, GUID); 3] = [
+    (
+        "performance",
+        GUID::from_u128(0xded574b5_45a0_4f42_8737_46345c09c238),
+    ),
+    ("balanced", GUID::zeroed()),
+    (
+        "efficiency",
+        GUID::from_u128(0x961cc777_2547_4f9d_8174_7d86181b8a7a),
+    ),
+];
+
+#[cfg(windows)]
+fn power_mode_index(guid: &GUID) -> Option<usize> {
+    POWER_MODES.iter().position(|(_, g)| g == guid)
 }
 
+#[cfg(windows)]
+fn next_power_mode(index: usize) -> usize {
+    (index + 1) % POWER_MODES.len()
+}
+
+/// The overlay exports are undocumented and not in the `windows` crate, so they
+/// are resolved at runtime (like glass.rs): a build without them just falls back.
+#[cfg(windows)]
+fn powrprof_proc(name: windows::core::PCSTR) -> Option<unsafe extern "system" fn() -> isize> {
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    unsafe { GetProcAddress(LoadLibraryW(windows::core::w!("powrprof.dll")).ok()?, name) }
+}
+
+/// Power mode only applies while the active plan is Balanced or derived from it
+/// (Microsoft's "Customize the power slider" doc). Windows records that as the
+/// plan's personality setting, where 2 = Balanced.
+#[cfg(windows)]
+fn balanced_plan_active() -> bool {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::System::Power::{PowerGetActiveScheme, PowerReadACValueIndex};
+    const NO_SUBGROUP_GUID: GUID = GUID::from_u128(0xfea3413e_7e05_4911_9a71_700331f1c294);
+    const PERSONALITY_GUID: GUID = GUID::from_u128(0x245d8541_3943_4422_b025_13a784f679b7);
+    unsafe {
+        let mut scheme: *mut GUID = std::ptr::null_mut();
+        if PowerGetActiveScheme(None, &mut scheme).is_err() {
+            return false;
+        }
+        let mut personality = 0u32;
+        let ok = PowerReadACValueIndex(
+            None,
+            Some(scheme),
+            Some(&NO_SUBGROUP_GUID),
+            Some(&PERSONALITY_GUID),
+            &mut personality,
+        )
+        .is_ok();
+        LocalFree(Some(HLOCAL(scheme as _)));
+        ok && personality == 2
+    }
+}
+
+/// Effective mode (energy saver forcing efficiency included); None if unknown
+/// or not applicable to the active plan.
+#[cfg(windows)]
+fn read_power_mode() -> Option<usize> {
+    if !balanced_plan_active() {
+        return None;
+    }
+    type GetOverlay = unsafe extern "system" fn(*mut GUID) -> u32;
+    let get: GetOverlay = unsafe {
+        std::mem::transmute(powrprof_proc(windows::core::s!(
+            "PowerGetEffectiveOverlayScheme"
+        ))?)
+    };
+    let mut guid = GUID::zeroed();
+    if unsafe { get(&mut guid) } != 0 {
+        return None;
+    }
+    power_mode_index(&guid)
+}
+
+#[cfg(windows)]
+fn write_power_mode(index: usize) -> bool {
+    type SetOverlay = unsafe extern "system" fn(GUID) -> u32;
+    let Some(proc) = powrprof_proc(windows::core::s!("PowerSetActiveOverlayScheme")) else {
+        return false;
+    };
+    let set: SetOverlay = unsafe { std::mem::transmute(proc) };
+    unsafe { set(POWER_MODES[index].1) == 0 }
+}
+
+#[cfg(windows)]
+fn energy_saver_on() -> bool {
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_MULTITHREADED,
+        );
+    }
+    use windows::System::Power::{EnergySaverStatus, PowerManager};
+    // Err = no battery / not supported on this device
+    PowerManager::EnergySaverStatus().is_ok_and(|s| s == EnergySaverStatus::On)
+}
+
+#[cfg(windows)]
 #[tauri::command]
-pub fn open_battery_saver_settings() {
+pub async fn get_power_mode() -> Result<Option<&'static str>, String> {
+    tauri::async_runtime::spawn_blocking(|| read_power_mode().map(|i| POWER_MODES[i].0))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Steps to the next mode and returns the mode Windows now reports. When Windows
+/// can't take it (energy saver on, a non-Balanced plan, unknown overlay, or the
+/// write didn't stick) it opens Power settings instead, so the UI never guesses.
+#[cfg(windows)]
+#[tauri::command]
+pub async fn cycle_power_mode() -> Result<Option<&'static str>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        if let Some(i) = read_power_mode().filter(|_| !energy_saver_on()) {
+            let next = next_power_mode(i);
+            // Windows may report the new mode a beat late: re-read briefly
+            // before treating the switch as refused.
+            if write_power_mode(next)
+                && (0..3).any(|attempt| {
+                    if attempt > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    read_power_mode() == Some(next)
+                })
+            {
+                return Some(POWER_MODES[next].0);
+            }
+        }
+        open_power_settings();
+        read_power_mode().map(|i| POWER_MODES[i].0)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[cfg(windows)]
+fn open_power_settings() {
     unsafe {
         use windows::Win32::UI::Shell::ShellExecuteA;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         let _ = ShellExecuteA(
             None,
             windows::core::PCSTR(c"open".as_ptr() as *const u8),
-            windows::core::PCSTR(c"ms-settings:batterysaver".as_ptr() as *const u8),
+            windows::core::PCSTR(c"ms-settings:powersleep".as_ptr() as *const u8),
             windows::core::PCSTR::null(),
             windows::core::PCSTR::null(),
             SW_SHOWNORMAL,
@@ -3178,6 +3474,7 @@ pub fn open_battery_saver_settings() {
 
 // --- System metrics for status widgets ---
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn get_cpu_usage() -> Result<u32, String> {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -3217,6 +3514,7 @@ pub fn get_cpu_usage() -> Result<u32, String> {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn get_ram_usage() -> Result<f32, String> {
     unsafe {
@@ -3229,6 +3527,7 @@ pub fn get_ram_usage() -> Result<f32, String> {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn get_disk_space() -> Result<u64, String> {
     unsafe {
@@ -3246,6 +3545,7 @@ pub fn get_disk_space() -> Result<u64, String> {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn get_network_speed() -> Result<(u64, u64), String> {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -3305,6 +3605,7 @@ pub fn get_network_speed() -> Result<(u64, u64), String> {
     Ok((sent_per_sec, recv_per_sec))
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub fn get_windows_accent_color() -> Option<String> {
     unsafe {
@@ -3376,10 +3677,113 @@ pub fn get_windows_accent_color() -> Option<String> {
     None
 }
 
+/// The colour adaptive mode follows: the wallpaper's own, else the Windows accent.
+#[cfg(windows)]
+pub fn adaptive_color() -> Option<String> {
+    wallpaper_color().or_else(get_windows_accent_color)
+}
+
+/// The colour adaptive mode follows: the wallpaper's own (Linux has no common
+/// accent colour setting).
+#[cfg(target_os = "linux")]
+pub fn adaptive_color() -> Option<String> {
+    wallpaper_color()
+}
+
+/// The wallpaper's dominant vivid colour. Windows only derives its accent from
+/// the wallpaper when "automatic accent" is on, and wallpaper apps (WinCux,
+/// Wallpaper Engine...) rarely trigger it, so adaptive mode would sit on the
+/// default blue. Decoded once per wallpaper file (path + modified time).
+fn wallpaper_color() -> Option<String> {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(String, std::time::SystemTime, String)>> = Mutex::new(None);
+
+    let path = wallpaper_path()?;
+    if path.is_empty() {
+        return None;
+    }
+    let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+    if let Some((p, m, c)) = CACHE.lock().ok()?.as_ref() {
+        if *p == path && *m == modified {
+            return Some(c.clone());
+        }
+    }
+    let color = dominant_color(&image::open(&path).ok()?.thumbnail(64, 64).to_rgb8())?;
+    *CACHE.lock().ok()? = Some((path, modified, color.clone()));
+    Some(color)
+}
+
+/// The desktop wallpaper's file path.
+#[cfg(windows)]
+fn wallpaper_path() -> Option<String> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETDESKWALLPAPER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    };
+    let mut buf = [0u16; 1024];
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETDESKWALLPAPER,
+            buf.len() as u32,
+            Some(buf.as_mut_ptr() as *mut _),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .ok()?;
+    }
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let path = String::from_utf16_lossy(&buf[..len]);
+    Some(path.trim_start_matches(r"\\?\").to_string())
+}
+
+/// Buckets pixels by hue, weighting vivid, mid-bright pixels, and returns the
+/// average of the heaviest bucket. Falls back to the plain average for a
+/// greyscale image.
+fn dominant_color(img: &image::RgbImage) -> Option<String> {
+    const BUCKETS: usize = 24;
+    let mut acc = [(0f64, 0f64, 0f64, 0f64); BUCKETS];
+    let (mut ar, mut ag, mut ab, mut n) = (0f64, 0f64, 0f64, 0f64);
+    for p in img.pixels() {
+        let (r, g, b) = (p[0] as f64 / 255.0, p[1] as f64 / 255.0, p[2] as f64 / 255.0);
+        ar += r;
+        ag += g;
+        ab += b;
+        n += 1.0;
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let d = max - min;
+        if d < 0.08 || max < 0.15 {
+            continue;
+        }
+        let h = if max == r {
+            ((g - b) / d).rem_euclid(6.0)
+        } else if max == g {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        } / 6.0;
+        let w = (d / max) * (1.0 - (max - 0.65).abs());
+        let i = ((h * BUCKETS as f64) as usize).min(BUCKETS - 1);
+        acc[i].0 += r * w;
+        acc[i].1 += g * w;
+        acc[i].2 += b * w;
+        acc[i].3 += w;
+    }
+    if n == 0.0 {
+        return None;
+    }
+    let best = acc.iter().max_by(|a, b| a.3.total_cmp(&b.3))?;
+    let (r, g, b) = if best.3 > n * 0.02 {
+        (best.0 / best.3, best.1 / best.3, best.2 / best.3)
+    } else {
+        (ar / n, ag / n, ab / n)
+    };
+    let to = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+    Some(format!("#{:02x}{:02x}{:02x}", to(r), to(g), to(b)))
+}
+
+#[cfg(windows)]
 #[tauri::command]
 pub fn get_system_accent_color() -> Result<String, String> {
-    // Try reading registry first for exact Windows accent color
-    if let Some(color) = get_windows_accent_color() {
+    if let Some(color) = adaptive_color() {
         return Ok(color);
     }
 
@@ -3522,6 +3926,7 @@ pub fn reset_settings(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
 pub fn setup_settings_watcher(app: AppHandle) {
     use tauri::Manager;
 
@@ -3598,48 +4003,7 @@ pub fn setup_settings_watcher(app: AppHandle) {
 
                 std::thread::sleep(std::time::Duration::from_millis(200));
 
-                if let Ok(new_content) = std::fs::read_to_string(&settings_path) {
-                    if let Ok(new_settings) =
-                        serde_json::from_str::<HashMap<String, serde_json::Value>>(&new_content)
-                    {
-                        // Collect diffs while holding the lock, then drop before emitting
-                        let (changed, removed) = {
-                            let mut cache = crate::state::SETTINGS_CACHE
-                                .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
-                                .lock()
-                                .unwrap();
-
-                            let mut changed = Vec::new();
-                            for (key, value) in &new_settings {
-                                if cache.get(key) != Some(value) {
-                                    changed.push((key.clone(), value.clone()));
-                                }
-                            }
-
-                            let removed: Vec<String> = cache
-                                .keys()
-                                .filter(|k| !new_settings.contains_key(*k))
-                                .cloned()
-                                .collect();
-
-                            *cache = new_settings.clone();
-                            (changed, removed)
-                        };
-                        // Lock dropped — safe to emit without blocking save_setting
-                        for (key, value) in &changed {
-                            let _ = app.emit(
-                                "settings-external-changed",
-                                serde_json::json!({ "key": key, "value": value }),
-                            );
-                        }
-                        for key in removed {
-                            let _ = app.emit(
-                                "settings-external-changed",
-                                serde_json::json!({ "key": key, "value": null }),
-                            );
-                        }
-                    }
-                }
+                reload_settings(&app, &settings_path);
             }
 
             let _ = CloseHandle(h_event);
@@ -3648,7 +4012,94 @@ pub fn setup_settings_watcher(app: AppHandle) {
     });
 }
 
-#[cfg(test)]
+/// Re-reads settings.json after an external edit, updates the cache and emits
+/// `settings-external-changed` for every key that changed or disappeared.
+pub(crate) fn reload_settings(app: &AppHandle, settings_path: &std::path::Path) {
+    if let Ok(new_content) = std::fs::read_to_string(settings_path) {
+        if let Ok(new_settings) =
+            serde_json::from_str::<HashMap<String, serde_json::Value>>(&new_content)
+        {
+            // Collect diffs while holding the lock, then drop before emitting
+            let (changed, removed) = {
+                let mut cache = crate::state::SETTINGS_CACHE
+                    .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+                    .lock()
+                    .unwrap();
+
+                let mut changed = Vec::new();
+                for (key, value) in &new_settings {
+                    if cache.get(key) != Some(value) {
+                        changed.push((key.clone(), value.clone()));
+                    }
+                }
+
+                let removed: Vec<String> = cache
+                    .keys()
+                    .filter(|k| !new_settings.contains_key(*k))
+                    .cloned()
+                    .collect();
+
+                *cache = new_settings.clone();
+                (changed, removed)
+            };
+            // Bloom AI re-reads its keys (hotkey, on/off) from the new values.
+            #[cfg(windows)]
+            crate::ai::sync_from_settings();
+            // Lock dropped — safe to emit without blocking save_setting
+            for (key, value) in &changed {
+                let _ = app.emit(
+                    "settings-external-changed",
+                    serde_json::json!({ "key": key, "value": value }),
+                );
+            }
+            for key in removed {
+                let _ = app.emit(
+                    "settings-external-changed",
+                    serde_json::json!({ "key": key, "value": null }),
+                );
+            }
+        }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod power_mode_tests {
+    use super::*;
+
+    #[test]
+    fn guid_mapping_and_cycle() {
+        let idx = |s: &str| power_mode_index(&GUID::try_from(s).unwrap());
+        assert_eq!(idx("ded574b5-45a0-4f42-8737-46345c09c238"), Some(0));
+        assert_eq!(idx("00000000-0000-0000-0000-000000000000"), Some(1));
+        assert_eq!(idx("961cc777-2547-4f9d-8174-7d86181b8a7a"), Some(2));
+        // The Balanced *plan* GUID is not an overlay.
+        assert_eq!(idx("381b4222-f694-41f0-9685-ff5bb260df2e"), None);
+        let mut i = 0;
+        let names: Vec<_> = (0..4)
+            .map(|_| {
+                let name = POWER_MODES[i].0;
+                i = next_power_mode(i);
+                name
+            })
+            .collect();
+        assert_eq!(
+            names,
+            ["performance", "balanced", "efficiency", "performance"]
+        );
+    }
+
+    // Read-only probe of this PC: cargo test -- --ignored read_power_mode_probe --nocapture
+    #[test]
+    #[ignore]
+    fn read_power_mode_probe() {
+        println!(
+            "effective overlay: {:?}",
+            read_power_mode().map(|i| POWER_MODES[i].0)
+        );
+    }
+}
+
+#[cfg(all(test, windows))]
 mod pwa_icon_tests {
     use super::*;
 
@@ -3731,6 +4182,13 @@ mod pwa_icon_tests {
             None
         );
         assert_eq!(browser_web_app_id_from_aumid("MSEdge"), None);
+        // Chrome's shortened form (YouTube Music) finds its full app folder.
+        assert_eq!(
+            browser_web_app_id_from_aumid("Chrome._crx_cinhiknlkffjgod.UserData.Profile1").as_deref(),
+            Some("cinhiknlkffjgod")
+        );
+        assert!(web_app_dir_matches("cinhimbnkkaeohfgghhklpknlkffjgod", "cinhiknlkffjgod"));
+        assert!(!web_app_dir_matches("pommaclcbfghclhalboakcipcmmndhcj", "cinhiknlkffjgod"));
     }
 
     #[test]
@@ -3851,6 +4309,7 @@ mod pwa_icon_tests {
     }
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn get_tray_apps() -> Vec<crate::tray::TrayApp> {
     tauri::async_runtime::spawn_blocking(crate::tray::enumerate)
@@ -3858,6 +4317,7 @@ pub async fn get_tray_apps() -> Vec<crate::tray::TrayApp> {
         .unwrap_or_default()
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn show_tray_context_menu(tray_id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || crate::tray::interact(&tray_id, true))
@@ -3865,6 +4325,7 @@ pub async fn show_tray_context_menu(tray_id: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+#[cfg(windows)]
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SystemAction {
@@ -3879,6 +4340,7 @@ pub enum SystemAction {
     NetworkConnections,
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn open_system_action(action: SystemAction) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || unsafe {
@@ -3931,9 +4393,25 @@ pub async fn open_system_action(action: SystemAction) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn activate_tray_icon(tray_id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || crate::tray::interact(&tray_id, false))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod app_window_cycle_tests {
+    use super::next_app_window;
+
+    #[test]
+    fn app_windows_cycle_in_a_stable_order() {
+        // Most recent first; nothing of the app in front: the most recent wins.
+        assert_eq!(next_app_window(&[30, 10, 20], 99), Some(30));
+        // One in front: the next in sorted order, wrapping around.
+        assert_eq!(next_app_window(&[30, 10, 20], 10), Some(20));
+        assert_eq!(next_app_window(&[30, 10, 20], 30), Some(10));
+        assert_eq!(next_app_window(&[], 10), None);
+    }
 }

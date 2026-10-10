@@ -1,8 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod ai;
 mod commands;
+mod connect;
+mod glass;
+#[cfg(target_os = "linux")]
+mod linux;
 mod services;
 mod state;
+#[cfg(windows)]
 mod tray;
 mod types;
 mod updater;
@@ -10,15 +17,21 @@ mod utils;
 
 use std::sync::atomic::Ordering;
 use tauri::Manager;
+#[cfg(windows)]
 use windows::core::BOOL;
+#[cfg(windows)]
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
+#[cfg(windows)]
 use windows::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT};
 
 use crate::commands::*;
 use crate::services::*;
 use crate::state::*;
 use crate::utils::*;
+#[cfg(target_os = "linux")]
+use crate::linux::WindowHandleExt;
 
+#[cfg(windows)]
 unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     if ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT {
         set_taskbar_visibility(true, true);
@@ -29,11 +42,18 @@ unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
 }
 
 fn main() {
+    #[cfg(windows)]
     unsafe {
         let _ = SetConsoleCtrlHandler(Some(ctrl_handler), true);
     }
 
+    #[cfg(target_os = "linux")]
+    if !crate::linux::prepare_process() {
+        return;
+    }
+
     // Single-instance enforcement
+    #[cfg(windows)]
     unsafe {
         use windows::Win32::Foundation::{CloseHandle, GetLastError};
         use windows::Win32::System::Threading::{
@@ -99,10 +119,13 @@ fn main() {
             open_system_tray,
             set_ignore_cursor_events,
             set_window_height,
+            #[cfg(target_os = "linux")]
+            get_battery,
             resize_settings_window,
             hide_overlay,
             set_splash_fullscreen,
-            sync_overlay_position,
+            show_overlay,
+            set_overlay_hud,
             media_play_pause,
             media_next,
             media_previous,
@@ -116,14 +139,19 @@ fn main() {
             open_app,
             launch_new_instance,
             update_dock_rect,
+            glass::set_glass,
             update_notch_rect,
             set_dock_hovered,
             set_notch_hovered,
             set_notch_visible,
             get_active_windows,
+            #[cfg(windows)]
             get_tray_apps,
+            #[cfg(windows)]
             show_tray_context_menu,
+            #[cfg(windows)]
             activate_tray_icon,
+            #[cfg(windows)]
             open_system_action,
             get_app_icon,
             get_installed_apps,
@@ -156,11 +184,21 @@ fn main() {
             set_wifi_state,
             get_bluetooth_state,
             set_bluetooth_state,
+            connect::wifi_networks,
+            connect::wifi_connect,
+            connect::wifi_disconnect,
+            connect::bt_watch,
+            connect::bt_unwatch,
+            connect::bt_pair,
+            connect::bt_pair_answer,
+            connect::bt_connect,
+            connect::bt_forget,
+            connect::take_keyboard,
             open_bluetooth_settings,
             open_airplane_mode_settings,
             set_brightness,
-            get_battery_saver_state,
-            open_battery_saver_settings,
+            get_power_mode,
+            cycle_power_mode,
             get_system_accent_color,
             get_cpu_usage,
             get_ram_usage,
@@ -173,7 +211,55 @@ fn main() {
             write_settings_to_path,
             updater::check_for_updates,
             updater::install_update,
-            updater::get_update_state
+            updater::get_update_state,
+            #[cfg(windows)]
+            ai::ai_status,
+            #[cfg(windows)]
+            ai::ai_prompt,
+            #[cfg(windows)]
+            ai::ai_cancel,
+            #[cfg(windows)]
+            ai::ai_confirm,
+            #[cfg(windows)]
+            ai::ai_set_secret,
+            #[cfg(windows)]
+            ai::ai_secret_status,
+            #[cfg(windows)]
+            ai::ai_library_status,
+            #[cfg(windows)]
+            ai::ai_reveal,
+            #[cfg(windows)]
+            ai::ai_forget_all,
+            #[cfg(windows)]
+            ai::ai_mcp_reload,
+            #[cfg(windows)]
+            ai::ai_outlook_login,
+            #[cfg(windows)]
+            ai::ai_test_email,
+            #[cfg(windows)]
+            ai::ai_test_search,
+            #[cfg(windows)]
+            ai::ai_enroll_sample,
+            #[cfg(windows)]
+            ai::ai_enroll_build,
+            #[cfg(windows)]
+            ai::ai_whatsapp_status,
+            #[cfg(windows)]
+            ai::ai_whatsapp_restart,
+            #[cfg(windows)]
+            ai::ai_whatsapp_pair_code,
+            #[cfg(windows)]
+            ai::ai_whatsapp_unlink,
+            #[cfg(windows)]
+            ai::ai_whatsapp_contacts,
+            #[cfg(windows)]
+            ai::ai_contacts,
+            #[cfg(windows)]
+            ai::ai_context,
+            #[cfg(windows)]
+            ai::ai_open,
+            #[cfg(windows)]
+            ai::ai_delete
         ])
         .setup(|app| {
             init_taskbar_marker(app.handle());
@@ -181,6 +267,9 @@ fn main() {
             // invoke save_setting as soon as it loads, which happens before the
             // rest of this hook runs.
             crate::utils::init_settings_cache(app.handle());
+            // Bloom AI: arm the hotkey from settings; the agent itself starts on first use.
+            #[cfg(windows)]
+            crate::ai::init(app.handle());
             // Crash-recovery: if a previous session was force-killed while the native
             // taskbar was hidden, restore it now. Runs before the frontend re-hides it
             // (init_dock fires after a delay), so the flag must be removed first.
@@ -201,6 +290,8 @@ fn main() {
 
             let window = app.get_webview_window("main").unwrap();
             let dock_win = app.get_webview_window("dock").unwrap();
+            #[cfg(target_os = "linux")]
+            crate::linux::mark_dock_windows(app.handle());
 
             // Sync window rects initially and on event
             let win_clone = window.clone();
@@ -295,6 +386,7 @@ fn main() {
                 });
             }
 
+            #[cfg(windows)]
             watch_webview_processes(app.handle());
             setup_mouse_hook(app.handle().clone());
             setup_display_change_monitor(app.handle().clone());
@@ -317,6 +409,9 @@ fn main() {
             setup_settings_watcher(app.handle().clone());
 
             // Listen for second-instance signal to open settings
+            #[cfg(target_os = "linux")]
+            crate::linux::listen_second_instance(app.handle().clone());
+            #[cfg(windows)]
             if let Some(&h_event) = SINGLE_INSTANCE_EVENT_HANDLE.get() {
                 if h_event != 0 {
                     let app_handle = app.handle().clone();

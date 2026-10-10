@@ -1,4 +1,4 @@
-import { Palette, Droplet, Contrast, Droplets, Sun, Square, Maximize2 } from "lucide-react";
+import { Palette, Droplet, Contrast, Droplets, Sun, Square, Maximize2, Sparkles } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 
 interface AppearanceTabProps {
@@ -8,6 +8,8 @@ interface AppearanceTabProps {
 	handleThemeColorChange: (color: string) => void;
 	themeOpacity: number;
 	handleOpacityChange: (val: number) => void;
+	glassEnabled: boolean;
+	toggleGlass: () => void;
 	themeSaturation: number;
 	handleSaturationChange: (val: number) => void;
 	themeBrightness: number;
@@ -25,6 +27,8 @@ export function AppearanceTab({
 	handleThemeColorChange,
 	themeOpacity,
 	handleOpacityChange,
+	glassEnabled,
+	toggleGlass,
 	themeSaturation,
 	handleSaturationChange,
 	themeBrightness,
@@ -129,6 +133,17 @@ export function AppearanceTab({
 
 			<div className="setting-group-label">Display</div>
 			<div className="setting-group">
+				<SettingRow
+					icon={Sparkles}
+					label="Glass"
+					desc="Frosted, see-through dock and notch. Turn off to save power on slower PCs"
+				>
+					<label className="toggle-switch">
+						<input type="checkbox" checked={glassEnabled} onChange={toggleGlass} />
+						<span className="slider"></span>
+					</label>
+				</SettingRow>
+
 				<SettingRow icon={Square} label="Screen Corners" desc="Rounded top edges">
 					<label className="toggle-switch">
 						<input type="checkbox" checked={cornersEnabled} onChange={toggleCorners} />
@@ -149,7 +164,7 @@ export function AppearanceTab({
 							className="scale-adjust-btn"
 							title="Decrease Scale"
 						>
-							—
+							−
 						</button>
 						<span className="scale-display-value">{Math.round(scale * 100)}%</span>
 						<button

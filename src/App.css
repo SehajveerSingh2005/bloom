@@ -1572,6 +1572,18 @@ img {
 }
 
 /* Active Monochrome pill states */
+.cc-pill-more {
+	margin-left: auto;
+	padding: 0 4px;
+	font-size: 16px;
+	line-height: 20px;
+	border-radius: 6px;
+	opacity: 0.55;
+}
+.cc-pill-more:hover {
+	opacity: 1;
+	background: var(--bloom-border, rgba(255, 255, 255, 0.12));
+}
 .cc-pill-tile.active {
 	background: var(--bloom-text, rgba(255, 255, 255, 0.95));
 	border-color: var(--bloom-text, rgba(255, 255, 255, 0.95));
@@ -1583,6 +1595,10 @@ img {
 
 .cc-pill-tile.active .cc-pill-status {
 	color: var(--bloom-bg-expanded, rgba(0, 0, 0, 0.5));
+}
+
+.cc-pill-tile.active .cc-pill-more {
+	color: var(--bloom-bg-expanded, #000);
 }
 
 .cc-pill-tile.active .cc-pill-icon-wrapper {
@@ -2101,4 +2117,19 @@ img {
 .cmp-output-check {
 	font-size: 11px;
 	opacity: 0.6;
+}
+
+/* ── Glass (Appearance → Glass, <html class="glass">) ──────────────────────
+   The compositor frosts what is behind the notch (glass.rs, useGlass); this is
+   the material on top: a lighter tint so the frost shows, a hairline rim, a
+   soft specular line where it curves away at the bottom, and a faint sheen. */
+html.glass:not(.no-blur) .bloom {
+	--notch-bg: color-mix(in srgb, var(--bloom-bg, rgba(0, 0, 0, 0.8)) 52%, transparent);
+	box-shadow:
+		inset 0 -1px 0 rgba(255, 255, 255, 0.2),
+		inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+	background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 60%);
+}
+html.glass:not(.no-blur) .bloom.expanded {
+	--notch-bg: color-mix(in srgb, var(--bloom-bg-expanded, rgba(0, 0, 0, 0.92)) 60%, transparent);
 }

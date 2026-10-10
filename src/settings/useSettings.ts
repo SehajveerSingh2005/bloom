@@ -22,6 +22,12 @@ export function useSettings() {
 	const [autostart, setAutostart] = useState(false);
 	const [weatherEnabled, setWeatherEnabled] = useState(true);
 	const [calendarEnabled, setCalendarEnabled] = useState(true);
+	const [glassEnabled, setGlassEnabled] = useState(
+		() => localStorage.getItem("bloom-glass") !== "false"
+	);
+	const [infoCentre, setInfoCentre] = useState(
+		() => localStorage.getItem("bloom-info-centre") === "true"
+	);
 	const [timerSoundEnabled, setTimerSoundEnabled] = useState(
 		() => localStorage.getItem("bloom-timer-sound-enabled") !== "false"
 	);
@@ -147,6 +153,8 @@ export function useSettings() {
 
 			apply(getVal("bloom-weather-enabled"), setWeatherEnabled, readBool);
 			apply(getVal("bloom-calendar-enabled"), setCalendarEnabled, readBool);
+			apply(getVal("bloom-info-centre"), setInfoCentre, readBool);
+			apply(getVal("bloom-glass"), setGlassEnabled, readBool);
 			apply(getVal("bloom-timer-sound-enabled"), setTimerSoundEnabled, readBool);
 			apply(getVal("bloom-music-mode-enabled"), setMusicModeEnabled, readBool);
 			apply(getVal("bloom-music-compact-notch"), setMusicCompactNotch, readBool);
@@ -228,6 +236,8 @@ export function useSettings() {
 		"bloom-dock-win-number-enabled": setDockWinNumberEnabled,
 		"bloom-weather-enabled": setWeatherEnabled,
 		"bloom-calendar-enabled": setCalendarEnabled,
+		"bloom-info-centre": setInfoCentre,
+		"bloom-glass": setGlassEnabled,
 		"bloom-timer-sound-enabled": setTimerSoundEnabled,
 		"bloom-music-mode-enabled": setMusicModeEnabled,
 		"bloom-music-compact-notch": setMusicCompactNotch,
@@ -385,6 +395,18 @@ export function useSettings() {
 		const next = !calendarEnabled;
 		setCalendarEnabled(next);
 		saveSetting("bloom-calendar-enabled", String(next));
+	};
+
+	const toggleGlass = () => {
+		const next = !glassEnabled;
+		setGlassEnabled(next);
+		saveSetting("bloom-glass", String(next));
+	};
+
+	const toggleInfoCentre = () => {
+		const next = !infoCentre;
+		setInfoCentre(next);
+		saveSetting("bloom-info-centre", String(next));
 	};
 
 	const toggleTimerSound = () => {
@@ -756,6 +778,10 @@ export function useSettings() {
 		handleNotchEdgeDelayChange,
 		calendarEnabled,
 		toggleCalendar,
+		infoCentre,
+		toggleInfoCentre,
+		glassEnabled,
+		toggleGlass,
 		timerSoundEnabled,
 		toggleTimerSound,
 		musicModeEnabled,

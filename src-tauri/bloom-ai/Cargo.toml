@@ -1,0 +1,47 @@
+[package]
+name = "bloom-ai"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Bloom's optional AI agent, run by Bloom on demand"
+
+[dependencies]
+base64 = "0.22"
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "system-proxy", "json", "form", "multipart"] }
+keyring = { version = "3", features = ["windows-native"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros", "sync", "process", "time", "io-util", "net"] }
+dirs = "6"
+lettre = "0.11"
+imap = "2.4"
+native-tls = "0.2"
+rustpotter = "3"
+# rustpotter 3.0.x -> candle-core 0.2.2 breaks on half 2.5+ (rand_distr 0.5).
+# Drop this when rustpotter moves off candle 0.2.
+half = ">=2.4.1, <2.5"
+# WhatsApp linked device (whatsmeow/Baileys port). Pinned: its API moves fast.
+# No tokio-native/signal: it runs on its own current-thread runtime. No simd: nightly only.
+whatsapp-rust = { version = "=0.7.0", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client"] }
+async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+# A paused clock for the auto-reply pacing tests.
+tokio = { version = "1", features = ["test-util"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+	"Win32_Foundation",
+	"Win32_Globalization",
+	"Win32_Media_Audio",
+	"Win32_Security",
+	"Win32_Storage_FileSystem",
+	"Win32_System_JobObjects",
+	"Win32_System_Threading",
+	"Win32_System_Com",
+	"Win32_System_Com_StructuredStorage",
+	"Win32_System_Variant",
+	"Win32_UI_Shell",
+	"Win32_UI_WindowsAndMessaging",
+] }

@@ -1,0 +1,180 @@
+/* A row's controls never push past its edge (the group clips them): fields
+   shrink, then the controls wrap under each other, right-aligned. */
+.setting-item > .ai-secret,
+.setting-item > .ai-field,
+.setting-item > .ai-btn {
+	margin-left: 10px;
+}
+
+.setting-item:has(> .ai-secret) > .setting-info {
+	min-width: 120px;
+}
+
+.ai-field {
+	box-sizing: border-box;
+	flex: 0 1 170px;
+	width: 170px;
+	min-width: 96px;
+	padding: 4px 8px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.06);
+	color: var(--bloom-text, #fff);
+	font-size: 12px;
+	outline: none;
+}
+
+.ai-field:focus {
+	border-color: var(--bloom-accent, #0a84ff);
+}
+
+.ai-secret {
+	display: flex;
+	flex: 0 1 auto;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 6px;
+	min-width: 0;
+}
+
+.ai-secret .ai-field + .ai-field {
+	flex: 0 0 56px;
+	width: 56px;
+	min-width: 56px;
+}
+
+.ai-btn {
+	padding: 4px 10px;
+	border: none;
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.1);
+	color: var(--bloom-text, #fff);
+	font-size: 12px;
+	white-space: nowrap;
+	flex-shrink: 0;
+	cursor: pointer;
+}
+
+.ai-btn:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.ai-note {
+	white-space: nowrap;
+	font-size: 11px;
+	opacity: 0.6;
+}
+
+.ai-code {
+	font-family: ui-monospace, Consolas, monospace;
+	font-size: 14px;
+	letter-spacing: 1px;
+}
+
+.ai-warning {
+	margin: 4px 14px 8px;
+	font-size: 11px;
+	color: #ffb340;
+}
+
+.ai-pair {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 8px;
+	margin-left: 10px;
+}
+
+/* Always dark on white, whatever the theme, so phones can read it. */
+.ai-qr {
+	width: 180px;
+	height: 180px;
+	border-radius: 6px;
+}
+
+.ai-text {
+	flex-basis: 220px;
+	width: 220px;
+	resize: vertical;
+	font-family: inherit;
+}
+
+.ai-checks {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+	margin-left: 10px;
+	font-size: 12px;
+}
+
+.ai-checks label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+}
+
+/* Settings > Contacts: one card per saved person. */
+.ai-person {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 14px;
+	border-top: 1px solid rgba(255, 255, 255, 0.06);
+	font-size: 12px;
+}
+
+.ai-person-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.ai-person-line {
+	overflow-wrap: anywhere;
+	opacity: 0.85;
+}
+
+.ai-person .ai-secret {
+	justify-content: flex-start;
+}
+
+.ai-tags {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+
+.ai-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	padding: 1px 4px 1px 8px;
+	border-radius: 10px;
+	background: rgba(255, 255, 255, 0.1);
+	font-size: 11px;
+}
+
+.ai-tag button {
+	padding: 0 3px;
+	border: none;
+	background: none;
+	color: inherit;
+	opacity: 0.7;
+	cursor: pointer;
+}
+
+.ai-field.ai-small {
+	flex: 0 1 96px;
+	width: 96px;
+}
+
+.ai-more {
+	margin: 6px 14px;
+	white-space: normal;
+}
