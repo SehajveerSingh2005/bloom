@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod dock_extras;
 mod services;
 mod state;
 mod tray;
@@ -173,7 +174,10 @@ fn main() {
             write_settings_to_path,
             updater::check_for_updates,
             updater::install_update,
-            updater::get_update_state
+            updater::get_update_state,
+            dock_extras::get_dock_extras,
+            dock_extras::open_dock_extra,
+            dock_extras::eject_dock_extra
         ])
         .setup(|app| {
             init_taskbar_marker(app.handle());

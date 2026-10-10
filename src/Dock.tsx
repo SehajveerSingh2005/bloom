@@ -8,6 +8,7 @@ import { useSettingsSync } from "./hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 
 import { mergeTrayApps, selectDockTrayApps, type AppInfo, type TrayApp } from "./dockApps";
+import { removeCustomFolder, type DockExtra } from "./dockExtras";
 
 // Host processes (Edge/Chrome/Brave/ApplicationFrameHost) run every PWA/UWP
 // window, so their window title must be part of their identity — otherwise two
@@ -143,6 +144,11 @@ const Dock = memo(function Dock() {
 	const [startIcon, setStartIcon] = useState(
 		() => localStorage.getItem("bloom-start-icon") || "default"
 	);
+	const [dockExtrasPosition, setDockExtrasPosition] = useState(
+		() => localStorage.getItem("bloom-dock-extras-position") || "off"
+	);
+	const [dockExtras, setDockExtras] = useState<DockExtra[]>([]);
+	const [dockExtrasRevision, setDockExtrasRevision] = useState(0);
 	const [isMaximized, setIsMaximized] = useState(false);
 	const [previewData, setPreviewData] = useState<{
 		id: string;
@@ -157,6 +163,7 @@ const Dock = memo(function Dock() {
 		x: number;
 		y: number;
 		app: AppInfo | null;
+		extra?: DockExtra | null;
 	} | null>(null);
 	const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
 	const [activeOrder, setActiveOrder] = useState<string[]>([]);
@@ -332,6 +339,9 @@ const Dock = memo(function Dock() {
 			const startIconVal = getVal("bloom-start-icon", "default") || "default";
 			setStartIcon(startIconVal);
 
+			const extrasPosition = getVal("bloom-dock-extras-position", "off");
+			if (extrasPosition) setDockExtrasPosition(extrasPosition);
+
 			const scaleVal = getVal("bloom-scale");
 			if (scaleVal !== null) setScale(parseFloat(scaleVal));
 
@@ -382,8 +392,41 @@ const Dock = memo(function Dock() {
 		"bloom-dock-separator-enabled": setDockSeparatorEnabled,
 		"bloom-dock-adaptive": setDockAdaptive,
 		"bloom-start-icon": setStartIcon,
-		"bloom-scale": setScale
+		"bloom-scale": setScale,
+		"bloom-dock-extras-position": setDockExtrasPosition,
+		"bloom-dock-extras-drives": () => setDockExtrasRevision((r) => r + 1),
+		"bloom-dock-extras-recycle-bin": () => setDockExtrasRevision((r) => r + 1),
+		"bloom-dock-extras-folders": () => setDockExtrasRevision((r) => r + 1),
+		"bloom-dock-extras-custom-folders": () => setDockExtrasRevision((r) => r + 1)
 	});
+
+	useEffect(() => {
+		if (dockExtrasPosition === "off") {
+			setDockExtras([]);
+			return;
+		}
+		let stopped = false;
+		let loadSeq = 0;
+		const load = async () => {
+			const seq = ++loadSeq;
+			try {
+				const extras = await invoke<DockExtra[]>("get_dock_extras");
+				// A slow load must never overwrite a newer one that already landed.
+				if (!stopped && seq === loadSeq) setDockExtras(extras);
+			} catch (e) {
+				console.error("Failed to load dock extras:", e);
+			}
+		};
+		load();
+
+		// Drives can be plugged in or removed at any time; converge like the
+		// window list does instead of trusting a one-shot fetch.
+		const interval = setInterval(load, 10000);
+		return () => {
+			stopped = true;
+			clearInterval(interval);
+		};
+	}, [dockExtrasPosition, dockExtrasRevision]);
 
 	useEffect(() => {
 		let pollSeq = 0;
@@ -630,6 +673,34 @@ const Dock = memo(function Dock() {
 			return;
 		}
 		setContextMenu({ x: e.clientX, y: e.clientY, app });
+	};
+
+	const handleExtraClick = (extra: DockExtra) => {
+		invoke("open_dock_extra", { kind: extra.kind, path: extra.path }).catch(showActionError);
+	};
+
+	const handleExtraContextMenu = (e: React.MouseEvent, extra: DockExtra) => {
+		e.stopPropagation();
+		e.preventDefault();
+		setContextMenu({ x: e.clientX, y: e.clientY, app: null, extra });
+	};
+
+	const ejectExtra = (extra: DockExtra) => {
+		closeMenu();
+		invoke("eject_dock_extra", { path: extra.path }).catch(showActionError);
+	};
+
+	const removeExtraFromDock = (extra: DockExtra) => {
+		const next = removeCustomFolder(
+			localStorage.getItem("bloom-dock-extras-custom-folders"),
+			extra.path
+		);
+		localStorage.setItem("bloom-dock-extras-custom-folders", next);
+		invoke("save_setting", {
+			key: "bloom-dock-extras-custom-folders",
+			value: next
+		}).catch(console.error);
+		closeMenu();
 	};
 
 	// Measured before paint: the menu's height depends on which items it shows,
@@ -924,6 +995,46 @@ const Dock = memo(function Dock() {
 		tap: { scale: 0.95 }
 	};
 
+	const renderExtra = (extra: DockExtra) => (
+		<motion.div
+			key={extra.id}
+			layout
+			initial={{ opacity: 0, scale: 0 }}
+			animate={{ opacity: 1, scale: 1 }}
+			exit={{ opacity: 0, scale: 0, transition: { duration: 0.12 } }}
+			className="dock-icon-wrapper"
+			onContextMenu={(e) => handleExtraContextMenu(e, extra)}
+			onMouseEnter={() => setHoveredApp(extra.id)}
+			onMouseLeave={() => {
+				setHoveredApp(null);
+				setPressedApp(null);
+			}}
+			onMouseDown={(e) => {
+				if (e.button === 1) e.preventDefault();
+			}}
+			onClick={(e) => {
+				e.stopPropagation();
+				handleExtraClick(extra);
+			}}
+		>
+			{hoveredApp === extra.id && <div className="tooltip">{extra.name}</div>}
+			<motion.div
+				className="dock-icon"
+				variants={iconVariants}
+				animate={pressedApp === extra.id ? "tap" : hoveredApp === extra.id ? "hover" : "idle"}
+				onPointerDown={() => setPressedApp(extra.id)}
+				onPointerUp={() => setPressedApp(null)}
+				onPointerCancel={() => setPressedApp(null)}
+			>
+				{extra.icon ? (
+					<img src={extra.icon} alt={extra.name} draggable={false} />
+				) : (
+					<div className="fallback-icon">{extra.name[0]}</div>
+				)}
+			</motion.div>
+		</motion.div>
+	);
+
 	return (
 		<div className={`dock-container ${isDragging ? "dragging" : ""}`} onClick={closeMenu}>
 			<div
@@ -1041,6 +1152,17 @@ const Dock = memo(function Dock() {
 											/>
 										</motion.div>
 									</motion.div>
+								)}
+
+								{dockExtrasPosition === "left" && dockExtras.length > 0 && (
+									<>
+										{dockExtras.map((extra) => renderExtra(extra))}
+										<div
+											className="dock-app-divider"
+											role="separator"
+											aria-orientation="vertical"
+										/>
+									</>
 								)}
 
 								<Reorder.Group
@@ -1362,6 +1484,17 @@ const Dock = memo(function Dock() {
 										)}
 									</motion.div>
 								))}
+
+								{dockExtrasPosition === "right" && dockExtras.length > 0 && (
+									<>
+										<div
+											className="dock-app-divider"
+											role="separator"
+											aria-orientation="vertical"
+										/>
+										{dockExtras.map((extra) => renderExtra(extra))}
+									</>
+								)}
 							</motion.div>
 						)}
 					</AnimatePresence>
@@ -1380,7 +1513,7 @@ const Dock = memo(function Dock() {
 					}}
 					onClick={(e) => e.stopPropagation()}
 				>
-					{(!contextMenu.app || contextMenu.app.path === "start") && (
+					{!contextMenu.extra && (!contextMenu.app || contextMenu.app.path === "start") && (
 						<div
 							style={{
 								maxHeight: Math.max(64, window.innerHeight / scale - 200),
@@ -1417,7 +1550,36 @@ const Dock = memo(function Dock() {
 							<div className="menu-divider" />
 						</div>
 					)}
-					{contextMenu.app ? (
+					{contextMenu.extra ? (
+						<>
+							<div
+								className="menu-item"
+								onClick={() => {
+									const extra = contextMenu.extra!;
+									closeMenu();
+									handleExtraClick(extra);
+								}}
+							>
+								Open
+							</div>
+							{contextMenu.extra.kind === "drive" && contextMenu.extra.removable && (
+								<div className="menu-item" onClick={() => ejectExtra(contextMenu.extra!)}>
+									Eject
+								</div>
+							)}
+							{contextMenu.extra.kind === "custom" && (
+								<>
+									<div className="menu-divider" />
+									<div
+										className="menu-item quit"
+										onClick={() => removeExtraFromDock(contextMenu.extra!)}
+									>
+										Remove from Dock
+									</div>
+								</>
+							)}
+						</>
+					) : contextMenu.app ? (
 						<>
 							<div className="menu-item" onClick={() => togglePin(contextMenu.app!)}>
 								{contextMenu.app.is_pinned ? "Unpin from Dock" : "Pin to Dock"}

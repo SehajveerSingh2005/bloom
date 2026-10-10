@@ -398,6 +398,87 @@ body {
 	opacity: 0.8;
 }
 
+.folder-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 4px 12px;
+	border-radius: 999px;
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.12));
+	background: rgba(255, 255, 255, 0.05);
+	color: var(--bloom-text, rgba(255, 255, 255, 0.95));
+	font-size: 12px;
+	font-family: inherit;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.folder-chip:hover {
+	background: rgba(255, 255, 255, 0.1);
+}
+
+.folder-chip.active {
+	border-color: var(--bloom-accent, #007aff);
+	background: color-mix(in srgb, var(--bloom-accent, #007aff) 18%, transparent);
+}
+
+.folder-chip.add {
+	align-self: flex-start;
+}
+
+.light-mode .folder-chip {
+	background: rgba(0, 0, 0, 0.04);
+	color: var(--text-color, #1d1d1f);
+}
+
+.light-mode .folder-chip:hover {
+	background: rgba(0, 0, 0, 0.08);
+}
+
+.extra-folder-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+}
+
+.extra-folder-name {
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--bloom-text, rgba(255, 255, 255, 0.95));
+	flex-shrink: 0;
+}
+
+.extra-folder-path {
+	font-size: 11px;
+	color: var(--text-muted, rgba(255, 255, 255, 0.5));
+	opacity: 0.9;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.extra-folder-remove {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	padding: 3px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-muted, rgba(255, 255, 255, 0.6));
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.extra-folder-remove:hover {
+	background: rgba(255, 255, 255, 0.1);
+	color: var(--bloom-text, white);
+}
+
 .setting-divider {
 	height: 1px;
 	background: var(--bloom-border, rgba(255, 255, 255, 0.06));

@@ -7,6 +7,12 @@ import type { UpdateCheckResult } from "../updater";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "../hooks/settingsMirror";
 import { hexToHsl } from "../theme";
+import {
+	addCustomFolder,
+	removeCustomFolder,
+	toggleEnabledFolder,
+	DEFAULT_ENABLED_FOLDERS
+} from "../dockExtras";
 import type { WidgetConfig } from "./types";
 
 function saveSetting(key: string, value: string) {
@@ -77,6 +83,21 @@ export function useSettings() {
 	);
 	const [dockWinNumberEnabled, setDockWinNumberEnabled] = useState(
 		() => localStorage.getItem("bloom-dock-win-number-enabled") !== "false"
+	);
+	const [dockExtrasPosition, setDockExtrasPosition] = useState(
+		() => localStorage.getItem("bloom-dock-extras-position") || "off"
+	);
+	const [dockExtrasDrives, setDockExtrasDrives] = useState(
+		() => localStorage.getItem("bloom-dock-extras-drives") !== "false"
+	);
+	const [dockExtrasRecycleBin, setDockExtrasRecycleBin] = useState(
+		() => localStorage.getItem("bloom-dock-extras-recycle-bin") !== "false"
+	);
+	const [dockExtrasFolders, setDockExtrasFolders] = useState(
+		() => localStorage.getItem("bloom-dock-extras-folders") ?? DEFAULT_ENABLED_FOLDERS
+	);
+	const [dockExtrasCustomFolders, setDockExtrasCustomFolders] = useState(
+		() => localStorage.getItem("bloom-dock-extras-custom-folders") || "[]"
 	);
 	const [dockMode, setDockMode] = useState(() => {
 		// "smart" is the fresh-install default — keep in step with App.tsx,
@@ -167,6 +188,11 @@ export function useSettings() {
 			apply(getVal("bloom-start-icon"), setStartIcon, (v) => v);
 			apply(getVal("bloom-dock-adaptive"), setDockAdaptive, readBool);
 			apply(getVal("bloom-dock-win-number-enabled"), setDockWinNumberEnabled, readBool);
+			apply(getVal("bloom-dock-extras-position"), setDockExtrasPosition, (v) => v);
+			apply(getVal("bloom-dock-extras-drives"), setDockExtrasDrives, readBool);
+			apply(getVal("bloom-dock-extras-recycle-bin"), setDockExtrasRecycleBin, readBool);
+			apply(getVal("bloom-dock-extras-folders"), setDockExtrasFolders, (v) => v);
+			apply(getVal("bloom-dock-extras-custom-folders"), setDockExtrasCustomFolders, (v) => v);
 
 			apply(getVal("bloom-temp-unit"), setTempUnitFahrenheit, (v) => v === "fahrenheit");
 			apply(getVal("bloom-scale"), setScale, parseFloat);
@@ -226,6 +252,11 @@ export function useSettings() {
 		"bloom-dock-preview-enabled": setDockPreviewEnabled,
 		"bloom-dock-adaptive": setDockAdaptive,
 		"bloom-dock-win-number-enabled": setDockWinNumberEnabled,
+		"bloom-dock-extras-position": setDockExtrasPosition,
+		"bloom-dock-extras-drives": setDockExtrasDrives,
+		"bloom-dock-extras-recycle-bin": setDockExtrasRecycleBin,
+		"bloom-dock-extras-folders": setDockExtrasFolders,
+		"bloom-dock-extras-custom-folders": setDockExtrasCustomFolders,
 		"bloom-weather-enabled": setWeatherEnabled,
 		"bloom-calendar-enabled": setCalendarEnabled,
 		"bloom-timer-sound-enabled": setTimerSoundEnabled,
@@ -509,6 +540,53 @@ export function useSettings() {
 		const next = !dockWinNumberEnabled;
 		setDockWinNumberEnabled(next);
 		saveSetting("bloom-dock-win-number-enabled", String(next));
+	};
+
+	const handleDockExtrasPositionChange = (position: string) => {
+		setDockExtrasPosition(position);
+		saveSetting("bloom-dock-extras-position", position);
+	};
+
+	const toggleDockExtrasDrives = () => {
+		const next = !dockExtrasDrives;
+		setDockExtrasDrives(next);
+		saveSetting("bloom-dock-extras-drives", String(next));
+	};
+
+	const toggleDockExtrasRecycleBin = () => {
+		const next = !dockExtrasRecycleBin;
+		setDockExtrasRecycleBin(next);
+		saveSetting("bloom-dock-extras-recycle-bin", String(next));
+	};
+
+	const toggleDockExtraFolder = (id: string) => {
+		const next = toggleEnabledFolder(dockExtrasFolders, id);
+		setDockExtrasFolders(next);
+		saveSetting("bloom-dock-extras-folders", next);
+	};
+
+	const handleAddDockExtraFolder = async () => {
+		try {
+			const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
+			const selected = await openDialog({
+				title: "Add a folder to the dock",
+				directory: true,
+				multiple: false
+			});
+			if (typeof selected === "string") {
+				const next = addCustomFolder(dockExtrasCustomFolders, selected);
+				setDockExtrasCustomFolders(next);
+				saveSetting("bloom-dock-extras-custom-folders", next);
+			}
+		} catch (e) {
+			console.error("Folder picker failed:", e);
+		}
+	};
+
+	const handleRemoveDockExtraFolder = (path: string) => {
+		const next = removeCustomFolder(dockExtrasCustomFolders, path);
+		setDockExtrasCustomFolders(next);
+		saveSetting("bloom-dock-extras-custom-folders", next);
 	};
 
 	const toggleAutoUpdate = () => {
@@ -803,6 +881,17 @@ export function useSettings() {
 		toggleDockAdaptive,
 		dockWinNumberEnabled,
 		toggleDockWinNumber,
+		dockExtrasPosition,
+		handleDockExtrasPositionChange,
+		dockExtrasDrives,
+		toggleDockExtrasDrives,
+		dockExtrasRecycleBin,
+		toggleDockExtrasRecycleBin,
+		dockExtrasFolders,
+		toggleDockExtraFolder,
+		dockExtrasCustomFolders,
+		handleAddDockExtraFolder,
+		handleRemoveDockExtraFolder,
 
 		// Overlays
 		volumeOverlayEnabled,
