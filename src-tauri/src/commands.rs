@@ -29,13 +29,126 @@ pub async fn set_dock_hovered(hovered: bool) {
 }
 
 #[tauri::command]
-pub async fn set_notch_hovered(hovered: bool) {
+pub async fn set_notch_hovered(app: AppHandle, hovered: bool) {
     NOTCH_IS_HOVERED.store(hovered, Ordering::Relaxed);
+    // Re-evaluate right away. During a native drag the webview never sees the
+    // pointer leave, so waiting for the next mouse move can leave the notch
+    // (and its edge-hover state) stuck expanded in peek/smart mode.
+    crate::services::refresh_main_interaction(&app);
 }
 
 #[tauri::command]
 pub async fn set_notch_visible(visible: bool) {
     NOTCH_IS_VISIBLE.store(visible, Ordering::Relaxed);
+}
+
+#[tauri::command]
+pub fn setup_shelf_drop(app: AppHandle) {
+    let first = app.clone();
+    let _ = app.run_on_main_thread(move || crate::shelf::setup(&first));
+    // WebView2 can create or recreate its render child after first paint;
+    // re-register once it has settled so the drop target tracks the live window.
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+        let late = app.clone();
+        let _ = app.run_on_main_thread(move || crate::shelf::setup(&late));
+    });
+}
+
+/// Small PNG preview for shelf items, as a data URI. `None` for anything that
+/// is not a readable image (the frontend falls back to a generic file icon).
+#[tauri::command]
+pub async fn shelf_thumbnail(path: String) -> Option<String> {
+    use base64::Engine;
+
+    let p = std::path::Path::new(&path);
+    let ext = p.extension()?.to_str()?.to_ascii_lowercase();
+    if !matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "tif" | "tiff"
+    ) {
+        return None;
+    }
+    let meta = std::fs::metadata(p).ok()?;
+    if !meta.is_file() || meta.len() > 32 * 1024 * 1024 {
+        return None;
+    }
+
+    // Decode with dimension/allocation caps: a small, highly compressed file
+    // can still expand into a huge bitmap.
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    let mut reader = image::ImageReader::open(p)
+        .ok()?
+        .with_guessed_format()
+        .ok()?;
+    reader.limits(limits);
+    let img = reader.decode().ok()?;
+    let thumb = img.thumbnail(256, 256);
+    let mut png_bytes: Vec<u8> = Vec::new();
+    thumb
+        .write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            image::ImageFormat::Png,
+        )
+        .ok()?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+    Some(format!("data:image/png;base64,{}", b64))
+}
+
+/// Opens a shelf file in its default app. Uses the opener plugin's Rust API
+/// directly: its JS `open_path` command additionally requires a path scope,
+/// which an empty capability would deny for every file.
+#[tauri::command]
+pub async fn shelf_open(path: String) -> Result<(), String> {
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Drops shelf entries whose files no longer exist (moved, deleted, drive
+/// unplugged). Called once at startup so the shelf does not accumulate dead
+/// references across sessions.
+#[tauri::command]
+pub async fn shelf_prune(paths: Vec<String>) -> Vec<String> {
+    paths
+        .into_iter()
+        .filter(|p| std::path::Path::new(p).exists())
+        .collect()
+}
+
+/// Generic document icon used as the native drag preview for shelf items that
+/// have no thumbnail. Returned as a PNG data URI.
+#[tauri::command]
+pub fn shelf_drag_icon() -> Option<String> {
+    use base64::Engine;
+
+    let page = image::Rgba([246, 246, 246, 255]);
+    let fold = image::Rgba([198, 198, 198, 255]);
+    let line = image::Rgba([152, 152, 152, 255]);
+    let mut img = image::RgbaImage::from_pixel(64, 64, image::Rgba([0, 0, 0, 0]));
+
+    for y in 6..58u32 {
+        for x in 14..50u32 {
+            let in_fold = x >= 38 && y <= 18 && (x - 38) + (y - 6) >= 12;
+            img.put_pixel(x, y, if in_fold { fold } else { page });
+        }
+    }
+    for (i, y) in [22u32, 30, 38, 46].into_iter().enumerate() {
+        let end = if i == 3 { 36 } else { 42 };
+        for x in 20..end {
+            img.put_pixel(x, y, line);
+        }
+    }
+
+    let mut png_bytes: Vec<u8> = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut png_bytes),
+        image::ImageFormat::Png,
+    )
+    .ok()?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+    Some(format!("data:image/png;base64,{}", b64))
 }
 
 #[tauri::command]

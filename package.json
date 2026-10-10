@@ -20,6 +20,7 @@
 		"@dnd-kit/utilities": "^3.2.2",
 		"@tauri-apps/api": "~2.11.1",
 		"@tauri-apps/plugin-autostart": "^2.5.1",
+		"@tauri-apps/plugin-clipboard-manager": "^2.3.2",
 		"@tauri-apps/plugin-dialog": "^2.7.3",
 		"@tauri-apps/plugin-opener": "^2.5.5",
 		"framer-motion": "^12.43.0",

@@ -23,6 +23,7 @@ tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+windows-core = "0.61"
 windows = { version = "0.61", features = [
 	"Win32_UI_Input_KeyboardAndMouse",
 	"Win32_UI_Shell",
@@ -37,6 +38,7 @@ windows = { version = "0.61", features = [
 	"Win32_Media_Audio",
 	"Win32_Media_Audio_Endpoints",
 	"Win32_System_Threading",
+	"Win32_System_Memory",
 	"Win32_System_Com_StructuredStorage",
 	"Win32_System_SystemInformation",
 	"Win32_System_Wmi",
@@ -62,6 +64,7 @@ windows = { version = "0.61", features = [
 ] }
 base64 = "0.22"
 tauri-plugin-autostart = "2.5.1"
+tauri-plugin-clipboard-manager = "2"
 tauri-plugin-updater = "2"
 window-vibrancy = "0.7.1"
 wmi = "0.14"
