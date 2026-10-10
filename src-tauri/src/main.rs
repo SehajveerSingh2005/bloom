@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod dock_extras;
 mod services;
 mod shelf;
 mod state;
+mod tray;
 mod types;
 mod updater;
 mod utils;
@@ -128,6 +130,10 @@ fn main() {
             shelf_prune,
             shelf_open,
             get_active_windows,
+            get_tray_apps,
+            show_tray_context_menu,
+            activate_tray_icon,
+            open_system_action,
             get_app_icon,
             get_installed_apps,
             save_pinned_apps,
@@ -176,7 +182,10 @@ fn main() {
             write_settings_to_path,
             updater::check_for_updates,
             updater::install_update,
-            updater::get_update_state
+            updater::get_update_state,
+            dock_extras::get_dock_extras,
+            dock_extras::open_dock_extra,
+            dock_extras::eject_dock_extra
         ])
         .setup(|app| {
             init_taskbar_marker(app.handle());
@@ -314,7 +323,7 @@ fn main() {
             trigger_app_scan();
             let tx = setup_system_worker(app.handle().clone());
             let _ = COMMAND_SENDER.set(tx.clone());
-            let _hook = services::setup_keyboard_hook(app.handle().clone());
+            services::setup_keyboard_hook(app.handle().clone());
             setup_taskbar_hook();
             setup_audio_visualization(app.handle().clone());
             setup_settings_watcher(app.handle().clone());

@@ -29,6 +29,7 @@ windows = { version = "0.61", features = [
 	"Win32_UI_Shell",
 	"Win32_UI_Shell_PropertiesSystem",
 	"Win32_UI_WindowsAndMessaging",
+	"Win32_UI_HiDpi",
 	"Win32_Foundation",
 	"Win32_System_Com",
 	"Win32_UI_Accessibility",
@@ -58,7 +59,8 @@ windows = { version = "0.61", features = [
 	"System_Power",
 	"Win32_NetworkManagement_IpHelper",
 	"Win32_NetworkManagement_Ndis",
-	"Win32_NetworkManagement_WiFi"
+	"Win32_NetworkManagement_WiFi",
+	"Win32_NetworkManagement_WNet"
 ] }
 base64 = "0.22"
 tauri-plugin-autostart = "2.5.1"

@@ -39,7 +39,9 @@ import {
 	Megaphone,
 	File,
 	Type,
-	X
+	X,
+	ChevronLeft,
+	ChevronRight
 } from "lucide-react";
 
 // Pomodoro timer limit.
@@ -454,6 +456,8 @@ function App() {
 
 	const [time, setTime] = useState("");
 	const [isHovered, setIsHovered] = useState(false);
+	// Set once the open notch is clicked; shows the panel arrows until hover ends.
+	const [notchClicked, setNotchClicked] = useState(false);
 	const [isReady, setIsReady] = useState(false);
 	const [scale, setScale] = useState(() =>
 		parseFloat(localStorage.getItem("bloom-scale") || "1.0")
@@ -900,6 +904,8 @@ function App() {
 						const dockEnabled = getVal("bloom-dock-enabled", "true") === "true";
 						if (dockEnabled) {
 							await invoke("init_dock", { mode: dockMode });
+						} else {
+							await invoke("toggle_dock", { enable: false });
 						}
 						await invoke("change_notch_mode", { mode: nMode });
 						await invoke("sync_appbar");
@@ -1289,6 +1295,7 @@ function App() {
 	const releaseNotchHover = () => {
 		setIsHovered(false);
 		setIsNotchHovered(false);
+		setNotchClicked(false);
 		setBloomMode((prev) =>
 			prev === "music" ||
 			prev === "command-center" ||
@@ -1534,6 +1541,10 @@ function App() {
 		const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
 		if (Math.abs(delta) < 5) return; // Ignore tiny movements
 
+		if (cycleBloomMode(delta > 0 ? 1 : -1)) lastScrollTime.current = now;
+	};
+
+	const getCyclableModes = () => {
 		// Music shifts position based on playing state:
 		// Playing: command-center → music → status → shelf → calendar (active, near command-center)
 		// Paused:  command-center → status → shelf → music → calendar (secondary, after status)
@@ -1541,7 +1552,7 @@ function App() {
 		const modes: BloomMode[] = musicBeforeStatus
 			? ["command-center", "music", "status", "shelf", "calendar"]
 			: ["command-center", "status", "shelf", "music", "calendar"];
-		const availableModes = modes.filter((m) => {
+		return modes.filter((m) => {
 			if (m === "music" && (!settingsMusicModeEnabled || !mediaInfo.has_media)) return false;
 			if (m === "calendar" && !settingsCalendarEnabled) return false;
 			// Shelf only appears in the cycle while it holds something (or a
@@ -1549,26 +1560,21 @@ function App() {
 			if (m === "shelf" && shelfItems.length === 0 && !isDragHovering) return false;
 			return true;
 		});
+	};
 
+	// Moves to the next (1) or previous (-1) notch panel. Shared by the scroll
+	// wheel and the panel arrows; returns whether the panel changed.
+	const cycleBloomMode = (direction: 1 | -1) => {
 		// The announcement card is closed explicitly, not cycled away.
-		if (bloomMode === "announcement") return;
-
+		if (bloomMode === "announcement") return false;
+		const availableModes = getCyclableModes();
 		const currentIndex = availableModes.indexOf(bloomMode);
-		if (currentIndex === -1) return;
-
-		if (delta > 0) {
-			const nextIndex = (currentIndex + 1) % availableModes.length;
-			const nextMode = availableModes[nextIndex];
-			manualMusicRef.current = nextMode === "music";
-			setBloomMode(nextMode);
-			lastScrollTime.current = now;
-		} else if (delta < 0) {
-			const prevIndex = (currentIndex - 1 + availableModes.length) % availableModes.length;
-			const prevMode = availableModes[prevIndex];
-			manualMusicRef.current = prevMode === "music";
-			setBloomMode(prevMode);
-			lastScrollTime.current = now;
-		}
+		if (currentIndex === -1) return false;
+		const nextMode =
+			availableModes[(currentIndex + direction + availableModes.length) % availableModes.length];
+		manualMusicRef.current = nextMode === "music";
+		setBloomMode(nextMode);
+		return true;
 	};
 
 	// Timer state
@@ -2374,6 +2380,10 @@ function App() {
 	};
 
 	const isCalendarMode = bloomMode === "calendar";
+	// Arrows beside the time switch panels once the open notch has been clicked,
+	// for mice without a scroll wheel. Hover alone keeps the notch uncluttered.
+	const showPanelArrows =
+		isHovered && notchClicked && bloomMode !== "announcement" && getCyclableModes().length > 1;
 
 	// Close compact media player expansions when notch is unhovered or mode changes
 	useEffect(() => {
@@ -2446,6 +2456,7 @@ function App() {
 					onClick={(e) => {
 						e.stopPropagation();
 					}}
+					onClickCapture={() => setNotchClicked(true)}
 					onHoverStart={() => {
 						setIsHovered(true);
 						// Shelf and announcement manage their own lifetime — hovering
@@ -2871,6 +2882,26 @@ function App() {
 
 															{/* Center - Time (always visible) */}
 															<div className="time-center">
+																<AnimatePresence>
+																	{showPanelArrows && (
+																		<motion.button
+																			key="panel-prev"
+																			type="button"
+																			className="panel-arrow prev"
+																			aria-label="Previous panel"
+																			initial={{ opacity: 0, x: 4 }}
+																			animate={{ opacity: 1, x: 0 }}
+																			exit={{ opacity: 0, x: 4 }}
+																			transition={{ duration: 0.15 }}
+																			onClick={(e) => {
+																				e.stopPropagation();
+																				cycleBloomMode(-1);
+																			}}
+																		>
+																			<ChevronLeft size={12} strokeWidth={2.5} />
+																		</motion.button>
+																	)}
+																</AnimatePresence>
 																<div className="time-flip-container" onClick={toggleCalendarMode}>
 																	<AnimatePresence initial={false}>
 																		{timerSeconds > 0 || isTimerFinished ? (
@@ -2905,6 +2936,26 @@ function App() {
 																		)}
 																	</AnimatePresence>
 																</div>
+																<AnimatePresence>
+																	{showPanelArrows && (
+																		<motion.button
+																			key="panel-next"
+																			type="button"
+																			className="panel-arrow next"
+																			aria-label="Next panel"
+																			initial={{ opacity: 0, x: -4 }}
+																			animate={{ opacity: 1, x: 0 }}
+																			exit={{ opacity: 0, x: -4 }}
+																			transition={{ duration: 0.15 }}
+																			onClick={(e) => {
+																				e.stopPropagation();
+																				cycleBloomMode(1);
+																			}}
+																		>
+																			<ChevronRight size={12} strokeWidth={2.5} />
+																		</motion.button>
+																	)}
+																</AnimatePresence>
 																{updateAvailable && showUpdateIndicator && (
 																	<div className="update-dot" />
 																)}

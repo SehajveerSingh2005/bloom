@@ -103,6 +103,16 @@
 		"active": true,
 		"createUpdaterArtifacts": true,
 		"targets": "all",
+		"publisher": "Sehajveer Singh",
+		"copyright": "Copyright © 2026 Sehajveer Singh",
+		"category": "Utility",
+		"shortDescription": "A notch and dock for Windows",
+		"longDescription": "Bloom replaces the Windows taskbar with a dock and adds a notch for media, quick controls and status.",
+		"windows": {
+			"webviewInstallMode": {
+				"type": "embedBootstrapper"
+			}
+		},
 		"icon": [
 			"icons/32x32.png",
 			"icons/128x128.png",

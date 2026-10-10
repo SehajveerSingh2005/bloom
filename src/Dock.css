@@ -235,6 +235,16 @@ body {
 	gap: 12px;
 }
 
+.dock-app-divider {
+	width: 1px;
+	height: 26px;
+	flex: none;
+	margin: 0 2px;
+	border-radius: 1px;
+	background: color-mix(in srgb, var(--bloom-text, white) 24%, transparent);
+	pointer-events: none;
+}
+
 .dock::before,
 .dock::after {
 	content: "";
@@ -811,4 +821,10 @@ body {
 	pointer-events: none;
 	white-space: nowrap;
 	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* A tray-only app is running, but has no windows to focus or preview. */
+.window-dots .active-indicator.background-indicator {
+	background: #888;
+	box-shadow: none;
 }
