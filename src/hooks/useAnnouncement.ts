@@ -31,8 +31,7 @@ function normalize(data: unknown): Announcement | null {
 		title,
 		severity: raw.severity === "warning" ? "warning" : "info",
 		body: typeof raw.body === "string" ? raw.body.trim() : "",
-		url:
-			typeof raw.url === "string" && raw.url.startsWith("https://") ? raw.url : undefined
+		url: typeof raw.url === "string" && raw.url.startsWith("https://") ? raw.url : undefined
 	};
 }
 

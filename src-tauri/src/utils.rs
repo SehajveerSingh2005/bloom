@@ -119,6 +119,14 @@ pub fn restore_taskbar_after_crash() {
 
 #[cfg(windows)]
 pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) {
+    // Delayed AppBar and tray callbacks cannot hide Windows' taskbar after the
+    // dock has been disabled or while its tray is in use.
+    if !visible
+        && (!dock_enabled()
+            || crate::state::TRAY_INTERACTION_ACTIVE.load(std::sync::atomic::Ordering::Relaxed))
+    {
+        return;
+    }
     unsafe {
         use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETSTATE, ABM_SETSTATE, APPBARDATA};
         use windows::Win32::UI::WindowsAndMessaging::{
@@ -779,6 +787,21 @@ pub fn get_setting_str(_app: &tauri::AppHandle, key: &str) -> Option<String> {
     guard.get(key)?.as_str().map(|s| s.to_string())
 }
 
+fn dock_setting_enabled(value: Option<&serde_json::Value>) -> bool {
+    value.is_none_or(|value| value.as_str() == Some("true"))
+}
+
+/// An absent setting uses the fresh-install default; any explicit value other
+/// than the string "true" leaves Windows' taskbar in charge.
+pub fn dock_enabled() -> bool {
+    crate::state::SETTINGS_CACHE.get().is_none_or(|cache| {
+        cache
+            .lock()
+            .map(|settings| dock_setting_enabled(settings.get("bloom-dock-enabled")))
+            .unwrap_or(false)
+    })
+}
+
 /// Re-assert HWND_TOPMOST without activating the window.
 ///
 /// Tauri's `set_always_on_top(true)` calls `SetWindowPos(HWND_TOPMOST)` without
@@ -1040,5 +1063,16 @@ mod tests {
             guard.get("bloom-test").and_then(|value| value.as_str()),
             Some("true")
         );
+    }
+
+    #[test]
+    fn dock_setting_defaults_on_but_rejects_explicit_invalid_values() {
+        use super::dock_setting_enabled;
+
+        assert!(dock_setting_enabled(None));
+        assert!(dock_setting_enabled(Some(&serde_json::json!("true"))));
+        assert!(!dock_setting_enabled(Some(&serde_json::json!("false"))));
+        assert!(!dock_setting_enabled(Some(&serde_json::json!("invalid"))));
+        assert!(!dock_setting_enabled(Some(&serde_json::json!(true))));
     }
 }

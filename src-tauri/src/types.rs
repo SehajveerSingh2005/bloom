@@ -8,6 +8,15 @@ pub struct WmiMonitorBrightness {
     pub current_brightness: u8,
 }
 
+/// Raised by Windows whenever a display's brightness changes, by any means.
+#[cfg(windows)]
+#[derive(Deserialize, Debug)]
+#[serde(rename = "WmiMonitorBrightnessEvent")]
+#[serde(rename_all = "PascalCase")]
+pub struct WmiMonitorBrightnessEvent {
+    pub brightness: u8,
+}
+
 #[cfg(windows)]
 #[derive(Clone, Serialize)]
 pub struct AudioVisualizationData {
@@ -32,22 +41,12 @@ pub struct MediaInfo {
 }
 
 pub enum SystemCommand {
-    #[cfg(windows)]
-    VolumeMute,
-    #[cfg(windows)]
-    VolumeUp,
-    #[cfg(windows)]
-    VolumeDown,
     SetVolume(f32),
     MediaPlayPause,
     MediaNext,
     MediaPrevious,
     MediaSeek(i64),
     ToggleVisibility(bool),
-    #[cfg(windows)]
-    BrightnessUp,
-    #[cfg(windows)]
-    BrightnessDown,
 }
 
 #[derive(Clone, Copy, Deserialize, Debug)]

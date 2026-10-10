@@ -37,8 +37,7 @@ const manifestUrl = tag
 const expectedVersion = tag?.replace(/^v/, "");
 
 let failures = 0;
-const pass = (msg, detail = "") =>
-	console.log(`  ok    ${msg}${detail ? `  (${detail})` : ""}`);
+const pass = (msg, detail = "") => console.log(`  ok    ${msg}${detail ? `  (${detail})` : ""}`);
 const fail = (msg, detail = "") => {
 	failures += 1;
 	console.error(`  FAIL  ${msg}${detail ? `  (${detail})` : ""}`);
@@ -73,7 +72,10 @@ try {
 		manifest = await res.json();
 	}
 } catch (error) {
-	fail("manifest request", error?.name === "AbortError" ? `timed out at ${budgetSecs}s` : String(error));
+	fail(
+		"manifest request",
+		error?.name === "AbortError" ? `timed out at ${budgetSecs}s` : String(error)
+	);
 }
 
 if (manifest) {

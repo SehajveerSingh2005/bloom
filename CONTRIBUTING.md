@@ -4,8 +4,12 @@ Thanks for wanting to help. Bloom is a Windows desktop companion built with Taur
 
 ## Before you start
 
+**Issues come first.** Bloom is a small project, so unsolicited feature PRs are hard to keep up with — however good the code is.
+
 - Bugs and feature ideas go through the issue templates. They keep triage automatic.
-- For anything large (new features, refactors, new dependencies), open an issue first so we can agree on the approach before you spend time on code.
+- For anything large (new features, behavior changes, refactors, new dependencies), open an issue and wait for a maintainer to agree on the approach before writing code.
+- PRs that implement an unapproved feature may be closed without review. Please don't take it personally; it isn't a comment on your code.
+- Small fixes (typos, docs, crash fixes with an obvious cause) can go straight to a pull request with a clear description.
 
 ## Setup
 
@@ -39,6 +43,7 @@ Useful commands:
 
 ## Pull requests
 
+- Every feature or behavior-change PR must link the approved issue it implements (`Closes #123`). If there is no issue yet, open one and discuss the approach first.
 - CI must pass (frontend build, `cargo check`, clippy, CodeQL).
 - Fill in the PR template: what changed, which issue it closes, and how you tested it.
 - Keep the diff readable. Unrelated cleanups belong in a separate PR.

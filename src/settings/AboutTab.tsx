@@ -122,7 +122,6 @@ export function AboutTab({
 					onClick={handleImportSettings}
 				/>
 			</div>
-
 		</div>
 	);
 }

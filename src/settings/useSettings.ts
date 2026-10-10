@@ -72,6 +72,9 @@ export function useSettings() {
 	const [dockIconOnly, setDockIconOnly] = useState(
 		() => localStorage.getItem("bloom-dock-icon-only") === "true"
 	);
+	const [dockSeparatorEnabled, setDockSeparatorEnabled] = useState(
+		() => localStorage.getItem("bloom-dock-separator-enabled") !== "false"
+	);
 	const [startIcon, setStartIcon] = useState(
 		() => localStorage.getItem("bloom-start-icon") || "default"
 	);
@@ -168,6 +171,7 @@ export function useSettings() {
 			apply(getVal("bloom-dock-enabled"), setDockEnabled, readBool);
 			apply(getVal("bloom-dock-preview-enabled"), setDockPreviewEnabled, readBool);
 			apply(getVal("bloom-dock-icon-only"), setDockIconOnly, readBool);
+			apply(getVal("bloom-dock-separator-enabled"), setDockSeparatorEnabled, readBool);
 			apply(getVal("bloom-start-icon"), setStartIcon, (v) => v);
 			apply(getVal("bloom-dock-adaptive"), setDockAdaptive, readBool);
 			apply(getVal("bloom-dock-win-number-enabled"), setDockWinNumberEnabled, readBool);
@@ -225,6 +229,7 @@ export function useSettings() {
 		"bloom-notch-edge-delay": setNotchEdgeDelay,
 		"bloom-dock-enabled": setDockEnabled,
 		"bloom-dock-icon-only": setDockIconOnly,
+		"bloom-dock-separator-enabled": setDockSeparatorEnabled,
 		"bloom-start-icon": setStartIcon,
 		"bloom-dock-preview-enabled": setDockPreviewEnabled,
 		"bloom-dock-adaptive": setDockAdaptive,
@@ -503,6 +508,12 @@ export function useSettings() {
 		const next = !dockIconOnly;
 		setDockIconOnly(next);
 		saveSetting("bloom-dock-icon-only", String(next));
+	};
+
+	const toggleDockSeparator = () => {
+		const next = !dockSeparatorEnabled;
+		setDockSeparatorEnabled(next);
+		saveSetting("bloom-dock-separator-enabled", String(next));
 	};
 
 	const handleStartIconChange = (icon: string) => {
@@ -810,6 +821,8 @@ export function useSettings() {
 		toggleDockPreview,
 		dockIconOnly,
 		toggleDockIconOnly,
+		dockSeparatorEnabled,
+		toggleDockSeparator,
 		startIcon,
 		handleStartIconChange,
 		dockAdaptive,

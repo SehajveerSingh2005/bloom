@@ -207,6 +207,41 @@ img {
 	position: relative;
 }
 
+/* Panel arrows beside the time, shown once the open notch is clicked */
+.panel-arrow {
+	position: absolute;
+	top: 50%;
+	margin-top: -9px;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.7));
+	cursor: pointer;
+	z-index: 11;
+	transition:
+		background 0.15s ease,
+		color 0.15s ease;
+}
+
+.panel-arrow:hover {
+	background: rgba(255, 255, 255, 0.12);
+	color: var(--bloom-text, white);
+}
+
+.panel-arrow.prev {
+	right: calc(100% + 4px);
+}
+
+.panel-arrow.next {
+	left: calc(100% + 4px);
+}
+
 .time-flip-container {
 	min-width: 60px;
 	height: 24px;

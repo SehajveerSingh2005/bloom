@@ -9,6 +9,8 @@ mod glass;
 mod linux;
 mod services;
 mod state;
+#[cfg(windows)]
+mod tray;
 mod types;
 mod updater;
 mod utils;
@@ -143,6 +145,14 @@ fn main() {
             set_notch_hovered,
             set_notch_visible,
             get_active_windows,
+            #[cfg(windows)]
+            get_tray_apps,
+            #[cfg(windows)]
+            show_tray_context_menu,
+            #[cfg(windows)]
+            activate_tray_icon,
+            #[cfg(windows)]
+            open_system_action,
             get_app_icon,
             get_installed_apps,
             save_pinned_apps,
@@ -393,8 +403,7 @@ fn main() {
             trigger_app_scan();
             let tx = setup_system_worker(app.handle().clone());
             let _ = COMMAND_SENDER.set(tx.clone());
-            #[cfg_attr(target_os = "linux", allow(clippy::let_unit_value))]
-            let _hook = services::setup_keyboard_hook(app.handle().clone());
+            services::setup_keyboard_hook(app.handle().clone());
             setup_taskbar_hook();
             setup_audio_visualization(app.handle().clone());
             setup_settings_watcher(app.handle().clone());

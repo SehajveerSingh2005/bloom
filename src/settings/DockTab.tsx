@@ -4,6 +4,7 @@ import {
 	Eye,
 	EyeOff,
 	Circle,
+	Columns2,
 	Maximize2,
 	Keyboard,
 	Sparkles,
@@ -43,6 +44,8 @@ interface DockTabProps {
 	toggleDockPreview: () => void;
 	dockIconOnly: boolean;
 	toggleDockIconOnly: () => void;
+	dockSeparatorEnabled: boolean;
+	toggleDockSeparator: () => void;
 	dockAdaptive: boolean;
 	toggleDockAdaptive: () => void;
 	dockWinNumberEnabled: boolean;
@@ -60,6 +63,8 @@ export function DockTab({
 	toggleDockPreview,
 	dockIconOnly,
 	toggleDockIconOnly,
+	dockSeparatorEnabled,
+	toggleDockSeparator,
 	dockAdaptive,
 	toggleDockAdaptive,
 	dockWinNumberEnabled,
@@ -118,10 +123,20 @@ export function DockTab({
 							icon={Circle}
 							label="Icon Only"
 							desc="Remove icon background and padding"
-							divider={false}
 						>
 							<label className="toggle-switch">
 								<input type="checkbox" checked={dockIconOnly} onChange={toggleDockIconOnly} />
+								<span className="slider"></span>
+							</label>
+						</SettingRow>
+
+						<SettingRow
+							icon={Columns2}
+							label="App Separator"
+							desc="Show a divider before unpinned apps"
+						>
+							<label className="toggle-switch">
+								<input type="checkbox" checked={dockSeparatorEnabled} onChange={toggleDockSeparator} />
 								<span className="slider"></span>
 							</label>
 						</SettingRow>

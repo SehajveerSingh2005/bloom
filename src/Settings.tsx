@@ -117,11 +117,7 @@ function SettingsApp() {
 									Learn more
 								</button>
 							)}
-							<button
-								className="announcement-banner-close"
-								onClick={dismiss}
-								title="Dismiss"
-							>
+							<button className="announcement-banner-close" onClick={dismiss} title="Dismiss">
 								<X size={12} strokeWidth={2.2} />
 							</button>
 						</div>
@@ -208,6 +204,8 @@ function SettingsApp() {
 							toggleDockPreview={settings.toggleDockPreview}
 							dockIconOnly={settings.dockIconOnly}
 							toggleDockIconOnly={settings.toggleDockIconOnly}
+							dockSeparatorEnabled={settings.dockSeparatorEnabled}
+							toggleDockSeparator={settings.toggleDockSeparator}
 							dockAdaptive={settings.dockAdaptive}
 							toggleDockAdaptive={settings.toggleDockAdaptive}
 							dockWinNumberEnabled={settings.dockWinNumberEnabled}

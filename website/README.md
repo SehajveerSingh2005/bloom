@@ -80,11 +80,11 @@ Publish one by replacing the contents:
 
 ```json
 {
-  "id": "2026-09-26-updater-manual-update",
-  "severity": "warning",
-  "title": "Update checks may fail on some networks",
-  "body": "Bloom 3.8.7 and 3.9.0 can time out reaching GitHub. If no update is found, install the latest release manually.",
-  "url": "https://github.com/SehajveerSingh2005/bloom/releases/latest"
+	"id": "2026-09-26-updater-manual-update",
+	"severity": "warning",
+	"title": "Update checks may fail on some networks",
+	"body": "Bloom 3.8.7 and 3.9.0 can time out reaching GitHub. If no update is found, install the latest release manually.",
+	"url": "https://github.com/SehajveerSingh2005/bloom/releases/latest"
 }
 ```
 

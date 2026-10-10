@@ -229,7 +229,9 @@ export function useWeather(enabled: boolean) {
 				if (location.city) {
 					setCityName(location.city);
 					localStorage.setItem("bloom-weather-city", location.city);
-					invoke("save_setting", { key: "bloom-weather-city", value: location.city }).catch(() => {});
+					invoke("save_setting", { key: "bloom-weather-city", value: location.city }).catch(
+						() => {}
+					);
 				}
 			} catch (e) {
 				console.warn("Weather fetch failed:", e);

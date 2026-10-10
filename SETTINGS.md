@@ -19,21 +19,22 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 
 ### Dock
 
-| Key                             | Type                             | Default   | Description                                                                                                                                                                      |
-| ------------------------------- | -------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bloom-dock-enabled`            | `"true"` / `"false"`             | `"true"`  | Show or hide the Bloom Dock (taskbar replacement).                                                                                                                               |
-| `bloom-dock-mode`               | `"fixed"` / `"smart"` / `"peek"` | `"smart"` | Dock visibility behavior. **fixed** = always visible as AppBar. **smart** = auto-hide when overlapped by fullscreen apps. **peek** = hidden until cursor approaches bottom edge. |
-| `bloom-dock-preview-enabled`    | `"true"` / `"false"`             | `"true"`  | Show window thumbnail previews when hovering dock icons.                                                                                                                         |
-| `bloom-dock-icon-only`          | `"true"` / `"false"`             | `"false"` | Minimal icon-only style (no background/padding around icons).                                                                                                                    |
+| Key                             | Type                             | Default     | Description                                                                                                                                                                      |
+| ------------------------------- | -------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bloom-dock-enabled`            | `"true"` / `"false"`             | `"true"`    | Show or hide the Bloom Dock (taskbar replacement).                                                                                                                               |
+| `bloom-dock-mode`               | `"fixed"` / `"smart"` / `"peek"` | `"smart"`   | Dock visibility behavior. **fixed** = always visible as AppBar. **smart** = auto-hide when overlapped by fullscreen apps. **peek** = hidden until cursor approaches bottom edge. |
+| `bloom-dock-preview-enabled`    | `"true"` / `"false"`             | `"true"`    | Show window thumbnail previews when hovering dock icons.                                                                                                                         |
+| `bloom-dock-icon-only`          | `"true"` / `"false"`             | `"false"`   | Minimal icon-only style (no background/padding around icons).                                                                                                                    |
+| `bloom-dock-separator-enabled`  | `"true"` / `"false"`             | `"true"`    | Show a divider between pinned and unpinned dock apps when unpinned apps are present. Unpinned apps remain on the right when disabled.                                               |
 | `bloom-start-icon`              | icon key / `custom:<data URI>`   | `"default"` | Start button icon: `default`, `bloom-colorful`, `bloom-golden`, `bloom-biscuit`, `windows`, or `custom:` followed by an uploaded image's data URI.                               |
-| `bloom-dock-adaptive`           | `"true"` / `"false"`             | `"false"` | Fixed dock only. Stretch the dock to full width like a traditional taskbar while a window is maximized, and contract back when it's restored.                                    |
-| `bloom-dock-win-number-enabled` | `"true"` / `"false"`             | `"true"`  | When the taskbar is replaced, Win+1 through Win+9 activate the matching pinned dock app (focus/minimize if running, launch otherwise) instead of the native taskbar slots.       |
+| `bloom-dock-adaptive`           | `"true"` / `"false"`             | `"false"`   | Fixed dock only. Stretch the dock to full width like a traditional taskbar while a window is maximized, and contract back when it's restored.                                    |
+| `bloom-dock-win-number-enabled` | `"true"` / `"false"`             | `"true"`    | When the taskbar is replaced, Win+1 through Win+9 activate the matching pinned dock app (focus/minimize if running, launch otherwise) instead of the native taskbar slots.       |
 
 ### Notch
 
-| Key                      | Type                             | Default   | Description                                                                                                                  |
-| ------------------------ | -------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `bloom-notch-mode`       | `"fixed"` / `"smart"` / `"peek"` | `"fixed"` | Notch (top bar) visibility behavior. Same modes as dock. **peek** shows the notch briefly on media events and notifications. |
+| Key                      | Type                             | Default   | Description                                                                                                                    |
+| ------------------------ | -------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `bloom-notch-mode`       | `"fixed"` / `"smart"` / `"peek"` | `"fixed"` | Notch (top bar) visibility behavior. Same modes as dock. **peek** shows the notch briefly on media events and notifications.   |
 | `bloom-notch-edge-delay` | milliseconds `"0"`–`"2000"`      | `"200"`   | In smart/peek mode, how long the cursor must rest against the top screen edge before the notch peeks. `"0"` reveals instantly. |
 
 ### Weather
@@ -138,14 +139,14 @@ Example:
 
 ### System
 
-| Key                           | Type                 | Default   | Description                                                                                          |
-| ----------------------------- | -------------------- | --------- | ---------------------------------------------------------------------------------------------------- |
-| `bloom-scale`                 | float string         | `"1.0"`   | UI scale factor (0.8 to 1.3). Changing this re-registers AppBars to resize the reserved screen area. |
-| `bloom-low-battery-threshold` | integer string       | `"20"`    | Battery percentage that triggers the low-battery alert pulse (5 to 50, step 5).                      |
-| `bloom-auto-update`           | `"true"` / `"false"` | `"false"` | Check for and download updates automatically on startup.                                             |
-| `bloom-show-update-indicator` | `"true"` / `"false"` | `"true"`  | Show a green dot on the notch when an update is available.                                           |
+| Key                            | Type                 | Default   | Description                                                                                          |
+| ------------------------------ | -------------------- | --------- | ---------------------------------------------------------------------------------------------------- |
+| `bloom-scale`                  | float string         | `"1.0"`   | UI scale factor (0.8 to 1.3). Changing this re-registers AppBars to resize the reserved screen area. |
+| `bloom-low-battery-threshold`  | integer string       | `"20"`    | Battery percentage that triggers the low-battery alert pulse (5 to 50, step 5).                      |
+| `bloom-auto-update`            | `"true"` / `"false"` | `"false"` | Check for and download updates automatically on startup.                                             |
+| `bloom-show-update-indicator`  | `"true"` / `"false"` | `"true"`  | Show a green dot on the notch when an update is available.                                           |
 | `bloom-announcement-dismissed` | announcement id      | `""`      | ID of the last dismissed in-app announcement (published via `website/public/announcements.json`).    |
-| `bloom-time-format-24h`       | `"true"` / `"false"` | `"false"` | Use 24-hour clock format in the notch. When `"false"`, displays 12-hour format with AM/PM.           |
+| `bloom-time-format-24h`        | `"true"` / `"false"` | `"false"` | Use 24-hour clock format in the notch. When `"false"`, displays 12-hour format with AM/PM.           |
 
 ### Internal (Do Not Edit Manually)
 

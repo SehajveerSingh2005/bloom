@@ -24,11 +24,16 @@ const mirroredAtStartup = Object.keys(localStorage).filter((key) => key.startsWi
  */
 export async function reloadIfMirrorWasStale(settings: Record<string, unknown> | null | undefined) {
 	const fileKeys = Object.keys(settings ?? {}).filter((key) => key.startsWith("bloom-"));
-	const stale = mirroredAtStartup.filter((key) => !fileKeys.includes(key) && !LOCAL_ONLY_KEYS.has(key));
+	const stale = mirroredAtStartup.filter(
+		(key) => !fileKeys.includes(key) && !LOCAL_ONLY_KEYS.has(key)
+	);
 	if (stale.length === 0) return false;
 	// A missing or unreadable settings.json also loads as {}. Then localStorage
 	// is still the only copy (installs from before settings.json), so keep it.
-	if (fileKeys.length === 0 && !(await invoke<boolean>("settings_file_readable").catch(() => false))) {
+	if (
+		fileKeys.length === 0 &&
+		!(await invoke<boolean>("settings_file_readable").catch(() => false))
+	) {
 		return false;
 	}
 	stale.forEach((key) => localStorage.removeItem(key));
