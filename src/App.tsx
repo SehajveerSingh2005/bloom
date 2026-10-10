@@ -23,7 +23,7 @@ import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
 import { useAnnouncement } from "./hooks/useAnnouncement";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
-import { openUrl, openPath } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { WidgetConfig } from "./components/StatusWidgetConfig";
@@ -38,6 +38,7 @@ import {
 	RotateCcw,
 	Megaphone,
 	File,
+	Type,
 	X
 } from "lucide-react";
 
@@ -985,10 +986,18 @@ function App() {
 			setIsEdgeHovered(event.payload);
 		});
 
+		// The backend emits this when the window flips to click-through while
+		// the webview still thinks the pointer is inside the notch (it cannot
+		// receive the mouseleave once the window is click-through).
+		const unlistenNotchPointerLeft = listen("notch-pointer-left", () => {
+			releaseNotchHover();
+		});
+
 		return () => {
 			unlistenVisibility.then((f) => f());
 			unlistenNotchOverlap.then((f) => f());
 			unlistenNotchEdgeHover.then((f) => f());
+			unlistenNotchPointerLeft.then((f) => f());
 			document.removeEventListener("contextmenu", preventContext);
 		};
 	}, [windowLabel]);
@@ -1143,6 +1152,21 @@ function App() {
 		}
 	}, [shelfItems, shelfThumbs]);
 
+	// Drop cached thumbnails for items that left the shelf so the cache cannot
+	// grow without bound over a long session (each entry is a data URI).
+	useEffect(() => {
+		const current = new Set(shelfItems.filter((i) => i.path).map((i) => i.path as string));
+		setShelfThumbs((prev) => {
+			const keys = Object.keys(prev);
+			if (keys.every((k) => current.has(k))) return prev;
+			const next: Record<string, string | null> = {};
+			for (const k of keys) {
+				if (current.has(k)) next[k] = prev[k];
+			}
+			return next;
+		});
+	}, [shelfItems]);
+
 	// Native drag preview for items without a thumbnail.
 	const [shelfDragIcon, setShelfDragIcon] = useState<string | null>(null);
 	useEffect(() => {
@@ -1160,6 +1184,9 @@ function App() {
 	// When a drag ends on the notch itself the drop listener re-stashes the
 	// item; remember when that happened so the drag callback does not remove it.
 	const shelfSelfDropAtRef = useRef(0);
+	// True while our own drag-out is running, so the drag-enter we receive when
+	// it starts over the notch does not flash the hover outline or re-open it.
+	const shelfSelfDragRef = useRef(false);
 	const handleShelfPointerDown = (e: React.PointerEvent<HTMLDivElement>, item: ShelfItem) => {
 		if (e.button !== 0) return;
 		// Text items have no native drag-out; a click copies them.
@@ -1177,21 +1204,41 @@ function App() {
 		if (Math.hypot(e.clientX - st.x, e.clientY - st.y) < 6) return;
 		if (!item.path) return;
 		const path = item.path;
-		st.dragging = true;
 		const icon = shelfThumbs[path] ?? shelfDragIcon;
 		if (!icon) return;
+		st.dragging = true;
+		// Picking an item up is a deliberate act; don't let the post-drop
+		// auto-close fire mid-drag.
+		clearShelfCollapse();
+		shelfSelfDragRef.current = true;
+		let droppedOnSelf = false;
 		startDrag({ item: [path], icon }, (payload) => {
 			// Picked up and dropped somewhere — it leaves the shelf. Unless it
 			// was dropped back onto the notch, which re-stashes it.
-			const droppedOnSelf = Date.now() - shelfSelfDropAtRef.current < 800;
+			droppedOnSelf = Date.now() - shelfSelfDropAtRef.current < 800;
 			if (payload?.result === "Dropped" && !droppedOnSelf) removeShelfItem(item.id);
-		}).catch((err) => console.error("[shelf] drag out failed:", path, err));
+		})
+			.catch((err) => console.error("[shelf] drag out failed:", path, err))
+			.finally(() => {
+				shelfSelfDragRef.current = false;
+				// The native drag owns the pointer, so the webview never sees
+				// it leave the notch. Clear the hover flags or peek/smart mode
+				// stays stuck expanded; the command also makes the backend
+				// re-evaluate its edge-hover state immediately.
+				if (!droppedOnSelf) {
+					setIsHovered(false);
+					setIsNotchHovered(false);
+					invoke("set_notch_hovered", { hovered: false }).catch(() => {});
+				}
+			});
 	};
 	const handleShelfTileClick = (e: React.MouseEvent<HTMLDivElement>, item: ShelfItem) => {
 		e.stopPropagation();
 		const st = shelfPointerRef.current;
 		shelfPointerRef.current = null;
-		if (st?.dragging) return;
+		// Only this tile's own drag suppresses the click; a stale flag from a
+		// previous tile's drag-out must not swallow it.
+		if (st && st.id === item.id && st.dragging) return;
 		openShelfItem(item);
 	};
 
@@ -1231,6 +1278,23 @@ function App() {
 	shelfRestingModeRef.current =
 		mediaInfo.has_media && isPlaying && settingsMusicCompactNotch ? "music" : "status";
 
+	// Shared hover-release, called on DOM hover end and when the backend
+	// reports the pointer left the (now click-through) notch window. Clears
+	// the hover flags and folds hover-only panels back to the resting mode.
+	const releaseNotchHover = () => {
+		setIsHovered(false);
+		setIsNotchHovered(false);
+		setBloomMode((prev) =>
+			prev === "music" ||
+			prev === "command-center" ||
+			prev === "calendar" ||
+			prev === "status" ||
+			prev === "shelf"
+				? shelfRestingModeRef.current
+				: prev
+		);
+	};
+
 	const clearShelfCollapse = () => {
 		if (shelfCollapseTimer.current !== null) {
 			window.clearTimeout(shelfCollapseTimer.current);
@@ -1261,6 +1325,15 @@ function App() {
 	// the current list.
 	const shelfItemsRef = useRef<ShelfItem[]>(shelfItems);
 	shelfItemsRef.current = shelfItems;
+	// Tiles that were just added get an entrance animation; ones restored when
+	// the panel reopens do not (the panel itself already fades in).
+	const shelfNewIdsRef = useRef<Set<string>>(new Set());
+	const markShelfNew = (ids: string[]) => {
+		for (const id of ids) shelfNewIdsRef.current.add(id);
+		window.setTimeout(() => {
+			for (const id of ids) shelfNewIdsRef.current.delete(id);
+		}, 900);
+	};
 	const [shelfNotice, setShelfNotice] = useState<string | null>(null);
 	const shelfNoticeTimer = useRef<number | null>(null);
 	const showShelfNotice = (message: string) => {
@@ -1298,7 +1371,9 @@ function App() {
 		if (fresh.length > room) {
 			showShelfNotice(`Shelf is full — added ${room} of ${fresh.length} items`);
 		}
-		setShelfItems([...fresh.slice(0, room), ...prev]);
+		const added = fresh.slice(0, room);
+		markShelfNew(added.map((i) => i.id));
+		setShelfItems([...added, ...prev]);
 	};
 
 	const addShelfText = (text: string) => {
@@ -1308,20 +1383,20 @@ function App() {
 			showShelfNotice(`Shelf is full (${SHELF_MAX_ITEMS}) — remove an item first`);
 			return;
 		}
-		setShelfItems([
-			{
-				id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-				type: "text",
-				name: text.trim().replace(/\s+/g, " ").slice(0, 48),
-				text,
-				timestamp: Date.now()
-			},
-			...prev
-		]);
+		const item: ShelfItem = {
+			id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			type: "text",
+			name: text.trim().replace(/\s+/g, " ").slice(0, 48),
+			text,
+			timestamp: Date.now()
+		};
+		markShelfNew([item.id]);
+		setShelfItems([item, ...prev]);
 	};
 
 	// Files open in their default app; text items are copied to the clipboard
-	// so they can be pasted anywhere.
+	// so they can be pasted anywhere. A file that no longer exists is reported
+	// and dropped from the shelf.
 	const openShelfItem = (item: ShelfItem) => {
 		if (item.type === "text") {
 			if (!item.text) return;
@@ -1331,7 +1406,19 @@ function App() {
 			return;
 		}
 		if (item.path) {
-			openPath(item.path).catch((e) => console.error("[shelf] open failed:", item.path, e));
+			const path = item.path;
+			invoke("shelf_open", { path }).catch(async (e) => {
+				console.error("[shelf] open failed:", path, e);
+				// Only a confirmed-missing file leaves the shelf; a transient
+				// failure (e.g. no association) must not remove it.
+				const alive = await invoke<string[]>("shelf_prune", { paths: [path] }).catch(() => null);
+				if (alive && alive.length === 0) {
+					showShelfNotice("File no longer exists — removed from shelf");
+					removeShelfItem(item.id);
+				} else {
+					showShelfNotice("Couldn't open the file");
+				}
+			});
 		}
 	};
 
@@ -1348,6 +1435,9 @@ function App() {
 		let cancelled = false;
 
 		const enter = (event: { payload: { paths?: string[]; text?: string } }) => {
+			// Our own drag-out starts with the cursor over the notch; ignore
+			// the enter it causes instead of flashing the hover state.
+			if (shelfSelfDragRef.current) return;
 			console.info("[shelf] drag-enter:", event.payload.paths ?? event.payload.text);
 			setIsDragHovering(true);
 			setBloomMode((prev) => {
@@ -1393,9 +1483,7 @@ function App() {
 			})
 			.catch((e) => console.error("[shelf] drag-drop listener failed:", e));
 
-		invoke("setup_shelf_drop").catch((e) =>
-			console.error("[shelf] drop target setup failed:", e)
-		);
+		invoke("setup_shelf_drop").catch((e) => console.error("[shelf] drop target setup failed:", e));
 
 		return () => {
 			cancelled = true;
@@ -1424,7 +1512,11 @@ function App() {
 	const lastScrollTime = useRef(0);
 	const handleWheel = (e: React.WheelEvent) => {
 		const target = e.target as HTMLElement;
-		if (target.closest(".calendar-grid") || target.closest(".timer-column") || target.closest(".shelf-items-grid")) {
+		if (
+			target.closest(".calendar-grid") ||
+			target.closest(".timer-column") ||
+			target.closest(".shelf-items-grid")
+		) {
 			return;
 		}
 
@@ -2349,32 +2441,18 @@ function App() {
 					onClick={(e) => {
 						e.stopPropagation();
 					}}
-				onHoverStart={() => {
-					setIsHovered(true);
-					// Shelf and announcement manage their own lifetime — hovering
-					// must not yank the island out from under them. Hovering the
-					// shelf also cancels its post-drop auto-close.
-					if (bloomMode === "shelf") {
-						clearShelfCollapse();
-					} else if (bloomMode !== "announcement") {
-						setBloomMode(mediaInfo.has_media && isPlaying ? "music" : "status");
-					}
-				}}
-				onHoverEnd={() => {
-					setIsHovered(false);
-					const targetMode =
-						mediaInfo.has_media && isPlaying && settingsMusicCompactNotch ? "music" : "status";
-					if (bloomMode === "music") {
-						setBloomMode(targetMode);
-					} else if (
-						bloomMode === "command-center" ||
-						bloomMode === "calendar" ||
-						bloomMode === "status" ||
-						bloomMode === "shelf"
-					) {
-						setBloomMode(targetMode);
-					}
-				}}
+					onHoverStart={() => {
+						setIsHovered(true);
+						// Shelf and announcement manage their own lifetime — hovering
+						// must not yank the island out from under them. Hovering the
+						// shelf also cancels its post-drop auto-close.
+						if (bloomMode === "shelf") {
+							clearShelfCollapse();
+						} else if (bloomMode !== "announcement") {
+							setBloomMode(mediaInfo.has_media && isPlaying ? "music" : "status");
+						}
+					}}
+					onHoverEnd={releaseNotchHover}
 					style={{ originY: 0 }}
 					transition={{
 						width: { type: "spring", stiffness: 400, damping: 31 },
@@ -3323,40 +3401,78 @@ function App() {
 												</div>
 											) : (
 												<div className="shelf-items-grid" onWheel={handleShelfWheel}>
-													{shelfItems.map((item) => {
-														const thumb = item.path ? shelfThumbs[item.path] : undefined;
-														return (
-															<div
-																key={item.id}
-																className="shelf-tile"
-																title={item.type === "text" ? item.text : item.path}
-																onPointerDown={(e) => handleShelfPointerDown(e, item)}
-																onPointerMove={(e) => handleShelfPointerMove(e, item)}
-																onClick={(e) => handleShelfTileClick(e, item)}
-															>
-																<div className="shelf-tile-preview">
-																	{item.type === "text" ? (
-																		<div className="shelf-tile-text">{item.text}</div>
-																	) : thumb ? (
-																		<img src={thumb} alt="" draggable={false} />
-																	) : (
-																		<File size={26} strokeWidth={1.75} />
-																	)}
-																</div>
-																<span className="shelf-tile-name">{item.name}</span>
-																<button
-																	className="shelf-tile-remove"
-																	title="Remove from shelf"
-																	onClick={(e) => {
-																		e.stopPropagation();
-																		removeShelfItem(item.id);
+													<AnimatePresence mode="popLayout">
+														{shelfItems.map((item) => {
+															const thumb = item.path ? shelfThumbs[item.path] : undefined;
+															return (
+																<motion.div
+																	key={item.id}
+																	layout
+																	initial={
+																		shelfNewIdsRef.current.has(item.id)
+																			? { opacity: 0, scale: 0.82 }
+																			: false
+																	}
+																	animate={{ opacity: 1, scale: 1 }}
+																	exit={{
+																		opacity: 0,
+																		scale: 0.82,
+																		transition: { duration: 0.16, ease: "easeOut" }
 																	}}
+																	transition={{
+																		type: "spring",
+																		stiffness: 520,
+																		damping: 38,
+																		mass: 0.7
+																	}}
+																	className={`shelf-tile ${item.type === "text" ? "is-text" : ""}`}
+																	title={item.type === "text" ? item.text : item.path}
+																	onPointerDown={(e) => handleShelfPointerDown(e, item)}
+																	onPointerMove={(e) => handleShelfPointerMove(e, item)}
+																	onClick={(e) => handleShelfTileClick(e, item)}
 																>
-																	<X size={11} strokeWidth={2.5} />
-																</button>
-															</div>
-														);
-													})}
+																	<div className="shelf-tile-preview">
+																		{item.type === "text" ? (
+																			<div className="shelf-tile-text">
+																				<Type
+																					size={11}
+																					strokeWidth={2}
+																					className="shelf-tile-text-icon"
+																				/>
+																				<span className="shelf-tile-text-body">{item.text}</span>
+																			</div>
+																		) : (
+																			<>
+																				<div className="shelf-tile-placeholder">
+																					{thumb === null ? (
+																						<File size={26} strokeWidth={1.75} />
+																					) : null}
+																				</div>
+																				{thumb ? (
+																					<img src={thumb} alt="" draggable={false} />
+																				) : null}
+																			</>
+																		)}
+																	</div>
+																	<span className="shelf-tile-name">
+																		{item.type === "text"
+																			? `Text · ${item.text?.length ?? 0} chars`
+																			: item.name}
+																	</span>
+																	<button
+																		className="shelf-tile-remove"
+																		title="Remove from shelf"
+																		onClick={(e) => {
+																			e.stopPropagation();
+																			removeShelfItem(item.id);
+																		}}
+																	>
+																		<X size={11} strokeWidth={2.5} />
+																	</button>
+																</motion.div>
+															);
+														})}
+													</AnimatePresence>
 												</div>
 											)}
 										</motion.div>

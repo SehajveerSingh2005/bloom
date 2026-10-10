@@ -28,8 +28,12 @@ pub async fn set_dock_hovered(hovered: bool) {
 }
 
 #[tauri::command]
-pub async fn set_notch_hovered(hovered: bool) {
+pub async fn set_notch_hovered(app: AppHandle, hovered: bool) {
     NOTCH_IS_HOVERED.store(hovered, Ordering::Relaxed);
+    // Re-evaluate right away. During a native drag the webview never sees the
+    // pointer leave, so waiting for the next mouse move can leave the notch
+    // (and its edge-hover state) stuck expanded in peek/smart mode.
+    crate::services::refresh_main_interaction(&app);
 }
 
 #[tauri::command]
@@ -69,7 +73,18 @@ pub async fn shelf_thumbnail(path: String) -> Option<String> {
         return None;
     }
 
-    let img = image::open(p).ok()?;
+    // Decode with dimension/allocation caps: a small, highly compressed file
+    // can still expand into a huge bitmap.
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    let mut reader = image::ImageReader::open(p)
+        .ok()?
+        .with_guessed_format()
+        .ok()?;
+    reader.limits(limits);
+    let img = reader.decode().ok()?;
     let thumb = img.thumbnail(256, 256);
     let mut png_bytes: Vec<u8> = Vec::new();
     thumb
@@ -80,6 +95,14 @@ pub async fn shelf_thumbnail(path: String) -> Option<String> {
         .ok()?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
     Some(format!("data:image/png;base64,{}", b64))
+}
+
+/// Opens a shelf file in its default app. Uses the opener plugin's Rust API
+/// directly: its JS `open_path` command additionally requires a path scope,
+/// which an empty capability would deny for every file.
+#[tauri::command]
+pub async fn shelf_open(path: String) -> Result<(), String> {
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| e.to_string())
 }
 
 /// Drops shelf entries whose files no longer exist (moved, deleted, drive

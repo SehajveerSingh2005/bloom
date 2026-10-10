@@ -126,6 +126,7 @@ fn main() {
             shelf_thumbnail,
             shelf_drag_icon,
             shelf_prune,
+            shelf_open,
             get_active_windows,
             get_app_icon,
             get_installed_apps,

@@ -58,8 +58,8 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 
 ### Shelf
 
-| Key                   | Type                 | Default   | Description                                                                                             |
-| --------------------- | -------------------- | --------- | ------------------------------------------------------------------------------------------------------- |
+| Key                   | Type                 | Default   | Description                                                                                                    |
+| --------------------- | -------------------- | --------- | -------------------------------------------------------------------------------------------------------------- |
 | `bloom-shelf-persist` | `"true"` / `"false"` | `"false"` | Keep notch shelf items across restarts. Off = items are cleared when Bloom closes. Max 10 items, newest first. |
 
 ### Music Appearance

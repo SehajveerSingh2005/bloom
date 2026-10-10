@@ -2168,6 +2168,19 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
+/// Re-runs notch hit-testing immediately. Called when the frontend's hover
+/// flag changes so edge-hover state cannot go stale while the cursor is
+/// stationary — a native drag-out ends with the pointer outside the notch but
+/// the webview never saw it leave.
+pub fn refresh_main_interaction(app_handle: &AppHandle) {
+    let mut pt = windows::Win32::Foundation::POINT::default();
+    if unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt) }.is_err() {
+        return;
+    }
+    let fg_fs = CURRENT_FOREGROUND_FULLSCREEN.load(Ordering::Relaxed);
+    update_main_interaction(app_handle, pt, now_ms(), fg_fs);
+}
+
 /// True while a screen-capture UI (Windows Snipping Tool) has a visible window.
 /// Bloom's notch sits exactly where that toolbar lives, so it must get out of
 /// the way even if the capture window isn't recognised as fullscreen.
@@ -2369,6 +2382,11 @@ fn update_main_interaction(
         if MH_LAST_TOP_EDGE_HOVER.swap(0, Ordering::Relaxed) != 0 {
             let _ = app_handle.emit("notch-edge-hover", false);
         }
+        // Bloom is fully click-through here, so the webview cannot clear its
+        // own hover state; do it for it.
+        if NOTCH_IS_HOVERED.swap(false, Ordering::Relaxed) {
+            let _ = app_handle.emit("notch-pointer-left", ());
+        }
         return;
     }
 
@@ -2483,29 +2501,24 @@ fn update_main_interaction(
         }
         let _ = main_win.set_ignore_cursor_events(final_ignore);
         MH_LAST_MAIN_IGNORE.store(new_ignore, Ordering::Relaxed);
+        // Once the window is click-through the webview can never receive the
+        // mouseleave that would clear its hover state (it may already have
+        // missed it if the pointer left in the same frame). Tell it explicitly
+        // or the notch stays expanded in peek/smart mode.
+        if new_ignore == 1 && NOTCH_IS_HOVERED.swap(false, Ordering::Relaxed) {
+            let _ = app_handle.emit("notch-pointer-left", ());
+        }
     }
 }
 
-/// Completes a pending top-edge dwell while the cursor is stationary. The mouse
-/// hook only fires on movement, so without this an intentional "rest on the top
-/// edge" gesture would never arm.
+/// Keeps notch hit-testing fresh while the cursor is stationary: completes a
+/// pending top-edge dwell, forces interactivity during a held-button drag, and
+/// catches boundary crossings the movement-only hook misses (so the click-
+/// through flip — and its hover-clear — always happens).
 fn setup_top_edge_watchdog(app_handle: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(TOP_EDGE_POLL_MS));
         if CAPTURE_UI_ACTIVE.load(Ordering::Relaxed) || SHUTTING_DOWN.load(Ordering::Relaxed) {
-            continue;
-        }
-        let dwell_pending = MH_TOP_EDGE_ENTER_MS.load(Ordering::Relaxed) != 0
-            && !MH_TOP_EDGE_ARMED.load(Ordering::Relaxed);
-        // The low-level hook can miss moves while another process runs an OLE
-        // drag loop, so also poll whenever the left button is held: a drag
-        // hovering the notch needs the window to flip interactive before the
-        // drop target becomes reachable.
-        let drag_held = unsafe {
-            use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-            (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0
-        };
-        if !dwell_pending && !drag_held {
             continue;
         }
         let mut pt = windows::Win32::Foundation::POINT::default();

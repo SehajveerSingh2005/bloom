@@ -15,12 +15,13 @@ use windows::core::{implement, Ref, BOOL};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, POINTL};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::Com::{
-    CoInitializeEx, COINIT_APARTMENTTHREADED, DVASPECT_CONTENT, FORMATETC, IDataObject, TYMED_HGLOBAL,
+    CoInitializeEx, IDataObject, COINIT_APARTMENTTHREADED, DVASPECT_CONTENT, FORMATETC,
+    TYMED_HGLOBAL,
 };
 use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::{
-    CF_HDROP, CF_UNICODETEXT, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE, IDropTarget,
-    IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
+    IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop, CF_HDROP,
+    CF_UNICODETEXT, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE,
 };
 use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
 use windows::Win32::UI::Shell::{DragFinish, DragQueryFileW, HDROP};
@@ -107,7 +108,9 @@ impl ShelfDropTarget {
         let text = if len >= MAX_TEXT_UNITS {
             None
         } else {
-            Some(String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len)))
+            Some(String::from_utf16_lossy(std::slice::from_raw_parts(
+                ptr, len,
+            )))
         };
         let _ = GlobalUnlock(medium.u.hGlobal);
         ReleaseStgMedium(&mut medium);
