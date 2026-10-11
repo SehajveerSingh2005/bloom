@@ -5,6 +5,7 @@ import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
+import { useSliderSync, useTransientError } from "./hooks/useSliderSync";
 import { getVersion } from "@tauri-apps/api/app";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -497,10 +498,12 @@ const SunIcon = ({ brightness }: { brightness: number }) => (
 
 function BrightnessNotch({
 	brightness,
-	onBrightnessChange
+	onBrightnessChange,
+	error
 }: {
 	brightness: number;
 	onBrightnessChange: (val: number) => void;
+	error: string | null;
 }) {
 	const barRef = useRef<HTMLDivElement>(null);
 
@@ -556,7 +559,10 @@ function BrightnessNotch({
 				>
 					<div
 						ref={barRef}
-						className="brightness-notch-bar"
+						className={`brightness-notch-bar${error ? " error" : ""}`}
+						title={error ?? undefined}
+						role={error ? "alert" : undefined}
+						aria-label={error ?? undefined}
 						onMouseDown={handleMouseDown}
 						onTouchStart={handleBarInteraction}
 						style={{ cursor: "pointer" }}
@@ -647,16 +653,24 @@ function OverlayApp() {
 			.catch(console.error);
 	}, []);
 
-	// Seed the HUD with the live system volume; the system worker's only
-	// startup event fires before this webview can register listeners.
-	useEffect(() => {
+	// Seed the HUD with the live system levels; the system worker's only
+	// startup event fires before this webview can register listeners. Also
+	// re-read when a HUD is opened from the edge and after a drag settles.
+	const syncLevels = () => {
 		invoke<{ volume: number; is_muted: boolean }>("get_volume_state")
 			.then((state) => {
 				setVolume(state.volume);
 				setIsMuted(state.is_muted);
 			})
 			.catch(() => {});
-	}, []);
+		invoke<number>("get_brightness")
+			.then(setBrightness)
+			.catch(() => {});
+	};
+	const volumeSync = useSliderSync(syncLevels);
+	const brightnessSync = useSliderSync(syncLevels);
+	const brightnessError = useTransientError("brightness-error");
+	useEffect(syncLevels, []);
 
 	// ── Splash Detection ──
 	useEffect(() => {
@@ -714,8 +728,10 @@ function OverlayApp() {
 			if (splashActiveRef.current || !volumeOverlayEnabled) return;
 			invoke("hide_native_osd");
 			const { volume: newVolume, is_muted } = event.payload;
-			setVolume(newVolume);
-			setIsMuted(is_muted);
+			if (volumeSync.accepts()) {
+				setVolume(newVolume);
+				setIsMuted(is_muted);
+			}
 			setMode("volume");
 			resetHideTimeout();
 		});
@@ -723,6 +739,7 @@ function OverlayApp() {
 		const volEdgePromise = listen<boolean>("volume-edge-hover", (event) => {
 			if (splashActiveRef.current || !volumeOverlayEnabled || !volumeEdgeEnabled) return;
 			if (event.payload) {
+				syncLevels();
 				setMode("volume");
 				if (timeoutRef.current) clearTimeout(timeoutRef.current);
 			} else {
@@ -738,7 +755,7 @@ function OverlayApp() {
 			if (splashActiveRef.current || !brightnessOverlayEnabled) return;
 			invoke("hide_native_osd");
 			const { brightness: newBrightness } = event.payload;
-			setBrightness(newBrightness);
+			if (brightnessSync.accepts()) setBrightness(newBrightness);
 			setMode("brightness");
 			resetHideTimeout();
 		});
@@ -746,6 +763,7 @@ function OverlayApp() {
 		const brightEdgePromise = listen<boolean>("brightness-edge-hover", (event) => {
 			if (splashActiveRef.current || !brightnessOverlayEnabled || !brightnessEdgeEnabled) return;
 			if (event.payload) {
+				syncLevels();
 				setMode("brightness");
 				if (timeoutRef.current) clearTimeout(timeoutRef.current);
 			} else {
@@ -906,13 +924,14 @@ function OverlayApp() {
 	}, 50);
 	const handleVolumeChange = useCallback(
 		(newVol: number) => {
+			volumeSync.touch();
 			setVolume(newVol);
 			setIsMuted(newVol === 0);
 			setMode("volume");
 			resetHideTimeout();
 			sendVolume(newVol);
 		},
-		[resetHideTimeout, sendVolume]
+		[resetHideTimeout, sendVolume, volumeSync]
 	);
 
 	const handleMixerExpandedChange = useCallback(
@@ -954,12 +973,13 @@ function OverlayApp() {
 	}, 50);
 	const handleBrightnessChange = useCallback(
 		(newBrightness: number) => {
+			brightnessSync.touch();
 			setBrightness(newBrightness);
 			setMode("brightness");
 			resetHideTimeout();
 			sendBrightness(newBrightness);
 		},
-		[resetHideTimeout, sendBrightness]
+		[resetHideTimeout, sendBrightness, brightnessSync]
 	);
 
 	const isLeft = mode === "volume";
@@ -1099,6 +1119,7 @@ function OverlayApp() {
 							<BrightnessNotch
 								brightness={brightness}
 								onBrightnessChange={handleBrightnessChange}
+								error={brightnessError}
 								key="brightness-island"
 							/>
 						)}

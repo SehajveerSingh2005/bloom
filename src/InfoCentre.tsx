@@ -31,6 +31,7 @@ import {
 import { useWeather } from "./hooks/useWeather";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
+import { useSliderSync, useTransientError } from "./hooks/useSliderSync";
 import { getTimerChimeCtx, playTimerChime } from "./chime";
 import { PowerModeIcon, powerModeLabel, usePowerMode } from "./powerMode";
 import { ConnectPage } from "./ConnectPage";
@@ -111,6 +112,24 @@ function useInfoData() {
 	});
 	const weather = useWeather(weatherEnabled);
 
+	// Live levels from the system: on mount, when the controls open, and once
+	// a slider settles after a drag.
+	const syncLevels = () => {
+		invoke<{ volume: number; is_muted: boolean }>("get_volume_state")
+			.then((s) => {
+				setVolumeState(s.volume);
+				setMuted(s.is_muted);
+			})
+			.catch(() => {});
+		invoke<number>("get_brightness")
+			.then(setBrightnessState)
+			.catch(() => {});
+	};
+	const volumeSync = useSliderSync(syncLevels);
+	const brightnessSync = useSliderSync(syncLevels);
+	const volumeError = useTransientError("volume-error");
+	const brightnessError = useTransientError("brightness-error");
+
 	// Timer lives here, not in the panel, so it keeps running while the panel is closed.
 	const [timerTotal, setTimerTotal] = useState(5 * 60);
 	const [timerLeft, setTimerLeft] = useState(5 * 60);
@@ -134,22 +153,15 @@ function useInfoData() {
 	useEffect(() => {
 		const unMedia = listen<MediaInfo>("media-update", (e) => e.payload && setMedia(e.payload));
 		const unVolume = listen<{ volume: number; is_muted: boolean }>("volume-change", (e) => {
+			if (!volumeSync.accepts()) return;
 			setVolumeState(e.payload.volume);
 			setMuted(e.payload.is_muted);
 		});
-		const unBrightness = listen<{ brightness: number }>("brightness-change", (e) =>
-			setBrightnessState(e.payload.brightness)
-		);
+		const unBrightness = listen<{ brightness: number }>("brightness-change", (e) => {
+			if (brightnessSync.accepts()) setBrightnessState(e.payload.brightness);
+		});
 
-		invoke<{ volume: number; is_muted: boolean }>("get_volume_state")
-			.then((s) => {
-				setVolumeState(s.volume);
-				setMuted(s.is_muted);
-			})
-			.catch(() => {});
-		invoke<number>("get_brightness")
-			.then(setBrightnessState)
-			.catch(() => {});
+		syncLevels();
 
 		// Wifi, bluetooth and power mode have no change events.
 		const pollStates = () => {
@@ -210,6 +222,9 @@ function useInfoData() {
 		volume,
 		muted,
 		brightness,
+		volumeError,
+		brightnessError,
+		syncLevels,
 		wifi,
 		bluetooth,
 		weather,
@@ -236,12 +251,14 @@ function useInfoData() {
 			}
 		},
 		setVolume: (v: number) => {
+			volumeSync.touch();
 			setVolumeState(v);
 			// set_volume unmutes for any non-zero level.
 			setMuted(v === 0);
 			sendVolume(v);
 		},
 		setBrightness: (v: number) => {
+			brightnessSync.touch();
 			setBrightnessState(v);
 			sendBrightness(v);
 		},
@@ -683,6 +700,8 @@ function ControlsView() {
 		return () => clearInterval(id);
 	}, []);
 	const [page, setPage] = useState<"wifi" | "bluetooth" | null>(null);
+	// Events can be missed while the dock sleeps; re-read when the controls open.
+	useEffect(() => info.syncLevels(), []);
 
 	if (page) {
 		return (
@@ -749,6 +768,7 @@ function ControlsView() {
 					max={1}
 					step={0.01}
 					onChange={info.setVolume}
+					error={info.volumeError}
 				/>
 				<Slider
 					label="Brightness"
@@ -757,6 +777,7 @@ function ControlsView() {
 					max={100}
 					step={1}
 					onChange={info.setBrightness}
+					error={info.brightnessError}
 				/>
 				<div className="ic-stats">
 					<div className="ic-stat">
@@ -781,6 +802,7 @@ function Slider(props: {
 	max: number;
 	step: number;
 	onChange: (v: number) => void;
+	error?: string | null;
 }) {
 	const fraction = props.max > 0 ? Math.min(1, Math.max(0, props.value / props.max)) : 0;
 	return (
@@ -798,6 +820,11 @@ function Slider(props: {
 				style={{ ["--f" as string]: String(fraction) }}
 				onChange={(e) => props.onChange(parseFloat(e.target.value))}
 			/>
+			{props.error && (
+				<span className="ic-slider-error" role="alert">
+					{props.error}
+				</span>
+			)}
 		</label>
 	);
 }

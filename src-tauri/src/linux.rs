@@ -1571,7 +1571,7 @@ fn write_brightness(percent: u32) {
     }
 }
 
-pub fn setup_brightness_worker() {
+pub fn setup_brightness_worker(_app: AppHandle) {
     let (tx, rx) = channel::<u32>();
     let _ = BRIGHTNESS_SENDER.set(tx);
     std::thread::spawn(move || {

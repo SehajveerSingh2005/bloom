@@ -1074,16 +1074,26 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     // visibility commands must keep working when there is no output device.
                     match (cmd, audio_endpoint_volume.as_ref()) {
                         (SystemCommand::SetVolume(volume), Some(aev)) => {
-                            let _ = aev.SetMasterVolumeLevelScalar(
-                                volume.clamp(0.0, 1.0),
-                                std::ptr::null(),
-                            );
+                            if aev
+                                .SetMasterVolumeLevelScalar(
+                                    volume.clamp(0.0, 1.0),
+                                    std::ptr::null(),
+                                )
+                                .is_err()
+                            {
+                                let _ = handle_system
+                                    .emit("volume-error", "Couldn't change the volume");
+                                // Resend the real level so the sliders snap back.
+                                last_volume = -1.0;
+                            }
                             if volume > 0.0 {
                                 let _ = aev.SetMute(false, std::ptr::null());
                             }
                             hide_osd("bloom-volume-overlay-enabled");
                         }
-                        (SystemCommand::SetVolume(_), None) => {}
+                        (SystemCommand::SetVolume(_), None) => {
+                            let _ = handle_system.emit("volume-error", "No audio output device");
+                        }
                         (SystemCommand::MediaPlayPause, _) => {
                             if let Some(ref mgr) = manager {
                                 if let Ok(session) = mgr.GetCurrentSession() {
@@ -1340,50 +1350,41 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
             Ok(con) => con,
             Err(_) => return,
         };
-        let mut last_brightness = match wmi_con.query::<WmiMonitorBrightness>() {
-            Ok(res) => res
-                .first()
-                .map(|b| b.current_brightness as u32)
-                .unwrap_or(50),
-            Err(_) => 50,
+        if let Some(b) = wmi_con
+            .query::<WmiMonitorBrightness>()
+            .ok()
+            .and_then(|res| res.into_iter().next())
+        {
+            CURRENT_BRIGHTNESS.store(b.current_brightness as u32, Ordering::Relaxed);
+        }
+        // A reading is news only when it differs from what Bloom believes the
+        // level is (`set_brightness` stores its target there first). Echoes of
+        // Bloom's own writes then match and stay quiet, while anything that
+        // moves the panel afterwards (keys, Windows, another app, the power
+        // plan restoring its level) reaches the sliders. The frontends ignore
+        // readings while their slider is being dragged (see useSliderSync).
+        let follow = |brightness: u32| {
+            if CURRENT_BRIGHTNESS.swap(brightness, Ordering::Relaxed) != brightness {
+                let _ = handle_brightness
+                    .emit("brightness-change", BrightnessChangeEvent { brightness });
+            }
         };
-        CURRENT_BRIGHTNESS.store(last_brightness, Ordering::Relaxed);
-        // Brightness keys are handled by Windows or the firmware, so follow the
-        // resulting changes as they happen; the overlay then appears at once.
-        // Changes Bloom made itself (its slider) are skipped like the poll did.
         if let Ok(events) = wmi_con.raw_notification::<WmiMonitorBrightnessEvent>(
             "SELECT * FROM WmiMonitorBrightnessEvent",
         ) {
             for event in events {
                 let Ok(event) = event else { break };
-                let brightness = event.brightness as u32;
-                if get_now_ms() - LAST_BRIGHTNESS_CHANGE.load(Ordering::Relaxed) < 2000
-                    || brightness == last_brightness
-                {
-                    continue;
-                }
-                last_brightness = brightness;
-                CURRENT_BRIGHTNESS.store(brightness, Ordering::Relaxed);
-                let _ = handle_brightness
-                    .emit("brightness-change", BrightnessChangeEvent { brightness });
+                follow(event.brightness as u32);
             }
         }
         // Fall back to polling when the subscription is unavailable or ends.
         loop {
-            if get_now_ms() - LAST_BRIGHTNESS_CHANGE.load(Ordering::Relaxed) < 2000 {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                continue;
-            }
-            if let Ok(results) = wmi_con.query::<WmiMonitorBrightness>() {
-                if let Some(b) = results.first() {
-                    let brightness = b.current_brightness as u32;
-                    if brightness != last_brightness {
-                        last_brightness = brightness;
-                        CURRENT_BRIGHTNESS.store(brightness, Ordering::Relaxed);
-                        let _ = handle_brightness
-                            .emit("brightness-change", BrightnessChangeEvent { brightness });
-                    }
-                }
+            if let Some(b) = wmi_con
+                .query::<WmiMonitorBrightness>()
+                .ok()
+                .and_then(|res| res.into_iter().next())
+            {
+                follow(b.current_brightness as u32);
             }
             std::thread::sleep(std::time::Duration::from_millis(1500));
         }
@@ -1788,8 +1789,9 @@ pub(crate) fn window_reaches_dock(dock_span: (i32, i32), win: (i32, i32, i32), t
     left < d_right - 4 && right > d_left + 4 && bottom > trigger_y + 4
 }
 
+/// True when at least one external monitor accepted the level over DDC/CI.
 #[cfg(windows)]
-fn set_physical_monitors_brightness(brightness: u32) {
+fn set_physical_monitors_brightness(brightness: u32) -> bool {
     unsafe {
         use windows::core::BOOL;
         use windows::Win32::Foundation::{LPARAM, RECT};
@@ -1801,7 +1803,9 @@ fn set_physical_monitors_brightness(brightness: u32) {
             _: *mut RECT,
             lparam: LPARAM,
         ) -> BOOL {
-            let brightness = lparam.0 as u32;
+            // lparam points at (level, any monitor accepted it).
+            let ctx = &mut *(lparam.0 as *mut (u32, bool));
+            let brightness = ctx.0;
             #[repr(C)]
             #[derive(Clone, Copy)]
             struct PHYSICAL_MONITOR {
@@ -1834,7 +1838,8 @@ fn set_physical_monitors_brightness(brightness: u32) {
                 {
                     for mon in &monitors {
                         if mon.h_physical_monitor != 0 {
-                            let _ = SetMonitorBrightness(mon.h_physical_monitor, brightness);
+                            ctx.1 |=
+                                SetMonitorBrightness(mon.h_physical_monitor, brightness).as_bool();
                         }
                     }
                     let _ = DestroyPhysicalMonitors(count, monitors.as_mut_ptr());
@@ -1843,12 +1848,14 @@ fn set_physical_monitors_brightness(brightness: u32) {
             true.into()
         }
 
+        let mut ctx = (brightness, false);
         let _ = EnumDisplayMonitors(
             None,
             None,
             Some(monitor_enum_proc),
-            LPARAM(brightness as isize),
+            LPARAM(&mut ctx as *mut (u32, bool) as isize),
         );
+        ctx.1
     }
 }
 
@@ -1952,7 +1959,7 @@ fn sync_native_osd(app_handle: &AppHandle) {
 }
 
 #[cfg(windows)]
-pub fn setup_brightness_worker() {
+pub fn setup_brightness_worker(app: AppHandle) {
     let (tx, rx) = channel::<u32>();
     let _ = BRIGHTNESS_SENDER.set(tx);
     std::thread::spawn(move || unsafe {
@@ -2035,13 +2042,31 @@ pub fn setup_brightness_worker() {
             in_cls
         };
 
-        while let Ok(mut brightness) = rx.recv() {
+        // The level waiting to be saved to the power plan once a drag settles.
+        let mut unsaved: Option<u32> = None;
+        loop {
+            let mut brightness = match unsaved {
+                Some(level) => match rx.recv_timeout(Duration::from_millis(400)) {
+                    Ok(v) => v,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        save_plan_brightness(level);
+                        unsaved = None;
+                        continue;
+                    }
+                    Err(_) => break,
+                },
+                None => match rx.recv() {
+                    Ok(v) => v,
+                    Err(_) => break,
+                },
+            };
             // A slider drag queues a value per input event, and each write is
             // slow (WMI plus DDC/CI per monitor). Only the latest value matters.
             while let Ok(newer) = rx.try_recv() {
                 brightness = newer;
             }
             let brightness = brightness.min(100);
+            let mut panel_ok = false;
             // 1. Laptop internal panel via WMI WmiMonitorBrightnessMethods
             let wql = windows::core::BSTR::from("WQL");
             let q = windows::core::BSTR::from("SELECT * FROM WmiMonitorBrightnessMethods");
@@ -2085,15 +2110,17 @@ pub fn setup_brightness_worker() {
                                             0,
                                         );
 
-                                        let _ = services.ExecMethod(
-                                            &obj_path,
-                                            &method_name,
-                                            WBEM_GENERIC_FLAG_TYPE(0),
-                                            None,
-                                            Some(&in_params),
-                                            None,
-                                            None,
-                                        );
+                                        panel_ok |= services
+                                            .ExecMethod(
+                                                &obj_path,
+                                                &method_name,
+                                                WBEM_GENERIC_FLAG_TYPE(0),
+                                                None,
+                                                Some(&in_params),
+                                                None,
+                                                None,
+                                            )
+                                            .is_ok();
                                     }
                                 }
                             }
@@ -2103,10 +2130,66 @@ pub fn setup_brightness_worker() {
             }
 
             // 2. Desktop external monitor via Physical Monitor API (DXVA2 DDC/CI)
-            set_physical_monitors_brightness(brightness);
+            let monitor_ok = set_physical_monitors_brightness(brightness);
+
+            if panel_ok {
+                // Windows keeps the panel level in the active power plan and
+                // restores it a few seconds after a raw WMI write, which made
+                // the slider drift back. Saving it there too makes it stick.
+                unsaved = Some(brightness);
+            }
+            if !panel_ok && !monitor_ok {
+                let _ = app.emit(
+                    "brightness-error",
+                    "Couldn't change brightness on this display",
+                );
+            }
         }
         let _ = CoUninitialize();
     });
+}
+
+/// Writes `level` as the active power plan's display brightness for the
+/// current power source and re-applies the plan, the way the Windows
+/// brightness slider records a change.
+#[cfg(windows)]
+fn save_plan_brightness(level: u32) {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::System::Power::{
+        GetSystemPowerStatus, PowerGetActiveScheme, PowerSetActiveScheme, PowerWriteACValueIndex,
+        PowerWriteDCValueIndex, SYSTEM_POWER_STATUS,
+    };
+    const VIDEO_SUBGROUP: windows::core::GUID =
+        windows::core::GUID::from_u128(0x7516b95f_f776_4464_8c53_06167f40cc99);
+    const VIDEO_NORMAL_LEVEL: windows::core::GUID =
+        windows::core::GUID::from_u128(0xaded5e82_b909_4619_9949_f5d71dac0bcb);
+    unsafe {
+        let mut scheme: *mut windows::core::GUID = std::ptr::null_mut();
+        if PowerGetActiveScheme(None, &mut scheme).is_err() {
+            return;
+        }
+        let mut power = SYSTEM_POWER_STATUS::default();
+        let on_battery = GetSystemPowerStatus(&mut power).is_ok() && power.ACLineStatus == 0;
+        if on_battery {
+            let _ = PowerWriteDCValueIndex(
+                None,
+                scheme,
+                Some(&VIDEO_SUBGROUP),
+                Some(&VIDEO_NORMAL_LEVEL),
+                level,
+            );
+        } else {
+            let _ = PowerWriteACValueIndex(
+                None,
+                scheme,
+                Some(&VIDEO_SUBGROUP),
+                Some(&VIDEO_NORMAL_LEVEL),
+                level,
+            );
+        }
+        let _ = PowerSetActiveScheme(None, Some(scheme));
+        LocalFree(Some(HLOCAL(scheme as _)));
+    }
 }
 
 static MOUSE_HOOK_APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();

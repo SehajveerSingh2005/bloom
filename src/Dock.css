@@ -1362,6 +1362,22 @@ body {
 	border-radius: 12px;
 	background: rgba(127, 127, 127, 0.16);
 }
+/* Sits beside the label when the system rejected the change. */
+.ic-slider {
+	position: relative;
+}
+.ic-slider-error {
+	position: absolute;
+	top: 9px;
+	right: 12px;
+	padding: 1px 8px;
+	border-radius: 9px;
+	font-size: 10px;
+	white-space: nowrap;
+	color: #fff;
+	background: rgba(200, 50, 50, 0.92);
+	pointer-events: none;
+}
 .ic-slider-label {
 	display: flex;
 	align-items: center;

@@ -2331,3 +2331,18 @@ html.glass:not(.no-blur) .bloom {
 html.glass:not(.no-blur) .bloom.expanded {
 	--notch-bg: color-mix(in srgb, var(--bloom-bg-expanded, rgba(0, 0, 0, 0.92)) 60%, transparent);
 }
+
+/* Shown over a control-centre slider when the system rejected the change. */
+.cc-slider-error {
+	position: absolute;
+	right: 0;
+	top: 50%;
+	transform: translateY(-50%);
+	padding: 1px 8px;
+	border-radius: 9px;
+	font-size: 10px;
+	white-space: nowrap;
+	color: #fff;
+	background: rgba(200, 50, 50, 0.92);
+	pointer-events: none;
+}
