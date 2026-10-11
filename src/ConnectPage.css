@@ -1,0 +1,289 @@
+/* Wi-Fi and Bluetooth pages (ConnectPage.tsx), shared by the info centre and
+   the notch. Neutral greys like the controls tiles, the accent for "on". */
+
+.cp {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	width: 100%;
+	min-height: 0;
+	font-size: 12px;
+	color: var(--bloom-text, #fff);
+	text-align: left;
+}
+
+.cp-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: none;
+}
+
+.cp-back {
+	display: grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: 8px;
+	background: rgba(127, 127, 127, 0.16);
+	color: inherit;
+	cursor: pointer;
+}
+
+.cp-back:hover {
+	background: rgba(127, 127, 127, 0.28);
+}
+
+.cp-title {
+	flex: 1;
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.cp-switch {
+	position: relative;
+	width: 32px;
+	height: 18px;
+	padding: 0;
+	border: 0;
+	border-radius: 9px;
+	background: rgba(127, 127, 127, 0.35);
+	cursor: pointer;
+	transition: background 0.2s;
+}
+
+.cp-switch span {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: #fff;
+	transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.cp-switch.on {
+	background: var(--bloom-accent, #7dd3fc);
+}
+
+.cp-switch.on span {
+	transform: translateX(14px);
+}
+
+.cp-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 230px;
+	overflow-y: auto;
+	scrollbar-width: thin;
+	margin: 0 -4px;
+	padding: 0 4px;
+}
+
+.cp-section {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 6px 0 2px;
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	opacity: 0.55;
+}
+
+.cp-row {
+	border-radius: 9px;
+	transition: background 0.15s;
+}
+
+.cp-row:hover,
+.cp-row.open {
+	background: rgba(127, 127, 127, 0.16);
+}
+
+.cp-row-main {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	width: 100%;
+	padding: 6px 8px;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.cp-row-icon {
+	display: grid;
+	place-items: center;
+	width: 26px;
+	height: 26px;
+	flex: none;
+	border-radius: 13px;
+	background: rgba(127, 127, 127, 0.22);
+}
+
+.cp-row.active .cp-row-icon {
+	background: var(--bloom-accent, #7dd3fc);
+	color: #000;
+}
+
+.cp-row-text {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.cp-row-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.cp-row-text small {
+	font-size: 10.5px;
+	opacity: 0.6;
+}
+
+.cp-lock {
+	opacity: 0.5;
+	flex: none;
+}
+
+.cp-row-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 0 8px 8px 43px;
+}
+
+.cp-note {
+	font-size: 11px;
+	opacity: 0.8;
+	line-height: 1.35;
+}
+
+.cp-pin {
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.08em;
+}
+
+.cp-secret {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.cp-field {
+	display: flex;
+	align-items: center;
+	border-radius: 8px;
+	background: rgba(127, 127, 127, 0.2);
+	box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.25);
+}
+
+.cp-field:focus-within {
+	box-shadow: inset 0 0 0 1px var(--bloom-accent, #7dd3fc);
+}
+
+.cp-field input {
+	flex: 1;
+	min-width: 0;
+	padding: 6px 8px;
+	border: 0;
+	outline: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	user-select: text;
+}
+
+.cp-eye {
+	display: grid;
+	place-items: center;
+	padding: 0 8px;
+	height: 26px;
+	border: 0;
+	background: none;
+	color: inherit;
+	opacity: 0.6;
+	cursor: pointer;
+}
+
+.cp-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 6px;
+}
+
+.cp-btn {
+	padding: 4px 10px;
+	border: 0;
+	border-radius: 7px;
+	background: rgba(127, 127, 127, 0.24);
+	color: inherit;
+	font: inherit;
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.cp-btn:hover {
+	background: rgba(127, 127, 127, 0.36);
+}
+
+.cp-btn.primary {
+	background: var(--bloom-accent, #7dd3fc);
+	color: #000;
+	font-weight: 600;
+}
+
+.cp-btn:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.cp-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 18px 8px;
+	opacity: 0.6;
+	text-align: center;
+	line-height: 1.4;
+}
+
+.cp-empty.small {
+	padding: 6px 8px;
+	font-size: 11px;
+	justify-content: flex-start;
+}
+
+.cp-spin {
+	animation: cp-spin 0.9s linear infinite;
+	flex: none;
+}
+
+@keyframes cp-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+/* The notch's command centre is short: a smaller list. */
+.command-center-content-minimal .cp {
+	height: 100%;
+}
+
+.command-center-content-minimal .cp-list {
+	max-height: none;
+	flex: 1;
+}

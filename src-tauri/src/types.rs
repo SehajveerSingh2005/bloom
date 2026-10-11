@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(windows)]
 #[derive(Deserialize, Debug)]
 #[serde(rename = "WmiMonitorBrightness")]
 #[serde(rename_all = "PascalCase")]
@@ -8,6 +9,7 @@ pub struct WmiMonitorBrightness {
 }
 
 /// Raised by Windows whenever a display's brightness changes, by any means.
+#[cfg(windows)]
 #[derive(Deserialize, Debug)]
 #[serde(rename = "WmiMonitorBrightnessEvent")]
 #[serde(rename_all = "PascalCase")]
@@ -15,6 +17,7 @@ pub struct WmiMonitorBrightnessEvent {
     pub brightness: u8,
 }
 
+#[cfg(windows)]
 #[derive(Clone, Serialize)]
 pub struct AudioVisualizationData {
     pub frequencies: Vec<f32>,

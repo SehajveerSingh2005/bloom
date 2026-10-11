@@ -1,0 +1,400 @@
+//! Messages between Bloom and the agent: one JSON object per line, `type`
+//! picks the variant. Bloom writes `In` to our stdin; we write `Out` to stdout.
+
+use serde::{Deserialize, Serialize};
+use std::io::Write;
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum In {
+    Prompt { task: u64, text: String },
+    RecordStart,
+    RecordStop { task: u64 },
+    Cancel,
+    ConfirmReply { id: u64, approved: bool },
+    BloomResult { id: u64, ok: bool, detail: String },
+    SetSecret { name: String, value: String },
+    OutlookLogin,
+    TestEmail,
+    SearchTest,
+    SecretStatus,
+    WakeOn,
+    WakeOff,
+    EnrollSample { index: u32 },
+    EnrollBuild,
+    LibraryStatus,
+    Reveal { what: String },
+    ForgetAll,
+    McpReload,
+    WhatsappOn,
+    WhatsappOff,
+    WhatsappPairCode { phone: String },
+    WhatsappUnlink,
+    /// Settings > Contacts: `action` is list, add_tag, remove_tag, add_email,
+    /// delete or harvest; `id` picks the person, `value` is the tag or address.
+    Contacts {
+        action: String,
+        #[serde(default)]
+        id: String,
+        #[serde(default)]
+        value: String,
+        #[serde(default)]
+        label: String,
+    },
+    /// Settings > AI > Context: status, apply, sync or delete.
+    Context {
+        #[serde(default)]
+        action: String,
+    },
+}
+
+#[derive(Debug, Serialize, PartialEq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfirmKind {
+    Email,
+    Script,
+    Memory,
+    Skill,
+    Web,
+    /// An MCP server's tool.
+    Tool,
+    /// A WhatsApp message, or a saved phone number change.
+    Message,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Out {
+    Ready,
+    Recording {
+        on: bool,
+    },
+    Transcript {
+        task: u64,
+        text: String,
+    },
+    Activity {
+        task: u64,
+        text: String,
+    },
+    Confirm {
+        task: u64,
+        id: u64,
+        kind: ConfirmKind,
+        title: String,
+        body: String,
+    },
+    Reply {
+        task: u64,
+        text: String,
+    },
+    Error {
+        task: Option<u64>,
+        message: String,
+    },
+    Bloom {
+        id: u64,
+        action: String,
+        value: serde_json::Value,
+    },
+    SecretStatus {
+        llm_key: bool,
+        stt_key: bool,
+        email_password: bool,
+        outlook: bool,
+        search_key: bool,
+    },
+    SecretSaved {
+        name: String,
+    },
+    LoginCode {
+        url: String,
+        code: String,
+    },
+    LoginDone {
+        ok: bool,
+        message: String,
+    },
+    SearchTest {
+        ok: bool,
+        message: String,
+    },
+    EmailTest {
+        ok: bool,
+        message: String,
+    },
+    /// "Hey <name>" heard; request `task` is being recorded.
+    Wake {
+        task: u64,
+    },
+    EnrollSaved {
+        index: u32,
+    },
+    EnrollDone,
+    LibraryStatus {
+        memory: usize,
+        skills: usize,
+        mcp_servers: usize,
+        mcp_tools: usize,
+        mcp_errors: Vec<String>,
+    },
+    /// The WhatsApp link, for Settings only. `state`: "off", "connecting",
+    /// "not_linked" or "linked". `qr` and `code` are pairing credentials:
+    /// never logged. `contacts` and `groups`: how many are synced.
+    WhatsappStatus {
+        state: String,
+        number: Option<String>,
+        qr: Option<String>,
+        code: Option<String>,
+        error: Option<String>,
+        contacts: Option<usize>,
+        groups: Option<usize>,
+    },
+    /// An automatic reply went to `name` (a toast, no message text).
+    WhatsappAutoReply {
+        name: String,
+    },
+    /// A request from the user's phone started (a toast, no message text).
+    WhatsappRequest,
+    /// people.json for Settings > Contacts (Settings only), how many people
+    /// the mail scan found, whether the account is a Microsoft one (not
+    /// scanned), and what the last change did.
+    Contacts {
+        people: Vec<crate::people::Person>,
+        mail: usize,
+        outlook: bool,
+        message: Option<String>,
+        error: Option<String>,
+    },
+    /// Settings > AI > Context: whether indexing is on, items per source and
+    /// WhatsApp messages waiting (counts only, no content).
+    ContextStatus {
+        on: bool,
+        counts: std::collections::BTreeMap<String, usize>,
+        pending: usize,
+        message: Option<String>,
+        error: Option<String>,
+    },
+}
+
+/// Writes one message to Bloom. A failed write means Bloom is gone; the stdin
+/// reader sees EOF right after and the process exits, so errors are ignored.
+pub fn emit(out: &Out) {
+    let mut line = serde_json::to_string(out).expect("Out always serializes");
+    line.push('\n');
+    let mut stdout = std::io::stdout().lock();
+    let _ = stdout.write_all(line.as_bytes());
+    let _ = stdout.flush();
+}
+
+pub fn parse(line: &str) -> Result<In, String> {
+    serde_json::from_str(line).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_prompt() {
+        assert_eq!(
+            parse(r#"{"type":"prompt","task":3,"text":"hi"}"#),
+            Ok(In::Prompt {
+                task: 3,
+                text: "hi".into()
+            })
+        );
+    }
+
+    #[test]
+    fn parses_unit_messages() {
+        assert_eq!(parse(r#"{"type":"record_start"}"#), Ok(In::RecordStart));
+        assert_eq!(parse(r#"{"type":"cancel"}"#), Ok(In::Cancel));
+    }
+
+    #[test]
+    fn parses_wake_messages() {
+        assert_eq!(parse(r#"{"type":"secret_status"}"#), Ok(In::SecretStatus));
+        assert_eq!(parse(r#"{"type":"wake_on"}"#), Ok(In::WakeOn));
+        assert_eq!(parse(r#"{"type":"wake_off"}"#), Ok(In::WakeOff));
+        assert_eq!(
+            parse(r#"{"type":"enroll_sample","index":2}"#),
+            Ok(In::EnrollSample { index: 2 })
+        );
+        assert_eq!(parse(r#"{"type":"enroll_build"}"#), Ok(In::EnrollBuild));
+        assert!(parse(r#"{"type":"enroll_sample"}"#).is_err());
+    }
+
+    #[test]
+    fn wake_events_serialize() {
+        let json = |out: Out| serde_json::to_string(&out).unwrap();
+        assert_eq!(
+            json(Out::Wake {
+                task: 1_000_000_001
+            }),
+            r#"{"type":"wake","task":1000000001}"#
+        );
+        assert_eq!(
+            json(Out::EnrollSaved { index: 3 }),
+            r#"{"type":"enroll_saved","index":3}"#
+        );
+        assert_eq!(json(Out::EnrollDone), r#"{"type":"enroll_done"}"#);
+    }
+
+    #[test]
+    fn email_test_messages() {
+        assert_eq!(parse(r#"{"type":"test_email"}"#), Ok(In::TestEmail));
+        assert_eq!(
+            serde_json::to_string(&Out::EmailTest {
+                ok: false,
+                message: "x".into()
+            })
+            .unwrap(),
+            r#"{"type":"email_test","ok":false,"message":"x"}"#
+        );
+    }
+
+    #[test]
+    fn library_messages() {
+        assert_eq!(parse(r#"{"type":"library_status"}"#), Ok(In::LibraryStatus));
+        assert_eq!(parse(r#"{"type":"forget_all"}"#), Ok(In::ForgetAll));
+        assert_eq!(parse(r#"{"type":"mcp_reload"}"#), Ok(In::McpReload));
+        assert_eq!(
+            serde_json::to_string(&ConfirmKind::Tool).unwrap(),
+            r#""tool""#
+        );
+        assert_eq!(
+            parse(r#"{"type":"reveal","what":"memory"}"#),
+            Ok(In::Reveal {
+                what: "memory".into()
+            })
+        );
+        assert_eq!(
+            serde_json::to_string(&Out::LibraryStatus {
+                memory: 2,
+                skills: 0,
+                mcp_servers: 0,
+                mcp_tools: 0,
+                mcp_errors: vec![]
+            })
+            .unwrap(),
+            r#"{"type":"library_status","memory":2,"skills":0,"mcp_servers":0,"mcp_tools":0,"mcp_errors":[]}"#
+        );
+    }
+
+    #[test]
+    fn whatsapp_messages() {
+        assert_eq!(parse(r#"{"type":"whatsapp_on"}"#), Ok(In::WhatsappOn));
+        assert_eq!(parse(r#"{"type":"whatsapp_off"}"#), Ok(In::WhatsappOff));
+        assert_eq!(
+            parse(r#"{"type":"whatsapp_unlink"}"#),
+            Ok(In::WhatsappUnlink)
+        );
+        assert_eq!(
+            parse(r#"{"type":"whatsapp_pair_code","phone":"+491701234567"}"#),
+            Ok(In::WhatsappPairCode {
+                phone: "+491701234567".into()
+            })
+        );
+        assert_eq!(
+            serde_json::to_string(&ConfirmKind::Message).unwrap(),
+            r#""message""#
+        );
+        assert_eq!(
+            serde_json::to_string(&Out::WhatsappStatus {
+                state: "linked".into(),
+                number: Some("+491701234567".into()),
+                qr: None,
+                code: None,
+                error: None,
+                contacts: Some(120),
+                groups: Some(8),
+            })
+            .unwrap(),
+            r#"{"type":"whatsapp_status","state":"linked","number":"+491701234567","qr":null,"code":null,"error":null,"contacts":120,"groups":8}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Out::WhatsappAutoReply {
+                name: "Neha".into()
+            })
+            .unwrap(),
+            r#"{"type":"whatsapp_auto_reply","name":"Neha"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Out::WhatsappRequest).unwrap(),
+            r#"{"type":"whatsapp_request"}"#
+        );
+    }
+
+    #[test]
+    fn contacts_messages() {
+        assert_eq!(
+            parse(r#"{"type":"contacts","action":"list"}"#),
+            Ok(In::Contacts {
+                action: "list".into(),
+                id: String::new(),
+                value: String::new(),
+                label: String::new()
+            })
+        );
+        let out = Out::Contacts {
+            people: vec![],
+            mail: 3,
+            outlook: false,
+            message: None,
+            error: Some("x".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&out).unwrap(),
+            r#"{"type":"contacts","people":[],"mail":3,"outlook":false,"message":null,"error":"x"}"#
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_types() {
+        assert!(parse(r#"{"type":"nope"}"#).is_err());
+    }
+
+    #[test]
+    fn confirm_serializes_flat() {
+        let out = Out::Confirm {
+            task: 1,
+            id: 2,
+            kind: ConfirmKind::Script,
+            title: "t".into(),
+            body: "b".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&out).unwrap(),
+            r#"{"type":"confirm","task":1,"id":2,"kind":"script","title":"t","body":"b"}"#
+        );
+    }
+
+    #[test]
+    fn memory_confirm_kind_serializes() {
+        let out = Out::Confirm {
+            task: 1,
+            id: 2,
+            kind: ConfirmKind::Memory,
+            title: "Remember this?".into(),
+            body: "b".into(),
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(
+            json.contains(r#""kind":"memory","title":"Remember this?""#),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn task_less_errors_serialize_null() {
+        let out = Out::Error {
+            task: None,
+            message: "x".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&out).unwrap(),
+            r#"{"type":"error","task":null,"message":"x"}"#
+        );
+    }
+}

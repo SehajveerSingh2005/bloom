@@ -1,0 +1,776 @@
+//! Bloom's side of the optional AI agent (bloom-ai.exe; see
+//! docs/superpowers/plans/2026-10-04-bloom-ai-sidecar.md). Bloom starts the
+//! agent on first use, relays its events to the webviews as `ai-event`, does
+//! the Bloom actions it asks for, and removes it for good on "Delete AI".
+
+use crate::types::AppInfo;
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Write};
+use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager};
+
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+/// VK_RMENU: Right Alt.
+pub const DEFAULT_HOTKEY_VK: u32 = 0xA5;
+
+/// Virtual-key code of the push-to-talk key, read by the keyboard hook on
+/// every key event. 0 while AI is off or deleted.
+pub static HOTKEY_VK: AtomicU32 = AtomicU32::new(0);
+
+struct Sidecar {
+    child: Child,
+    stdin: ChildStdin,
+}
+
+static SIDECAR: Mutex<Option<Sidecar>> = Mutex::new(None);
+static APP: OnceLock<AppHandle> = OnceLock::new();
+/// Hotkey presses, handled in order on one thread: a quick tap must never
+/// deliver its release before its press.
+static HOTKEY_TX: OnceLock<Sender<bool>> = OnceLock::new();
+static NEXT_TASK: AtomicU64 = AtomicU64::new(0);
+/// "Hey <name>" is on: the agent was told `wake_on`, and is told again
+/// whenever it is restarted.
+static WAKE: AtomicBool = AtomicBool::new(false);
+/// "Connect WhatsApp" is on: like WAKE, the agent keeps running and is told
+/// `whatsapp_on` again whenever it is restarted.
+static WHATSAPP: AtomicBool = AtomicBool::new(false);
+/// When the agent died on its own while it had to keep running (last minute).
+static CRASHES: Mutex<Vec<Instant>> = Mutex::new(Vec::new());
+
+fn ai_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_local_data_dir().ok().map(|d| d.join("ai"))
+}
+
+fn exe_path(app: &AppHandle) -> Option<PathBuf> {
+    ai_dir(app).map(|d| d.join("bloom-ai.exe"))
+}
+
+/// The assistant's name: trimmed, 1-24 letters, spaces, hyphens or
+/// apostrophes; anything else gives "Janice". Same rule as the agent's.
+fn clean_name(raw: &str) -> String {
+    let name = raw.trim();
+    let ok = (1..=24).contains(&name.chars().count())
+        && name
+            .chars()
+            .all(|c| c.is_alphabetic() || matches!(c, ' ' | '-' | '\'' | '’'));
+    if ok { name } else { "Janice" }.to_string()
+}
+
+/// True when the agent built a wake model (`wake/wake.rpw`) and wrote the name
+/// it was trained on (`wake/name.txt`), and that name is `name` in any case.
+/// An old model without name.txt is untrained.
+fn trained_for(dir: &std::path::Path, name: &str) -> bool {
+    dir.join("wake").join("wake.rpw").exists()
+        && std::fs::read_to_string(dir.join("wake").join("name.txt"))
+            .is_ok_and(|t| t.trim().to_lowercase() == name.trim().to_lowercase())
+}
+
+/// Trained for the name currently in Settings.
+fn wake_trained(app: &AppHandle) -> bool {
+    let name = clean_name(&crate::utils::get_setting_str(app, "bloom-ai-name").unwrap_or_default());
+    ai_dir(app).is_some_and(|d| trained_for(&d, &name))
+}
+
+fn deleted_flag(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("ai_deleted.flag"))
+}
+
+fn settings_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("settings.json"))
+}
+
+fn is_deleted(app: &AppHandle) -> bool {
+    deleted_flag(app).is_some_and(|p| p.exists())
+}
+
+fn enabled(app: &AppHandle) -> bool {
+    !is_deleted(app) && crate::utils::get_setting_str(app, "bloom-ai-enabled").as_deref() == Some("true")
+}
+
+/// The window that shows the panel: the dock when the notch is merged into it.
+fn surface(app: &AppHandle) -> &'static str {
+    if crate::utils::info_centre_enabled(app) {
+        "dock"
+    } else {
+        "main"
+    }
+}
+
+/// Once from setup, after the settings cache is loaded.
+pub fn init(app: &AppHandle) {
+    let _ = APP.set(app.clone());
+    // An install after "Delete AI" may have put the agent back: remove it again.
+    if is_deleted(app) {
+        if let Some(dir) = ai_dir(app).filter(|d| d.exists()) {
+            // Finish a delete that failed halfway, off the setup thread: wipe the
+            // keys, then the files. A failed wipe leaves everything for the next start.
+            let exe = exe_path(app).filter(|p| p.exists());
+            std::thread::spawn(move || {
+                if exe.is_none_or(|exe| wipe(&exe).is_ok()) {
+                    let _ = std::fs::remove_dir_all(dir);
+                }
+            });
+        }
+    }
+    let (tx, rx) = std::sync::mpsc::channel::<bool>();
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        for down in rx {
+            hotkey(&handle, down);
+        }
+    });
+    let _ = HOTKEY_TX.set(tx);
+    // Off the setup thread: with "Hey <name>" on this starts the agent.
+    std::thread::spawn(sync_from_settings);
+}
+
+/// After any settings change: arms or disarms the hotkey, turns "Hey <name>"
+/// on or off, and stops the agent when AI is turned off. Must be called
+/// without the settings lock held.
+pub fn sync_from_settings() {
+    let Some(app) = APP.get() else { return };
+    let on = enabled(app);
+    let vk = if on {
+        crate::utils::get_setting_str(app, "bloom-ai-hotkey")
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|v| (1..=254).contains(v))
+            .unwrap_or(DEFAULT_HOTKEY_VK)
+    } else {
+        0
+    };
+    HOTKEY_VK.store(vk, Ordering::Relaxed);
+    // A renamed assistant (or an old model) is untrained: the listener stays off.
+    let wake = on
+        && crate::utils::get_setting_str(app, "bloom-ai-wake").as_deref() == Some("true")
+        && wake_trained(app);
+    if wake != WAKE.load(Ordering::Relaxed) {
+        // Sent before the flag flips, so a fresh agent isn't told twice.
+        let _ = if wake {
+            send(app, json!({ "type": "wake_on" }))
+        } else {
+            send_if_running(json!({ "type": "wake_off" }))
+        };
+        WAKE.store(wake, Ordering::Relaxed);
+    }
+    let whatsapp = on && crate::utils::get_setting_str(app, "bloom-ai-whatsapp").as_deref() == Some("true");
+    if whatsapp != WHATSAPP.load(Ordering::Relaxed) {
+        let _ = if whatsapp {
+            send(app, json!({ "type": "whatsapp_on" }))
+        } else {
+            send_if_running(json!({ "type": "whatsapp_off" }))
+        };
+        WHATSAPP.store(whatsapp, Ordering::Relaxed);
+    }
+    if !on {
+        stop();
+    }
+}
+
+/// Kills the agent. Nothing of it keeps running or holds memory afterwards.
+pub fn stop() {
+    let taken = SIDECAR.lock().ok().and_then(|mut slot| slot.take());
+    if let Some(mut sidecar) = taken {
+        let _ = sidecar.child.kill();
+        let _ = sidecar.child.wait();
+    }
+}
+
+/// The agent removes its own Credential Manager entries.
+fn wipe(exe: &std::path::Path) -> Result<(), String> {
+    match Command::new(exe).arg("--wipe").creation_flags(CREATE_NO_WINDOW).status() {
+        Ok(status) if status.success() => Ok(()),
+        _ => Err("Couldn't remove the AI's saved keys; nothing was deleted. Try again.".into()),
+    }
+}
+
+fn spawn(app: &AppHandle) -> Result<Sidecar, String> {
+    let exe = exe_path(app).filter(|p| p.exists()).ok_or("The AI agent isn't installed.")?;
+    let mut child = Command::new(&exe)
+        .arg("--settings")
+        .arg(settings_path(app).unwrap_or_default())
+        .current_dir(exe.parent().unwrap_or(exe.as_path()))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("Couldn't start the AI agent: {e}"))?;
+    let stdin = child.stdin.take().ok_or("The AI agent has no input pipe.")?;
+    let stdout = child.stdout.take().ok_or("The AI agent has no output pipe.")?;
+    let handle = app.clone();
+    let pid = child.id();
+    std::thread::spawn(move || relay(handle, stdout, pid));
+    Ok(Sidecar { child, stdin })
+}
+
+/// The agent's output: `bloom` requests are carried out here, everything else
+/// goes to the webviews.
+fn relay(app: AppHandle, stdout: ChildStdout, pid: u32) {
+    for line in BufReader::new(stdout).lines() {
+        let Ok(line) = line else { break };
+        let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
+        if message["type"] == "bloom" {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let action = message["action"].as_str().unwrap_or_default();
+                let (ok, detail) = match bloom_action(&app, action, &message["value"]).await {
+                    Ok(detail) => (true, detail),
+                    Err(detail) => (false, detail),
+                };
+                let _ = send_if_running(json!({ "type": "bloom_result", "id": message["id"], "ok": ok, "detail": detail }));
+            });
+        } else {
+            // "Hey <name>" opens no panel: the overlay shows its orb from these
+            // events, and the panel opens itself if the request needs an OK.
+            let built = message["type"] == "enroll_done";
+            // The WhatsApp QR and link code are credentials: Settings only, on
+            // an event no other window listens to (an `ai-event` sent to one
+            // window still reaches every window's catch-all listener).
+            // The contact list is personal data: Settings only too.
+            let _ = if message["type"] == "whatsapp_status" {
+                app.emit_to("settings", "ai-whatsapp", message)
+            } else if message["type"] == "contacts" {
+                app.emit_to("settings", "ai-contacts", message)
+            } else {
+                app.emit("ai-event", message)
+            };
+            // A freshly trained model may let a "true" wake setting start listening.
+            if built {
+                std::thread::spawn(sync_from_settings);
+            }
+        }
+    }
+    let _ = app.emit("ai-event", json!({ "type": "exited" }));
+    rearm_after_crash(&app, pid);
+}
+
+/// The agent died on its own while "Hey <name>" or WhatsApp was on: start
+/// it again so they keep working, unless it keeps crashing.
+fn rearm_after_crash(app: &AppHandle, pid: u32) {
+    // stop() (AI off, Delete AI) or a replacement leaves the slot without this pid.
+    let crashed = SIDECAR.lock().is_ok_and(|slot| slot.as_ref().is_some_and(|s| s.child.id() == pid));
+    if !crashed || !keep_running() {
+        return;
+    }
+    let gave_up = {
+        let Ok(mut crashes) = CRASHES.lock() else { return };
+        crashes.retain(|t| t.elapsed() < Duration::from_secs(60));
+        crashes.push(Instant::now());
+        crashes.len() >= 3
+    };
+    if gave_up {
+        let message = "The AI agent keeps crashing, so the wake word and WhatsApp stopped.";
+        let _ = app.emit("ai-event", json!({ "type": "error", "task": null, "message": message }));
+        return;
+    }
+    std::thread::sleep(Duration::from_secs(2));
+    if keep_running() && enabled(app) {
+        if let Ok(mut slot) = SIDECAR.lock() {
+            let _ = ensure_running(app, &mut slot);
+        }
+    }
+}
+
+fn keep_running() -> bool {
+    WAKE.load(Ordering::Relaxed) || WHATSAPP.load(Ordering::Relaxed)
+}
+
+/// Sends one message, starting the agent first if needed.
+fn send(app: &AppHandle, message: Value) -> Result<(), String> {
+    if !enabled(app) {
+        return Err("Bloom AI is off. Turn it on in Settings > AI.".into());
+    }
+    let mut slot = SIDECAR.lock().map_err(|_| "AI state is unavailable.")?;
+    ensure_running(app, &mut slot)?;
+    write_line(&mut slot, message)
+}
+
+/// Starts the agent unless it is running, and re-arms "Hey <name>" and
+/// WhatsApp on a fresh one.
+fn ensure_running(app: &AppHandle, slot: &mut Option<Sidecar>) -> Result<(), String> {
+    // An agent that exited on its own is replaced.
+    if slot.as_mut().is_some_and(|s| !matches!(s.child.try_wait(), Ok(None))) {
+        *slot = None;
+    }
+    if slot.is_none() {
+        *slot = Some(spawn(app)?);
+        if WAKE.load(Ordering::Relaxed) {
+            write_line(slot, json!({ "type": "wake_on" }))?;
+        }
+        if WHATSAPP.load(Ordering::Relaxed) {
+            write_line(slot, json!({ "type": "whatsapp_on" }))?;
+        }
+    }
+    Ok(())
+}
+
+/// For answers and cancels: never starts the agent just to deliver them.
+fn send_if_running(message: Value) -> Result<(), String> {
+    let mut slot = SIDECAR.lock().map_err(|_| "AI state is unavailable.")?;
+    write_line(&mut slot, message)
+}
+
+fn write_line(slot: &mut Option<Sidecar>, message: Value) -> Result<(), String> {
+    let Some(sidecar) = slot.as_mut() else {
+        return Err("The AI agent isn't running.".into());
+    };
+    let mut line = message.to_string();
+    line.push('\n');
+    let written = sidecar.stdin.write_all(line.as_bytes()).and_then(|()| sidecar.stdin.flush());
+    if let Err(e) = written {
+        *slot = None;
+        return Err(format!("The AI agent stopped: {e}"));
+    }
+    Ok(())
+}
+
+/// From the keyboard hook (services.rs). Never blocks the hook.
+pub fn hotkey_event(down: bool) {
+    if let Some(tx) = HOTKEY_TX.get() {
+        let _ = tx.send(down);
+    }
+}
+
+fn hotkey(app: &AppHandle, down: bool) {
+    if down {
+        let _ = app.emit_to(surface(app), "ai-open", json!({ "recording": true }));
+        if let Err(message) = send(app, json!({ "type": "record_start" })) {
+            let _ = app.emit("ai-event", json!({ "type": "error", "task": 0, "message": message }));
+        }
+    } else {
+        let task = NEXT_TASK.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = send_if_running(json!({ "type": "record_stop", "task": task }));
+    }
+}
+
+/// Best installed-app match: exact name, then prefix, then anywhere.
+fn find_app<'a>(apps: &'a [AppInfo], query: &str) -> Option<&'a AppInfo> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return None;
+    }
+    let name = |a: &AppInfo| a.name.to_lowercase();
+    apps.iter()
+        .find(|a| name(a) == q)
+        .or_else(|| apps.iter().find(|a| name(a).starts_with(&q)))
+        .or_else(|| apps.iter().find(|a| name(a).contains(&q)))
+}
+
+/// 40, 40.5 or "40%".
+fn number(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str()?.trim().trim_end_matches('%').trim().parse().ok())
+        .filter(|v| v.is_finite())
+}
+
+/// true/false or "on"/"off".
+fn flag(value: &Value) -> Option<bool> {
+    value.as_bool().or_else(|| match value.as_str()?.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" => Some(true),
+        "off" | "false" => Some(false),
+        _ => None,
+    })
+}
+
+/// What the agent's `bloom_control` and `open` tools ask Bloom to do. Reuses
+/// the same commands the notch and dock call.
+async fn bloom_action(app: &AppHandle, action: &str, value: &Value) -> Result<String, String> {
+    use crate::commands;
+    match action {
+        "volume" => {
+            let v = number(value).ok_or("volume needs a number from 0 to 100")?.clamp(0.0, 100.0);
+            commands::set_volume((v / 100.0) as f32);
+            Ok(format!("Volume is {v:.0}%."))
+        }
+        "brightness" => {
+            let v = number(value).ok_or("brightness needs a number from 0 to 100")?.clamp(0.0, 100.0);
+            commands::set_brightness(app.clone(), v as u32);
+            Ok(format!("Brightness is {v:.0}%."))
+        }
+        "media" => {
+            match value.as_str() {
+                Some("play_pause") => commands::media_play_pause(),
+                Some("next") => commands::media_next(),
+                Some("previous") => commands::media_previous(),
+                _ => return Err("media needs play_pause, next or previous".into()),
+            }
+            Ok("Done.".into())
+        }
+        "wifi" => {
+            let on = flag(value).ok_or("wifi needs on or off")?;
+            commands::set_wifi_state(on).await?;
+            Ok(format!("Wi-Fi is {}.", if on { "on" } else { "off" }))
+        }
+        "bluetooth" => {
+            let on = flag(value).ok_or("bluetooth needs on or off")?;
+            commands::set_bluetooth_state(on).await?;
+            Ok(format!("Bluetooth is {}.", if on { "on" } else { "off" }))
+        }
+        "open_app" => {
+            let query = value.as_str().unwrap_or_default();
+            let found = {
+                let apps = crate::state::INSTALLED_APPS_CACHE
+                    .get()
+                    .and_then(|cache| cache.lock().ok())
+                    .ok_or("The app list isn't ready yet.")?;
+                find_app(&apps, query).map(|a| (a.name.clone(), a.path.clone()))
+            };
+            let (name, path) = found.ok_or_else(|| format!("No installed app called {query}."))?;
+            commands::open_app(app.clone(), path).await;
+            Ok(format!("Opened {name}."))
+        }
+        _ => Err(format!("unknown action {action}")),
+    }
+}
+
+fn strip_ai_keys(settings: &mut serde_json::Map<String, Value>) {
+    settings.retain(|key, _| !key.starts_with("bloom-ai-"));
+}
+
+fn remove_ai_settings(app: &AppHandle) -> Result<(), String> {
+    let path = settings_path(app).ok_or("Can't find settings.json.")?;
+    let Ok(content) = std::fs::read_to_string(&path) else { return Ok(()) };
+    let mut settings: serde_json::Map<String, Value> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    strip_ai_keys(&mut settings);
+    std::fs::write(&path, Value::Object(settings).to_string()).map_err(|e| e.to_string())?;
+    // Updates the cache and tells every window the keys are gone.
+    crate::commands::reload_settings(app, &path);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn ai_status(app: AppHandle) -> Value {
+    json!({
+        "installed": exe_path(&app).is_some_and(|p| p.exists()),
+        "deleted": is_deleted(&app),
+        "enabled": enabled(&app),
+        "running": SIDECAR
+            .lock()
+            .map(|mut slot| slot.as_mut().is_some_and(|s| matches!(s.child.try_wait(), Ok(None))))
+            .unwrap_or(false),
+        "wake_trained": wake_trained(&app),
+    })
+}
+
+#[tauri::command]
+pub fn ai_prompt(app: AppHandle, text: String) -> Result<u64, String> {
+    let task = NEXT_TASK.fetch_add(1, Ordering::Relaxed) + 1;
+    send(&app, json!({ "type": "prompt", "task": task, "text": text }))?;
+    Ok(task)
+}
+
+#[tauri::command]
+pub fn ai_cancel() {
+    let _ = send_if_running(json!({ "type": "cancel" }));
+}
+
+#[tauri::command]
+pub fn ai_confirm(id: u64, approved: bool) -> Result<(), String> {
+    send_if_running(json!({ "type": "confirm_reply", "id": id, "approved": approved }))
+}
+
+/// Secrets go straight to the agent, which keeps them in Credential Manager.
+#[tauri::command]
+pub fn ai_set_secret(app: AppHandle, name: String, value: String) -> Result<(), String> {
+    send(&app, json!({ "type": "set_secret", "name": name, "value": value }))
+}
+
+/// Asks the agent which credentials exist; `secret_status` (booleans only)
+/// follows as an `ai-event`.
+#[tauri::command]
+pub fn ai_secret_status(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "secret_status" }))
+}
+
+/// Asks the agent for Library counts; `library_status` follows as an `ai-event`.
+#[tauri::command]
+pub fn ai_library_status(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "library_status" }))
+}
+
+/// Opens a Library item ("memory", "skills" or "mcp") in its default app.
+#[tauri::command]
+pub fn ai_reveal(app: AppHandle, what: String) -> Result<(), String> {
+    send(&app, json!({ "type": "reveal", "what": what }))
+}
+
+/// Restarts the agent's MCP servers from mcp.json; `library_status` follows.
+#[tauri::command]
+pub fn ai_mcp_reload(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "mcp_reload" }))
+}
+
+/// Clears the agent's long-term memory; `library_status` follows.
+#[tauri::command]
+pub fn ai_forget_all(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "forget_all" }))
+}
+
+#[tauri::command]
+pub fn ai_outlook_login(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "outlook_login" }))
+}
+
+/// Logs in to the configured mail server without sending; `email_test` follows.
+#[tauri::command]
+pub fn ai_test_email(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "test_email" }))
+}
+
+/// Runs one search with the configured provider; `search_test` follows.
+#[tauri::command]
+pub fn ai_test_search(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "search_test" }))
+}
+
+/// Records "Hey <name>" sample `index` (1 starts over); `enroll_saved` follows.
+#[tauri::command]
+pub fn ai_enroll_sample(app: AppHandle, index: u32) -> Result<(), String> {
+    send(&app, json!({ "type": "enroll_sample", "index": index }))
+}
+
+/// Builds the wake word from the samples; `enroll_done` follows.
+#[tauri::command]
+pub fn ai_enroll_build(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "enroll_build" }))
+}
+
+/// Settings > WhatsApp opened: a `whatsapp_status` follows (Settings only).
+#[tauri::command]
+pub fn ai_whatsapp_status(app: AppHandle) -> Result<(), String> {
+    if !WHATSAPP.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    send(&app, json!({ "type": "whatsapp_on" }))
+}
+
+/// "Show a new QR" / "Try again": reconnects from scratch.
+#[tauri::command]
+pub fn ai_whatsapp_restart(app: AppHandle) -> Result<(), String> {
+    if !WHATSAPP.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    send(&app, json!({ "type": "whatsapp_off" }))?;
+    send(&app, json!({ "type": "whatsapp_on" }))
+}
+
+/// Link with a phone number instead of the QR; the code comes in `whatsapp_status`.
+#[tauri::command]
+pub fn ai_whatsapp_pair_code(app: AppHandle, phone: String) -> Result<(), String> {
+    send(&app, json!({ "type": "whatsapp_pair_code", "phone": phone }))
+}
+
+/// Logs Bloom out of WhatsApp and deletes the session.
+#[tauri::command]
+pub fn ai_whatsapp_unlink(app: AppHandle) -> Result<(), String> {
+    send(&app, json!({ "type": "whatsapp_unlink" }))
+}
+
+/// Saved phone contacts for Settings > Auto-reply, sorted by name. Empty when
+/// there are none.
+#[tauri::command]
+pub fn ai_whatsapp_contacts(app: AppHandle) -> Vec<(String, String)> {
+    ai_dir(&app).map(|d| saved_numbers(&d)).unwrap_or_default()
+}
+
+/// Numbers the user saved themselves: people.json entries with source "user"
+/// (synced ones never count for auto-reply), or phones.json before the agent
+/// has built people.json.
+fn saved_numbers(dir: &std::path::Path) -> Vec<(String, String)> {
+    let read = |file: &str| std::fs::read_to_string(dir.join(file)).ok();
+    let mut found: Vec<(String, String)> = match read("people.json") {
+        Some(c) => serde_json::from_str::<Vec<Value>>(&c)
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|p| {
+                let name = p["name"].as_str().unwrap_or_default().to_string();
+                p["phones"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|x| x["source"].as_str().is_none_or(|s| s == "user"))
+                    .filter_map(move |x| Some((name.clone(), x["number"].as_str()?.to_string())))
+            })
+            .collect(),
+        None => read("phones.json")
+            .and_then(|c| serde_json::from_str::<std::collections::BTreeMap<String, String>>(&c).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+    };
+    found.sort_by_key(|(name, _)| name.to_lowercase());
+    found
+}
+
+/// Settings > Contacts: `action` is list, add_tag, remove_tag, add_email,
+/// delete or harvest. The agent answers with the list (`ai-contacts`, Settings
+/// only).
+#[tauri::command]
+pub fn ai_contacts(
+    app: AppHandle,
+    action: String,
+    id: Option<String>,
+    value: Option<String>,
+    label: Option<String>,
+) -> Result<(), String> {
+    send(
+        &app,
+        json!({ "type": "contacts", "action": action, "id": id.unwrap_or_default(), "value": value.unwrap_or_default(), "label": label.unwrap_or_default() }),
+    )
+}
+
+/// Settings > AI > Context: `action` is status, apply (a setting changed),
+/// sync (index now) or delete. `context_status` follows as an `ai-event`
+/// (counts only).
+#[tauri::command]
+pub fn ai_context(app: AppHandle, action: String) -> Result<(), String> {
+    send(&app, json!({ "type": "context", "action": action }))
+}
+
+/// The dock's AI button: show the panel with its text box.
+#[tauri::command]
+pub fn ai_open(app: AppHandle) {
+    if enabled(&app) {
+        let _ = app.emit_to(surface(&app), "ai-open", json!({ "recording": false }));
+    }
+}
+
+/// "Delete AI altogether". Blocking work runs off the main thread.
+#[tauri::command]
+pub async fn ai_delete(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || delete_blocking(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn delete_blocking(app: &AppHandle) -> Result<(), String> {
+    // The marker first: AI now counts as off, so nothing can respawn the agent,
+    // and if removing files fails halfway init() finishes the job on next start.
+    let flag_path = deleted_flag(app).ok_or("Can't find Bloom's settings folder.")?;
+    std::fs::write(&flag_path, "Bloom AI was deleted in Settings. Delete this file to allow installing it again.
+")
+        .map_err(|e| e.to_string())?;
+    stop();
+    HOTKEY_VK.store(0, Ordering::Relaxed);
+    if let Some(exe) = exe_path(app).filter(|p| p.exists()) {
+        wipe(&exe)?;
+    }
+    if let Some(dir) = ai_dir(app).filter(|d| d.exists()) {
+        // The exe can stay locked for a moment after its process exits.
+        let mut removed = std::fs::remove_dir_all(&dir);
+        for _ in 0..5 {
+            if removed.is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+            removed = std::fs::remove_dir_all(&dir);
+        }
+        removed.map_err(|e| format!("Couldn't remove {}: {e}", dir.display()))?;
+    }
+    remove_ai_settings(app)?;
+    let _ = app.emit("ai-event", json!({ "type": "deleted" }));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(name: &str) -> AppInfo {
+        AppInfo {
+            name: name.into(),
+            path: format!("C:\\{name}.lnk"),
+            icon: None,
+            is_running: false,
+            hwnd: None,
+            executable: None,
+            all_hwnds: None,
+        }
+    }
+
+    #[test]
+    fn names_are_validated() {
+        assert_eq!(clean_name(" Mina "), "Mina");
+        assert_eq!(clean_name("R2D2"), "Janice");
+        assert_eq!(clean_name(""), "Janice");
+        assert_eq!(clean_name(&"x".repeat(25)), "Janice");
+    }
+
+    #[test]
+    fn trained_name_must_match() {
+        let dir = std::env::temp_dir().join(format!("bloom-wake-{}", std::process::id()));
+        let wake = dir.join("wake");
+        std::fs::create_dir_all(&wake).unwrap();
+        assert!(!trained_for(&dir, "Janice"));
+        std::fs::write(wake.join("wake.rpw"), b"").unwrap();
+        assert!(!trained_for(&dir, "Janice"), "no name.txt");
+        std::fs::write(wake.join("name.txt"), "Janice").unwrap();
+        assert!(trained_for(&dir, "janice"));
+        assert!(!trained_for(&dir, "Mina"));
+        // The pre-rename model never counts.
+        std::fs::remove_file(wake.join("name.txt")).unwrap();
+        std::fs::write(wake.join("hello-janice.rpw"), b"").unwrap();
+        assert!(!trained_for(&dir, "Janice"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn finds_apps_exact_then_prefix_then_anywhere() {
+        let apps = vec![app("Spotify Helper"), app("Spotify"), app("Microsoft Edge")];
+        assert_eq!(find_app(&apps, "spotify").unwrap().name, "Spotify");
+        assert_eq!(find_app(&apps, "micro").unwrap().name, "Microsoft Edge");
+        assert_eq!(find_app(&apps, "edge").unwrap().name, "Microsoft Edge");
+        assert!(find_app(&apps, "zoom").is_none());
+        assert!(find_app(&apps, " ").is_none());
+    }
+
+    #[test]
+    fn numbers_and_flags_from_loose_model_output() {
+        assert_eq!(number(&json!(40)), Some(40.0));
+        assert_eq!(number(&json!("40%")), Some(40.0));
+        assert_eq!(number(&json!("loud")), None);
+        assert_eq!(flag(&json!(true)), Some(true));
+        assert_eq!(flag(&json!("off")), Some(false));
+        assert_eq!(flag(&json!("maybe")), None);
+        assert_eq!(number(&json!("NaN")), None);
+        assert_eq!(number(&json!("inf")), None);
+        assert_eq!(flag(&json!("On")), Some(true));
+        assert_eq!(flag(&json!("OFF")), Some(false));
+    }
+
+    #[test]
+    fn auto_reply_lists_only_numbers_the_user_saved() {
+        let dir = std::env::temp_dir().join(format!("bloom-people-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("phones.json"), r#"{"Old": "+491"}"#).unwrap();
+        assert_eq!(saved_numbers(&dir), [("Old".to_string(), "+491".to_string())]);
+        let people = json!([
+            { "name": "zed", "phones": [{ "number": "+492", "source": "user" }] },
+            { "name": "Ann", "phones": [{ "number": "+493", "source": "user" }, { "number": "+494", "source": "whatsapp" }] },
+            { "name": "Synced", "phones": [{ "number": "+495", "source": "whatsapp" }] }
+        ]);
+        std::fs::write(dir.join("people.json"), people.to_string()).unwrap();
+        let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(saved_numbers(&dir), [pair("Ann", "+493"), pair("zed", "+492")]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strips_only_ai_keys() {
+        let mut settings: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "bloom-ai-enabled": "true",
+            "bloom-ai-model": "m",
+            "bloom-dock-enabled": "true"
+        }))
+        .unwrap();
+        strip_ai_keys(&mut settings);
+        assert_eq!(settings.keys().collect::<Vec<_>>(), vec!["bloom-dock-enabled"]);
+    }
+}

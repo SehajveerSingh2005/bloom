@@ -1,0 +1,73 @@
+/* Janice's 3D aura orb (AiOrb.tsx). Soft gradient shells, each tilted on its
+   own axis and turning in its own plane under perspective, around a bright
+   core, with a glow behind and a red tint for errors. Gradients fade to
+   transparent, so no filter is needed. Nothing here animates: orbMotion's
+   springs write each layer's transform and opacity from one frame loop. */
+.aio {
+	--aio-a: #ff5fa2;
+	--aio-b: #4cc3ff;
+	--aio-c: #8f6bff;
+	--aio-d: #5ee0a0;
+	--aio-e: #ffb340;
+	position: relative;
+	display: block;
+	flex-shrink: 0;
+	width: var(--aio-size);
+	height: var(--aio-size);
+}
+
+.aio-glow,
+.aio-sphere,
+.aio-shell,
+.aio-tint,
+.aio-core {
+	position: absolute;
+	inset: 0;
+	border-radius: 50%;
+}
+
+.aio-glow {
+	inset: -35%;
+	background: radial-gradient(circle closest-side, var(--aio-c), transparent);
+}
+
+/* Perspective for each shell on its own, painted in order: no shared 3D
+   space, so the GPU never splits intersecting planes (seams) or sorts them. */
+.aio-sphere {
+	perspective: calc(var(--aio-size) * 4);
+}
+
+/* Set by AiOrb only while its frame loop runs. */
+.aio-live,
+.aio-live .aio-shell {
+	will-change: transform, opacity;
+}
+
+/* Every shell fades out before its rim, so no hard edge shows when it tilts. */
+.aio-shell {
+	-webkit-mask-image: radial-gradient(circle closest-side, #000 45%, transparent);
+	mask-image: radial-gradient(circle closest-side, #000 45%, transparent);
+}
+
+.aio-shell:nth-child(1) {
+	background: conic-gradient(from 0deg, var(--aio-a), var(--aio-e), var(--aio-d), var(--aio-b), var(--aio-c), var(--aio-a));
+}
+
+.aio-shell:nth-child(2) {
+	background: radial-gradient(circle at 30% 30%, var(--aio-b), transparent 68%);
+}
+
+.aio-shell:nth-child(3) {
+	background: radial-gradient(circle at 70% 68%, var(--aio-a), transparent 68%);
+}
+
+/* Errors fade this in over the shells and out past the edge, like a red glow. */
+.aio-tint {
+	inset: -20%;
+	background: radial-gradient(circle closest-side, rgba(255, 69, 58, 0.85) 30%, rgba(196, 37, 28, 0.45) 70%, transparent);
+}
+
+.aio-core {
+	inset: 22%;
+	background: radial-gradient(circle at 42% 38%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.25) 45%, transparent 72%);
+}

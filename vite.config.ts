@@ -5,9 +5,23 @@ import svgr from "vite-plugin-svgr";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+// KaTeX's CSS lists each font as woff2, woff and ttf. WebView2 only ever
+// loads woff2, so the other two (about 800 kB) stay out of the bundle.
+const katexWoff2Only = {
+	name: "katex-woff2-only",
+	enforce: "pre" as const,
+	transform(code: string, id: string) {
+		if (!id.includes("katex") || !id.endsWith(".css")) return;
+		return code.replace(
+			/,url\([^)]+\.woff\) format\("woff"\),url\([^)]+\.ttf\) format\("truetype"\)/g,
+			""
+		);
+	}
+};
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-	plugins: [react(), svgr()],
+	plugins: [react(), svgr(), katexWoff2Only],
 
 	// Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
 	//

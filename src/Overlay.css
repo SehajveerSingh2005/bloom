@@ -561,3 +561,77 @@ body,
 .light-mode .brightness-notch-bar {
 	background: rgba(0, 0, 0, 0.12);
 }
+
+/* ─── Bloom AI Orb ──────────────────────────────────────────────────────── */
+
+/* "Hey <name>": the orb floats just under the notch (44px collapsed), or just
+   above the merged dock (53px, as the add-app popup), centred. Scaled by
+   bloom-scale like the HUDs (--ai-zoom here, zoom on the orb and the card in
+   Overlay.tsx); click-through like the rest of the overlay. */
+.ai-orb-float {
+	position: fixed;
+	left: 0;
+	right: 0;
+	display: flex;
+	justify-content: center;
+	pointer-events: none;
+}
+
+.ai-orb-float.notch {
+	top: calc(56px * var(--ai-zoom, 1));
+}
+
+.ai-orb-float.dock {
+	bottom: calc(65px * var(--ai-zoom, 1));
+}
+
+.ai-orb-float-card {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: calc(10px * var(--ai-zoom, 1));
+}
+
+.ai-orb-float.notch .ai-orb-caption-wrap {
+	transform-origin: top center;
+}
+
+.ai-orb-float.dock .ai-orb-caption-wrap {
+	transform-origin: bottom center;
+}
+
+/* The caption reuses the HUD card's glass and the panel's type. */
+.ai-orb-caption {
+	max-width: 320px;
+	padding: 6px 12px;
+	background: var(--bloom-bg, rgba(0, 0, 0, 0.8));
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
+	border-radius: 18px;
+	color: var(--bloom-text, #fff);
+	font-family:
+		"Inter",
+		-apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		sans-serif;
+	font-size: 12px;
+	line-height: 1.4;
+	text-align: center;
+	overflow-wrap: anywhere;
+	box-sizing: border-box;
+	/* Tall enough for most answers; a taller one moves to the panel (Overlay.tsx). */
+	max-height: 320px;
+	overflow: hidden;
+}
+
+/* A finished answer reads like the panel: wider card, left-aligned Markdown. */
+.ai-orb-caption.answer {
+	max-width: 440px;
+	padding: 10px 14px;
+	text-align: left;
+}
+
+
+.ai-orb-caption.error {
+	color: #ff9f9a;
+}
