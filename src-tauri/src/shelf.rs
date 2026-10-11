@@ -6,6 +6,8 @@
 //! stale — and OLE does not fall back to ancestors, so a drag over the notch
 //! finds nothing. This module revokes any existing target and registers ours on
 //! the toplevel and every current descendant, after the webview has painted.
+//! The dock gets the same target so the shelf works while the notch is merged
+//! into it; each event names the window it came from.
 
 use std::cell::UnsafeCell;
 use std::sync::Mutex;
@@ -48,6 +50,7 @@ enum DragPayload {
 struct ShelfDropTarget {
     app: AppHandle,
     hwnd: HWND,
+    window: &'static str,
     enter_valid: UnsafeCell<bool>,
     cursor_effect: UnsafeCell<DROPEFFECT>,
 }
@@ -168,14 +171,14 @@ impl IDropTarget_Impl for ShelfDropTarget_Impl {
             DragPayload::Files(paths, hdrop) => {
                 let _ = self.app.emit(
                     "shelf-drag-enter",
-                    serde_json::json!({ "paths": paths, "position": { "x": point.x, "y": point.y } }),
+                    serde_json::json!({ "paths": paths, "window": self.window, "position": { "x": point.x, "y": point.y } }),
                 );
                 unsafe { DragFinish(hdrop) };
             }
             DragPayload::Text(text) => {
                 let _ = self.app.emit(
                     "shelf-drag-enter",
-                    serde_json::json!({ "text": text, "position": { "x": point.x, "y": point.y } }),
+                    serde_json::json!({ "text": text, "window": self.window, "position": { "x": point.x, "y": point.y } }),
                 );
             }
         }
@@ -195,7 +198,9 @@ impl IDropTarget_Impl for ShelfDropTarget_Impl {
     fn DragLeave(&self) -> windows::core::Result<()> {
         if unsafe { *self.enter_valid.get() } {
             unsafe { *self.enter_valid.get() = false };
-            let _ = self.app.emit("shelf-drag-leave", ());
+            let _ = self
+                .app
+                .emit("shelf-drag-leave", serde_json::json!({ "window": self.window }));
         }
         Ok(())
     }
@@ -216,13 +221,13 @@ impl IDropTarget_Impl for ShelfDropTarget_Impl {
                 Some(DragPayload::Files(paths, hdrop)) => {
                     let _ = self
                         .app
-                        .emit("shelf-drag-drop", serde_json::json!({ "paths": paths }));
+                        .emit("shelf-drag-drop", serde_json::json!({ "paths": paths, "window": self.window }));
                     unsafe { DragFinish(hdrop) };
                 }
                 Some(DragPayload::Text(text)) => {
                     let _ = self
                         .app
-                        .emit("shelf-drag-drop", serde_json::json!({ "text": text }));
+                        .emit("shelf-drag-drop", serde_json::json!({ "text": text, "window": self.window }));
                 }
                 None => {}
             }
@@ -231,49 +236,53 @@ impl IDropTarget_Impl for ShelfDropTarget_Impl {
     }
 }
 
-/// (Re)registers the shelf drop target on the main window and all its current
-/// descendants. Safe to call repeatedly; existing registrations are replaced.
+/// (Re)registers the shelf drop target on the main and dock windows and all
+/// their current descendants. Safe to call repeatedly; existing registrations
+/// are replaced.
 pub fn setup(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("main") else {
-        return;
-    };
-    let Ok(hwnd) = win.hwnd() else {
-        return;
-    };
-
     struct Ctx {
         app: AppHandle,
+        window: &'static str,
         targets: Vec<IDropTarget>,
     }
 
     unsafe extern "system" fn child_proc(child: HWND, lparam: LPARAM) -> BOOL {
         let ctx = &mut *(lparam.0 as *mut Ctx);
-        unsafe { inject(child, &ctx.app, &mut ctx.targets) };
+        unsafe { inject(child, &ctx.app, ctx.window, &mut ctx.targets) };
         BOOL(1)
     }
 
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let mut ctx = Ctx {
-            app: app.clone(),
-            targets: Vec::new(),
+    let mut targets = Vec::new();
+    for window in ["main", "dock"] {
+        let Some(hwnd) = app.get_webview_window(window).and_then(|w| w.hwnd().ok()) else {
+            continue;
         };
-        inject(hwnd, app, &mut ctx.targets);
-        let _ = EnumChildWindows(
-            Some(hwnd),
-            Some(child_proc),
-            LPARAM(&mut ctx as *mut Ctx as isize),
-        );
-        if let Ok(mut guard) = SHELF_DROP_TARGETS.lock() {
-            *guard = Some(TargetStore(ctx.targets));
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let mut ctx = Ctx {
+                app: app.clone(),
+                window,
+                targets: Vec::new(),
+            };
+            inject(hwnd, app, window, &mut ctx.targets);
+            let _ = EnumChildWindows(
+                Some(hwnd),
+                Some(child_proc),
+                LPARAM(&mut ctx as *mut Ctx as isize),
+            );
+            targets.append(&mut ctx.targets);
         }
+    }
+    if let Ok(mut guard) = SHELF_DROP_TARGETS.lock() {
+        *guard = Some(TargetStore(targets));
     }
 }
 
-unsafe fn inject(hwnd: HWND, app: &AppHandle, out: &mut Vec<IDropTarget>) {
+unsafe fn inject(hwnd: HWND, app: &AppHandle, window: &'static str, out: &mut Vec<IDropTarget>) {
     let target: IDropTarget = ShelfDropTarget {
         app: app.clone(),
         hwnd,
+        window,
         enter_valid: UnsafeCell::new(false),
         cursor_effect: UnsafeCell::new(DROPEFFECT_NONE),
     }

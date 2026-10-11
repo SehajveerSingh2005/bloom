@@ -1557,3 +1557,75 @@ html.glass:not(.no-blur).light-mode .ic-zone.active {
 	opacity: 1;
 	background: rgba(255, 255, 255, 0.1);
 }
+
+/* Shelf tab (merged mode): the notch's shelf tiles, one scrolling row. */
+.ic-shelf {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+.ic-shelf .shelf-tile {
+	position: relative;
+	flex: 0 0 104px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 6px;
+	border-radius: 12px;
+	background: rgba(255, 255, 255, 0.06);
+	cursor: pointer;
+}
+.ic-shelf .shelf-tile:hover {
+	background: rgba(255, 255, 255, 0.12);
+}
+.ic-shelf .shelf-tile-preview {
+	height: 84px;
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.05);
+	overflow: hidden;
+}
+.ic-shelf .shelf-tile-preview img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+.ic-shelf .shelf-tile-text {
+	padding: 7px 8px;
+	font-size: 10px;
+	line-height: 1.45;
+	overflow: hidden;
+	height: 100%;
+	box-sizing: border-box;
+	word-break: break-word;
+}
+.ic-shelf .shelf-tile-name {
+	font-size: 11px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	opacity: 0.85;
+}
+.ic-shelf .shelf-tile-remove {
+	position: absolute;
+	top: 4px;
+	right: 4px;
+	width: 18px;
+	height: 18px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: none;
+	border-radius: 50%;
+	background: rgba(0, 0, 0, 0.55);
+	color: #fff;
+	opacity: 0;
+	cursor: pointer;
+	transition: opacity 0.12s ease;
+}
+.ic-shelf .shelf-tile:hover .shelf-tile-remove {
+	opacity: 1;
+}

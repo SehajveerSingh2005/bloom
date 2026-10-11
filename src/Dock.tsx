@@ -205,6 +205,8 @@ const Dock = memo(function Dock() {
 	// Info centre: notch content in the dock (see InfoCentre.tsx). infoTab = open panel.
 	const [infoCentre, setInfoCentre] = useInfoCentre();
 	const [infoTab, setInfoTab] = useState<InfoTab | null>(null);
+	const infoCentreRef = useRef(infoCentre);
+	infoCentreRef.current = infoCentre;
 	const infoCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const infoPanelRef = useRef<HTMLDivElement>(null);
 	const updateRectRef = useRef(() => {});
@@ -257,6 +259,22 @@ const Dock = memo(function Dock() {
 		if ((!ai.enabled || !infoCentre) && (aiOpen || aiOwnRef.current)) closeAi();
 		if (!infoCentre) setInfoTab(null);
 	}, [ai.enabled, infoCentre, aiOpen]);
+	// Merged mode: dragging a file or text onto the dock opens the Shelf tab;
+	// the drop itself lands in the notch's shelf list (App.tsx).
+	useEffect(() => {
+		invoke("setup_shelf_drop").catch(() => {});
+		const offs = [
+			listen<{ window?: string }>("shelf-drag-enter", (e) => {
+				if (e.payload.window !== "dock" || !infoCentreRef.current) return;
+				if (infoCloseTimer.current) clearTimeout(infoCloseTimer.current);
+				setInfoTab((cur) => (cur === "ai" ? cur : "shelf"));
+			}),
+			listen<{ window?: string }>("shelf-drag-leave", (e) => {
+				if (e.payload?.window === "dock") scheduleInfoClose();
+			})
+		];
+		return () => offs.forEach((off) => off.then((fn) => fn()));
+	}, []);
 	// A request waiting for an OK brings the AI tab back if another tab is showing.
 	useEffect(() => {
 		if (ai.state.confirm && ai.enabled && infoCentre) setInfoTab("ai");
@@ -316,6 +334,7 @@ const Dock = memo(function Dock() {
 	const isHidden =
 		!startupAnimating &&
 		!aiOpen &&
+		infoTab !== "shelf" &&
 		((dockMode === "smart" && isOverlapped && interactionState === "none") ||
 			(dockMode === "peek" && interactionState === "none"));
 

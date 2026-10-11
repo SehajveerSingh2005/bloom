@@ -6,7 +6,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import {
 	BatteryCharging,
 	BatteryFull,
@@ -25,6 +25,7 @@ import {
 	Volume1,
 	Volume2,
 	VolumeX,
+	X,
 	Wifi,
 	WifiOff
 } from "lucide-react";
@@ -35,6 +36,8 @@ import { useSliderSync, useTransientError } from "./hooks/useSliderSync";
 import { getTimerChimeCtx, playTimerChime } from "./chime";
 import { PowerModeIcon, powerModeLabel, usePowerMode } from "./powerMode";
 import { ConnectPage } from "./ConnectPage";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { startDrag } from "@crabnebula/tauri-plugin-drag";
 
 /** A tile's "more" arrow: the tile itself toggles, this opens its page
  *  (Wi-Fi networks to join, Bluetooth devices to pair or connect). */
@@ -55,13 +58,14 @@ function TileMore({ title, onOpen }: { title: string; onOpen: () => void }) {
 }
 
 /** "ai" is Bloom AI's view: a tab of this panel when AI is on (Dock.tsx). */
-export type InfoTab = "media" | "calendar" | "timer" | "controls" | "ai";
+export type InfoTab = "media" | "calendar" | "timer" | "controls" | "shelf" | "ai";
 
 const TABS: [InfoTab, string][] = [
 	["media", "Now playing"],
 	["calendar", "Calendar"],
 	["timer", "Timer"],
-	["controls", "Controls"]
+	["controls", "Controls"],
+	["shelf", "Shelf"]
 ];
 
 interface MediaInfo {
@@ -506,6 +510,7 @@ export function InfoPanel({ tab, setTab, onResize, ai }: PanelProps) {
 						{tab === "calendar" && <CalendarView />}
 						{tab === "timer" && <TimerView />}
 						{tab === "controls" && <ControlsView />}
+						{tab === "shelf" && <ShelfView />}
 						{tab === "ai" && ai?.view}
 					</motion.div>
 				</AnimatePresence>
@@ -676,6 +681,95 @@ function TimerView() {
 					{timer.running ? "Pause" : "Start"}
 				</button>
 			</div>
+		</div>
+	);
+}
+
+interface ShelfItem {
+	id: string;
+	type: "file" | "text";
+	name: string;
+	path?: string;
+	text?: string;
+}
+
+// The notch's shelf (App.tsx owns the items) shown in the merged dock. Drops
+// on the dock reach the notch's list; this view mirrors it and removes through it.
+function ShelfView() {
+	const [items, setItems] = useState<ShelfItem[]>([]);
+	const [thumbs, setThumbs] = useState<Record<string, string | null>>({});
+	const [dragIcon, setDragIcon] = useState<string | null>(null);
+	const press = useRef<{ id: string; x: number; y: number; dragging: boolean } | null>(null);
+	useEffect(() => {
+		const off = listen<ShelfItem[]>("shelf-items", (e) => setItems(e.payload));
+		emit("shelf-request").catch(() => {});
+		invoke<string | null>("shelf_drag_icon").then(setDragIcon).catch(() => {});
+		return () => {
+			off.then((fn) => fn());
+		};
+	}, []);
+	useEffect(() => {
+		for (const { path } of items) {
+			if (!path || path in thumbs) continue;
+			setThumbs((t) => ({ ...t, [path]: null }));
+			invoke<string | null>("shelf_thumbnail", { path })
+				.then((img) => setThumbs((t) => ({ ...t, [path]: img })))
+				.catch(() => {});
+		}
+	}, [items]);
+	const open = (item: ShelfItem) => {
+		if (press.current?.dragging) return;
+		if (item.type === "text") writeText(item.text ?? "").catch(() => {});
+		else if (item.path) invoke("shelf_open", { path: item.path }).catch(() => {});
+	};
+	const move = (e: React.PointerEvent, item: ShelfItem) => {
+		const st = press.current;
+		if (!st || st.id !== item.id || st.dragging || !item.path) return;
+		if (Math.hypot(e.clientX - st.x, e.clientY - st.y) < 6) return;
+		const icon = thumbs[item.path] ?? dragIcon;
+		if (!icon) return;
+		st.dragging = true;
+		startDrag({ item: [item.path], icon }).catch(() => {});
+	};
+	if (items.length === 0)
+		return <div className="ic-empty">Drop files or selected text on the dock</div>;
+	return (
+		<div className="ic-shelf">
+			{items.map((item) => (
+				<div
+					key={item.id}
+					className={`shelf-tile ${item.type === "text" ? "is-text" : ""}`}
+					title={item.type === "text" ? "Click to copy" : item.path}
+					onPointerDown={(e) => {
+						if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+						press.current = { id: item.id, x: e.clientX, y: e.clientY, dragging: false };
+					}}
+					onPointerMove={(e) => move(e, item)}
+					onClick={() => {
+						open(item);
+						press.current = null;
+					}}
+				>
+					<div className="shelf-tile-preview">
+						{item.type === "text" ? (
+							<div className="shelf-tile-text">{item.text}</div>
+						) : item.path && thumbs[item.path] ? (
+							<img src={thumbs[item.path]!} alt="" draggable={false} />
+						) : null}
+					</div>
+					<div className="shelf-tile-name">{item.name}</div>
+					<button
+						className="shelf-tile-remove"
+						aria-label="Remove"
+						onClick={(e) => {
+							e.stopPropagation();
+							emit("shelf-remove", item.id).catch(() => {});
+						}}
+					>
+						<X size={11} />
+					</button>
+				</div>
+			))}
 		</div>
 	);
 }

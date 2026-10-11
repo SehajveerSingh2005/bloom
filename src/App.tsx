@@ -1,6 +1,6 @@
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
 import { useEffect, useState, useCallback, useRef, memo } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getVersion } from "@tauri-apps/api/app";
@@ -1310,6 +1310,9 @@ function App() {
 	// the current list.
 	const shelfItemsRef = useRef<ShelfItem[]>(shelfItems);
 	shelfItemsRef.current = shelfItems;
+	useEffect(() => {
+		emit("shelf-items", shelfItems).catch(() => {});
+	}, [shelfItems]);
 	// Tiles that were just added get an entrance animation; ones restored when
 	// the panel reopens do not (the panel itself already fades in).
 	const shelfNewIdsRef = useRef<Set<string>>(new Set());
@@ -1419,10 +1422,13 @@ function App() {
 		let unlisteners: (() => void)[] = [];
 		let cancelled = false;
 
-		const enter = (event: { payload: { paths?: string[]; text?: string } }) => {
+		// The dock has the same drop target (merged mode shows the shelf there):
+		// its drops still land in this list, but the notch panel stays put.
+		type ShelfDragPayload = { paths?: string[]; text?: string; window?: string };
+		const enter = (event: { payload: ShelfDragPayload }) => {
 			// Our own drag-out starts with the cursor over the notch; ignore
 			// the enter it causes instead of flashing the hover state.
-			if (shelfSelfDragRef.current) return;
+			if (shelfSelfDragRef.current || event.payload.window === "dock") return;
 			console.info("[shelf] drag-enter:", event.payload.paths ?? event.payload.text);
 			setIsDragHovering(true);
 			setBloomMode((prev) => {
@@ -1433,7 +1439,8 @@ function App() {
 				return "shelf";
 			});
 		};
-		const leave = () => {
+		const leave = (event: { payload: ShelfDragPayload | null }) => {
+			if (event.payload?.window === "dock") return;
 			setIsDragHovering(false);
 			if (shelfDragActiveRef.current) {
 				shelfDragActiveRef.current = false;
@@ -1441,7 +1448,12 @@ function App() {
 				setBloomMode((prev) => (prev === "shelf" ? restore : prev));
 			}
 		};
-		const drop = (event: { payload: { paths?: string[]; text?: string } }) => {
+		const drop = (event: { payload: ShelfDragPayload }) => {
+			if (event.payload.window === "dock") {
+				addShelfItems(event.payload.paths ?? []);
+				if (event.payload.text) addShelfText(event.payload.text);
+				return;
+			}
 			setIsDragHovering(false);
 			shelfDragActiveRef.current = false;
 			shelfSelfDropAtRef.current = Date.now();
@@ -1456,9 +1468,15 @@ function App() {
 		};
 
 		Promise.all([
-			listen<{ paths?: string[]; text?: string }>("shelf-drag-enter", enter),
-			listen("shelf-drag-leave", leave),
-			listen<{ paths?: string[]; text?: string }>("shelf-drag-drop", drop)
+			listen<ShelfDragPayload>("shelf-drag-enter", enter),
+			listen<ShelfDragPayload | null>("shelf-drag-leave", leave),
+			listen<ShelfDragPayload>("shelf-drag-drop", drop),
+			// The dock's shelf tab (merged mode) shows this list and removes
+			// through it, so the notch stays the only owner of the items.
+			listen("shelf-request", () => emit("shelf-items", shelfItemsRef.current)),
+			listen<string>("shelf-remove", (e) =>
+				setShelfItems((prev) => prev.filter((i) => i.id !== e.payload))
+			)
 		])
 			.then((fns) => {
 				if (cancelled) {
