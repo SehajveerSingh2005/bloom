@@ -11,12 +11,14 @@ const MAX_OUTPUT: usize = 8000;
 /// `::` here never counts against the model's script.
 const PRELUDE: &str = "$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; $ErrorActionPreference='Continue';\n";
 
+/// A script as `-EncodedCommand` wants it: base64 of its UTF-16LE text.
+pub(crate) fn encode(script: &str) -> String {
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    base64::engine::general_purpose::STANDARD.encode(utf16)
+}
+
 pub async fn run(script: &str) -> Result<String, String> {
-    let utf16: Vec<u8> = format!("{PRELUDE}{script}")
-        .encode_utf16()
-        .flat_map(u16::to_le_bytes)
-        .collect();
-    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+    let encoded = encode(&format!("{PRELUDE}{script}"));
     let mut cmd = tokio::process::Command::new("powershell.exe");
     cmd.args([
         "-NoProfile",
@@ -71,7 +73,7 @@ pub(crate) mod job {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
 
@@ -90,17 +92,23 @@ pub(crate) mod job {
     }
 
     impl KillOnClose {
-        /// Stops the job killing on close, so processes the script started keep running.
-        pub fn disarm(&self) {
+        /// Sets the job's limit flags (all others cleared).
+        fn limit(&self, flags: JOB_OBJECT_LIMIT) -> windows::core::Result<()> {
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            info.BasicLimitInformation.LimitFlags = flags;
             unsafe {
-                let info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-                let _ = SetInformationJobObject(
+                SetInformationJobObject(
                     self.0,
                     JobObjectExtendedLimitInformation,
                     &info as *const _ as *const std::ffi::c_void,
                     std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                );
+                )
             }
+        }
+
+        /// Stops the job killing on close, so processes the script started keep running.
+        pub fn disarm(&self) {
+            let _ = self.limit(JOB_OBJECT_LIMIT(0));
         }
 
         /// Puts `child` in a new job. None if any step fails: the script then
@@ -109,15 +117,7 @@ pub(crate) mod job {
             let raw = child.raw_handle()?;
             unsafe {
                 let job = Self(CreateJobObjectW(None, PCWSTR::null()).ok()?);
-                let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                SetInformationJobObject(
-                    job.0,
-                    JobObjectExtendedLimitInformation,
-                    &info as *const _ as *const std::ffi::c_void,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                )
-                .ok()?;
+                job.limit(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE).ok()?;
                 AssignProcessToJobObject(job.0, HANDLE(raw)).ok()?;
                 Some(job)
             }
@@ -128,22 +128,18 @@ pub(crate) mod job {
 /// Extracts readable error messages from PowerShell's CLIXML error output.
 /// Decodes escape sequences like _x000D__x000A_ back to actual characters.
 fn decode_clixml_errors(clixml: &str) -> String {
-    // Extract all text within <S S="Error"> tags, then unescape PowerShell's encoding
-    let mut result = String::new();
-    for line in clixml.split("<S S=\"Error\">") {
-        if let Some(end) = line.find("</S>") {
-            let text = &line[..end];
-            // Unescape PowerShell's XML encoding: _x000D_ = \r, _x000A_ = \n
-            let unescaped = text
-                .replace("_x000D__x000A_", "\n")
+    // Extract all text within <S S="Error"> tags, then unescape PowerShell's
+    // encoding: _x000D_ = \r, _x000A_ = \n.
+    let result: String = clixml
+        .split("<S S=\"Error\">")
+        .filter_map(|part| part.find("</S>").map(|end| &part[..end]))
+        .map(|text| {
+            text.replace("_x000D__x000A_", "\n")
                 .replace("_x000D_", "\r")
                 .replace("_x000A_", "\n")
-                .replace("_x0020_", " ");
-            if !unescaped.is_empty() {
-                result.push_str(&unescaped);
-            }
-        }
-    }
+                .replace("_x0020_", " ")
+        })
+        .collect();
     if result.is_empty() {
         clixml.to_string()
     } else {
@@ -156,11 +152,7 @@ pub fn clip(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
-    let mut end = max;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}\n[output cut at {max} bytes]", &s[..end])
+    format!("{}\n[output cut at {max} bytes]", &s[..s.floor_char_boundary(max)])
 }
 
 #[cfg(test)]

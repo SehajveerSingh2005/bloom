@@ -16,6 +16,7 @@ import { useAi } from "./ai/useAi";
 import { AiOrb } from "./ai/AiOrb";
 import { plainText } from "./ai/mdText";
 import "./ai/ai.css";
+import { useInfoCentre } from "./hooks/useGlass";
 
 // Loaded on the first answer, like the panel does, so the overlay starts light.
 const Markdown = lazy(() => import("./ai/Markdown"));
@@ -619,7 +620,7 @@ function OverlayApp() {
 	const [scale, setScale] = useState(() =>
 		parseFloat(localStorage.getItem("bloom-scale") || "1.0")
 	);
-	const [merged, setMerged] = useState(() => localStorage.getItem("bloom-info-centre") === "true");
+	const [merged] = useInfoCentre();
 	const timeoutRef = useRef<any>(null);
 	const hideWindowTimeoutRef = useRef<any>(null);
 	const splashActiveRef = useRef(false);
@@ -812,8 +813,7 @@ function OverlayApp() {
 		"bloom-volume-edge-enabled": setVolumeEdgeEnabled,
 		"bloom-brightness-overlay-enabled": setBrightnessOverlayEnabled,
 		"bloom-brightness-edge-enabled": setBrightnessEdgeEnabled,
-		"bloom-scale": setScale,
-		"bloom-info-centre": (v) => setMerged(v === true)
+		"bloom-scale": setScale
 	});
 
 	// Only a HUD card makes the overlay's edge rects clickable (services.rs);

@@ -482,64 +482,41 @@ pub fn ai_set_secret(app: AppHandle, name: String, value: String) -> Result<(), 
     send(&app, json!({ "type": "set_secret", "name": name, "value": value }))
 }
 
-/// Asks the agent which credentials exist; `secret_status` (booleans only)
-/// follows as an `ai-event`.
-#[tauri::command]
-pub fn ai_secret_status(app: AppHandle) -> Result<(), String> {
-    send(&app, json!({ "type": "secret_status" }))
-}
-
-/// Asks the agent for Library counts; `library_status` follows as an `ai-event`.
-#[tauri::command]
-pub fn ai_library_status(app: AppHandle) -> Result<(), String> {
-    send(&app, json!({ "type": "library_status" }))
-}
-
 /// Opens a Library item ("memory", "skills" or "mcp") in its default app.
 #[tauri::command]
 pub fn ai_reveal(app: AppHandle, what: String) -> Result<(), String> {
     send(&app, json!({ "type": "reveal", "what": what }))
 }
 
-/// Restarts the agent's MCP servers from mcp.json; `library_status` follows.
-#[tauri::command]
-pub fn ai_mcp_reload(app: AppHandle) -> Result<(), String> {
-    send(&app, json!({ "type": "mcp_reload" }))
-}
+/// The agent messages that take no arguments, sent as-is by `ai_send`. Each
+/// answer follows as an `ai-event`: `secret_status` (booleans only),
+/// `library_status` (also after mcp_reload and forget_all), `email_test` after
+/// test_email (logs in without sending), `search_test`, `enroll_done` after
+/// enroll_build. whatsapp_unlink logs out and deletes the session.
+const AI_SENDS: &[&str] = &[
+    "secret_status",
+    "library_status",
+    "mcp_reload",
+    "forget_all",
+    "outlook_login",
+    "test_email",
+    "search_test",
+    "enroll_build",
+    "whatsapp_unlink",
+];
 
-/// Clears the agent's long-term memory; `library_status` follows.
 #[tauri::command]
-pub fn ai_forget_all(app: AppHandle) -> Result<(), String> {
-    send(&app, json!({ "type": "forget_all" }))
-}
-
-#[tauri::command]
-pub fn ai_outlook_login(app: AppHandle) -> Result<(), String> {
-    send(&app, json!({ "type": "outlook_login" }))
-}
-
-/// Logs in to the configured mail server without sending; `email_test` follows.
-#[tauri::command]
-pub fn ai_test_email(app: AppHandle) -> Result<(), String> {
-    send(&app, json!({ "type": "test_email" }))
-}
-
-/// Runs one search with the configured provider; `search_test` follows.
-#[tauri::command]
-pub fn ai_test_search(app: AppHandle) -> Result<(), String> {
-    send(&app, json!({ "type": "search_test" }))
+pub fn ai_send(app: AppHandle, kind: String) -> Result<(), String> {
+    if !AI_SENDS.contains(&kind.as_str()) {
+        return Err(format!("Unknown AI request {kind}."));
+    }
+    send(&app, json!({ "type": kind }))
 }
 
 /// Records "Hey <name>" sample `index` (1 starts over); `enroll_saved` follows.
 #[tauri::command]
 pub fn ai_enroll_sample(app: AppHandle, index: u32) -> Result<(), String> {
     send(&app, json!({ "type": "enroll_sample", "index": index }))
-}
-
-/// Builds the wake word from the samples; `enroll_done` follows.
-#[tauri::command]
-pub fn ai_enroll_build(app: AppHandle) -> Result<(), String> {
-    send(&app, json!({ "type": "enroll_build" }))
 }
 
 /// Settings > WhatsApp opened: a `whatsapp_status` follows (Settings only).
@@ -565,12 +542,6 @@ pub fn ai_whatsapp_restart(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn ai_whatsapp_pair_code(app: AppHandle, phone: String) -> Result<(), String> {
     send(&app, json!({ "type": "whatsapp_pair_code", "phone": phone }))
-}
-
-/// Logs Bloom out of WhatsApp and deletes the session.
-#[tauri::command]
-pub fn ai_whatsapp_unlink(app: AppHandle) -> Result<(), String> {
-    send(&app, json!({ "type": "whatsapp_unlink" }))
 }
 
 /// Saved phone contacts for Settings > Auto-reply, sorted by name. Empty when

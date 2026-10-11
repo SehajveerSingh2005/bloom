@@ -12,11 +12,6 @@ fn is_bad_tool_call(error: &Value) -> bool {
     said.contains("tool_use_failed") || said.contains("invalid_tool_call") || said.contains("invalid tool call") || said.contains("failed to call a function") || !error["failed_generation"].is_null()
 }
 
-/// True for the error `chat` returns when the model twice-over cannot call tools.
-pub fn is_tool_call_failure(e: &str) -> bool {
-    e.starts_with(MODEL_TOOL_CALL_FAILED)
-}
-
 pub struct Llm {
     pub http: reqwest::Client,
     pub base_url: String,

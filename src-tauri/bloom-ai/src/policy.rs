@@ -4,20 +4,13 @@
 
 use crate::config::Tier;
 
-pub fn email_needs_confirm(tier: Tier, known_recipient: bool, tainted: bool) -> bool {
+/// Emails, WhatsApp messages and MCP calls: competent trusts only a known
+/// recipient (or an MCP server marked `"trusted": true` in mcp.json), and
+/// only while the request is untainted.
+pub fn needs_confirm(tier: Tier, trusted: bool, tainted: bool) -> bool {
     match tier {
         Tier::Conservative => true,
-        Tier::Competent => !known_recipient || tainted,
-        Tier::CarteBlanche => false,
-    }
-}
-
-/// MCP tools: competent trusts only servers marked `"trusted": true` in
-/// mcp.json, and only while the request is untainted.
-pub fn mcp_needs_confirm(tier: Tier, trusted_server: bool, tainted: bool) -> bool {
-    match tier {
-        Tier::Conservative => true,
-        Tier::Competent => !trusted_server || tainted,
+        Tier::Competent => !trusted || tainted,
         Tier::CarteBlanche => false,
     }
 }
@@ -245,12 +238,18 @@ mod tests {
     use crate::config::Tier::*;
 
     #[test]
-    fn email_levels() {
-        assert!(email_needs_confirm(Conservative, true, false));
-        assert!(!email_needs_confirm(Competent, true, false));
-        assert!(email_needs_confirm(Competent, false, false));
-        assert!(email_needs_confirm(Competent, true, true));
-        assert!(!email_needs_confirm(CarteBlanche, false, true));
+    fn email_whatsapp_and_mcp_levels() {
+        // The full truth table of the email and MCP rules this one replaced.
+        for (tier, want) in [
+            (Conservative, [true, true, true, true]),
+            (Competent, [true, true, false, true]),
+            (CarteBlanche, [false, false, false, false]),
+        ] {
+            // (trusted, tainted): (no, no), (no, yes), (yes, no), (yes, yes).
+            let got = [(false, false), (false, true), (true, false), (true, true)]
+                .map(|(trusted, tainted)| needs_confirm(tier, trusted, tainted));
+            assert_eq!(got, want, "{tier:?}");
+        }
     }
 
     #[test]

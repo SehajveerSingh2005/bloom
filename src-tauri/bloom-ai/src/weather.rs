@@ -193,6 +193,14 @@ mod tests {
     use super::*;
     use crate::testutil::{ctx_with_endpoints, mock_server};
 
+    /// A Ctx with saved coordinates whose lookups go to `url`.
+    fn ctx_at(url: &str) -> crate::agent::Ctx {
+        let mut c = ctx_with_endpoints(url);
+        c.cfg.weather_lat = Some(1.0);
+        c.cfg.weather_lon = Some(1.0);
+        c
+    }
+
     const FORECAST: &str = r#"{"current":{"temperature_2m":30.6,"apparent_temperature":33.2,"weather_code":2,"wind_speed_10m":11.4},"daily":{"weather_code":[61,0],"temperature_2m_max":[35.1,33.0],"temperature_2m_min":[26.0,25.4],"precipitation_probability_max":[40,5]}}"#;
 
     #[tokio::test]
@@ -242,24 +250,18 @@ mod tests {
 
     #[tokio::test]
     async fn service_errors_and_garbage_give_clean_messages() {
-        let (url, _r) =
-            crate::testutil::mock_server_status("500 Internal Server Error", vec!["x".into()]);
-        let mut ctx = ctx_with_endpoints(&url);
-        ctx.cfg.weather_lat = Some(1.0);
-        ctx.cfg.weather_lon = Some(1.0);
+        let (url, _r) = crate::testutil::mock_server_full(
+            "500 Internal Server Error",
+            "Content-Type: application/json\r\n",
+            vec!["x".into()],
+        );
         assert_eq!(
-            get(&ctx, None).await,
+            get(&ctx_at(&url), None).await,
             Err("Weather service error (500 Internal Server Error)".into())
         );
         let (url, _r) = mock_server(vec!["<html>nope".into()]);
-        let ctx = {
-            let mut c = ctx_with_endpoints(&url);
-            c.cfg.weather_lat = Some(1.0);
-            c.cfg.weather_lon = Some(1.0);
-            c
-        };
         assert_eq!(
-            get(&ctx, None).await,
+            get(&ctx_at(&url), None).await,
             Err("The weather service sent something unreadable.".into())
         );
     }
@@ -268,10 +270,7 @@ mod tests {
     async fn explicit_city_wins_over_saved_location() {
         let geo = r#"{"results":[{"name":"Paris","latitude":48.8,"longitude":2.3}]}"#;
         let (url, _r) = mock_server(vec![geo.into(), FORECAST.into()]);
-        let mut ctx = ctx_with_endpoints(&url);
-        ctx.cfg.weather_lat = Some(1.0);
-        ctx.cfg.weather_lon = Some(1.0);
-        assert!(get(&ctx, Some("Paris"))
+        assert!(get(&ctx_at(&url), Some("Paris"))
             .await
             .unwrap()
             .starts_with("Paris. Now"));
@@ -280,9 +279,6 @@ mod tests {
     #[tokio::test]
     async fn empty_response_is_an_error() {
         let (url, _r) = mock_server(vec!["{}".into()]);
-        let mut ctx = ctx_with_endpoints(&url);
-        ctx.cfg.weather_lat = Some(1.0);
-        ctx.cfg.weather_lon = Some(1.0);
-        assert!(get(&ctx, None).await.is_err());
+        assert!(get(&ctx_at(&url), None).await.is_err());
     }
 }

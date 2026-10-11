@@ -88,11 +88,7 @@ impl Config {
             weather_lon: number("bloom-weather-lon"),
             weather_city: get("bloom-weather-city", ""),
             fahrenheit: get("bloom-temp-unit", "celsius") == "fahrenheit",
-            name: clean_name(
-                map.get("bloom-ai-name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            ),
+            name: clean_name(&get("bloom-ai-name", "")),
             stt_url: get("bloom-ai-stt-url", &base_url)
                 .trim_end_matches('/')
                 .to_string(),

@@ -6,9 +6,9 @@ import "./orb.css";
 
 // Each shell's resting tilt and how fast it turns relative to the spin.
 const SHELLS = [
-	{ base: "rotateX(18deg)", axis: "rotateX", rate: 1 },
-	{ base: "rotateY(58deg)", axis: "rotateX", rate: -0.77 },
-	{ base: "rotate3d(1, 1, 0, 62deg)", axis: "rotateX", rate: 1.25 }
+	{ base: "rotateX(18deg)", rate: 1 },
+	{ base: "rotateY(58deg)", rate: -0.77 },
+	{ base: "rotate3d(1, 1, 0, 62deg)", rate: 1.25 }
 ];
 const DEG = 180 / Math.PI;
 
@@ -67,7 +67,7 @@ export function AiOrb({
 			el.style.opacity = (f.shells * 0.8).toFixed(4);
 			el.style.transform =
 				`translate3d(${(Math.cos(o) * spread).toFixed(2)}px, ${(Math.sin(o) * spread).toFixed(2)}px, 0) ` +
-				`${s.base} ${s.axis}(${f.tilt.toFixed(2)}deg) rotateZ(${(a * DEG).toFixed(2)}deg)`;
+				`${s.base} rotateX(${f.tilt.toFixed(2)}deg) rotateZ(${(a * DEG).toFixed(2)}deg)`;
 		});
 	};
 

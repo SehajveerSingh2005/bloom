@@ -178,24 +178,11 @@ pub fn classify_open(target: &str) -> Result<OpenTarget, String> {
 /// Opens a link, file or folder with its default handler.
 #[cfg(windows)]
 pub fn shell_open(target: &str) -> Result<(), String> {
+    use windows::core::{w, HSTRING};
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    let wide = |s: &str| {
-        s.encode_utf16()
-            .chain(std::iter::once(0))
-            .collect::<Vec<u16>>()
-    };
-    let (verb, file) = (wide("open"), wide(target));
-    let result = unsafe {
-        ShellExecuteW(
-            None,
-            windows::core::PCWSTR(verb.as_ptr()),
-            windows::core::PCWSTR(file.as_ptr()),
-            None,
-            None,
-            SW_SHOWNORMAL,
-        )
-    };
+    let file = HSTRING::from(target);
+    let result = unsafe { ShellExecuteW(None, w!("open"), &file, None, None, SW_SHOWNORMAL) };
     // ShellExecute reports success as a value above 32.
     if result.0 as usize > 32 {
         Ok(())

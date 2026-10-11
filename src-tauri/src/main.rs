@@ -204,7 +204,6 @@ fn main() {
             connect::bt_pair_answer,
             connect::bt_connect,
             connect::bt_forget,
-            connect::take_keyboard,
             open_bluetooth_settings,
             open_airplane_mode_settings,
             set_brightness,
@@ -240,33 +239,17 @@ fn main() {
             #[cfg(windows)]
             ai::ai_set_secret,
             #[cfg(windows)]
-            ai::ai_secret_status,
-            #[cfg(windows)]
-            ai::ai_library_status,
+            ai::ai_send,
             #[cfg(windows)]
             ai::ai_reveal,
             #[cfg(windows)]
-            ai::ai_forget_all,
-            #[cfg(windows)]
-            ai::ai_mcp_reload,
-            #[cfg(windows)]
-            ai::ai_outlook_login,
-            #[cfg(windows)]
-            ai::ai_test_email,
-            #[cfg(windows)]
-            ai::ai_test_search,
-            #[cfg(windows)]
             ai::ai_enroll_sample,
-            #[cfg(windows)]
-            ai::ai_enroll_build,
             #[cfg(windows)]
             ai::ai_whatsapp_status,
             #[cfg(windows)]
             ai::ai_whatsapp_restart,
             #[cfg(windows)]
             ai::ai_whatsapp_pair_code,
-            #[cfg(windows)]
-            ai::ai_whatsapp_unlink,
             #[cfg(windows)]
             ai::ai_whatsapp_contacts,
             #[cfg(windows)]

@@ -6,12 +6,10 @@ import { Gauge, Leaf, Zap } from "lucide-react";
 // not available (e.g. a non-Balanced plan); clicking then opens Power settings.
 export type PowerMode = "performance" | "balanced" | "efficiency" | null;
 
+const LABELS: Record<string, string> = { performance: "Performance", efficiency: "Efficiency", balanced: "Balanced" };
+
 // Short so it fits the info centre's half-width tile.
-export function powerModeLabel(mode: PowerMode) {
-	if (mode === "performance") return "Performance";
-	if (mode === "efficiency") return "Efficiency";
-	return mode === "balanced" ? "Balanced" : "Unavailable";
-}
+export const powerModeLabel = (mode: PowerMode) => (mode && LABELS[mode]) || "Unavailable";
 
 export function PowerModeIcon({ mode, size, strokeWidth }: { mode: PowerMode; size: number; strokeWidth?: number }) {
 	const Icon = mode === "performance" ? Zap : mode === "efficiency" ? Leaf : Gauge;

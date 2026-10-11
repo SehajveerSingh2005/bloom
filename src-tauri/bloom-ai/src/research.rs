@@ -3,6 +3,7 @@
 //! report. Everything read here is web content, so the request is tainted.
 
 use crate::agent::{Ctx, Shared};
+use crate::debug::cut;
 use crate::errors::{
     coded, MODEL_RATE_LIMITED, RESEARCH_SOURCE_FAILED, SEARCH_BLOCKED, SEARCH_NOT_CONFIGURED,
 };
@@ -21,15 +22,11 @@ pub struct Budget {
     pub model_calls: usize,
 }
 
-impl Default for Budget {
-    fn default() -> Budget {
-        Budget {
-            fetches: 20,
-            time: Duration::from_secs(180),
-            model_calls: 10,
-        }
-    }
-}
+const BUDGET: Budget = Budget {
+    fetches: 20,
+    time: Duration::from_secs(180),
+    model_calls: 10,
+};
 
 const MAX_QUESTIONS: usize = 6;
 const PER_QUESTION: usize = 3;
@@ -103,23 +100,11 @@ fn show(ctx: &Ctx, text: String) {
 }
 
 fn trace(ctx: &Ctx, event: &str, detail: &str) {
-    if ctx.cfg.debug {
-        let detail = crate::debug::cut(detail, crate::debug::RESULT_CHARS);
-        crate::debug::log(&ctx.shared.data_dir, event, &detail);
-    }
-}
-
-fn short(text: &str, chars: usize) -> String {
-    let mut it = text.chars();
-    let mut out: String = it.by_ref().take(chars).collect();
-    if it.next().is_some() {
-        out += "...";
-    }
-    out
+    crate::debug::trace(ctx.cfg.debug, &ctx.shared.data_dir, event, detail);
 }
 
 pub async fn run(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
-    run_within(llm, ctx, text, Budget::default()).await
+    run_within(llm, ctx, text, BUDGET).await
 }
 
 pub async fn run_within(
@@ -132,7 +117,7 @@ pub async fn run_within(
     let gather_until = start + budget.time.saturating_sub(WRITE_TIME);
     let mut calls = budget.model_calls;
     let mut partial: Vec<String> = Vec::new();
-    show(ctx, format!("Researching: {}", short(text, 80)));
+    show(ctx, format!("Researching: {}", cut(text, 80)));
 
     calls = calls.saturating_sub(1);
     let (questions, time_sensitive) = plan(llm, ctx, text, gather_until, &mut partial).await;
@@ -150,7 +135,7 @@ pub async fn run_within(
             ));
             break;
         }
-        show(ctx, format!("Searching: {}", short(q, 80)));
+        show(ctx, format!("Searching: {}", cut(q, 80)));
         let mut hits = match search(&ctx.shared, q, news, gather_until).await {
             Ok(hits) => hits,
             Err(e) if e.starts_with(SEARCH_BLOCKED) || e.starts_with(SEARCH_NOT_CONFIGURED) => {
@@ -162,7 +147,8 @@ pub async fn run_within(
                 continue;
             }
         };
-        rank(&mut hits);
+        // Best first; ties keep the search engine's order.
+        hits.sort_by_key(|h| -score(h));
         lists.push(hits);
     }
     if lists.is_empty() {
@@ -383,7 +369,7 @@ async fn plan(
         .into_iter()
         .flatten()
         .filter_map(|q| q.as_str())
-        .map(|q| short(q.trim(), 200))
+        .map(|q| cut(q.trim(), 200))
         .filter(|q| !q.is_empty() && seen.insert(q.to_lowercase()))
         .take(MAX_QUESTIONS)
         .collect();
@@ -409,7 +395,7 @@ async fn plan(
         } else {
             "the research plan failed, so only the request itself was searched".into()
         });
-        return (vec![short(text, 200)], time_sensitive);
+        return (vec![cut(text, 200)], time_sensitive);
     }
     (questions, time_sensitive)
 }
@@ -450,37 +436,29 @@ fn retry_after(e: &str) -> Option<Duration> {
     Duration::try_from_secs_f64(secs).ok()
 }
 
-/// News first when asked for; an empty or failed news search falls back to the web.
+/// News first when asked for; an empty or failed news search falls back to
+/// the web. A search Brave rate-limited is tried once more after a pause, in time.
 async fn search(
     shared: &Shared,
     query: &str,
     news: bool,
     until: Instant,
 ) -> Result<Vec<Hit>, String> {
-    if news {
-        if let Ok(hits) = search_once_more(shared, query, true, until).await {
-            if !hits.is_empty() {
-                return Ok(hits);
+    let kinds: &[bool] = if news { &[true, false] } else { &[false] };
+    let mut result = Ok(Vec::new());
+    for &news in kinds {
+        result = match web::run_search(shared, query, news).await {
+            Err(e) if e.ends_with(web::RATE_LIMITED) && Instant::now() + BRAVE_WAIT < until => {
+                tokio::time::sleep(BRAVE_WAIT).await;
+                web::run_search(shared, query, news).await
             }
+            other => other,
+        };
+        if result.as_ref().is_ok_and(|hits| !hits.is_empty()) {
+            break;
         }
     }
-    search_once_more(shared, query, false, until).await
-}
-
-/// A search Brave rate-limited is tried once more after a pause, in time.
-async fn search_once_more(
-    shared: &Shared,
-    query: &str,
-    news: bool,
-    until: Instant,
-) -> Result<Vec<Hit>, String> {
-    match web::run_search(shared, query, news).await {
-        Err(e) if e.ends_with(web::RATE_LIMITED) && Instant::now() + BRAVE_WAIT < until => {
-            tokio::time::sleep(BRAVE_WAIT).await;
-            web::run_search(shared, query, news).await
-        }
-        other => other,
-    }
+    result
 }
 
 /// ponytail: a fixed domain list and "ago"/year snippet hints, not a real
@@ -522,11 +500,6 @@ fn score(hit: &Hit) -> i32 {
     s
 }
 
-/// Best first; ties keep the search engine's order.
-fn rank(hits: &mut [Hit]) {
-    hits.sort_by_key(|h| -score(h));
-}
-
 fn extract_messages(request: &str, chunk: &[Source], first: usize) -> Vec<Value> {
     let mut pages = String::new();
     for (i, s) in chunk.iter().enumerate() {
@@ -535,7 +508,7 @@ fn extract_messages(request: &str, chunk: &[Source], first: usize) -> Vec<Value>
             first + i,
             s.title,
             s.url,
-            short(&s.text, SOURCE_CHARS)
+            cut(&s.text, SOURCE_CHARS)
         );
     }
     vec![
@@ -576,7 +549,7 @@ fn read_claims(
                 .unwrap_or_default()
                 .trim()
                 .to_lowercase(),
-            text: short(text, 400),
+            text: cut(text, 400),
             analysis: c["kind"].as_str() == Some("analysis"),
         });
     }
@@ -591,7 +564,7 @@ fn read_claims(
         let about = c["about"].as_str().unwrap_or_default().trim();
         if cited.len() >= 2 && !about.is_empty() {
             let refs: Vec<String> = cited.iter().map(|n| format!("[{n}]")).collect();
-            conflicts.push(format!("{} ({})", short(about, 200), refs.join(" ")));
+            conflicts.push(format!("{} ({})", cut(about, 200), refs.join(" ")));
         }
     }
 }
@@ -773,7 +746,6 @@ fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::{ctx, http};
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::sync::{mpsc, Arc};
@@ -840,23 +812,24 @@ mod tests {
     }
 
     fn setup(base: &str, key: Option<&str>) -> (Llm, Ctx) {
-        let mut c = ctx();
-        let w = &mut Arc::get_mut(&mut c.shared).unwrap().web;
-        w.allow_loopback = true;
-        w.use_store = false;
-        w.key = key.map(str::to_string);
-        w.brave_url = base.to_string();
-        w.search_url = format!("{base}/ddg");
-        let llm = Llm {
-            http: http(),
-            base_url: base.to_string(),
-            model: "m".into(),
-            key: "k".into(),
+        (crate::testutil::llm(base), crate::testutil::web_ctx(base, key))
+    }
+
+    /// The model's answer by step: the plan, the claims, then the report.
+    fn model(body: &str, plan: &str, claims: &str, report: &str) -> (&'static str, String) {
+        let content = if body.contains("You plan web research") {
+            plan
+        } else if body.contains("Extract claims") {
+            claims
+        } else {
+            report
         };
-        (llm, c)
+        ("200 OK", said(content))
     }
 
     const PLAN: &str = r#"{"questions":["alpha one","alpha two"],"time_sensitive":false}"#;
+    const FACT: &str = r#"{"claims":[{"source":1,"topic":"t","claim":"A fact.","kind":"fact"}]}"#;
+    const REPORT: &str = "# R\n\n## Summary\n**Fact:** A fact [1].";
 
     fn requests(rx: &mpsc::Receiver<String>) -> Vec<String> {
         rx.try_iter().collect()
@@ -866,17 +839,11 @@ mod tests {
     async fn a_multi_source_report_cites_its_sources_and_survives_a_dead_page() {
         let (base, rx) = serve(|line, body, base| {
             if line.starts_with("POST /chat/completions") {
-                return (
-                    "200 OK",
-                    if body.contains("You plan web research") {
-                        said(PLAN)
-                    } else if body.contains("Extract claims") {
-                        said(
-                            r#"{"claims":[{"source":1,"topic":"launch date","claim":"It launched in March.","kind":"fact"},{"source":2,"topic":"reception","claim":"Critics liked it.","kind":"analysis"},{"source":3,"topic":"sales","claim":"Sales grew.","kind":"fact"},{"source":7,"topic":"x","claim":"from a page that does not exist","kind":"fact"}]}"#,
-                        )
-                    } else {
-                        said("# Alpha\n\n## Summary\n**Fact:** It launched in March [1]. **Analysis:** liked [2][9].\n\n## What's uncertain\n- Sales figures are vague [3].\n\n## Sources\n1. made up")
-                    },
+                return model(
+                    body,
+                    PLAN,
+                    r#"{"claims":[{"source":1,"topic":"launch date","claim":"It launched in March.","kind":"fact"},{"source":2,"topic":"reception","claim":"Critics liked it.","kind":"analysis"},{"source":3,"topic":"sales","claim":"Sales grew.","kind":"fact"},{"source":7,"topic":"x","claim":"from a page that does not exist","kind":"fact"}]}"#,
+                    "# Alpha\n\n## Summary\n**Fact:** It launched in March [1]. **Analysis:** liked [2][9].\n\n## What's uncertain\n- Sales figures are vague [3].\n\n## Sources\n1. made up",
                 );
             }
             if line.contains("/web/search?q=alpha+one") {
@@ -946,17 +913,11 @@ mod tests {
     async fn conflicting_sources_land_in_whats_uncertain() {
         let (base, rx) = serve(|line, body, base| {
             if line.starts_with("POST /chat/completions") {
-                return (
-                    "200 OK",
-                    if body.contains("You plan web research") {
-                        said(r#"{"questions":["quake toll"],"time_sensitive":true}"#)
-                    } else if body.contains("Extract claims") {
-                        said(
-                            r#"{"claims":[{"source":1,"topic":"Death toll","claim":"The death toll is 40.","kind":"fact"},{"source":2,"topic":"death toll","claim":"At least 52 people died.","kind":"fact"}]}"#,
-                        )
-                    } else {
-                        said("# Quake\n\n## Summary\n**Fact:** A quake hit [1].")
-                    },
+                return model(
+                    body,
+                    r#"{"questions":["quake toll"],"time_sensitive":true}"#,
+                    r#"{"claims":[{"source":1,"topic":"Death toll","claim":"The death toll is 40.","kind":"fact"},{"source":2,"topic":"death toll","claim":"At least 52 people died.","kind":"fact"}]}"#,
+                    "# Quake\n\n## Summary\n**Fact:** A quake hit [1].",
                 );
             }
             if line.contains("/news/search?q=quake+toll") {
@@ -1065,18 +1026,7 @@ mod tests {
     async fn budgets_cap_fetches_and_model_calls_and_label_the_report_partial() {
         let (base, rx) = serve(|line, body, base| {
             if line.starts_with("POST /chat/completions") {
-                return (
-                    "200 OK",
-                    if body.contains("You plan web research") {
-                        said(PLAN)
-                    } else if body.contains("Extract claims") {
-                        said(
-                            r#"{"claims":[{"source":1,"topic":"t","claim":"A fact.","kind":"fact"}]}"#,
-                        )
-                    } else {
-                        said("# R\n\n## Summary\n**Fact:** A fact [1].")
-                    },
-                );
+                return model(body, PLAN, FACT, REPORT);
             }
             if line.contains("/web/search") {
                 let p = if line.contains("one") {
@@ -1129,14 +1079,14 @@ mod tests {
             url: url.into(),
             snippet: snippet.into(),
         };
-        let mut hits = vec![
+        let mut hits = [
             hit("https://www.pinterest.com/x", ""),
             hit("https://blog.example/x", ""),
             hit("https://example.org/x", "(3 hours ago) d"),
             hit("https://www.reuters.com/x", ""),
             hit("https://data.gov.sg/x", ""),
         ];
-        rank(&mut hits);
+        hits.sort_by_key(|h| -score(h));
         let order: Vec<&str> = hits.iter().map(|h| h.url.as_str()).collect();
         assert_eq!(
             order,
@@ -1252,17 +1202,12 @@ mod tests {
                 return match n.fetch_add(1, Ordering::SeqCst) {
                     // Waited out once (it fits the budget), then fine.
                     0 => (LIMITED, limited("0.2s")),
-                    1 => (
-                        "200 OK",
-                        said(
-                            r#"{"claims":[{"source":1,"topic":"t","claim":"A fact.","kind":"fact"}]}"#,
-                        ),
-                    ),
+                    1 => ("200 OK", said(FACT)),
                     // Too long to wait: the run stops here.
                     _ => (LIMITED, limited("9m0s")),
                 };
             }
-            ("200 OK", said("# R\n\n## Summary\n**Fact:** A fact [1]."))
+            ("200 OK", said(REPORT))
         });
         let (llm, mut c) = setup(&base, Some("k"));
         let report = run(&llm, &mut c, "research alpha").await.unwrap();
@@ -1297,18 +1242,7 @@ mod tests {
     async fn a_rate_limited_search_and_a_failed_plan_label_the_report_partial() {
         let (base, rx) = serve(|line, body, base| {
             if line.starts_with("POST") {
-                return (
-                    "200 OK",
-                    if body.contains("You plan web research") {
-                        said(PLAN)
-                    } else if body.contains("Extract claims") {
-                        said(
-                            r#"{"claims":[{"source":1,"topic":"t","claim":"A fact.","kind":"fact"}]}"#,
-                        )
-                    } else {
-                        said("# R\n\n## Summary\n**Fact:** A fact [1].")
-                    },
-                );
+                return model(body, PLAN, FACT, REPORT);
             }
             if line.contains("/web/search?q=alpha+two") {
                 return ("429 Too Many Requests", "{}".into());
@@ -1334,16 +1268,7 @@ mod tests {
                 return ("500 Internal Server Error", "{}".into());
             }
             if line.starts_with("POST") {
-                return (
-                    "200 OK",
-                    if body.contains("Extract claims") {
-                        said(
-                            r#"{"claims":[{"source":1,"topic":"t","claim":"A fact.","kind":"fact"}]}"#,
-                        )
-                    } else {
-                        said("# R\n\n## Summary\n**Fact:** A fact [1].")
-                    },
-                );
+                return model(body, PLAN, FACT, REPORT);
             }
             if line.contains("/web/search") {
                 return ("200 OK", brave(base, &[("p1", "p1")]));

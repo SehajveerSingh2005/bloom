@@ -4,7 +4,7 @@
 
 export type AiPhase = "idle" | "recording" | "transcribing" | "working" | "confirm" | "done" | "error";
 
-export interface AiConfirm {
+interface AiConfirm {
 	id: number;
 	kind: "email" | "script" | "memory" | "skill" | "web" | "tool" | "message";
 	title: string;
@@ -31,6 +31,9 @@ export interface AiEvent {
 export const IDLE: AiState = { phase: "idle", heard: "", activity: "", reply: "", confirm: null, task: null, wake: false };
 
 const ACTIVE: AiPhase[] = ["recording", "transcribing", "working", "confirm"];
+
+/** A request is under way: recording, thinking or waiting for an OK. */
+export const isBusy = (phase: AiPhase) => ACTIVE.includes(phase);
 
 function isStale(state: AiState, ev: AiEvent): boolean {
 	return typeof ev.task === "number" && state.task !== null && ev.task !== state.task;
@@ -69,7 +72,7 @@ export function reduceAiEvent(state: AiState, ev: AiEvent): AiState {
 			if (isStale(state, ev)) return state;
 			return { ...state, phase: "error", reply: ev.message, activity: "", confirm: null };
 		case "exited":
-			return ACTIVE.includes(state.phase)
+			return isBusy(state.phase)
 				? { ...state, phase: "error", reply: "The AI agent stopped.", activity: "", confirm: null }
 				: state;
 		default:

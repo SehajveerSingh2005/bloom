@@ -24,7 +24,7 @@ import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
 import { useSliderSync, useTransientError } from "./hooks/useSliderSync";
 import { useAnnouncement } from "./hooks/useAnnouncement";
-import { useGlass, useGlassEnabled } from "./hooks/useGlass";
+import { useGlass, useGlassEnabled, useInfoCentre } from "./hooks/useGlass";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -621,9 +621,7 @@ function App() {
 
 	// Info centre: the dock carries the notch's content, so the notch draws nothing.
 	// The window keeps running — it drives dock start-up and AppBar syncing.
-	const [infoCentre, setInfoCentre] = useState(
-		() => localStorage.getItem("bloom-info-centre") === "true"
-	);
+	const [infoCentre, setInfoCentre] = useInfoCentre();
 	const infoCentreRef = useRef(infoCentre);
 	infoCentreRef.current = infoCentre;
 	// The notch draws nothing while merged into the dock: no glass for it then.
@@ -988,7 +986,6 @@ function App() {
 		{
 			"bloom-weather-enabled": setSettingsWeatherEnabled,
 			"bloom-calendar-enabled": setSettingsCalendarEnabled,
-			"bloom-info-centre": (v: unknown) => setInfoCentre(v === true || v === "true"),
 			"bloom-timer-sound-enabled": setSettingsTimerSoundEnabled,
 			"bloom-music-mode-enabled": setSettingsMusicModeEnabled,
 			"bloom-shelf-persist": setShelfPersist,

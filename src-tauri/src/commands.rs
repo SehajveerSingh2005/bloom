@@ -3792,17 +3792,13 @@ pub fn get_windows_accent_color() -> Option<String> {
     None
 }
 
-/// The colour adaptive mode follows: the wallpaper's own, else the Windows accent.
-#[cfg(windows)]
+/// The colour adaptive mode follows: the wallpaper's own, else the Windows
+/// accent (Linux has no common accent colour setting).
 pub fn adaptive_color() -> Option<String> {
-    wallpaper_color().or_else(get_windows_accent_color)
-}
-
-/// The colour adaptive mode follows: the wallpaper's own (Linux has no common
-/// accent colour setting).
-#[cfg(target_os = "linux")]
-pub fn adaptive_color() -> Option<String> {
-    wallpaper_color()
+    #[cfg(windows)]
+    return wallpaper_color().or_else(get_windows_accent_color);
+    #[cfg(target_os = "linux")]
+    return wallpaper_color();
 }
 
 /// The wallpaper's dominant vivid colour. Windows only derives its accent from

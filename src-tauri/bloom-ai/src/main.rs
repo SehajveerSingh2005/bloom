@@ -34,7 +34,6 @@ mod web;
 mod wa_client;
 mod wa_contacts;
 mod wake;
-mod wake_score;
 mod weather;
 mod whatsapp;
 
@@ -55,20 +54,6 @@ fn main() {
     // removing the folder, so stored keys and passwords go too.
     if args.iter().any(|a| a == "--wipe") {
         secrets::wipe();
-        return;
-    }
-    // Diagnostics: `--wake-score <wake dir> [wav...]` prints how well
-    // recordings match the trained wake word. Reads only.
-    if let Some(i) = args.iter().position(|a| a == "--wake-score") {
-        let dir = PathBuf::from(args.get(i + 1).map_or("", String::as_str));
-        let wavs: Vec<PathBuf> = args.iter().skip(i + 2).map(PathBuf::from).collect();
-        match wake_score::report(&dir, &wavs) {
-            Ok(text) => print!("{text}"),
-            Err(e) => {
-                eprintln!("{e}");
-                std::process::exit(1);
-            }
-        }
         return;
     }
     let settings_path = args
@@ -117,8 +102,7 @@ async fn serve(shared: Arc<Shared>) {
     let mut wake = WakeState {
         listener: None,
         task: None,
-        dir: shared.data_dir.clone(),
-        settings: shared.settings_path.clone(),
+        shared: shared.clone(),
         busy: busy.clone(),
         events: wake_tx,
     };
@@ -167,10 +151,7 @@ async fn serve(shared: Arc<Shared>) {
         let message = match protocol::parse(&line) {
             Ok(message) => message,
             Err(e) => {
-                emit(&Out::Error {
-                    task: None,
-                    message: format!("bad message: {e}"),
-                });
+                fail(format!("bad message: {e}"));
                 continue;
             }
         };
@@ -201,10 +182,7 @@ async fn serve(shared: Arc<Shared>) {
             }
             In::SetSecret { name, value } => match secrets::set(&name, &value) {
                 Ok(()) => emit(&Out::SecretSaved { name }),
-                Err(message) => emit(&Out::Error {
-                    task: None,
-                    message,
-                }),
+                Err(message) => fail(message),
             },
             In::SecretStatus => {
                 let [llm_key, stt_key, email_password, outlook, search_key] =
@@ -232,29 +210,22 @@ async fn serve(shared: Arc<Shared>) {
             In::LibraryStatus => emit_library_status(&shared),
             In::ForgetAll => {
                 if let Err(message) = facts::clear(&shared.data_dir) {
-                    emit(&Out::Error {
-                        task: None,
-                        message,
-                    });
+                    fail(message);
                 }
                 // Refreshes the Settings count.
                 emit_library_status(&shared);
             }
             In::Reveal { what } => {
-                let opened = match what.as_str() {
-                    "memory" => facts::ensure(&shared.data_dir)
-                        .and_then(|p| tools::files::shell_open(&p.to_string_lossy())),
-                    "skills" => skills::ensure(&shared.data_dir)
-                        .and_then(|p| tools::files::shell_open(&p.to_string_lossy())),
-                    "mcp" => mcp::ensure(&shared.data_dir)
-                        .and_then(|p| tools::files::shell_open(&p.to_string_lossy())),
+                let folder = match what.as_str() {
+                    "memory" => facts::ensure(&shared.data_dir),
+                    "skills" => skills::ensure(&shared.data_dir),
+                    "mcp" => mcp::ensure(&shared.data_dir),
                     other => Err(format!("Can't open {other}.")),
                 };
-                if let Err(message) = opened {
-                    emit(&Out::Error {
-                        task: None,
-                        message,
-                    });
+                if let Err(message) =
+                    folder.and_then(|p| tools::files::shell_open(&p.to_string_lossy()))
+                {
+                    fail(message);
                 }
             }
             In::McpReload => {
@@ -335,10 +306,7 @@ async fn serve(shared: Arc<Shared>) {
                     drop(guard);
                     match saved.map_err(|e| e.to_string()).and_then(|r| r) {
                         Ok(_) => emit(&Out::EnrollSaved { index }),
-                        Err(message) => emit(&Out::Error {
-                            task: None,
-                            message,
-                        }),
+                        Err(message) => fail(message),
                     }
                 });
             }
@@ -380,13 +348,18 @@ async fn serve(shared: Arc<Shared>) {
                     }
                     emit(&Out::EnrollDone);
                 }
-                Err(message) => emit(&Out::Error {
-                    task: None,
-                    message,
-                }),
+                Err(message) => fail(message),
             },
         }
     }
+}
+
+/// An error that belongs to no request.
+fn fail(message: String) {
+    emit(&Out::Error {
+        task: None,
+        message,
+    });
 }
 
 /// Counts for Settings > Library. MCP counts are the running servers (none
@@ -423,8 +396,7 @@ async fn run_voice(task: u64, heard: Result<String, String>, shared: Arc<Shared>
 struct WakeState {
     listener: Option<wake::Listener>,
     task: Option<u64>,
-    dir: PathBuf,
-    settings: PathBuf,
+    shared: Arc<Shared>,
     busy: Arc<AtomicUsize>,
     events: tokio::sync::mpsc::UnboundedSender<wake::Event>,
 }
@@ -434,19 +406,11 @@ impl WakeState {
     /// listener.
     fn start(&mut self) {
         self.listener = None;
-        let name = config::Config::load(&self.settings).name;
-        match wake::Listener::start(
-            &self.dir,
-            &self.settings,
-            &name,
-            self.busy.clone(),
-            self.events.clone(),
-        ) {
+        let (dir, settings) = (&self.shared.data_dir, &self.shared.settings_path);
+        let name = config::Config::load(settings).name;
+        match wake::Listener::start(dir, settings, &name, self.busy.clone(), self.events.clone()) {
             Ok(started) => self.listener = Some(started),
-            Err(message) => emit(&Out::Error {
-                task: None,
-                message,
-            }),
+            Err(message) => fail(message),
         }
     }
 

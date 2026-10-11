@@ -22,6 +22,7 @@ import {
 	WifiLow,
 	WifiZero
 } from "lucide-react";
+import { takeKeyboard } from "./ai/AiPanel";
 import "./ConnectPage.css";
 
 interface WifiNetwork {
@@ -78,14 +79,6 @@ export function ConnectPage({ kind, enabled, onToggle, onBack }: Props) {
 	);
 }
 
-/** Lets the panel take the keyboard, then focuses the field. */
-function focusField(el: HTMLInputElement | null) {
-	if (!el) return;
-	invoke("take_keyboard")
-		.catch(() => {})
-		.finally(() => el.focus());
-}
-
 function SecretField(props: {
 	placeholder: string;
 	submit: string;
@@ -105,7 +98,7 @@ function SecretField(props: {
 		>
 			<div className="cp-field">
 				<input
-					ref={focusField}
+					ref={takeKeyboard}
 					type={shown || props.numeric ? "text" : "password"}
 					inputMode={props.numeric ? "numeric" : undefined}
 					placeholder={props.placeholder}

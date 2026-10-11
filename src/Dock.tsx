@@ -7,11 +7,12 @@ import { initTheme } from "./theme";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 import { InfoLeft, InfoPanel, InfoProvider, InfoRight, type InfoTab } from "./InfoCentre";
-import { useGlass, useGlassEnabled } from "./hooks/useGlass";
+import { useGlass, useGlassEnabled, useInfoCentre } from "./hooks/useGlass";
 import { Sparkles } from "lucide-react";
 import { AiPanel } from "./ai/AiPanel";
 import { useAiName } from "./ai/aiName";
 import { useAi } from "./ai/useAi";
+import { isBusy } from "./ai/aiState";
 
 import { mergeTrayApps, selectDockTrayApps, type AppInfo, type TrayApp } from "./dockApps";
 import { removeCustomFolder, type DockExtra } from "./dockExtras";
@@ -202,9 +203,7 @@ const Dock = memo(function Dock() {
 	);
 	const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
 	// Info centre: notch content in the dock (see InfoCentre.tsx). infoTab = open panel.
-	const [infoCentre, setInfoCentre] = useState(
-		() => localStorage.getItem("bloom-info-centre") === "true"
-	);
+	const [infoCentre, setInfoCentre] = useInfoCentre();
 	const [infoTab, setInfoTab] = useState<InfoTab | null>(null);
 	const infoCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const infoPanelRef = useRef<HTMLDivElement>(null);
@@ -240,7 +239,7 @@ const Dock = memo(function Dock() {
 	// The dock hears every `ai-event`, the notch's too: it only owns a busy task
 	// that was running while merged, and keeps owning it until it ends. A
 	// "Hey <name>" request belongs to the overlay's orb until it asks for an OK.
-	if (!["recording", "transcribing", "working", "confirm"].includes(ai.state.phase)) aiOwnRef.current = false;
+	if (!isBusy(ai.state.phase)) aiOwnRef.current = false;
 	else if (infoCentre && (!ai.state.wake || aiOpen)) aiOwnRef.current = true;
 	const closeAi = () => {
 		ai.stop();
@@ -505,8 +504,7 @@ const Dock = memo(function Dock() {
 		"bloom-dock-extras-drives": () => setDockExtrasRevision((r) => r + 1),
 		"bloom-dock-extras-recycle-bin": () => setDockExtrasRevision((r) => r + 1),
 		"bloom-dock-extras-folders": () => setDockExtrasRevision((r) => r + 1),
-		"bloom-dock-extras-custom-folders": () => setDockExtrasRevision((r) => r + 1),
-		"bloom-info-centre": (v) => setInfoCentre(v === true || v === "true")
+		"bloom-dock-extras-custom-folders": () => setDockExtrasRevision((r) => r + 1)
 	});
 	const infoOpen = infoCentre && !!infoTab && isExpanded && !isHidden && isVisible;
 	// One glass sheet: the open info panel and the dock under it share it.

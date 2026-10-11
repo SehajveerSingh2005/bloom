@@ -151,11 +151,7 @@ fn cut(s: &str) -> String {
     if s.len() <= MAX_BYTES {
         return s.to_string();
     }
-    let mut end = MAX_BYTES;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}\n[truncated]", &s[..end])
+    format!("{}\n[truncated]", &s[..s.floor_char_boundary(MAX_BYTES)])
 }
 
 fn other_files(root: &Path) -> Vec<String> {

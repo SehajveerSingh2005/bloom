@@ -14,3 +14,9 @@ export function useAiSetting(key: string, fallback: string): [string, (value: st
 	};
 	return [value, save];
 }
+
+/** A "true"/"false" bloom-ai-* setting as a boolean. */
+export function useAiFlag(key: string, fallback = false): [boolean, (on: boolean) => Promise<void>] {
+	const [value, save] = useAiSetting(key, String(fallback));
+	return [fallback ? value !== "false" : value === "true", (on) => save(String(on))];
+}

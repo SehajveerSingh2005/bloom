@@ -834,7 +834,7 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
         && !ctx.saved_this_task.contains(&number);
     // No message text in actions.log: messages stay in RAM.
     let detail = format!("to {name} {number} ({} chars)", text.chars().count());
-    let ask = policy::email_needs_confirm(ctx.cfg.tier, known, ctx.tainted);
+    let ask = policy::needs_confirm(ctx.cfg.tier, known, ctx.tainted);
     // The name typed by the user found it; from here on it is in the result.
     ctx.tainted |= synced;
     let (title, body) = confirm_text(&name, &number, group.map(|g| g.1), text);
@@ -848,12 +848,7 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
         journal::record(&dir, "whatsapp", &detail, "declined");
         return Ok("The user chose not to send it.".into());
     }
-    let started = if ask {
-        "approved-started"
-    } else {
-        "auto-started"
-    };
-    journal::record(&dir, "whatsapp", &detail, started);
+    journal::record(&dir, "whatsapp", &detail, journal::started(ask));
     // Turned off while the confirm was open: nothing goes out.
     let Some(link) = state.link() else {
         journal::record_with(
@@ -867,11 +862,7 @@ pub async fn send(ctx: &mut Ctx, to: &str, text: &str) -> Result<String, String>
     };
     state.note_send(Instant::now());
     let sent = link.send_text(&number, text).await;
-    let outcome = match (&sent, ask) {
-        (Err(_), _) => "failed",
-        (Ok(()), true) => "approved",
-        (Ok(()), false) => "auto",
-    };
+    let outcome = journal::outcome(sent.is_ok(), ask);
     let reason = sent.as_ref().err().map(String::as_str);
     journal::record_with(&dir, "whatsapp", &detail, outcome, reason);
     if sent.is_ok() {
@@ -1034,7 +1025,7 @@ async fn send_file_in(
     // contents in actions.log, only the name and size.
     let detail = format!("file {file_name} ({size} bytes) to {name} {number}");
     let ask = ctx.cfg.tier != Tier::CarteBlanche
-        || policy::email_needs_confirm(ctx.cfg.tier, known, ctx.tainted);
+        || policy::needs_confirm(ctx.cfg.tier, known, ctx.tainted);
     ctx.tainted |= synced;
     let (_, mut body) = confirm_text(&name, &number, group.map(|g| g.1), &size_text(size));
     if let Some(c) = caption {
@@ -1051,12 +1042,7 @@ async fn send_file_in(
         journal::record(&dir, "whatsapp", &detail, "declined");
         return Ok("The user chose not to send it.".into());
     }
-    let started = if ask {
-        "approved-started"
-    } else {
-        "auto-started"
-    };
-    journal::record(&dir, "whatsapp", &detail, started);
+    journal::record(&dir, "whatsapp", &detail, journal::started(ask));
     let failed = |reason: &str| {
         journal::record_with(&dir, "whatsapp", &detail, "failed", Some(reason));
         Err(reason.to_string())
@@ -1082,11 +1068,7 @@ async fn send_file_in(
             },
         )
         .await;
-    let outcome = match (&sent, ask) {
-        (Err(_), _) => "failed",
-        (Ok(()), true) => "approved",
-        (Ok(()), false) => "auto",
-    };
+    let outcome = journal::outcome(sent.is_ok(), ask);
     let reason = sent.as_ref().err().map(String::as_str);
     journal::record_with(&dir, "whatsapp", &detail, outcome, reason);
     if sent.is_ok() {

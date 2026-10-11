@@ -8,7 +8,6 @@
 //! reach the agent loop); request text, tool arguments (such as email
 //! bodies) and tool results are.
 
-use serde_json::Value;
 use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,21 +46,22 @@ pub fn cut(text: &str, max: usize) -> String {
     }
 }
 
-/// A tool call for the log: its name and arguments.
-pub fn call(name: &str, args: &Value) -> String {
-    format!("{name} {args}")
+/// `log` with `detail` cut to RESULT_CHARS, only when `on` (the debug setting).
+pub fn trace(on: bool, dir: &Path, event: &str, detail: &str) {
+    if on {
+        log(dir, event, &cut(detail, RESULT_CHARS));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn appends_json_lines_and_rotates() {
         let dir = crate::testutil::temp_dir();
         log(&dir, "request", "hello");
-        let first: Value = serde_json::from_str(
+        let first: serde_json::Value = serde_json::from_str(
             std::fs::read_to_string(dir.join("debug.log"))
                 .unwrap()
                 .lines()
@@ -89,11 +89,5 @@ mod tests {
     fn cuts_long_text_on_a_char_boundary() {
         assert_eq!(cut("short", 300), "short");
         assert_eq!(cut("ééé", 2), "éé...");
-    }
-
-    #[test]
-    fn tool_calls_show_name_and_arguments() {
-        let line = call("open", &json!({ "target": "notepad" }));
-        assert_eq!(line, r#"open {"target":"notepad"}"#);
     }
 }

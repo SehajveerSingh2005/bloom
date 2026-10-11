@@ -2778,11 +2778,7 @@ unsafe extern "system" fn mouse_hook_proc(
 }
 
 /// Screen cursor position in physical pixels.
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) struct Cursor {
-    pub x: i32,
-    pub y: i32,
-}
+pub(crate) type Cursor = tauri::PhysicalPosition<i32>;
 
 /// Cursor hit-testing shared by the Windows mouse hook and the Linux pointer
 /// poller: toggles click-through on Bloom's windows and drives the edge hovers.

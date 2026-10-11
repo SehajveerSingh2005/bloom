@@ -255,13 +255,8 @@ fn parse_brave(json: &serde_json::Value, news: bool) -> Vec<Hit> {
 /// Users get a clean `SEARCH_FAILED` message; the raw error goes to debug.log
 /// (cut to 300 chars) when debug is on.
 fn failed(shared: &Shared, user: &str, raw: &str) -> String {
-    if crate::config::Config::load(&shared.settings_path).debug {
-        crate::debug::log(
-            &shared.data_dir,
-            "search-error",
-            &crate::debug::cut(raw, crate::debug::RESULT_CHARS),
-        );
-    }
+    let debug = crate::config::Config::load(&shared.settings_path).debug;
+    crate::debug::trace(debug, &shared.data_dir, "search-error", raw);
     coded(SEARCH_FAILED, user)
 }
 
@@ -387,9 +382,7 @@ fn blocked(ip: IpAddr) -> bool {
     }
 }
 
-fn refused() -> String {
-    "Refused: that address is on this PC or the local network.".into()
-}
+const REFUSED: &str = "Refused: that address is on this PC or the local network.";
 
 /// Refuses loopback, private, link-local and `.local` hosts (any resolved
 /// address counts), except on carte blanche.
@@ -406,7 +399,7 @@ async fn check_host(ctx: &Ctx, url: &Url) -> Result<(), String> {
         Err(_) => {
             let d = host.to_ascii_lowercase();
             if d == "localhost" || d.ends_with(".localhost") || d.ends_with(".local") {
-                return Err(refused());
+                return Err(REFUSED.into());
             }
             let port = url.port_or_known_default().unwrap_or(80);
             let found = tokio::net::lookup_host((d.as_str(), port))
@@ -421,7 +414,7 @@ async fn check_host(ctx: &Ctx, url: &Url) -> Result<(), String> {
             .iter()
             .any(|&ip| blocked(ip) && !(loopback_ok && ip.is_loopback()))
     {
-        return Err(refused());
+        return Err(REFUSED.into());
     }
     Ok(())
 }
@@ -526,7 +519,7 @@ async fn hops(ctx: &mut Ctx, mut u: Url) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::{ctx, mock_server_full};
+    use crate::testutil::{ctx, mock_server_full, web_ctx};
     use crate::Answer;
     use std::sync::Arc;
 
@@ -544,8 +537,7 @@ mod tests {
     async fn search_parses_unwraps_redirects_and_taints() {
         let (url, _rx) =
             mock_server_full("200 OK", "Content-Type: text/html\r\n", vec![DDG.into()]);
-        let mut c = local_ctx();
-        Arc::get_mut(&mut c.shared).unwrap().web.search_url = url;
+        let mut c = web_ctx(&url, None);
         let out = search(&mut c, "q", false).await.unwrap();
         assert!(
             out.contains("1. Example & Co\n   https://example.com/a?x=1&y=2\n   The first snippet"),
@@ -682,14 +674,6 @@ mod tests {
         assert_eq!(fetch(&mut c, &url).await.unwrap(), "hello");
     }
 
-    fn with_search(c: &mut Ctx, url: String, key: Option<&str>) {
-        let w = &mut Arc::get_mut(&mut c.shared).unwrap().web;
-        w.search_url = url.clone();
-        w.brave_url = url;
-        w.key = key.map(str::to_string);
-        w.use_store = false;
-    }
-
     #[tokio::test]
     async fn ddg_bot_challenge_is_blocked_not_no_results() {
         for (status, body) in [
@@ -698,15 +682,13 @@ mod tests {
             ("200 OK", "<html><body>nothing here</body></html>"),
         ] {
             let (url, _rx) = mock_server_full(status, "Content-Type: text/html\r\n", vec![body.into()]);
-            let mut c = local_ctx();
-            with_search(&mut c, url, None);
+            let mut c = web_ctx(&url, None);
             let e = search(&mut c, "q", false).await.unwrap_err();
             assert!(e.starts_with("SEARCH_BLOCKED: DuckDuckGo is blocking"), "{e}");
         }
         let page = r#"<div class="no-results">No results.</div>"#;
         let (url, _rx) = mock_server_full("200 OK", "", vec![page.into()]);
-        let mut c = local_ctx();
-        with_search(&mut c, url, None);
+        let mut c = web_ctx(&url, None);
         assert_eq!(search(&mut c, "q", false).await.unwrap(), "No results found.");
     }
 
@@ -714,8 +696,7 @@ mod tests {
     async fn brave_json_parses_and_strips_markup() {
         let json = r#"{"web":{"results":[{"title":"Rust &amp; Co","url":"https://r.test/a","description":"The <strong>best</strong> lang"}]}}"#;
         let (url, rx) = mock_server_full("200 OK", "Content-Type: application/json\r\n", vec![json.into()]);
-        let mut c = local_ctx();
-        with_search(&mut c, url, Some("k"));
+        let mut c = web_ctx(&url, Some("k"));
         let out = search(&mut c, "rust", false).await.unwrap();
         assert!(out.contains("1. Rust & Co\n   https://r.test/a\n   The best lang"), "{out}");
         assert!(c.tainted && c.allowed_urls.contains("https://r.test/a"));
@@ -729,8 +710,7 @@ mod tests {
     async fn brave_news_shows_age_and_bad_keys_and_limits_have_codes() {
         let news = r#"{"results":[{"title":"T","url":"https://n.test/","description":"d","age":"2 hours ago"}]}"#;
         let (url, rx) = mock_server_full("200 OK", "", vec![news.into()]);
-        let mut c = local_ctx();
-        with_search(&mut c, url, Some("k"));
+        let mut c = web_ctx(&url, Some("k"));
         let out = search(&mut c, "q", true).await.unwrap();
         assert!(out.contains("(2 hours ago) d"), "{out}");
         let req = rx.recv().unwrap().to_ascii_lowercase();
@@ -741,8 +721,7 @@ mod tests {
             ("429 Too Many Requests", "SEARCH_FAILED", "try again in a minute"),
         ] {
             let (url, _rx) = mock_server_full(status, "", vec!["{}".into()]);
-            let mut c = local_ctx();
-            with_search(&mut c, url, Some("k"));
+            let mut c = web_ctx(&url, Some("k"));
             let e = search(&mut c, "q", false).await.unwrap_err();
             assert!(e.starts_with(code) && e.contains(hint), "{e}");
         }
@@ -750,8 +729,7 @@ mod tests {
 
     #[tokio::test]
     async fn news_without_a_key_is_not_configured() {
-        let mut c = local_ctx();
-        with_search(&mut c, "http://127.0.0.1:1".into(), None);
+        let mut c = web_ctx("http://127.0.0.1:1", None);
         let e = search(&mut c, "q", true).await.unwrap_err();
         assert!(e.starts_with("SEARCH_NOT_CONFIGURED: News search needs"), "{e}");
     }
@@ -759,8 +737,7 @@ mod tests {
     #[tokio::test]
     async fn transport_errors_are_clean_and_logged_only_with_debug() {
         for debug in [false, true] {
-            let mut c = local_ctx();
-            with_search(&mut c, "http://127.0.0.1:1".into(), Some("k"));
+            let mut c = web_ctx("http://127.0.0.1:1", Some("k"));
             let dir = c.shared.data_dir.clone();
             if debug {
                 let p = dir.join("settings.json");
@@ -777,8 +754,7 @@ mod tests {
     async fn ddg_403_and_429_are_blocked() {
         for status in ["403 Forbidden", "429 Too Many Requests"] {
             let (url, _rx) = mock_server_full(status, "", vec!["x".into()]);
-            let mut c = local_ctx();
-            with_search(&mut c, url, None);
+            let mut c = web_ctx(&url, None);
             let e = search(&mut c, "q", false).await.unwrap_err();
             assert!(e.starts_with("SEARCH_BLOCKED") && e.contains("Brave Search key"), "{e}");
         }

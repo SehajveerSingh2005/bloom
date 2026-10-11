@@ -366,11 +366,7 @@ async fn reply(
     });
     let dir = &shared.data_dir;
     // Message text only in debug.log, cut short; never in actions.log.
-    let log = |event: &str, detail: String| {
-        if cfg.debug {
-            debug::log(dir, event, &debug::cut(&detail, debug::RESULT_CHARS));
-        }
-    };
+    let log = |event: &str, detail: String| debug::trace(cfg.debug, dir, event, &detail);
     log("auto-reply in", format!("{chat}: {}", last.text));
     if cfg.model.is_empty() {
         return Err("no model chosen in Settings".into());

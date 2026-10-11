@@ -2,6 +2,7 @@
 
 use crate::agent::{Ctx, Shared};
 use crate::config::Config;
+use crate::llm::Llm;
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -12,15 +13,7 @@ use std::sync::{mpsc, Arc};
 /// Answers each request with the next body (HTTP 200, JSON). Returns the base
 /// URL and a channel that yields each request body.
 pub fn mock_server(bodies: Vec<String>) -> (String, mpsc::Receiver<String>) {
-    mock_server_status("200 OK", bodies)
-}
-
-/// Like `mock_server`, answering with the given HTTP status line.
-pub fn mock_server_status(
-    status: &'static str,
-    bodies: Vec<String>,
-) -> (String, mpsc::Receiver<String>) {
-    mock_server_full(status, "Content-Type: application/json\r\n", bodies)
+    mock_server_full("200 OK", "Content-Type: application/json\r\n", bodies)
 }
 
 /// Like `mock_server`, with a status line and raw header lines (each ending CRLF).
@@ -94,17 +87,21 @@ pub fn http() -> reqwest::Client {
     reqwest::Client::builder().no_proxy().build().unwrap()
 }
 
+/// A model at `url`.
+pub fn llm(url: &str) -> Llm {
+    Llm {
+        http: http(),
+        base_url: url.into(),
+        model: "m".into(),
+        key: "k".into(),
+    }
+}
+
 pub fn ctx() -> Ctx {
     let shared = Shared {
-        bridge: Default::default(),
         data_dir: temp_dir(),
-        settings_path: PathBuf::new(),
         http: http(),
-        memory: Default::default(),
-        endpoints: Default::default(),
-        web: crate::web::WebCfg::new(),
-        mcp: Default::default(),
-        whatsapp: Default::default(),
+        ..Shared::new(PathBuf::new(), PathBuf::new())
     };
     Ctx {
         task: 1,
@@ -114,6 +111,19 @@ pub fn ctx() -> Ctx {
         saved_this_task: HashSet::new(),
         allowed_urls: HashSet::new(),
     }
+}
+
+/// A Ctx whose web tools may reach 127.0.0.1 and whose searches go to `url`
+/// (Brave with `key`, else DuckDuckGo).
+pub fn web_ctx(url: &str, key: Option<&str>) -> Ctx {
+    let mut c = ctx();
+    let w = &mut Arc::get_mut(&mut c.shared).unwrap().web;
+    w.allow_loopback = true;
+    w.use_store = false;
+    w.key = key.map(str::to_string);
+    w.search_url = url.into();
+    w.brave_url = url.into();
+    c
 }
 
 /// A Ctx whose weather lookups all go to `url`.

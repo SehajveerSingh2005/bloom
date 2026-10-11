@@ -31,9 +31,9 @@ tokio = { version = "1", features = ["time", "sync"] }
 image = "0.25"
 tauri-plugin-drag = "2.1.1"
 tauri-plugin-dialog = "2"
-rustfft = "6"
 
 [target.'cfg(windows)'.dependencies]
+rustfft = "6"
 windows-core = "0.61"
 windows = { version = "0.61", features = [
 	"Win32_UI_Input_KeyboardAndMouse",
@@ -75,7 +75,6 @@ windows = { version = "0.61", features = [
 	"Win32_NetworkManagement_WNet",
 	"Win32_Media_KernelStreaming",
 	"Foundation",
-	"Foundation_Collections",
 	"Devices_WiFi",
 	"Devices_Enumeration",
 	"Networking_Connectivity",

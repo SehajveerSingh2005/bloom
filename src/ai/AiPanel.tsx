@@ -1,10 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AnimatePresence, motion, MotionConfig } from "framer-motion";
 import { ArrowUp, Square, X } from "lucide-react";
 import type { AiControls } from "./useAi";
 import { useAiName } from "./aiName";
 import { AiOrb } from "./AiOrb";
+import { isBusy } from "./aiState";
 import "./ai.css";
 
 const STATUS: Record<string, string> = {
@@ -30,9 +31,10 @@ const LINE = {
 } as const;
 
 /** The notch and dock are no-activate windows: take the keyboard, then focus. */
-function takeKeyboard(el: HTMLElement | null) {
+export function takeKeyboard(el: HTMLElement | null) {
 	if (!el) return;
-	invoke("take_keyboard")
+	getCurrentWindow()
+		.setFocus()
 		.catch(() => {})
 		.finally(() => el.focus());
 }
@@ -55,9 +57,10 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 	const rootRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const approveRef = useRef<HTMLButtonElement>(null);
+	const cancelRef = useRef<HTMLButtonElement>(null);
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const linesRef = useRef<HTMLDivElement>(null);
-	const busy = ["recording", "transcribing", "working", "confirm"].includes(state.phase);
+	const busy = isBusy(state.phase);
 	const thinking = state.phase === "transcribing" || state.phase === "working";
 
 	useEffect(() => {
@@ -112,14 +115,7 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 	// Enter approves (the focused button), Escape declines (handler below).
 	// Focus approve only once enabled; while disabled, keep focus on Cancel so Escape works.
 	useEffect(() => {
-		if (state.phase !== "confirm") return;
-		if (!approveDisabled) {
-			takeKeyboard(approveRef.current);
-		} else {
-			// Focus Cancel button (first button in .ai-row) to keep focus on the panel.
-			const cancelBtn = rootRef.current?.querySelector(".ai-row button:first-child");
-			takeKeyboard(cancelBtn as HTMLElement);
-		}
+		if (state.phase === "confirm") takeKeyboard(approveDisabled ? cancelRef.current : approveRef.current);
 	}, [state.phase, approveDisabled]);
 
 	// Disable approve button for 600ms after confirm card appears to prevent accidental approval.
@@ -201,7 +197,7 @@ export function AiPanel({ ai, onClose, focusOnOpen, onHeight }: Props) {
 							<div className="ai-confirm-title">{state.confirm.title}</div>
 							<pre className="ai-confirm-body">{state.confirm.body}</pre>
 							<div className="ai-row">
-								<button onClick={() => answer(false)}>Cancel</button>
+								<button ref={cancelRef} onClick={() => answer(false)}>Cancel</button>
 								<button
 									ref={approveRef}
 									className="primary"

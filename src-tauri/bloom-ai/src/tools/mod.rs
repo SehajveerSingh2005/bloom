@@ -27,8 +27,8 @@ fn str_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     args[key].as_str().ok_or_else(|| format!("missing {key}"))
 }
 
-pub fn schema() -> Value {
-    Value::Array(vec![
+pub fn schema() -> Vec<Value> {
+    vec![
         tool(
             "write_file",
             "Create a new text file in the user's Downloads, Documents or Desktop folder. \
@@ -219,7 +219,7 @@ pub fn schema() -> Value {
             }),
             &["to", "path"],
         ),
-    ])
+    ]
 }
 
 /// One line for the panel while a tool runs.
@@ -296,7 +296,12 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
             let name = str_arg(args, "name")?;
             save_number(ctx, name, str_arg(args, "phone")?, "").await
         }
-        "tag_contact" => tag_contact(ctx, args),
+        "tag_contact" => retag(
+            &ctx.shared.data_dir,
+            str_arg(args, "name")?,
+            &list_arg(args, "add"),
+            &list_arg(args, "remove"),
+        ),
         "send_email" => send_email(ctx, args).await,
         "remember" => remember(ctx, str_arg(args, "text")?).await,
         "recall" => {
@@ -385,14 +390,11 @@ fn is_plain_local_path(t: &str) -> bool {
 
 #[cfg(windows)]
 fn is_local_drive(letter: char) -> bool {
-    use windows::core::PCWSTR;
+    use windows::core::HSTRING;
     use windows::Win32::Storage::FileSystem::GetDriveTypeW;
-    let root: Vec<u16> = format!("{}:\\", letter.to_ascii_uppercase())
-        .encode_utf16()
-        .chain(Some(0))
-        .collect();
+    let root = HSTRING::from(format!("{}:\\", letter.to_ascii_uppercase()));
     // DRIVE_REMOVABLE = 2, DRIVE_FIXED = 3; mapped network drives are DRIVE_REMOTE (4).
-    matches!(unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) }, 2 | 3)
+    matches!(unsafe { GetDriveTypeW(&root) }, 2 | 3)
 }
 
 #[cfg(not(windows))]
@@ -473,45 +475,17 @@ async fn run_powershell(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
         .as_str()
         .unwrap_or("Run this PowerShell script?");
     let ask = policy::script_needs_confirm(ctx.cfg.tier, script, ctx.tainted);
-    if ask
-        && !ctx
-            .shared
-            .bridge
-            .confirm(
-                ctx.task,
-                ConfirmKind::Script,
-                purpose.to_string(),
-                script.to_string(),
-            )
-            .await
-    {
+    if !confirm_persist(ctx, ConfirmKind::Script, ask, purpose, script).await {
         journal::record(&ctx.shared.data_dir, "script", script, "declined");
         return Ok("The user chose not to run it.".into());
     }
-    let started = if ask {
-        "approved-started"
-    } else {
-        "auto-started"
-    };
-    journal::record(&ctx.shared.data_dir, "script", script, started);
+    journal::record(&ctx.shared.data_dir, "script", script, journal::started(ask));
     let output = powershell::run(script).await;
-    let outcome = match (&output, ask) {
-        (Err(_), _) => "failed",
-        (Ok(_), true) => "approved",
-        (Ok(_), false) => "auto",
-    };
+    let outcome = journal::outcome(output.is_ok(), ask);
     journal::record(&ctx.shared.data_dir, "script", script, outcome);
     // What the script printed came from outside the conversation.
     ctx.tainted = true;
     output
-}
-
-fn list(matches: &[(String, String)]) -> String {
-    matches
-        .iter()
-        .map(|(n, a)| format!("{n} <{a}>"))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// A list argument the model may send as an array or as "a, b".
@@ -604,7 +578,7 @@ async fn find_contact(ctx: &mut Ctx, query: &str) -> Result<String, String> {
         match refresh_mail_if_due(ctx).await {
             Scan::Done => view = contact_view(&dir, ctx.cfg.whatsapp)?,
             Scan::Slow => slow = true,
-            Scan::Skipped | Scan::Background => {}
+            Scan::Skipped => {}
         }
     }
     match people::lookup(&view, query) {
@@ -672,9 +646,10 @@ async fn find_contact(ctx: &mut Ctx, query: &str) -> Result<String, String> {
                 if !found.is_empty() {
                     // Display names come from the mailbox: outside content.
                     ctx.tainted = true;
+                    let list: Vec<String> = found.iter().map(|(n, a)| format!("{n} <{a}>")).collect();
                     return Ok(format!(
                         "{}\n(Found in the user's Sent mail. If the user confirms one, save it with save_contact.)",
-                        list(&found)
+                        list.join("\n")
                     ));
                 }
             }
@@ -703,12 +678,11 @@ async fn find_contact(ctx: &mut Ctx, query: &str) -> Result<String, String> {
 /// What a find_contact miss did about the mail scan.
 #[derive(Debug, PartialEq)]
 enum Scan {
-    /// Not due, not set up, or it failed.
+    /// Not due, not set up, or it failed; or a scan exists and the day's
+    /// refresh runs on its own in the background: answer from what there is.
     Skipped,
     /// The first scan finished: look again.
     Done,
-    /// A scan exists: the day's refresh runs on its own, answer from it.
-    Background,
     /// The first scan is still running after `FIRST_SCAN_WAIT`.
     Slow,
 }
@@ -741,7 +715,7 @@ where
         tokio::spawn(async move {
             let _ = scan.await;
         });
-        return Scan::Background;
+        return Scan::Skipped;
     }
     match tokio::time::timeout(wait, scan).await {
         Ok(Ok(_)) => Scan::Done,
@@ -889,19 +863,9 @@ async fn save_address(
             // Outside text may be asking: a saved address becomes a known
             // recipient that competent mode emails without asking.
             let new = person.is_none_or(|p| !p.has_email(&address));
-            let ask = new && ctx.tainted && ctx.cfg.tier != crate::config::Tier::CarteBlanche;
-            if ask
-                && !ctx
-                    .shared
-                    .bridge
-                    .confirm(
-                        ctx.task,
-                        ConfirmKind::Email,
-                        format!("Save {name}'s address {address}?"),
-                        format!("{name}\n{address}"),
-                    )
-                    .await
-            {
+            let title = format!("Save {name}'s address {address}?");
+            let body = format!("{name}\n{address}");
+            if !confirm_persist(ctx, ConfirmKind::Email, new && ctx.tainted, &title, &body).await {
                 return Ok("The user chose not to save it.".into());
             }
             people::update(&dir, |all| {
@@ -984,15 +948,6 @@ async fn save_number(ctx: &mut Ctx, name: &str, raw: &str, label: &str) -> Resul
     // Not a known number for send_whatsapp until the next request.
     ctx.saved_this_task.insert(number.clone());
     Ok(format!("Saved {name} {number}."))
-}
-
-fn tag_contact(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
-    retag(
-        &ctx.shared.data_dir,
-        str_arg(args, "name")?,
-        &list_arg(args, "add"),
-        &list_arg(args, "remove"),
-    )
 }
 
 /// Adds and removes tags on a saved contact: the exact name, else one clear
@@ -1153,19 +1108,9 @@ async fn send_email(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
     let server = email::server_for(&ctx.cfg)?;
     let known = known_recipient(&ctx.shared.data_dir, &to) && !ctx.saved_this_task.contains(&to);
     let detail = format!("to {to}: {subject}");
-    let ask = policy::email_needs_confirm(ctx.cfg.tier, known, ctx.tainted);
-    if ask
-        && !ctx
-            .shared
-            .bridge
-            .confirm(
-                ctx.task,
-                ConfirmKind::Email,
-                format!("Send this to {to}?"),
-                format!("Subject: {subject}\n\n{body}"),
-            )
-            .await
-    {
+    let ask = policy::needs_confirm(ctx.cfg.tier, known, ctx.tainted);
+    let (title, preview) = (format!("Send this to {to}?"), format!("Subject: {subject}\n\n{body}"));
+    if !confirm_persist(ctx, ConfirmKind::Email, ask, &title, &preview).await {
         journal::record(&ctx.shared.data_dir, "email", &detail, "declined");
         return Ok("The user chose not to send it.".into());
     }
@@ -1185,35 +1130,14 @@ async fn send_email(ctx: &mut Ctx, args: &Value) -> Result<String, String> {
     let from = ctx.cfg.email.clone();
     let who = ctx.cfg.name.clone();
     let recipient = to.clone();
-    let started = if ask {
-        "approved-started"
-    } else {
-        "auto-started"
-    };
-    journal::record(&ctx.shared.data_dir, "email", &detail, started);
+    journal::record(&ctx.shared.data_dir, "email", &detail, journal::started(ask));
     let sent = tokio::task::spawn_blocking(move || {
         email::send(&server, &who, &from, &secret, &recipient, &subject, &body)
     })
-    .await;
-    let sent = match sent {
-        Ok(sent) => sent,
-        Err(e) => {
-            let reason = e.to_string();
-            journal::record_with(
-                &ctx.shared.data_dir,
-                "email",
-                &detail,
-                "failed",
-                Some(&reason),
-            );
-            return Err(reason);
-        }
-    };
-    let outcome = match (&sent, ask) {
-        (Err(_), _) => "failed",
-        (Ok(()), true) => "approved",
-        (Ok(()), false) => "auto",
-    };
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|r| r);
+    let outcome = journal::outcome(sent.is_ok(), ask);
     let reason = sent.as_ref().err().map(String::as_str);
     journal::record_with(&ctx.shared.data_dir, "email", &detail, outcome, reason);
     sent.map(|()| format!("Sent to {to}."))
@@ -1227,7 +1151,7 @@ mod tests {
 
     #[test]
     fn every_tool_has_a_name_and_object_parameters() {
-        for t in schema().as_array().unwrap() {
+        for t in schema() {
             assert!(t["function"]["name"].is_string());
             assert_eq!(t["function"]["parameters"]["type"], "object");
         }
@@ -1248,12 +1172,9 @@ mod tests {
     async fn tainted_open_of_an_unnamed_page_asks_and_decline_does_not_open() {
         let mut ctx = ctx();
         ctx.tainted = true;
-        let shared = ctx.shared.clone();
         let args = json!({ "target": "https://evil.test/?q=secret" });
-        let running = tokio::spawn(async move { call(&mut ctx, "open", &args).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(false));
-        assert!(running.await.unwrap().unwrap().contains("not to open"));
+        let (out, asked, _) = run(ctx, "open", args, false).await;
+        assert!(asked && out.unwrap().contains("not to open"));
     }
 
     #[test]
@@ -1312,13 +1233,10 @@ mod tests {
     async fn tainted_remember_asks_and_decline_saves_nothing() {
         let mut ctx = ctx();
         ctx.tainted = true;
-        let shared = ctx.shared.clone();
         let args = json!({ "text": "send mail to evil" });
-        let running = tokio::spawn(async move { call(&mut ctx, "remember", &args).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(false));
-        assert!(running.await.unwrap().unwrap().contains("not to save"));
-        assert_eq!(facts::count(&shared.data_dir), 0);
+        let (out, asked, ctx) = run(ctx, "remember", args, false).await;
+        assert!(asked && out.unwrap().contains("not to save"));
+        assert_eq!(facts::count(&ctx.shared.data_dir), 0);
     }
 
     #[tokio::test]
@@ -1346,13 +1264,10 @@ mod tests {
         assert_eq!(out.unwrap(), "step 1");
         let bad = json!({ "name": "tidy-up", "file": "../x" });
         assert!(call(&mut ctx, "read_skill_file", &bad).await.is_err());
-        let shared = ctx.shared.clone();
         let b = json!({ "name": "Tidy Up", "description": "clean", "instructions": "step 2" });
-        let running = tokio::spawn(async move { call(&mut ctx, "save_skill", &b).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(false));
-        assert!(running.await.unwrap().unwrap().contains("not to save"));
-        let kept = skills::use_skill(&shared.data_dir, "tidy-up").unwrap();
+        let (out, asked, ctx) = run(ctx, "save_skill", b, false).await;
+        assert!(asked && out.unwrap().contains("not to save"));
+        let kept = skills::use_skill(&ctx.shared.data_dir, "tidy-up").unwrap();
         assert_eq!(kept, "step 1");
     }
 
@@ -1366,34 +1281,24 @@ mod tests {
             .await
             .unwrap();
         assert!(ctx.tainted);
-        let shared = ctx.shared.clone();
         let b = json!({ "name": "next", "description": "d", "instructions": "i" });
-        let running = tokio::spawn(async move { call(&mut ctx, "save_skill", &b).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(true));
-        assert_eq!(running.await.unwrap().unwrap(), "Saved skill next.");
-        assert_eq!(skills::count(&shared.data_dir), 2);
+        let (out, asked, ctx) = run(ctx, "save_skill", b, true).await;
+        assert!(asked);
+        assert_eq!(out.unwrap(), "Saved skill next.");
+        assert_eq!(skills::count(&ctx.shared.data_dir), 2);
     }
 
     #[tokio::test]
     async fn tainted_skill_save_asks_and_carte_blanche_skips() {
         let mut ctx = ctx();
         ctx.tainted = true;
-        let shared = ctx.shared.clone();
         let a = json!({ "name": "evil", "description": "d", "instructions": "i" });
-        let a2 = a.clone();
-        let running = tokio::spawn(async move {
-            let r = call(&mut ctx, "save_skill", &a2).await;
-            (ctx, r)
-        });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(false));
-        let (mut ctx, r) = running.await.unwrap();
-        assert!(r.unwrap().contains("not to save"));
-        assert_eq!(skills::count(&shared.data_dir), 0);
+        let (out, asked, mut ctx) = run(ctx, "save_skill", a.clone(), false).await;
+        assert!(asked && out.unwrap().contains("not to save"));
+        assert_eq!(skills::count(&ctx.shared.data_dir), 0);
         ctx.cfg.tier = crate::config::Tier::CarteBlanche;
         call(&mut ctx, "save_skill", &a).await.unwrap();
-        assert_eq!(skills::count(&shared.data_dir), 1);
+        assert_eq!(skills::count(&ctx.shared.data_dir), 1);
     }
 
     #[tokio::test]
@@ -1407,26 +1312,17 @@ mod tests {
         .await
         .unwrap();
         ctx.tainted = true;
-        let shared = ctx.shared.clone();
-        let running =
-            tokio::spawn(async move { call(&mut ctx, "forget", &json!({ "id": 1 })).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(false));
-        assert!(running.await.unwrap().unwrap().contains("keep it"));
-        assert_eq!(facts::count(&shared.data_dir), 1);
+        let (out, asked, ctx) = run(ctx, "forget", json!({ "id": 1 }), false).await;
+        assert!(asked && out.unwrap().contains("keep it"));
+        assert_eq!(facts::count(&ctx.shared.data_dir), 1);
     }
 
     #[tokio::test]
     async fn approved_tainted_remember_saves() {
         let mut ctx = ctx();
         ctx.tainted = true;
-        let shared = ctx.shared.clone();
-        let running = tokio::spawn(async move {
-            call(&mut ctx, "remember", &json!({ "text": "likes tea" })).await
-        });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(true));
-        assert!(running.await.unwrap().unwrap().starts_with("Remembered"));
+        let (out, asked, _) = run(ctx, "remember", json!({ "text": "likes tea" }), true).await;
+        assert!(asked && out.unwrap().starts_with("Remembered"));
     }
 
     #[tokio::test]
@@ -1448,17 +1344,11 @@ mod tests {
 
     #[tokio::test]
     async fn declined_scripts_do_not_run_and_are_logged() {
-        let mut ctx = ctx(); // Conservative by default
-        let shared = ctx.shared.clone();
+        let ctx = ctx(); // Conservative by default
         let args = json!({ "script": "Get-Date", "purpose": "Show the date" });
-        let running = tokio::spawn(async move { call(&mut ctx, "run_powershell", &args).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(false));
-        assert_eq!(
-            running.await.unwrap(),
-            Ok("The user chose not to run it.".into())
-        );
-        let log = std::fs::read_to_string(shared.data_dir.join("actions.log")).unwrap();
+        let (out, _, ctx) = run(ctx, "run_powershell", args, false).await;
+        assert_eq!(out, Ok("The user chose not to run it.".into()));
+        let log = std::fs::read_to_string(ctx.shared.data_dir.join("actions.log")).unwrap();
         assert!(log.contains("declined"));
     }
 
@@ -1492,14 +1382,11 @@ mod tests {
         let mut ctx = ctx();
         ctx.cfg.email = "me@mycompany.com".into();
         ctx.cfg.smtp_host = "smtp.invalid".into();
-        let shared = ctx.shared.clone();
         let args = json!({ "to": "neha@example.com", "subject": "s", "body": "b" });
-        let running = tokio::spawn(async move { call(&mut ctx, "send_email", &args).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(true));
+        let (out, _, ctx) = run(ctx, "send_email", args, true).await;
         // No password saved (or an unreachable host): either way it fails with a reason.
-        assert!(running.await.unwrap().is_err());
-        let log = std::fs::read_to_string(shared.data_dir.join("actions.log")).unwrap();
+        assert!(out.is_err());
+        let log = std::fs::read_to_string(ctx.shared.data_dir.join("actions.log")).unwrap();
         let last: Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
         assert_eq!(last["outcome"], "failed");
         assert!(last["reason"].as_str().is_some_and(|r| !r.is_empty()));
@@ -1509,16 +1396,10 @@ mod tests {
     async fn declined_email_is_not_sent_and_is_logged() {
         let mut ctx = ctx();
         ctx.cfg.email = "me@gmail.com".into();
-        let shared = ctx.shared.clone();
         let args = json!({ "to": "neha@example.com", "subject": "Soccer", "body": "Game at 5?" });
-        let running = tokio::spawn(async move { call(&mut ctx, "send_email", &args).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(false));
-        assert_eq!(
-            running.await.unwrap(),
-            Ok("The user chose not to send it.".into())
-        );
-        let log = std::fs::read_to_string(shared.data_dir.join("actions.log")).unwrap();
+        let (out, _, ctx) = run(ctx, "send_email", args, false).await;
+        assert_eq!(out, Ok("The user chose not to send it.".into()));
+        let log = std::fs::read_to_string(ctx.shared.data_dir.join("actions.log")).unwrap();
         assert!(log.contains("declined") && log.contains("neha@example.com"));
     }
 
@@ -1534,16 +1415,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let shared = ctx.shared.clone();
         let args = json!({ "to": "neha@example.com", "subject": "s", "body": "b" });
-        let running = tokio::spawn(async move { call(&mut ctx, "send_email", &args).await });
-        tokio::task::yield_now().await;
+        let (out, asked, _) = run(ctx, "send_email", args, false).await;
         // Competent still asks: the contact was saved during this request.
-        shared.bridge.answer(1, Answer::Confirm(false));
-        assert_eq!(
-            running.await.unwrap(),
-            Ok("The user chose not to send it.".into())
-        );
+        assert!(asked);
+        assert_eq!(out, Ok("The user chose not to send it.".into()));
     }
 
     #[tokio::test]
@@ -1670,30 +1546,18 @@ mod tests {
 
     #[tokio::test]
     async fn changing_a_saved_number_asks_first() {
-        let mut ctx = ctx();
-        let dir = ctx.shared.data_dir.clone();
-        phones::save(&dir, "Neha", "+919876543210").unwrap();
-        let shared = ctx.shared.clone();
-        let args = json!({ "name": "Neha", "phone": "+49 170 1234567" });
-        let running = tokio::spawn(async move { call(&mut ctx, "save_phone", &args).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(false));
-        assert_eq!(
-            running.await.unwrap(),
-            Ok("The user kept the saved number.".into())
-        );
-        assert_eq!(phones::load(&dir).get("Neha").unwrap(), "+919876543210");
-
-        let mut ctx = crate::testutil::ctx();
-        let dir = ctx.shared.data_dir.clone();
-        phones::save(&dir, "Neha", "+919876543210").unwrap();
-        let shared = ctx.shared.clone();
-        let args = json!({ "name": "Neha", "phone": "+49 170 1234567" });
-        let running = tokio::spawn(async move { call(&mut ctx, "save_phone", &args).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(true));
-        assert!(running.await.unwrap().is_ok());
-        assert_eq!(phones::load(&dir).get("Neha").unwrap(), "+491701234567");
+        for (approve, kept) in [(false, "+919876543210"), (true, "+491701234567")] {
+            let ctx = ctx();
+            let dir = ctx.shared.data_dir.clone();
+            phones::save(&dir, "Neha", "+919876543210").unwrap();
+            let args = json!({ "name": "Neha", "phone": "+49 170 1234567" });
+            let (out, asked, _) = run(ctx, "save_phone", args, approve).await;
+            assert!(asked);
+            if !approve {
+                assert_eq!(out, Ok("The user kept the saved number.".into()));
+            }
+            assert_eq!(phones::load(&dir).get("Neha").unwrap(), kept);
+        }
     }
 
     #[tokio::test]
@@ -1707,12 +1571,10 @@ mod tests {
             let mut ctx = ctx();
             ctx.cfg.tier = tier;
             ctx.tainted = true;
-            let (dir, shared) = (ctx.shared.data_dir.clone(), ctx.shared.clone());
+            let dir = ctx.shared.data_dir.clone();
             let args = json!({ "name": "Eve", "phone": "+14155550100" });
-            let running = tokio::spawn(async move { call(&mut ctx, "save_phone", &args).await });
-            tokio::task::yield_now().await;
-            let asked = shared.bridge.answer_pending(Answer::Confirm(approve));
-            let out = running.await.unwrap().unwrap();
+            let (out, asked, _) = run(ctx, "save_phone", args, approve).await;
+            let out = out.unwrap();
             assert_eq!(asked, asks, "{tier:?}");
             let saved = phones::load(&dir).contains_key("Eve");
             assert_eq!(saved, !asks || approve, "{tier:?}: {out}");
@@ -1732,36 +1594,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn declining_address_change_keeps_old_address() {
-        let mut ctx = ctx();
-        let dir = ctx.shared.data_dir.clone();
-        email::save_contact(&dir, "Alice", "alice@old.com").unwrap();
-        let shared = ctx.shared.clone();
-        let args = json!({ "name": "Alice", "email": "alice@new.com" });
-        let running = tokio::spawn(async move { call(&mut ctx, "save_contact", &args).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(false));
-        assert_eq!(
-            running.await.unwrap(),
-            Ok("The user kept the saved address.".into())
-        );
-        let contacts = email::load_contacts(&dir);
-        assert_eq!(contacts.get("Alice"), Some(&"alice@old.com".to_string()));
-    }
-
-    #[tokio::test]
-    async fn approving_address_change_updates_it() {
-        let mut ctx = ctx();
-        let dir = ctx.shared.data_dir.clone();
-        email::save_contact(&dir, "Alice", "alice@old.com").unwrap();
-        let shared = ctx.shared.clone();
-        let args = json!({ "name": "Alice", "email": "alice@new.com" });
-        let running = tokio::spawn(async move { call(&mut ctx, "save_contact", &args).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(true));
-        assert!(running.await.unwrap().is_ok());
-        let contacts = email::load_contacts(&dir);
-        assert_eq!(contacts.get("Alice"), Some(&"alice@new.com".to_string()));
+    async fn an_address_change_asks_and_only_a_yes_changes_it() {
+        for (approve, kept) in [(false, "alice@old.com"), (true, "alice@new.com")] {
+            let ctx = ctx();
+            let dir = ctx.shared.data_dir.clone();
+            email::save_contact(&dir, "Alice", "alice@old.com").unwrap();
+            let args = json!({ "name": "Alice", "email": "alice@new.com" });
+            let (out, asked, _) = run(ctx, "save_contact", args, approve).await;
+            assert!(asked && out.is_ok());
+            if !approve {
+                assert_eq!(out, Ok("The user kept the saved address.".into()));
+            }
+            let contacts = email::load_contacts(&dir);
+            assert_eq!(contacts.get("Alice"), Some(&kept.to_string()));
+        }
     }
 
     #[tokio::test]
@@ -1777,15 +1623,12 @@ mod tests {
 
     #[tokio::test]
     async fn address_change_with_different_case_replaces_old_entry() {
-        let mut ctx = ctx();
+        let ctx = ctx();
         let dir = ctx.shared.data_dir.clone();
         email::save_contact(&dir, "Alice", "alice@old.com").unwrap();
-        let shared = ctx.shared.clone();
         let args = json!({ "name": "alice", "email": "alice@new.com" });
-        let running = tokio::spawn(async move { call(&mut ctx, "save_contact", &args).await });
-        tokio::task::yield_now().await;
-        shared.bridge.answer(1, Answer::Confirm(true));
-        assert!(running.await.unwrap().is_ok());
+        let (out, _, _) = run(ctx, "save_contact", args, true).await;
+        assert!(out.is_ok());
         let contacts = email::load_contacts(&dir);
         assert_eq!(contacts.len(), 1, "Should have exactly one entry");
         assert_eq!(
@@ -2115,7 +1958,7 @@ mod tests {
         let started = std::time::Instant::now();
         assert_eq!(
             scan_on_miss(&dir, scan, FIRST_SCAN_WAIT).await,
-            Scan::Background
+            Scan::Skipped
         );
         assert!(
             started.elapsed() < std::time::Duration::from_millis(40),

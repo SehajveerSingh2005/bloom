@@ -11,7 +11,7 @@ interface GlassRect {
 
 /** One glass surface: an element, or several that join into one sheet (the
  *  info panel sitting on the dock), so there is no seam between them. */
-export type GlassItem = Element | null | undefined | (Element | null | undefined)[];
+type GlassItem = Element | null | undefined | (Element | null | undefined)[];
 
 /** The native blur window has 8 px rounded corners; a box inset by
  *  (R - 8)(1 - 1/√2) from a curve of radius R keeps them hidden inside it. */
@@ -23,11 +23,18 @@ const inset = (r: number) => (r > 8 ? Math.ceil((r - 8) * (1 - Math.SQRT1_2)) : 
  */
 export function useGlassEnabled(): boolean {
 	const [on, setOn] = useState(() => localStorage.getItem("bloom-glass") !== "false");
-	useSettingsSync({ "bloom-glass": (v) => setOn(v !== false && v !== "false") });
+	useSettingsSync({ "bloom-glass": (v) => setOn(v !== false) });
 	useEffect(() => {
 		document.documentElement.classList.toggle("glass", on);
 	}, [on]);
 	return on;
+}
+
+/** The "Info centre" setting (`bloom-info-centre`): the notch's content lives in the dock. */
+export function useInfoCentre() {
+	const [on, setOn] = useState(() => localStorage.getItem("bloom-info-centre") === "true");
+	useSettingsSync({ "bloom-info-centre": (v) => setOn(v === true) });
+	return [on, setOn] as const;
 }
 
 /**

@@ -5,9 +5,9 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { BookOpen, Bot, Globe, Cpu, Keyboard, KeyRound, Mail, MessageCircle, Mic, AudioLines, Plug, QrCode, Server, Shield, Sparkles, Trash2, Users } from "lucide-react";
 import qrcode from "qrcode-generator";
 import { SettingRow } from "./SettingRow";
-import { AiContext } from "./AiContext";
-import { useAiSetting } from "./useAiSetting";
-import { cleanAiName, isValidAiName } from "../ai/aiName";
+import { AiContext, confirm, Toggle } from "./AiContext";
+import { useAiFlag, useAiSetting } from "./useAiSetting";
+import { cleanAiName, DEFAULT_AI_NAME, isValidAiName } from "../ai/aiName";
 import "./AiTab.css";
 
 interface AiStatus {
@@ -81,7 +81,6 @@ function ContactCard({ person, run }: { person: Person; run: ContactAction }) {
 	const [tag, setTag] = useState("");
 	const [email, setEmail] = useState("");
 	const [label, setLabel] = useState("");
-	const [deleting, setDeleting] = useState(false);
 	const addTag = () => {
 		if (!tag.trim()) return;
 		run("add_tag", person.id, tag.trim());
@@ -99,26 +98,17 @@ function ContactCard({ person, run }: { person: Person; run: ContactAction }) {
 				<span className="setting-label">{person.name}</span>
 				<button
 					className="ai-btn"
-					onBlur={() => setDeleting(false)}
-					onClick={() => {
-						if (!deleting) return setDeleting(true);
-						setDeleting(false);
-						run("delete", person.id);
+					onClick={async () => {
+						if (await confirm("Saved contacts", `Delete ${person.name} from your saved contacts?`, "Delete")) run("delete", person.id);
 					}}
 				>
-					{deleting ? "Delete? Yes" : "Delete"}
+					Delete
 				</button>
 			</div>
-			{person.emails.map((e) => (
-				<div className="ai-person-line" key={e.address}>
-					{e.address}
-					{e.label && ` (${e.label})`} <span className="ai-note">{note(e.source, e.primary)}</span>
-				</div>
-			))}
-			{person.phones.map((p) => (
-				<div className="ai-person-line" key={p.number}>
-					{p.number}
-					{p.label && ` (${p.label})`} <span className="ai-note">{note(p.source, p.primary)}</span>
+			{[...person.emails.map((e) => ({ ...e, value: e.address })), ...person.phones.map((p) => ({ ...p, value: p.number }))].map((x) => (
+				<div className="ai-person-line" key={x.value}>
+					{x.value}
+					{x.label && ` (${x.label})`} <span className="ai-note">{note(x.source, x.primary)}</span>
 				</div>
 			))}
 			<div className="ai-tags">
@@ -155,15 +145,8 @@ function Qr({ text }: { text: string }) {
 	const qr = qrcode(0, "L");
 	qr.addData(text);
 	qr.make();
-	const n = qr.getModuleCount();
-	let d = "";
-	for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) d += `M${c} ${r}h1v1h-1z`;
-	return (
-		<svg className="ai-qr" viewBox={`-3 -3 ${n + 6} ${n + 6}`} shapeRendering="crispEdges" role="img" aria-label="WhatsApp link QR code">
-			<rect x={-3} y={-3} width={n + 6} height={n + 6} fill="#fff" />
-			<path d={d} fill="#000" />
-		</svg>
-	);
+	// 4 px modules and a 3-module quiet zone, black on white.
+	return <img className="ai-qr" src={qr.createDataURL(4, 12)} alt="WhatsApp link QR code" />;
 }
 
 /** Saves on blur or Enter, not on every keystroke. `onSave` returning false
@@ -260,7 +243,7 @@ function keyName(vk: number): string {
 export function AiTab() {
 	const [status, setStatus] = useState<AiStatus | null>(null);
 	const [enabled, setEnabled] = useAiSetting("bloom-ai-enabled", "false");
-	const [rawName, setName] = useAiSetting("bloom-ai-name", "Janice");
+	const [rawName, setName] = useAiSetting("bloom-ai-name", DEFAULT_AI_NAME);
 	const aiName = cleanAiName(rawName);
 	const [baseUrl, setBaseUrl] = useAiSetting("bloom-ai-base-url", "https://api.openai.com/v1");
 	const [model, setModel] = useAiSetting("bloom-ai-model", "");
@@ -278,24 +261,23 @@ export function AiTab() {
 	const [testing, setTesting] = useState(false);
 	const [searchTesting, setSearchTesting] = useState(false);
 	const [searchNote, setSearchNote] = useState("");
-	const [wake, setWake] = useAiSetting("bloom-ai-wake", "false");
+	const [wake, setWake] = useAiFlag("bloom-ai-wake");
 	const [enrolling, setEnrolling] = useState(false);
 	const [next, setNext] = useState(1);
 	const [memoryCount, setMemoryCount] = useState(0);
 	const [skillCount, setSkillCount] = useState(0);
 	const [mcp, setMcp] = useState({ servers: 0, tools: 0, errors: [] as string[] });
-	const [clearing, setClearing] = useState(false);
 	const [reloading, setReloading] = useState(false);
 	const [busy, setBusy] = useState<"" | "recording" | "building">("");
 	const [whatsapp, setWhatsapp] = useAiSetting("bloom-ai-whatsapp", "false");
 	const [wa, setWa] = useState<WaStatus | null>(null);
 	const [useCode, setUseCode] = useState(false);
 	const [waPhone, setWaPhone] = useState("");
-	const [autoReply, setAutoReply] = useAiSetting("bloom-ai-whatsapp-autoreply", "false");
+	const [autoReply, setAutoReply] = useAiFlag("bloom-ai-whatsapp-autoreply");
 	const [autoTo, setAutoTo] = useAiSetting("bloom-ai-whatsapp-auto", "[]");
 	const [style, setStyle] = useAiSetting("bloom-ai-whatsapp-style", DEFAULT_STYLE);
-	const [sign, setSign] = useAiSetting("bloom-ai-whatsapp-sign", "true");
-	const [selfChat, setSelfChat] = useAiSetting("bloom-ai-whatsapp-selfchat", "false");
+	const [sign, setSign] = useAiFlag("bloom-ai-whatsapp-sign", true);
+	const [selfChat, setSelfChat] = useAiFlag("bloom-ai-whatsapp-selfchat");
 	const [contacts, setContacts] = useState<[string, string][]>([]);
 	const [book, setBook] = useState<Contacts | null>(null);
 	const [contactQuery, setContactQuery] = useState("");
@@ -310,7 +292,7 @@ export function AiTab() {
 	const testEmail = () => {
 		setTesting(true);
 		setMessage("");
-		invoke("ai_test_email").catch((e) => {
+		invoke("ai_send", { kind: "test_email" }).catch((e) => {
 			setTesting(false);
 			setMessage(String(e));
 		});
@@ -319,7 +301,7 @@ export function AiTab() {
 	const testSearch = () => {
 		setSearchTesting(true);
 		setSearchNote("");
-		invoke("ai_test_search").catch((e) => {
+		invoke("ai_send", { kind: "search_test" }).catch((e) => {
 			setSearchTesting(false);
 			setSearchNote(String(e));
 		});
@@ -334,8 +316,8 @@ export function AiTab() {
 		refresh();
 		// The agent answers with a secret_status event (booleans only).
 		if (enabled === "true") {
-			invoke("ai_secret_status").catch(() => {});
-			invoke("ai_library_status").catch(() => {});
+			invoke("ai_send", { kind: "secret_status" }).catch(() => {});
+			invoke("ai_send", { kind: "library_status" }).catch(() => {});
 			invoke("ai_contacts", { action: "list" }).catch(() => {});
 		}
 	}, [enabled]);
@@ -351,12 +333,6 @@ export function AiTab() {
 	useEffect(() => {
 		if (linked) invoke<[string, string][]>("ai_whatsapp_contacts").then(setContacts).catch(() => setContacts([]));
 	}, [linked]);
-
-	// The name decides whether the wake word counts as trained; let the save land first.
-	useEffect(() => {
-		const t = setTimeout(refresh, 300);
-		return () => clearTimeout(t);
-	}, [rawName]);
 
 	useEffect(() => {
 		const off = listen<any>("ai-event", ({ payload }) => {
@@ -426,10 +402,10 @@ export function AiTab() {
 
 	const chooseTier = async (next: string) => {
 		if (next === "carte-blanche") {
-			const { ask } = await import("@tauri-apps/plugin-dialog");
-			const ok = await ask(
+			const ok = await confirm(
+				"Carte blanche",
 				"Bloom AI will send emails and run PowerShell scripts without asking you first. Anything it reads (a web page, a file, an email) could trick it into doing something you didn't want. Choose this only if you accept that risk.",
-				{ title: "Carte blanche", kind: "warning", okLabel: "Allow everything", cancelLabel: "Cancel" }
+				"Allow everything"
 			);
 			if (!ok) return;
 		}
@@ -443,7 +419,8 @@ export function AiTab() {
 			return false;
 		}
 		setMessage("");
-		setName(v.trim());
+		// The name decides whether the wake word counts as trained: ask once it has landed.
+		setName(v.trim()).then(refresh);
 	};
 
 	const record = () => {
@@ -458,7 +435,7 @@ export function AiTab() {
 	const finish = () => {
 		setMessage("");
 		setBusy("building");
-		invoke("ai_enroll_build").catch((e) => {
+		invoke("ai_send", { kind: "enroll_build" }).catch((e) => {
 			setMessage(String(e));
 			setBusy("");
 		});
@@ -473,13 +450,12 @@ export function AiTab() {
 	};
 
 	const deleteAi = async () => {
-		const { ask } = await import("@tauri-apps/plugin-dialog");
-		const ok = await ask(
+		const ok = await confirm(
+			"Delete AI altogether",
 			"This removes Bloom AI from this PC: the agent program, its saved keys and passwords, contacts, action log and AI settings. AI can't be turned back on from Settings afterwards. If you linked WhatsApp, also remove \"Bloom\" in WhatsApp > Linked devices on your phone.",
-			{ title: "Delete AI altogether", kind: "warning", okLabel: "Delete AI", cancelLabel: "Cancel" }
+			"Delete AI"
 		);
-		if (!ok) return;
-		runDelete();
+		if (ok) runDelete();
 	};
 
 	if (!status) return null;
@@ -550,10 +526,7 @@ export function AiTab() {
 							: "The AI agent isn't installed (bloom-ai.exe is missing)"
 					}
 				>
-					<label className="toggle-switch">
-						<input type="checkbox" checked={on} onChange={() => setEnabled(on ? "false" : "true")} />
-						<span className="slider"></span>
-					</label>
+					<Toggle checked={on} onChange={() => setEnabled(on ? "false" : "true")} />
 				</SettingRow>
 				<SettingRow
 					icon={Sparkles}
@@ -565,7 +538,7 @@ export function AiTab() {
 					}
 					divider={false}
 				>
-					<Field value={aiName} onSave={saveName} placeholder="Janice" />
+					<Field value={aiName} onSave={saveName} placeholder={DEFAULT_AI_NAME} />
 				</SettingRow>
 			</div>
 			{message && <p className="ai-warning">{message}</p>}
@@ -665,15 +638,7 @@ export function AiTab() {
 									: `Teach ${aiName} your voice first`
 							}
 						>
-							<label className="toggle-switch">
-								<input
-									type="checkbox"
-									checked={wake === "true" && status.wake_trained}
-									disabled={!status.wake_trained}
-									onChange={() => setWake(wake === "true" ? "false" : "true")}
-								/>
-								<span className="slider"></span>
-							</label>
+							<Toggle checked={wake && status.wake_trained} disabled={!status.wake_trained} onChange={() => setWake(!wake)} />
 						</SettingRow>
 						<SettingRow icon={Keyboard} label="Push-to-talk key" desc="Hold to record, release to send" divider={false}>
 							<button
@@ -728,7 +693,7 @@ export function AiTab() {
 									disabled={reloading}
 									onClick={() => {
 										setReloading(true);
-										invoke("ai_mcp_reload").catch((e) => {
+										invoke("ai_send", { kind: "mcp_reload" }).catch((e) => {
 											setReloading(false);
 											setMessage(String(e));
 										});
@@ -753,14 +718,12 @@ export function AiTab() {
 								</button>
 								<button
 									className="ai-btn"
-									onBlur={() => setClearing(false)}
-									onClick={() => {
-										if (!clearing) return setClearing(true);
-										setClearing(false);
-										invoke("ai_forget_all").catch((e) => setMessage(String(e)));
+									onClick={async () => {
+										if (!(await confirm("Memory", `Forget everything ${aiName} remembers about you?`, "Clear"))) return;
+										invoke("ai_send", { kind: "forget_all" }).catch((e) => setMessage(String(e)));
 									}}
 								>
-									{clearing ? "Clear? Yes" : "Clear"}
+									Clear
 								</button>
 							</div>
 						</SettingRow>
@@ -774,10 +737,7 @@ export function AiTab() {
 							desc={`Links ${aiName} as a device on your WhatsApp. Unofficial connection: WhatsApp may restrict accounts it flags.`}
 							divider={waOn}
 						>
-							<label className="toggle-switch">
-								<input type="checkbox" checked={waOn} onChange={() => setWhatsapp(waOn ? "false" : "true")} />
-								<span className="slider"></span>
-							</label>
+							<Toggle checked={waOn} onChange={() => setWhatsapp(waOn ? "false" : "true")} />
 						</SettingRow>
 						{waOn && (
 							<SettingRow
@@ -798,7 +758,7 @@ export function AiTab() {
 									)}
 									{/* A linked session exists (even offline or stopped): it can be removed. */}
 									{wa?.number && (
-										<button className="ai-btn" onClick={() => waRun("ai_whatsapp_unlink")}>
+										<button className="ai-btn" onClick={() => waRun("ai_send", { kind: "whatsapp_unlink" })}>
 											Unlink
 										</button>
 									)}
@@ -853,10 +813,7 @@ export function AiTab() {
 								desc={`Write "${aiName}, ..." in your own WhatsApp chat (Message yourself) and ${aiName} does it on this PC and replies there. Up to 30 an hour; anything that needs your OK asks there too.`}
 								divider={false}
 							>
-								<label className="toggle-switch">
-									<input type="checkbox" checked={selfChat === "true"} onChange={() => setSelfChat(selfChat === "true" ? "false" : "true")} />
-									<span className="slider"></span>
-								</label>
+								<Toggle checked={selfChat} onChange={() => setSelfChat(!selfChat)} />
 							</SettingRow>
 						)}
 					</div>
@@ -870,14 +827,7 @@ export function AiTab() {
 									label="Reply automatically"
 									desc={`${aiName} answers the contacts you choose, after a short wait. Never groups, and it pauses for 30 minutes when you write in a chat yourself.`}
 								>
-									<label className="toggle-switch">
-										<input
-											type="checkbox"
-											checked={autoReply === "true"}
-											onChange={() => setAutoReply(autoReply === "true" ? "false" : "true")}
-										/>
-										<span className="slider"></span>
-									</label>
+									<Toggle checked={autoReply} onChange={() => setAutoReply(!autoReply)} />
 								</SettingRow>
 								<SettingRow
 									icon={Bot}
@@ -911,10 +861,7 @@ export function AiTab() {
 									desc={`Replies end with "(${aiName}, <your name>'s assistant)" so nobody is misled`}
 									divider={false}
 								>
-									<label className="toggle-switch">
-										<input type="checkbox" checked={sign !== "false"} onChange={() => setSign(sign === "false" ? "true" : "false")} />
-										<span className="slider"></span>
-									</label>
+									<Toggle checked={sign} onChange={() => setSign(!sign)} />
 								</SettingRow>
 							</div>
 						</>
@@ -948,7 +895,7 @@ export function AiTab() {
 								) : (
 									<button
 										className="ai-btn"
-										onClick={() => invoke("ai_outlook_login").catch((e) => setMessage(String(e)))}
+										onClick={() => invoke("ai_send", { kind: "outlook_login" }).catch((e) => setMessage(String(e)))}
 									>
 										Sign in
 									</button>

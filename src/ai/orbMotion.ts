@@ -8,7 +8,7 @@
 import type { AiPhase } from "./aiState";
 
 /** `idle` is hidden; `rest` is the panel's still orb; `settling` is idle until it has faded out. */
-export type OrbState = "idle" | "rest" | "activating" | "listening" | "thinking" | "speaking" | "error" | "settling";
+type OrbState = "idle" | "rest" | "activating" | "listening" | "thinking" | "speaking" | "error" | "settling";
 type Target = Exclude<OrbState, "settling">;
 
 const PARAMS = ["opacity", "scale", "glow", "shells", "core", "tint", "spin", "breathe", "breatheRate", "spread", "tilt"] as const;

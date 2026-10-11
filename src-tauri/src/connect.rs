@@ -875,13 +875,6 @@ pub async fn bt_forget(id: String) -> Result<(), String> {
     blocking(move || imp::bt_forget(&id)).await
 }
 
-/// Lets the calling panel take the keyboard (it's no-activate otherwise), for
-/// a password or PIN field.
-#[tauri::command]
-pub fn take_keyboard(window: WebviewWindow) {
-    let _ = window.set_focus();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

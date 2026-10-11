@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { CalendarDays, Database, FileText, Mail, MessageCircle, Users } from "lucide-react";
+import { Database, FileText, Mail, MessageCircle, Users } from "lucide-react";
 import { SettingRow } from "./SettingRow";
-import { useAiSetting } from "./useAiSetting";
+import { useAiFlag, useAiSetting } from "./useAiSetting";
+import type { SettingRowProps } from "./types";
 
 /** The agent's `context_status`: counts only, never content. */
 interface ContextStatus {
@@ -18,7 +19,7 @@ const LABELS: Record<string, string> = { contacts: "contacts", email: "emails", 
 
 const run = (action: string) => invoke("ai_context", { action }).catch(() => {});
 
-function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: () => void; disabled?: boolean }) {
+export function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: () => void; disabled?: boolean }) {
 	return (
 		<label className="toggle-switch">
 			<input type="checkbox" checked={checked} disabled={disabled} onChange={onChange} />
@@ -27,17 +28,32 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
 	);
 }
 
+/** A native "are you sure?" before something that can't be undone. */
+export async function confirm(title: string, message: string, okLabel: string) {
+	const { ask } = await import("@tauri-apps/plugin-dialog");
+	return ask(message, { title, kind: "warning", okLabel, cancelLabel: "Cancel" });
+}
+
+// The agent drops what is no longer allowed once the setting has landed.
+const change = (set: (on: boolean) => Promise<void>, on: boolean) => set(on).then(() => run("apply"));
+
+/** One source the index may read (`bloom-ai-context-<source>`). */
+function SourceRow({ source, ...row }: { source: string } & SettingRowProps) {
+	const [on, setOn] = useAiFlag(`bloom-ai-context-${source}`);
+	return (
+		<SettingRow {...row}>
+			<Toggle checked={on} onChange={() => change(setOn, !on)} />
+		</SettingRow>
+	);
+}
+
 /** Settings > AI > Context: opt-in indexing, per source, with Delete index. */
 export function AiContext({ name }: { name: string }) {
-	const [on, setOn] = useAiSetting("bloom-ai-context", "false");
-	const [contacts, setContacts] = useAiSetting("bloom-ai-context-contacts", "false");
-	const [email, setEmail] = useAiSetting("bloom-ai-context-email", "false");
-	const [whatsapp, setWhatsapp] = useAiSetting("bloom-ai-context-whatsapp", "false");
-	const [notes, setNotes] = useAiSetting("bloom-ai-context-notes", "false");
+	const [on, setOn] = useAiFlag("bloom-ai-context");
+	const [notes, setNotes] = useAiFlag("bloom-ai-context-notes");
 	const [notesDir, setNotesDir] = useAiSetting("bloom-ai-context-notes-dir", "");
 	const [status, setStatus] = useState<ContextStatus | null>(null);
 	const [busy, setBusy] = useState(false);
-	const [deleting, setDeleting] = useState(false);
 
 	useEffect(() => {
 		const off = listen<any>("ai-event", ({ payload }) => {
@@ -52,21 +68,10 @@ export function AiContext({ name }: { name: string }) {
 		};
 	}, []);
 
-	// The agent drops what is no longer allowed once the setting has landed.
-	const change = (set: (v: string) => Promise<void>, value: boolean) => set(value ? "true" : "false").then(() => run("apply"));
-
 	const total = Object.values(status?.counts ?? {}).reduce((a, b) => a + b, 0);
 	const turnOff = async () => {
-		if (total > 0) {
-			const { ask } = await import("@tauri-apps/plugin-dialog");
-			const ok = await ask(`Turning context indexing off deletes the index (${total} items).`, {
-				title: "Context indexing",
-				kind: "warning",
-				okLabel: "Turn off and delete",
-				cancelLabel: "Cancel"
-			});
-			if (!ok) return;
-		}
+		const message = `Turning context indexing off deletes the index (${total} items).`;
+		if (total > 0 && !(await confirm("Context indexing", message, "Turn off and delete"))) return;
 		change(setOn, false);
 	};
 
@@ -76,7 +81,6 @@ export function AiContext({ name }: { name: string }) {
 		if (typeof dir === "string") setNotesDir(dir).then(() => run("apply"));
 	};
 
-	const isOn = on === "true";
 	const counts = Object.entries(status?.counts ?? {})
 		.map(([source, n]) => `${n} ${LABELS[source] ?? source}`)
 		.join(", ");
@@ -91,42 +95,35 @@ export function AiContext({ name }: { name: string }) {
 					label="Context indexing"
 					desc={`Lets ${name} answer questions about your own plans and people ("who am I going with on Friday?") from the sources you tick below. New items are sent to your model provider in hourly batches to find the people, places and times in them. Off deletes the index.`}
 				>
-					<Toggle checked={isOn} onChange={() => (isOn ? turnOff() : change(setOn, true))} />
+					<Toggle checked={on} onChange={() => (on ? turnOff() : change(setOn, true))} />
 				</SettingRow>
-				<SettingRow icon={Users} label="Contacts" desc="Names, tags and companies of your saved contacts">
-					<Toggle checked={contacts === "true"} onChange={() => change(setContacts, contacts !== "true")} />
-				</SettingRow>
-				<SettingRow
+				<SourceRow source="contacts" icon={Users} label="Contacts" desc="Names, tags and companies of your saved contacts" />
+				<SourceRow
+					source="email"
 					icon={Mail}
 					label="Email"
 					desc="Subject, sender, recipients, date and the first 500 characters of each email from the last 30 days, read over IMAP at most once a day"
-				>
-					<Toggle checked={email === "true"} onChange={() => change(setEmail, email !== "true")} />
-				</SettingRow>
-				<SettingRow
+				/>
+				<SourceRow
+					source="whatsapp"
 					icon={MessageCircle}
 					label="WhatsApp"
 					desc={`Messages that arrive while Bloom is linked are saved on this PC until indexed. This overrides "kept in memory only" for indexed chats. Your own chat with ${name} is never indexed.`}
-				>
-					<Toggle checked={whatsapp === "true"} onChange={() => change(setWhatsapp, whatsapp !== "true")} />
-				</SettingRow>
-				<SettingRow icon={CalendarDays} label="Calendar" desc="Needs Outlook sign-in">
-					<Toggle checked={false} disabled onChange={() => {}} />
-				</SettingRow>
+				/>
 				<SettingRow
 					icon={FileText}
 					label="Notes"
 					desc={notesDir ? `.txt and .md files in ${notesDir}` : "A folder of .txt and .md files (1 MB each at most)"}
-					divider={isOn}
+					divider={on}
 				>
 					<div className="ai-secret">
 						<button className="ai-btn" onClick={pickNotes}>
 							{notesDir ? "Change folder" : "Choose folder"}
 						</button>
-						<Toggle checked={notes === "true"} onChange={() => change(setNotes, notes !== "true")} />
+						<Toggle checked={notes} onChange={() => change(setNotes, !notes)} />
 					</div>
 				</SettingRow>
-				{isOn && (
+				{on && (
 					<SettingRow
 						icon={Database}
 						label={`Indexed: ${total} ${total === 1 ? "item" : "items"}`}
@@ -146,14 +143,11 @@ export function AiContext({ name }: { name: string }) {
 							</button>
 							<button
 								className="ai-btn"
-								onBlur={() => setDeleting(false)}
-								onClick={() => {
-									if (!deleting) return setDeleting(true);
-									setDeleting(false);
-									run("delete");
+								onClick={async () => {
+									if (await confirm("Context indexing", `Delete the index (${total} items)?`, "Delete index")) run("delete");
 								}}
 							>
-								{deleting ? "Delete? Yes" : "Delete index"}
+								Delete index
 							</button>
 						</div>
 					</SettingRow>

@@ -8,6 +8,24 @@ use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// The started line: `approved-started` after the user said yes, else `auto-started`.
+pub fn started(asked: bool) -> &'static str {
+    if asked {
+        "approved-started"
+    } else {
+        "auto-started"
+    }
+}
+
+/// The final line: `failed`, else `approved` or `auto` as for `started`.
+pub fn outcome(ok: bool, asked: bool) -> &'static str {
+    match (ok, asked) {
+        (false, _) => "failed",
+        (true, true) => "approved",
+        (true, false) => "auto",
+    }
+}
+
 pub fn record(dir: &Path, kind: &str, detail: &str, outcome: &str) {
     record_with(dir, kind, detail, outcome, None);
 }

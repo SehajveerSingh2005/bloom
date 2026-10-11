@@ -35,11 +35,7 @@ pub struct Memory {
 const MEMORY_TURN_BYTES: usize = 2048;
 
 fn clip(text: &str) -> String {
-    let mut end = text.len().min(MEMORY_TURN_BYTES);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_string()
+    text[..text.floor_char_boundary(MEMORY_TURN_BYTES)].to_string()
 }
 
 impl Memory {
@@ -157,18 +153,14 @@ pub async fn run(task: u64, text: String, shared: Arc<Shared>) -> Result<String,
 }
 
 pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
-    let dir = ctx.cfg.debug.then(|| ctx.shared.data_dir.clone());
+    let (on, dir) = (ctx.cfg.debug, ctx.shared.data_dir.clone());
     // Requests and replies may quote messages or mail: logged short.
-    let log = |event: &str, detail: &str| {
-        if let Some(dir) = &dir {
-            debug::log(dir, event, &debug::cut(detail, debug::RESULT_CHARS));
-        }
-    };
+    let log = |event: &str, detail: &str| debug::trace(on, &dir, event, detail);
     log("request", text);
     // The router only picks the workflow; everything but research is the tool loop.
     let result = match crate::router::route(llm, text).await {
-        crate::router::Intent::DeepResearch => crate::research::run(llm, ctx, text).await,
-        _ => steps(llm, ctx, text).await,
+        true => crate::research::run(llm, ctx, text).await,
+        false => steps(llm, ctx, text).await,
     };
     match &result {
         Ok(reply) => {
@@ -186,16 +178,15 @@ pub async fn run_with(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, St
 
 async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
     let mut tools = tools::schema();
-    if let Some(list) = tools.as_array_mut() {
-        if let Some(mcp) = ctx.shared.mcp.get() {
-            list.extend(mcp.schema());
-        }
-        let whatsapp = ctx.cfg.whatsapp;
-        list.retain(|t| {
-            let name = t["function"]["name"].as_str().unwrap_or_default();
-            whatsapp || !crate::whatsapp::TOOLS.contains(&name)
-        });
+    if let Some(mcp) = ctx.shared.mcp.get() {
+        tools.extend(mcp.schema());
     }
+    let whatsapp = ctx.cfg.whatsapp;
+    tools.retain(|t| {
+        let name = t["function"]["name"].as_str().unwrap_or_default();
+        whatsapp || !crate::whatsapp::TOOLS.contains(&name)
+    });
+    let tools = Value::from(tools);
     let prompt = system_prompt(&ctx.cfg.name, &ctx.shared.data_dir, ctx.cfg.whatsapp);
     let mut messages = vec![json!({ "role": "system", "content": prompt })];
     {
@@ -208,11 +199,11 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
     for _ in 0..MAX_STEPS {
         // A malformed tool call gets one retry of the same step with a reminder.
         let message = match llm.chat(&messages, &tools).await {
-            Err(e) if crate::llm::is_tool_call_failure(&e) => {
+            Err(e) if e.starts_with(crate::errors::MODEL_TOOL_CALL_FAILED) => {
                 let mut again = messages.clone();
                 again.push(json!({ "role": "system", "content": "Your last tool call was malformed. Call tools with valid JSON arguments that match the tool's schema." }));
                 llm.chat(&again, &tools).await.map_err(|e| {
-                    if crate::llm::is_tool_call_failure(&e) {
+                    if e.starts_with(crate::errors::MODEL_TOOL_CALL_FAILED) {
                         crate::errors::coded(
                             crate::errors::MODEL_TOOL_CALL_FAILED,
                             "The model sent a broken tool call twice. Try again, or pick a model with reliable tool calling (for Groq: llama-3.3-70b-versatile or openai/gpt-oss-120b).",
@@ -253,8 +244,11 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
                 Ok(result) => result,
                 Err(e) if crate::errors::is_coded(&e) => {
                     // The model may paraphrase; the panel and orb still show the message.
-                    if let Some(ev) = coded_notice(ctx.task, &e) {
-                        emit(&ev);
+                    if !crate::selfchat::is_phone(ctx.task) {
+                        emit(&Out::Activity {
+                            task: ctx.task,
+                            text: e.clone(),
+                        });
                     }
                     e
                 }
@@ -262,26 +256,18 @@ async fn steps(llm: &Llm, ctx: &mut Ctx, text: &str) -> Result<String, String> {
             };
             if ctx.cfg.debug {
                 let dir = &ctx.shared.data_dir;
-                let mut line = debug::call(name, &args);
+                let mut line = format!("{name} {args}");
                 if crate::whatsapp::TOOLS.contains(&name) {
                     // Message text is logged short.
                     line = debug::cut(&line, debug::RESULT_CHARS);
                 }
                 debug::log(dir, "tool", &line);
-                debug::log(dir, "result", &debug::cut(&result, debug::RESULT_CHARS));
+                debug::trace(true, dir, "result", &result);
             }
             messages.push(json!({ "role": "tool", "tool_call_id": call["id"], "content": result }));
         }
     }
     Err("Stopped after too many steps without finishing.".into())
-}
-
-/// The activity line for a coded tool error (none for requests from the phone).
-fn coded_notice(task: u64, error: &str) -> Option<Out> {
-    (!crate::selfchat::is_phone(task)).then(|| Out::Activity {
-        task,
-        text: error.to_string(),
-    })
 }
 
 fn system_prompt(name: &str, data_dir: &std::path::Path, whatsapp: bool) -> String {
@@ -342,19 +328,14 @@ fn system_prompt(name: &str, data_dir: &std::path::Path, whatsapp: bool) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::{ctx, http, mock_server};
+    use crate::testutil::{ctx, llm, mock_server};
 
     #[tokio::test]
     async fn runs_tool_calls_until_the_model_answers() {
         let first = r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"no_such_tool","arguments":"{}"}}]}}]}"#;
         let second = r#"{"choices":[{"message":{"role":"assistant","content":"All done."}}]}"#;
         let (url, requests) = mock_server(vec![first.into(), second.into()]);
-        let llm = Llm {
-            http: http(),
-            base_url: url,
-            model: "m".into(),
-            key: "k".into(),
-        };
+        let llm = llm(&url);
         let mut ctx = ctx();
 
         assert_eq!(
@@ -375,12 +356,7 @@ mod tests {
         let second = r#"{"choices":[{"message":{"role":"assistant","content":"All done."}}]}"#;
         for on in [false, true] {
             let (url, _requests) = mock_server(vec![first.into(), second.into()]);
-            let llm = Llm {
-                http: http(),
-                base_url: url,
-                model: "m".into(),
-                key: "k".into(),
-            };
+            let llm = llm(&url);
             let mut ctx = ctx();
             ctx.cfg.debug = on;
             run_with(&llm, &mut ctx, "do it").await.unwrap();
@@ -416,12 +392,7 @@ mod tests {
         let answer =
             format!(r#"{{"choices":[{{"message":{{"role":"assistant","content":"{long}"}}}}]}}"#);
         let (url, _requests) = mock_server(vec![answer]);
-        let llm = Llm {
-            http: http(),
-            base_url: url,
-            model: "m".into(),
-            key: "k".into(),
-        };
+        let llm = llm(&url);
         let mut ctx = ctx();
         ctx.cfg.debug = true;
         run_with(&llm, &mut ctx, &"q".repeat(1000)).await.unwrap();
@@ -486,12 +457,7 @@ mod tests {
         let a = r#"{"choices":[{"message":{"role":"assistant","content":"Neha is neha@x.com."}}]}"#;
         let b = r#"{"choices":[{"message":{"role":"assistant","content":"Ok."}}]}"#;
         let (url, requests) = mock_server(vec![a.into(), b.into()]);
-        let llm = Llm {
-            http: http(),
-            base_url: url,
-            model: "m".into(),
-            key: "k".into(),
-        };
+        let llm = llm(&url);
         let mut ctx = ctx();
         run_with(&llm, &mut ctx, "who is Neha").await.unwrap();
         run_with(&llm, &mut ctx, "email her").await.unwrap();
@@ -513,12 +479,7 @@ mod tests {
     async fn taint_carries_into_the_next_request() {
         let a = r#"{"choices":[{"message":{"role":"assistant","content":"Read it."}}]}"#;
         let (url, _r) = mock_server(vec![a.into(), a.into()]);
-        let llm = Llm {
-            http: http(),
-            base_url: url,
-            model: "m".into(),
-            key: "k".into(),
-        };
+        let llm = llm(&url);
         let mut first = ctx();
         first.tainted = true; // e.g. it read a web page
         run_with(&llm, &mut first, "summarise").await.unwrap();
@@ -532,12 +493,7 @@ mod tests {
     #[tokio::test]
     async fn failed_requests_are_not_remembered() {
         let (url, _r) = mock_server(vec![r#"{"choices":[]}"#.into()]);
-        let llm = Llm {
-            http: http(),
-            base_url: url,
-            model: "m".into(),
-            key: "k".into(),
-        };
+        let llm = llm(&url);
         let mut ctx = ctx();
         assert!(run_with(&llm, &mut ctx, "x").await.is_err());
         assert!(ctx
@@ -552,25 +508,11 @@ mod tests {
     #[tokio::test]
     async fn model_errors_surface() {
         let (url, _requests) = mock_server(vec![r#"{"choices":[]}"#.into()]);
-        let llm = Llm {
-            http: http(),
-            base_url: url,
-            model: "m".into(),
-            key: "k".into(),
-        };
+        let llm = llm(&url);
         assert_eq!(
             run_with(&llm, &mut ctx(), "x").await,
             Err("The model sent no message.".into())
         );
-    }
-
-    fn llm_at(url: String) -> Llm {
-        Llm {
-            http: http(),
-            base_url: url,
-            model: "m".into(),
-            key: "k".into(),
-        }
     }
 
     const GROQ_400: &str = r#"{"error":{"message":"Failed to call a function.","type":"invalid_request_error","code":"tool_use_failed","failed_generation":"<function=x>"}}"#;
@@ -582,7 +524,7 @@ mod tests {
             "Content-Type: application/json\r\n",
             vec![("400 Bad Request", GROQ_400.into()), ("200 OK", ok.into())],
         );
-        let r = run_with(&llm_at(url), &mut ctx(), "hi").await;
+        let r = run_with(&llm(&url), &mut ctx(), "hi").await;
         assert_eq!(r, Ok("Fine.".into()));
         assert!(!requests.recv().unwrap().contains("valid JSON arguments"));
         assert!(requests.recv().unwrap().contains("valid JSON arguments"));
@@ -597,29 +539,26 @@ mod tests {
                 ("400 Bad Request", GROQ_400.into()),
             ],
         );
-        let e = run_with(&llm_at(url), &mut ctx(), "hi").await.unwrap_err();
+        let e = run_with(&llm(&url), &mut ctx(), "hi").await.unwrap_err();
         assert!(e.starts_with("MODEL_TOOL_CALL_FAILED: The model sent a broken tool call twice."), "{e}");
         assert!(e.contains("llama-3.3-70b-versatile or openai/gpt-oss-120b"));
     }
 
     #[tokio::test]
     async fn other_400s_are_not_hidden_or_retried() {
-        let (url, _r) = crate::testutil::mock_server_status(
+        let (url, _r) = crate::testutil::mock_server_full(
             "400 Bad Request",
+            "Content-Type: application/json\r\n",
             vec![r#"{"error":{"message":"bad model"}}"#.into()],
         );
-        let e = run_with(&llm_at(url), &mut ctx(), "hi").await.unwrap_err();
+        let e = run_with(&llm(&url), &mut ctx(), "hi").await.unwrap_err();
         assert!(e.contains("bad model"), "{e}");
     }
 
     #[test]
-    fn coded_tool_errors_become_an_activity_line() {
+    fn coded_tool_errors_are_recognised() {
         let text = "SEARCH_BLOCKED: DuckDuckGo is blocking automated searches from this PC.";
         assert!(crate::errors::is_coded(text));
-        match coded_notice(1, text) {
-            Some(Out::Activity { task: 1, text: t }) => assert_eq!(t, text),
-            other => panic!("{other:?}"),
-        }
         assert!(!crate::errors::is_coded("Error: missing query"));
     }
 }

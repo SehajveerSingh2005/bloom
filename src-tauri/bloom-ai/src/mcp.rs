@@ -503,7 +503,7 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         tool.name,
         debug::cut(&args.to_string(), JOURNAL_ARGS)
     );
-    let ask = policy::mcp_needs_confirm(ctx.cfg.tier, server.trusted, ctx.tainted);
+    let ask = policy::needs_confirm(ctx.cfg.tier, server.trusted, ctx.tainted);
     let title = format!("Use {}: {}?", server.name, tool.name);
     let body = debug::cut(
         &serde_json::to_string_pretty(args).unwrap_or_default(),
@@ -513,20 +513,11 @@ pub async fn call(ctx: &mut Ctx, name: &str, args: &Value) -> Result<String, Str
         journal::record(&dir, "mcp", &detail, "declined");
         return Ok("The user chose not to run it.".into());
     }
-    let started = if ask {
-        "approved-started"
-    } else {
-        "auto-started"
-    };
-    journal::record(&dir, "mcp", &detail, started);
+    journal::record(&dir, "mcp", &detail, journal::started(ask));
     // Whatever comes back, error text included, is outside content.
     ctx.tainted = true;
     let result = server.call(&tool.name, args, CALL_TIMEOUT).await;
-    let outcome = match (&result, ask) {
-        (Err(_), _) => "failed",
-        (Ok(_), true) => "approved",
-        (Ok(_), false) => "auto",
-    };
+    let outcome = journal::outcome(result.is_ok(), ask);
     let reason = result.as_ref().err().map(String::as_str);
     journal::record_with(&dir, "mcp", &detail, outcome, reason);
     result
@@ -802,7 +793,7 @@ pub mod tests {
 
     #[test]
     fn confirm_policy_table() {
-        use policy::mcp_needs_confirm as ask;
+        use policy::needs_confirm as ask;
         for trusted in [false, true] {
             for tainted in [false, true] {
                 assert!(ask(Tier::Conservative, trusted, tainted));
@@ -936,9 +927,7 @@ while ($null -ne ($l = [Console]::In.ReadLine())) {
   [Console]::Out.Flush()
 }
 "#;
-        use base64::Engine;
-        let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-        let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+        let encoded = crate::powershell::encode(script);
         let d = temp_dir();
         let cfg = json!({ "mcpServers": { "ps": {
             "command": "powershell",

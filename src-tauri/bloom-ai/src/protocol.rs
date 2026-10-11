@@ -368,22 +368,8 @@ mod tests {
             serde_json::to_string(&out).unwrap(),
             r#"{"type":"confirm","task":1,"id":2,"kind":"script","title":"t","body":"b"}"#
         );
-    }
-
-    #[test]
-    fn memory_confirm_kind_serializes() {
-        let out = Out::Confirm {
-            task: 1,
-            id: 2,
-            kind: ConfirmKind::Memory,
-            title: "Remember this?".into(),
-            body: "b".into(),
-        };
-        let json = serde_json::to_string(&out).unwrap();
-        assert!(
-            json.contains(r#""kind":"memory","title":"Remember this?""#),
-            "{json}"
-        );
+        let memory = serde_json::to_string(&ConfirmKind::Memory).unwrap();
+        assert_eq!(memory, r#""memory""#);
     }
 
     #[test]

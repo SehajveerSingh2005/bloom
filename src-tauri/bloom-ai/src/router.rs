@@ -1,42 +1,24 @@
-//! Picks the workflow for a request: a cheap phrase heuristic first, and one
-//! short JSON-mode model call only when the heuristic is unsure. The router
-//! never calls tools; every intent but DEEP_RESEARCH runs the normal agent loop.
+//! Decides whether a request is Deep Research: a cheap phrase heuristic first,
+//! and one short JSON-mode model call only when the heuristic is unsure. The
+//! router never calls tools; everything but research runs the normal agent loop.
 
 use crate::llm::Llm;
 use serde_json::json;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Intent {
-    ContactLookup,
-    ContactUpdate,
-    EmailAction,
-    MessageAction,
-    WebSearch,
-    DeepResearch,
-    ContextQuery,
-    PcAction,
-    General,
-}
-
-const NAMES: [(Intent, &str); 9] = [
-    (Intent::ContactLookup, "CONTACT_LOOKUP"),
-    (Intent::ContactUpdate, "CONTACT_UPDATE"),
-    (Intent::EmailAction, "EMAIL_ACTION"),
-    (Intent::MessageAction, "MESSAGE_ACTION"),
-    (Intent::WebSearch, "WEB_SEARCH"),
-    (Intent::DeepResearch, "DEEP_RESEARCH"),
-    (Intent::ContextQuery, "CONTEXT_QUERY"),
-    (Intent::PcAction, "PC_ACTION"),
-    (Intent::General, "GENERAL"),
+/// The intents the model may answer with; only DEEP_RESEARCH changes the
+/// workflow, the rest just say "not research".
+const NAMES: [&str; 9] = [
+    "CONTACT_LOOKUP",
+    "CONTACT_UPDATE",
+    "EMAIL_ACTION",
+    "MESSAGE_ACTION",
+    "WEB_SEARCH",
+    "DEEP_RESEARCH",
+    "CONTEXT_QUERY",
+    "PC_ACTION",
+    "GENERAL",
 ];
-
-impl Intent {
-    fn parse(name: &str) -> Option<Intent> {
-        let name = name.trim().to_ascii_uppercase();
-        NAMES.iter().find(|(_, n)| *n == name).map(|(i, _)| *i)
-    }
-}
 
 /// Confidence from here up is acted on without asking the model; below it
 /// (and above `UNSURE_FROM`) the model gets one short call.
@@ -103,97 +85,78 @@ const ANALYTIC: &[&str] = &[
     "overview",
 ];
 
-/// Ordered: the first list with a hit wins.
-const KEYWORDS: &[(Intent, &[&str])] = &[
-    (
-        Intent::ContactUpdate,
-        &[
-            "save contact",
-            "add contact",
-            "update contact",
-            "number is",
-            "email is",
-            "address is",
-            "number as",
-            "email as",
-            "to my contacts",
-            "to contacts",
-        ],
-    ),
-    (
-        Intent::ContactLookup,
-        &[
-            "contact",
-            "contacts",
-            "phone number",
-            "email address",
-            "number",
-        ],
-    ),
-    (
-        Intent::EmailAction,
-        &["email", "emails", "mail", "inbox", "reply to", "forward"],
-    ),
-    (
-        Intent::MessageAction,
-        &["whatsapp", "message", "messages", "text"],
-    ),
-    (
-        Intent::PcAction,
-        &[
-            "open",
-            "launch",
-            "volume",
-            "brightness",
-            "wifi",
-            "wi fi",
-            "bluetooth",
-            "mute",
-            "unmute",
-            "pause",
-            "play",
-            "skip",
-            "turn on",
-            "turn off",
-            "shut down",
-            "restart",
-            "screenshot",
-            "remind",
-        ],
-    ),
-    (
-        Intent::ContextQuery,
-        &[
-            "my files",
-            "my documents",
-            "my notes",
-            "my calendar",
-            "my schedule",
-            "on my pc",
-            "what did i",
-            "did i",
-        ],
-    ),
-    (
-        Intent::WebSearch,
-        &[
-            "latest",
-            "news",
-            "today",
-            "current",
-            "currently",
-            "price",
-            "prices",
-            "stock",
-            "score",
-            "search",
-            "look up",
-            "google",
-            "this week",
-            "right now",
-            "weather",
-        ],
-    ),
+/// Actions (contacts, email, messages, the PC): a request that mentions
+/// research but asks for one of these is the model's call.
+const ACTIONS: &[&str] = &[
+    "save contact",
+    "add contact",
+    "update contact",
+    "number is",
+    "email is",
+    "address is",
+    "number as",
+    "email as",
+    "to my contacts",
+    "to contacts",
+    "contact",
+    "contacts",
+    "phone number",
+    "email address",
+    "number",
+    "email",
+    "emails",
+    "mail",
+    "inbox",
+    "reply to",
+    "forward",
+    "whatsapp",
+    "message",
+    "messages",
+    "text",
+    "open",
+    "launch",
+    "volume",
+    "brightness",
+    "wifi",
+    "wi fi",
+    "bluetooth",
+    "mute",
+    "unmute",
+    "pause",
+    "play",
+    "skip",
+    "turn on",
+    "turn off",
+    "shut down",
+    "restart",
+    "screenshot",
+    "remind",
+];
+/// Lookups (the user's own data, the web): sure not-research unless research is sure.
+const LOOKUPS: &[&str] = &[
+    "my files",
+    "my documents",
+    "my notes",
+    "my calendar",
+    "my schedule",
+    "on my pc",
+    "what did i",
+    "did i",
+    "latest",
+    "news",
+    "today",
+    "current",
+    "currently",
+    "price",
+    "prices",
+    "stock",
+    "score",
+    "search",
+    "look up",
+    "google",
+    "this week",
+    "right now",
+    "weather",
 ];
 
 /// Lowercase words separated by single spaces, padded so ` phrase ` matches whole words.
@@ -251,49 +214,36 @@ fn opens_with_research(w: &str) -> bool {
         .any(|p| rest.starts_with(&format!(" {p} ")))
 }
 
-/// The heuristic pass: an intent and how sure it is (0..1).
-pub fn heuristic(text: &str) -> (Intent, f32) {
+/// The heuristic pass: research or not, and how sure it is (0..1).
+pub fn heuristic(text: &str) -> (bool, f32) {
     let w = words(text);
     let research = research_score(&w);
-    let keyword = KEYWORDS
-        .iter()
-        .find(|(_, list)| list.iter().any(|k| has(&w, k)))
-        .map(|(intent, _)| *intent);
+    let action = ACTIONS.iter().any(|k| has(&w, k));
     if research >= SURE {
         // "email Sam the research on batteries": an action that mentions
         // research is the model's call, unless the request opens with it.
-        let action = matches!(
-            keyword,
-            Some(
-                Intent::ContactUpdate
-                    | Intent::ContactLookup
-                    | Intent::EmailAction
-                    | Intent::MessageAction
-                    | Intent::PcAction
-            )
-        );
-        return match keyword {
-            Some(intent) if action && !opens_with_research(&w) => (intent, 0.55),
-            _ => (Intent::DeepResearch, research),
+        return match action && !opens_with_research(&w) {
+            true => (false, 0.55),
+            false => (true, research),
         };
     }
-    if let Some(intent) = keyword {
-        return (intent, 0.8);
+    if action || LOOKUPS.iter().any(|k| has(&w, k)) {
+        return (false, 0.8);
     }
     if research > 0.0 {
-        return (Intent::DeepResearch, research);
+        return (true, research);
     }
-    (Intent::General, 0.8)
+    (false, 0.8)
 }
 
-/// One short JSON-mode call; None on any failure or after five seconds.
-async fn ask_model(llm: &Llm, text: &str) -> Option<Intent> {
-    let names: Vec<&str> = NAMES.iter().map(|(_, n)| *n).collect();
+/// One short JSON-mode call: whether the model picked DEEP_RESEARCH. None on
+/// any failure, an unknown intent, or after five seconds.
+async fn ask_model(llm: &Llm, text: &str) -> Option<bool> {
     let system = format!(
         "Classify the user's request for a desktop assistant. Reply with JSON only: \
          {{\"intent\": \"<one of {}>\"}}. DEEP_RESEARCH means the user wants a researched, \
          multi-source report with citations; a simple factual question is WEB_SEARCH or GENERAL.",
-        names.join(", ")
+        NAMES.join(", ")
     );
     let messages = [
         json!({ "role": "system", "content": system }),
@@ -303,31 +253,23 @@ async fn ask_model(llm: &Llm, text: &str) -> Option<Intent> {
         .await
         .ok()?
         .ok()?;
-    Intent::parse(reply["intent"].as_str()?)
+    let name = reply["intent"].as_str()?.trim().to_ascii_uppercase();
+    NAMES.contains(&name.as_str()).then(|| name == "DEEP_RESEARCH")
 }
 
-/// The workflow for this request.
-pub async fn route(llm: &Llm, text: &str) -> Intent {
-    let (intent, confidence) = heuristic(text);
+/// Whether this request is Deep Research.
+pub async fn route(llm: &Llm, text: &str) -> bool {
+    let (research, confidence) = heuristic(text);
     if (UNSURE_FROM..SURE).contains(&confidence) {
-        return ask_model(llm, text).await.unwrap_or(intent);
+        return ask_model(llm, text).await.unwrap_or(research);
     }
-    intent
+    research
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::{http, mock_server};
-
-    fn llm(url: String) -> Llm {
-        Llm {
-            http: http(),
-            base_url: url,
-            model: "m".into(),
-            key: "k".into(),
-        }
-    }
+    use crate::testutil::{llm, mock_server};
 
     #[test]
     fn the_users_research_phrasings_route_to_deep_research() {
@@ -341,50 +283,44 @@ mod tests {
             "Find out everything about the Rust 2024 edition",
             "Explain the major parties, recent developments, public sentiment and likely next developments in Bangladesh politics",
         ] {
-            let (intent, confidence) = heuristic(text);
-            assert_eq!(intent, Intent::DeepResearch, "{text}");
+            let (research, confidence) = heuristic(text);
+            assert!(research, "{text}");
             assert!(confidence >= SURE, "{text}: {confidence}");
         }
     }
 
     #[test]
     fn simple_questions_and_actions_stay_out_of_research() {
-        let (intent, confidence) = heuristic("Who is the president of Singapore?");
-        assert!(
-            matches!(intent, Intent::General | Intent::WebSearch),
-            "{intent:?}"
-        );
+        let (research, confidence) = heuristic("Who is the president of Singapore?");
+        assert!(!research);
         assert!(
             confidence >= SURE,
             "a model call would be wasted: {confidence}"
         );
-        for (text, want) in [
-            ("email Sam my research notes", Intent::EmailAction),
-            ("whatsapp Neha that I'm late", Intent::MessageAction),
-            ("save Neha's number as 98450 12345", Intent::ContactUpdate),
-            ("what is Neha's phone number", Intent::ContactLookup),
-            ("set the volume to 30", Intent::PcAction),
-            ("what's the latest news on the Fed", Intent::WebSearch),
-            (
-                "what did I write in my notes yesterday",
-                Intent::ContextQuery,
-            ),
-            ("tell me a joke", Intent::General),
-            ("who is the researcher behind CRISPR", Intent::General),
+        for text in [
+            "email Sam my research notes",
+            "whatsapp Neha that I'm late",
+            "save Neha's number as 98450 12345",
+            "what is Neha's phone number",
+            "set the volume to 30",
+            "what's the latest news on the Fed",
+            "what did I write in my notes yesterday",
+            "tell me a joke",
+            "who is the researcher behind CRISPR",
         ] {
-            assert_eq!(heuristic(text).0, want, "{text}");
+            assert_eq!(heuristic(text), (false, 0.8), "{text}");
         }
     }
 
     #[test]
     fn actions_that_mention_research_are_left_to_the_model() {
-        for (text, want) in [
-            ("email Sam the research on batteries", Intent::EmailAction),
-            ("send Neha the research on WhatsApp", Intent::MessageAction),
-            ("remind me to research the flights", Intent::PcAction),
+        for text in [
+            "email Sam the research on batteries",
+            "send Neha the research on WhatsApp",
+            "remind me to research the flights",
         ] {
-            let (intent, confidence) = heuristic(text);
-            assert_eq!(intent, want, "{text}");
+            let (research, confidence) = heuristic(text);
+            assert!(!research, "{text}");
             assert!(
                 (UNSURE_FROM..SURE).contains(&confidence),
                 "{text}: {confidence}"
@@ -393,19 +329,19 @@ mod tests {
         // Opening with research keeps it sure, actions or not.
         assert_eq!(
             heuristic("Do deep research on the open source movement"),
-            (Intent::DeepResearch, 0.9)
+            (true, 0.9)
         );
         assert_eq!(
             heuristic("research how email spam filters work"),
-            (Intent::DeepResearch, 0.9)
+            (true, 0.9)
         );
     }
 
     #[tokio::test]
     async fn only_unsure_requests_ask_the_model_and_failures_fall_back() {
         let unsure = "what are the causes and consequences of the 2008 crisis";
-        let (intent, confidence) = heuristic(unsure);
-        assert_eq!(intent, Intent::DeepResearch);
+        let (research, confidence) = heuristic(unsure);
+        assert!(research);
         assert!((UNSURE_FROM..SURE).contains(&confidence), "{confidence}");
 
         let said = |intent: &str| {
@@ -414,7 +350,7 @@ mod tests {
                 .to_string()
         };
         let (url, requests) = mock_server(vec![said("GENERAL")]);
-        assert_eq!(route(&llm(url), unsure).await, Intent::General);
+        assert!(!route(&llm(&url), unsure).await);
         let body = requests.recv().unwrap();
         assert!(
             body.contains("json_object") && body.contains("DEEP_RESEARCH"),
@@ -423,23 +359,14 @@ mod tests {
 
         // Sure requests never reach the model (it would have said GENERAL).
         let (url, requests) = mock_server(vec![said("GENERAL")]);
-        assert_eq!(
-            route(&llm(url.clone()), "do deep research on tea").await,
-            Intent::DeepResearch
-        );
-        assert_eq!(
-            route(&llm(url), "Who is the president of Singapore?").await,
-            Intent::General
-        );
+        assert!(route(&llm(&url), "do deep research on tea").await);
+        assert!(!route(&llm(&url), "Who is the president of Singapore?").await);
         assert!(requests.try_recv().is_err());
 
         // Unreachable model, or nonsense, keeps the heuristic's answer.
-        assert_eq!(
-            route(&llm("http://127.0.0.1:1".into()), unsure).await,
-            Intent::DeepResearch
-        );
+        assert!(route(&llm("http://127.0.0.1:1"), unsure).await);
         let (url, _r) = mock_server(vec![said("SHOPPING")]);
-        assert_eq!(route(&llm(url), unsure).await, Intent::DeepResearch);
+        assert!(route(&llm(&url), unsure).await);
 
         // A server without JSON mode is asked again without it.
         let (url, requests) = crate::testutil::mock_server_each(
@@ -449,7 +376,7 @@ mod tests {
                 ("200 OK", json!({ "choices": [{ "message": { "content": "```json\n{\"intent\": \"GENERAL\"}\n```" } }] }).to_string()),
             ],
         );
-        assert_eq!(route(&llm(url), unsure).await, Intent::General);
+        assert!(!route(&llm(&url), unsure).await);
         requests.recv().unwrap();
         assert!(!requests.recv().unwrap().contains("response_format"));
     }

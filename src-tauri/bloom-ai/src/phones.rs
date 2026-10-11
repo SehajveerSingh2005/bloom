@@ -105,12 +105,6 @@ pub fn find(dir: &Path, query: &str) -> Result<Vec<(String, String)>, String> {
     Ok(crate::email::find(&try_load(dir)?, query))
 }
 
-/// The saved number if this name already has a different one.
-#[cfg(test)]
-pub fn needs_confirm(dir: &Path, name: &str, number: &str) -> Option<String> {
-    crate::email::contact_needs_confirm(&load(dir), name, number)
-}
-
 /// Save an already normalised number as `name`'s (replacing the old one).
 /// Never overwrites an unreadable file.
 pub fn save(dir: &Path, name: &str, number: &str) -> Result<(), String> {
@@ -172,11 +166,6 @@ mod tests {
             vec![("neha aggarwal".into(), "+919876500000".into())]
         );
         assert_eq!(find(&dir, "+91987").unwrap().len(), 1);
-        assert_eq!(
-            needs_confirm(&dir, "Neha Aggarwal", "+1555"),
-            Some("+919876500000".into())
-        );
-        assert_eq!(needs_confirm(&dir, "Sam", "+1555"), None);
     }
 
     #[test]

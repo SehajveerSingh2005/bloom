@@ -101,22 +101,6 @@ pub fn save_contact(dir: &Path, name: &str, address: &str) -> Result<(), String>
     crate::people::set_email(dir, name, &address)
 }
 
-/// Check if a contact name exists with a different address.
-#[cfg(test)]
-pub fn contact_needs_confirm(
-    contacts: &BTreeMap<String, String>,
-    name: &str,
-    new_address: &str,
-) -> Option<String> {
-    let trimmed_name = name.trim();
-    for (stored_name, stored_address) in contacts.iter() {
-        if stored_name.eq_ignore_ascii_case(trimmed_name) && stored_address != new_address {
-            return Some(stored_address.clone());
-        }
-    }
-    None
-}
-
 /// Contacts whose name or address contains every word of the query.
 pub fn find(contacts: &BTreeMap<String, String>, query: &str) -> Vec<(String, String)> {
     let words: Vec<String> = query
@@ -129,17 +113,9 @@ pub fn find(contacts: &BTreeMap<String, String>, query: &str) -> Vec<(String, St
     }
     contacts
         .iter()
-        .filter(|(name, address)| {
-            let hay = format!("{} {}", name.to_lowercase(), address);
-            words.iter().all(|w| hay.contains(w.as_str()))
-        })
+        .filter(|(name, address)| crate::imap_lookup::matches_all(name, address, &words))
         .map(|(n, a)| (n.clone(), a.clone()))
         .collect()
-}
-
-#[cfg(test)]
-pub fn is_known(contacts: &BTreeMap<String, String>, address: &str) -> bool {
-    contacts.values().any(|a| a.eq_ignore_ascii_case(address))
 }
 
 fn transport(
@@ -299,8 +275,6 @@ mod tests {
         assert_eq!(find(&contacts, "NEHA").len(), 1);
         assert!(find(&contacts, "neha sam").is_empty());
         assert!(find(&contacts, "").is_empty());
-        assert!(is_known(&contacts, "NEHA@example.com"));
-        assert!(!is_known(&contacts, "x@y.com"));
     }
 
     #[test]
@@ -341,24 +315,6 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.join("contacts.json")).unwrap(),
             "{invalid json"
-        );
-    }
-
-    #[test]
-    fn contact_needs_confirm_detects_address_change() {
-        let mut contacts = BTreeMap::new();
-        contacts.insert("Alice".into(), "alice@old.com".into());
-        assert_eq!(
-            contact_needs_confirm(&contacts, "alice", "alice@new.com"),
-            Some("alice@old.com".into())
-        );
-        assert_eq!(
-            contact_needs_confirm(&contacts, "alice", "alice@old.com"),
-            None
-        );
-        assert_eq!(
-            contact_needs_confirm(&contacts, "bob", "bob@example.com"),
-            None
         );
     }
 
