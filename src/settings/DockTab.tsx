@@ -1,4 +1,4 @@
-import type { ChangeEvent, CSSProperties } from "react";
+import { useState, type ChangeEvent, type CSSProperties } from "react";
 import {
 	Monitor,
 	Eye,
@@ -16,9 +16,11 @@ import {
 	FolderOpen,
 	FolderPlus,
 	Plus,
-	X
+	X,
+	Activity
 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
+import { saveSetting } from "./useSettings";
 import { KNOWN_FOLDER_OPTIONS, parseEnabledFolders, parseCustomFolders } from "../dockExtras";
 
 const START_ICON_PRESETS = [
@@ -197,6 +199,8 @@ export function DockTab({
 								<span className="slider"></span>
 							</label>
 						</SettingRow>
+
+						<TaskbarStatusRow />
 
 						<SettingRow
 							icon={Keyboard}
@@ -437,5 +441,31 @@ export function DockTab({
 				)}
 			</div>
 		</>
+	);
+}
+
+// Progress bars and badges read from the hidden Windows taskbar
+// (taskbar_status_poller in services.rs). Off by default: each read costs
+// Bloom and Explorer some CPU.
+function TaskbarStatusRow() {
+	const [on, setOn] = useState(() => localStorage.getItem("bloom-taskbar-status") === "true");
+	return (
+		<SettingRow
+			icon={Activity}
+			label="Progress and Badges"
+			desc="Download progress and unread dots on icons. Uses some CPU"
+		>
+			<label className="toggle-switch">
+				<input
+					type="checkbox"
+					checked={on}
+					onChange={() => {
+						setOn(!on);
+						saveSetting("bloom-taskbar-status", String(!on));
+					}}
+				/>
+				<span className="slider"></span>
+			</label>
+		</SettingRow>
 	);
 }

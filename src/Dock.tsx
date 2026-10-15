@@ -116,6 +116,32 @@ function WindowDots({ count, background }: { count: number; background?: boolean
 	);
 }
 
+// Progress and badge an app reports to the (hidden) Windows taskbar; see
+// taskbar_status_poller in services.rs.
+interface TaskbarStatus {
+	hwnds: number[];
+	progress: number | null;
+	state: string;
+	badge: boolean;
+}
+
+// The taskbar's progress bar along the icon's bottom edge (green, yellow when
+// paused, red on error, a shimmer while busy) and its badge, as a dot.
+function IconStatus({ status }: { status?: TaskbarStatus }) {
+	if (!status) return null;
+	const busy = status.state === "Busy";
+	return (
+		<>
+			{(busy || status.progress !== null) && (
+				<span className={`icon-progress ${status.state.toLowerCase()}`}>
+					<i style={busy ? undefined : { width: `${(status.progress ?? 0) * 100}%` }} />
+				</span>
+			)}
+			{status.badge && <span className="icon-badge" />}
+		</>
+	);
+}
+
 const Dock = memo(function Dock() {
 	useEffect(() => {
 		return initTheme();
@@ -149,6 +175,21 @@ const Dock = memo(function Dock() {
 		() => localStorage.getItem("bloom-dock-extras-position") || "off"
 	);
 	const [dockExtras, setDockExtras] = useState<DockExtra[]>([]);
+	// Windows flashing for attention until activated, and taskbar progress/badges.
+	const [flashing, setFlashing] = useState<Set<number>>(() => new Set());
+	const [taskbarStatus, setTaskbarStatus] = useState<TaskbarStatus[]>([]);
+	useEffect(() => {
+		const offs = [
+			listen<number>("window-flash", ({ payload: h }) =>
+				setFlashing((s) => (s.has(h) ? s : new Set(s).add(h)))
+			),
+			listen<number>("window-activated", ({ payload: h }) =>
+				setFlashing((s) => (s.has(h) ? new Set([...s].filter((x) => x !== h)) : s))
+			),
+			listen<TaskbarStatus[]>("taskbar-status", (e) => setTaskbarStatus(e.payload))
+		];
+		return () => offs.forEach((off) => off.then((f) => f()));
+	}, []);
 	const [dockExtrasRevision, setDockExtrasRevision] = useState(0);
 	const [isMaximized, setIsMaximized] = useState(false);
 	const [previewData, setPreviewData] = useState<{
@@ -1015,6 +1056,15 @@ const Dock = memo(function Dock() {
 		tap: { scale: 0.95 }
 	};
 
+	const appWindows = (app: AppInfo) =>
+		app.all_hwnds?.map(([hwnd]) => hwnd) ?? (app.hwnd ? [app.hwnd] : []);
+	const statusOf = (app: AppInfo) => {
+		const hwnds = appWindows(app);
+		return taskbarStatus.find((s) => s.hwnds.some((h) => hwnds.includes(h)));
+	};
+	const iconClass = (app: AppInfo) =>
+		appWindows(app).some((h) => flashing.has(h)) ? "dock-icon attention" : "dock-icon";
+
 	const renderExtra = (extra: DockExtra) => (
 		<motion.div
 			key={extra.id}
@@ -1289,7 +1339,7 @@ const Dock = memo(function Dock() {
 													<div className="tooltip">{app.name}</div>
 												)}
 												<motion.div
-													className="dock-icon"
+													className={iconClass(app)}
 													variants={iconVariants}
 													animate={
 														pressedApp === itemKey(app)
@@ -1339,6 +1389,7 @@ const Dock = memo(function Dock() {
 															<div className="fallback-icon">{app.name[0]}</div>
 														);
 													})()}
+													<IconStatus status={statusOf(app)} />
 												</motion.div>
 												{app.is_running && (
 													<WindowDots
@@ -1451,7 +1502,7 @@ const Dock = memo(function Dock() {
 											<div className="tooltip">{app.name}</div>
 										)}
 										<motion.div
-											className="dock-icon"
+											className={iconClass(app)}
 											variants={iconVariants}
 											animate={
 												pressedApp === itemKey(app)
@@ -1496,6 +1547,7 @@ const Dock = memo(function Dock() {
 													<div className="fallback-icon">{app.name[0]}</div>
 												);
 											})()}
+											<IconStatus status={statusOf(app)} />
 										</motion.div>
 										{app.is_running && (
 											<WindowDots

@@ -257,6 +257,7 @@ body {
 }
 
 .dock-icon {
+	position: relative;
 	width: 36px;
 	height: 36px;
 	display: flex;
@@ -267,6 +268,80 @@ body {
 	color: var(--bloom-text, white);
 	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 	transition: opacity 0.2s ease;
+}
+
+/* State Explorer still tracks for the hidden taskbar (IconStatus in Dock.tsx).
+   A window asking for attention glows the taskbar's orange until activated. */
+.dock-icon.attention {
+	animation: icon-attention 1.6s ease-in-out infinite;
+}
+@keyframes icon-attention {
+	0%,
+	100% {
+		box-shadow:
+			0 0 0 1.5px rgba(255, 159, 10, 0.85),
+			0 0 6px rgba(255, 159, 10, 0.3);
+	}
+	50% {
+		box-shadow:
+			0 0 0 1.5px rgba(255, 159, 10, 0.85),
+			0 0 14px rgba(255, 159, 10, 0.7);
+	}
+}
+.icon-progress {
+	position: absolute;
+	left: 5px;
+	right: 5px;
+	bottom: 2px;
+	height: 3px;
+	border-radius: 2px;
+	overflow: hidden;
+	background: rgba(0, 0, 0, 0.35);
+	pointer-events: none;
+}
+.icon-progress i {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	border-radius: inherit;
+	background: #3fb950;
+	transition: width 0.3s ease-out;
+}
+.icon-progress.paused i {
+	background: #e3b341;
+}
+.icon-progress.error i {
+	background: #f85149;
+}
+.icon-progress.busy i {
+	width: 40%;
+	animation: icon-progress-busy 1.2s ease-in-out infinite;
+}
+@keyframes icon-progress-busy {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(250%);
+	}
+}
+.icon-badge {
+	position: absolute;
+	top: -2px;
+	right: -2px;
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: #ff453a;
+	box-shadow: 0 0 0 1.5px var(--bloom-bg, rgba(0, 0, 0, 0.8));
+	pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+	.dock-icon.attention,
+	.icon-progress.busy i {
+		animation: none;
+	}
 }
 
 .dock-icon img {
