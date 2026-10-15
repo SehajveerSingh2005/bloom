@@ -684,12 +684,47 @@ const Dock = memo(function Dock() {
 		}
 	};
 
+	const hwndsOf = (app: AppInfo) =>
+		app.all_hwnds?.map(([hwnd]) => hwnd) ?? (app.hwnd ? [app.hwnd] : []);
+
+	// Close every window of the item, like the taskbar's "Close all windows",
+	// not just the first one.
+	const closeAppWindows = (app: AppInfo) =>
+		Promise.all(hwndsOf(app).map((hwnd) => invoke("close_window", { hwnd })));
+
+	// The app's own menu, native like the taskbar's: its recent items (jump
+	// list), its name (new instance), Pin and Close. Bloom's menu if it fails.
+	const openAppMenu = async (e: React.MouseEvent, app: AppInfo) => {
+		const fallback = { x: e.clientX, y: e.clientY, app };
+		closeMenu();
+		setPreviewData(null);
+		// The menu takes the button release, which would leave the icon pressed.
+		setPressedApp(null);
+		try {
+			const action = await invoke<string>("show_app_menu", {
+				name: app.name,
+				path: app.path,
+				hwnds: hwndsOf(app),
+				pinned: !!app.is_pinned
+			});
+			if (action === "launch") handleNewInstance(app);
+			else if (action === "pin") void togglePin(app);
+			else if (action === "close") void closeAppWindows(app);
+		} catch {
+			setContextMenu(fallback);
+		}
+	};
+
 	const handleContextMenu = (e: React.MouseEvent, app: AppInfo | null) => {
 		e.stopPropagation();
 		e.preventDefault();
 		// Shift-right-click keeps Bloom pin/customization controls available.
 		if (app?.is_background && app.tray_ids?.length === 1 && !e.shiftKey) {
 			void openTrayMenu(app.tray_ids[0]);
+			return;
+		}
+		if (app && app.path !== "start" && !app.is_background && !e.shiftKey) {
+			void openAppMenu(e, app);
 			return;
 		}
 		setContextMenu({ x: e.clientX, y: e.clientY, app });
@@ -1724,12 +1759,7 @@ const Dock = memo(function Dock() {
 									<div
 										className="menu-item quit"
 										onClick={async () => {
-											// Close every window of the item, like the taskbar's
-											// "Close all windows", not just the first one.
-											const app = contextMenu.app;
-											const hwnds =
-												app?.all_hwnds?.map(([hwnd]) => hwnd) ?? (app?.hwnd ? [app.hwnd] : []);
-											await Promise.all(hwnds.map((hwnd) => invoke("close_window", { hwnd })));
+											if (contextMenu.app) await closeAppWindows(contextMenu.app);
 											closeMenu();
 										}}
 									>

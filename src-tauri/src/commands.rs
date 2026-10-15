@@ -3986,6 +3986,139 @@ pub async fn show_tray_context_menu(tray_id: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+/// The taskbar's right-click menu for a dock app, shown natively at the
+/// cursor: the app's recent items (its jump list, when it has an
+/// AppUserModelID), then its name (new instance), Pin/Unpin and Close.
+/// A recent item is opened here; otherwise returns what the dock should do:
+/// "launch", "pin", "close", or "" when dismissed.
+#[tauri::command]
+pub async fn show_app_menu(name: String, path: String, hwnds: Vec<isize>, pinned: bool) -> String {
+    tauri::async_runtime::spawn_blocking(move || unsafe {
+        use windows::core::{w, HSTRING, PCWSTR};
+        use windows::Win32::Foundation::{POINT, WPARAM};
+        use windows::Win32::System::Com::{
+            CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER,
+            COINIT_MULTITHREADED,
+        };
+        use windows::Win32::UI::Shell::Common::IObjectArray;
+        use windows::Win32::UI::Shell::{
+            ApplicationDocumentLists, IApplicationDocumentLists, IShellItem, ShellExecuteW,
+            ADLT_RECENT, SIGDN, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_NORMALDISPLAY,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::*;
+
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        // Packaged apps' dock path is already their AppUserModelID.
+        let app_id = hwnds
+            .first()
+            .and_then(|&h| get_window_app_user_model_id(HWND(h as *mut _)))
+            .or_else(|| (!path.contains(['\\', '/'])).then(|| path.clone()));
+        let recent: Vec<(String, String)> = app_id
+            .and_then(|id| {
+                let lists: IApplicationDocumentLists =
+                    CoCreateInstance(&ApplicationDocumentLists, None, CLSCTX_INPROC_SERVER).ok()?;
+                lists.SetAppID(&HSTRING::from(id)).ok()?;
+                let list: IObjectArray = lists.GetList(ADLT_RECENT, 10).ok()?;
+                let items = (0..list.GetCount().ok()?).filter_map(|i| {
+                    let item: IShellItem = list.GetAt(i).ok()?;
+                    let text = |kind: SIGDN| {
+                        let p = item.GetDisplayName(kind).ok()?;
+                        let s = p.to_string().ok();
+                        CoTaskMemFree(Some(p.0 as _));
+                        s
+                    };
+                    Some((text(SIGDN_NORMALDISPLAY)?, text(SIGDN_DESKTOPABSOLUTEPARSING)?))
+                });
+                Some(items.collect())
+            })
+            .unwrap_or_default();
+
+        let Ok(menu) = CreatePopupMenu() else {
+            return String::new();
+        };
+        if !recent.is_empty() {
+            let _ = AppendMenuW(menu, MF_GRAYED, 0, w!("Recent"));
+            for (i, (label, _)) in recent.iter().enumerate() {
+                let _ = AppendMenuW(menu, MF_STRING, 100 + i, &HSTRING::from(label.replace('&', "&&")));
+            }
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        }
+        let _ = AppendMenuW(menu, MF_STRING, 1, &HSTRING::from(name.replace('&', "&&")));
+        let pin = if pinned { w!("Unpin from Dock") } else { w!("Pin to Dock") };
+        let _ = AppendMenuW(menu, MF_STRING, 2, pin);
+        if !hwnds.is_empty() {
+            let close = if hwnds.len() > 1 { w!("Close all windows") } else { w!("Close window") };
+            let _ = AppendMenuW(menu, MF_STRING, 3, close);
+        }
+
+        // TrackPopupMenu needs a foreground window of this thread to dismiss
+        // the menu on an outside click.
+        let mut cmd = 0;
+        if let Ok(owner) = CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            w!("STATIC"),
+            PCWSTR::null(),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            None,
+            None,
+        ) {
+            let mut pt = POINT::default();
+            let _ = GetCursorPos(&mut pt);
+            let _ = SetForegroundWindow(owner);
+            cmd = TrackPopupMenu(
+                menu,
+                TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
+                pt.x,
+                pt.y,
+                None,
+                owner,
+                None,
+            )
+            .0 as usize;
+            let _ = PostMessageW(Some(owner), WM_NULL, WPARAM(0), LPARAM(0));
+            let _ = DestroyWindow(owner);
+        }
+        let _ = DestroyMenu(menu);
+
+        let action = match cmd {
+            1 => "launch",
+            2 => "pin",
+            3 => "close",
+            i if i >= 100 => {
+                if let Some((_, item)) = recent.get(i - 100) {
+                    // Through the app's own exe when the dock knows it (a recent
+                    // folder must open in the editor, not Explorer), otherwise
+                    // the item's default handler.
+                    let (file, args) = if path.to_lowercase().ends_with(".exe") {
+                        (path.as_str(), format!("\"{item}\""))
+                    } else {
+                        (item.as_str(), String::new())
+                    };
+                    ShellExecuteW(
+                        None,
+                        w!("open"),
+                        &HSTRING::from(file),
+                        &HSTRING::from(args),
+                        PCWSTR::null(),
+                        SW_SHOWNORMAL,
+                    );
+                }
+                ""
+            }
+            _ => "",
+        };
+        action.to_string()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SystemAction {
