@@ -1317,6 +1317,7 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
         };
         let mut last_visible = true;
         let mut last_dock_overlap: Option<bool> = None;
+        let mut held_dock_span: Option<(i32, i32)> = None;
         let mut last_notch_overlap: Option<bool> = None;
         let mut last_dock_maximized: Option<bool> = None;
         let mut last_fg_maximized = false;
@@ -1349,9 +1350,11 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                 let mut hwnd = GetForegroundWindow();
 
                 // Find the first meaningful window for overlap detection.
-                // We skip Bloom windows, invisible windows, minimized windows, and 'cloaked' system ghosts.
+                // We skip Bloom windows, invisible windows, minimized windows, 'cloaked' system ghosts,
+                // and tool windows (floating overlays and widgets): they never cover the
+                // dock like an app does, so the app under them decides.
                 let mut check_count = 0;
-                while !hwnd.is_invalid() && check_count < 15 {
+                while !hwnd.is_invalid() && check_count < 64 {
                     let mut process_id = 0u32;
                     GetWindowThreadProcessId(hwnd, Some(&mut process_id));
 
@@ -1381,7 +1384,11 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                         && (rect.right - rect.left) > 0
                         && (rect.bottom - rect.top) > 0;
 
-                    if is_bloom || !is_visible || is_iconic || is_cloaked || !has_valid_rect {
+                    let is_tool = (GetWindowLongW(hwnd, windows::Win32::UI::WindowsAndMessaging::GWL_EXSTYLE) as u32
+                        & windows::Win32::UI::WindowsAndMessaging::WS_EX_TOOLWINDOW.0)
+                        != 0;
+
+                    if is_bloom || is_tool || !is_visible || is_iconic || is_cloaked || !has_valid_rect {
                         hwnd = windows::Win32::UI::WindowsAndMessaging::GetWindow(
                             hwnd,
                             windows::Win32::UI::WindowsAndMessaging::GW_HWNDNEXT,
@@ -1392,6 +1399,19 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                         break;
                     }
                 }
+
+                let dock_span = DOCK_RECT
+                    .lock()
+                    .ok()
+                    .and_then(|g| *g)
+                    .map(|dr| dock_span_px(dr, cached_scale));
+                // While overlapped, keep testing against the span the dock had when
+                // the overlap began: hiding shrinks DOCK_RECT to the 34px pill, and a
+                // window that only covers the expanded dock (e.g. Win+R's Run dialog)
+                // would stop overlapping, show the dock, overlap again, and flicker.
+                // DOCK_RECT itself must stay the live rect: the mouse hook hit-tests
+                // against it, and while hidden only the pill is clickable.
+                let overlap_span = held_dock_span.or(dock_span);
 
                 let mut should_overlap = false;
                 let mut should_notch_overlap = false;
@@ -1510,22 +1530,14 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                                         should_maximized = is_maximized && !current_is_fs;
                                     } else {
                                         should_overlap = false;
-                                        if let Ok(dock_rect_lock) = DOCK_RECT.lock() {
-                                            if let Some(dr) = *dock_rect_lock {
-                                                let scale = cached_scale;
-                                                let d_left = (dr.x as f64 * scale) as i32;
-                                                let d_right =
-                                                    d_left + (dr.width as f64 * scale) as i32;
-                                                let res_h = (56.0 * scale) as i32;
-                                                let trigger_y = screen_rect.bottom - res_h;
-
-                                                if rect.left < d_right - 4
-                                                    && rect.right > d_left + 4
-                                                    && rect.bottom > trigger_y + 4
-                                                {
-                                                    should_overlap = true;
-                                                }
-                                            }
+                                        if let Some(span) = overlap_span {
+                                            let res_h = (56.0 * cached_scale) as i32;
+                                            let trigger_y = screen_rect.bottom - res_h;
+                                            should_overlap = window_reaches_dock(
+                                                span,
+                                                (rect.left, rect.right, rect.bottom),
+                                                trigger_y,
+                                            );
                                         }
 
                                         if let Ok(notch_rect_lock) = NOTCH_RECT.lock() {
@@ -1568,6 +1580,11 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
                     .get_webview_window("dock")
                     .is_some_and(|w| w.is_visible().unwrap_or(false));
                 let effective_dock_overlap = should_overlap && dock_visible;
+                held_dock_span = if effective_dock_overlap {
+                    overlap_span
+                } else {
+                    None
+                };
 
                 // Update overlap state
                 CURRENT_DOCK_OVERLAP.store(
@@ -1669,6 +1686,20 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
     });
 
     tx
+}
+
+/// The dock's horizontal span in physical px: `DOCK_RECT` is in CSS px.
+pub(crate) fn dock_span_px(dock: IntRect, scale: f64) -> (i32, i32) {
+    let left = (dock.x as f64 * scale) as i32;
+    (left, left + (dock.width as f64 * scale) as i32)
+}
+
+/// Smart-hide test: does the foreground window (left, right, bottom, physical
+/// px) reach into the dock's horizontal span below `trigger_y`?
+pub(crate) fn window_reaches_dock(dock_span: (i32, i32), win: (i32, i32, i32), trigger_y: i32) -> bool {
+    let (d_left, d_right) = dock_span;
+    let (left, right, bottom) = win;
+    left < d_right - 4 && right > d_left + 4 && bottom > trigger_y + 4
 }
 
 fn set_physical_monitors_brightness(brightness: u32) {
@@ -4063,8 +4094,48 @@ fn recover_from_webview_failure(handle: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_helper_name, is_launchable_entry, notch_mode_reserves_work_area, win_number_index,
+        dock_span_px, is_helper_name, is_launchable_entry, notch_mode_reserves_work_area,
+        win_number_index, window_reaches_dock,
     };
+    use crate::types::IntRect;
+
+    #[test]
+    fn dock_span_is_scaled_to_physical_px() {
+        let dock = IntRect {
+            x: 320,
+            y: 0,
+            width: 640,
+            height: 34,
+        };
+        assert_eq!(dock_span_px(dock, 1.0), (320, 960));
+        // 150 %: a 1920 px screen is 1280 CSS px wide.
+        assert_eq!(dock_span_px(dock, 1.5), (480, 1440));
+    }
+
+    #[test]
+    fn held_dock_span_keeps_run_dialog_overlap_steady() {
+        // 1920 px wide screen at 150 %, Run dialog at the bottom left (about
+        // 600 px wide), a wide dock centred.
+        let run = (12, 620, 1190);
+        let trigger_y = 1200 - 84;
+        let expanded = (480, 1440);
+        let pill = (935, 985);
+        assert!(window_reaches_dock(expanded, run, trigger_y));
+        // The hidden dock is a pill the dialog never touches: on its own this
+        // would show the dock again and flicker...
+        assert!(!window_reaches_dock(pill, run, trigger_y));
+        // ...so the overlap thread tests against the span latched when the
+        // overlap began, and drops it once the window is clear.
+        let mut held: Option<(i32, i32)> = None;
+        for current in [expanded, pill, pill] {
+            let span = held.unwrap_or(current);
+            let overlap = window_reaches_dock(span, run, trigger_y);
+            assert!(overlap);
+            held = if overlap { Some(span) } else { None };
+        }
+        let moved = (12, 620, 900);
+        assert!(!window_reaches_dock(held.unwrap(), moved, trigger_y));
+    }
 
     #[test]
     fn win_number_maps_top_row_digits_only() {
