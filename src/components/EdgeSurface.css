@@ -12,6 +12,14 @@
    visible edges on the same unrounded geometry. */
 .edge-surface {
 	--surface-solid: rgb(from var(--surface-bg) r g b / 1);
+	/* Hairline along the free edges, for a surface that sets --surface-edge
+	   (the dock and the notch use the text colour). Mixed into the solid
+	   colour so the mask fades it with the rest; unset, it draws nothing. */
+	--surface-line: color-mix(
+		in srgb,
+		var(--surface-solid),
+		var(--surface-edge, var(--surface-solid)) 22%
+	);
 	position: absolute;
 	inset: 0;
 	z-index: -1;
@@ -52,6 +60,21 @@
 	right: 13px;
 }
 
+/* The hairline: every side but the one on the screen edge. */
+.edge-surface--top::before {
+	box-shadow:
+		0 0 0 1px var(--surface-solid),
+		inset 1px -1px 0 var(--surface-line),
+		inset -1px 0 0 var(--surface-line);
+}
+
+.edge-surface--bottom::before {
+	box-shadow:
+		0 0 0 1px var(--surface-solid),
+		inset 1px 1px 0 var(--surface-line),
+		inset -1px 0 0 var(--surface-line);
+}
+
 .edge-surface--left::before,
 .edge-surface--right::before {
 	top: 13px;
@@ -72,6 +95,25 @@
 
 .edge-surface.show-flares .edge-surface-flare {
 	opacity: 1;
+}
+
+/* The hairline carried along each flare's curve: the flare is painted in the
+   line colour and its fill is laid over it 1px further in, so a 1px band shows
+   along the curve, joins the pill's side line and thins out into the screen
+   edge. Same shape as the flare (below), mirrored with it. */
+.edge-surface--top .edge-surface-flare,
+.edge-surface--bottom .edge-surface-flare {
+	background: var(--surface-line);
+}
+
+.edge-surface--top .edge-surface-flare::before,
+.edge-surface--bottom .edge-surface-flare::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: var(--surface-solid);
+	clip-path: inherit;
+	transform: translateX(1px);
 }
 
 /* Drawn as the top edge's left flare. */
