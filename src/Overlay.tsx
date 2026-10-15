@@ -789,6 +789,12 @@ function OverlayApp() {
 		"bloom-scale": setScale
 	});
 
+	// Only a HUD card makes the overlay's edge rects clickable (services.rs).
+	const hudUp = mode === "volume" || mode === "brightness";
+	useEffect(() => {
+		invoke("set_overlay_hud", { up: hudUp }).catch(() => {});
+	}, [hudUp]);
+
 	// Side effects: reset overlay mode to idle when overlay is disabled
 	useEffect(() => {
 		if (splashActiveRef.current) return;
@@ -816,9 +822,8 @@ function OverlayApp() {
 						await appWindow.hide();
 					}, 400);
 				} else {
-					// Position the window first, then show
-					await invoke("sync_overlay_position");
-					await appWindow.show();
+					// Position the window first, then show it without taking focus
+					await invoke("show_overlay");
 				}
 			} catch (e) {
 				console.error("Window management error:", e);
