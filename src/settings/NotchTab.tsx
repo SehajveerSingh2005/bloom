@@ -10,9 +10,13 @@ import {
 	CloudSun,
 	Timer,
 	Archive,
-	X
+	X,
+	AudioLines,
+	Palette
 } from "lucide-react";
+import { useState } from "react";
 import { SettingRow } from "./SettingRow";
+import { saveSetting } from "./useSettings";
 import { StatusWidgetConfig } from "../components/StatusWidgetConfig";
 import type { WidgetConfig } from "./types";
 
@@ -225,6 +229,8 @@ export function NotchTab({
 							</div>
 						</SettingRow>
 
+						<VisualizerRows />
+
 						<SettingRow
 							icon={Sparkles}
 							label="Ambient Glow"
@@ -347,6 +353,45 @@ export function NotchTab({
 			<div className="setting-group">
 				<StatusWidgetConfig value={statusWidgets} onChange={handleWidgetsChange} />
 			</div>
+		</>
+	);
+}
+
+// The audio visualizer's look (Visualizer.tsx): bars, wave or blocks, in the
+// text colour, a gradient around the accent, or a drifting rainbow.
+function VisualizerRows() {
+	const [style, setStyle] = useState(() => localStorage.getItem("bloom-viz-style") || "bars");
+	const [color, setColor] = useState(() => localStorage.getItem("bloom-viz-color") || "mono");
+	return (
+		<>
+			<SettingRow icon={AudioLines} label="Visualizer Style" desc="How the audio visualizer draws the music">
+				<select
+					className="settings-select"
+					value={style}
+					onChange={(e) => {
+						setStyle(e.target.value);
+						saveSetting("bloom-viz-style", e.target.value);
+					}}
+				>
+					<option value="bars">Bars</option>
+					<option value="wave">Wave</option>
+					<option value="blocks">Blocks</option>
+				</select>
+			</SettingRow>
+			<SettingRow icon={Palette} label="Visualizer Colour" desc="Mono uses the text colour; smooth glides around your accent">
+				<select
+					className="settings-select"
+					value={color}
+					onChange={(e) => {
+						setColor(e.target.value);
+						saveSetting("bloom-viz-color", e.target.value);
+					}}
+				>
+					<option value="mono">Mono</option>
+					<option value="smooth">Smooth</option>
+					<option value="rainbow">Rainbow</option>
+				</select>
+			</SettingRow>
 		</>
 	);
 }

@@ -624,10 +624,6 @@ pub fn setup_audio_visualization(app_handle: AppHandle) {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
-            const NUM_BANDS: usize = 5;
-            let mut max_band_energies = [0.01f32; NUM_BANDS];
-            let mut prev_values = [0.1f32; NUM_BANDS];
-
             loop {
                 let _: Result<(), String> = (|| {
                     let enumerator: IMMDeviceEnumerator = CoCreateInstance(
@@ -663,6 +659,17 @@ pub fn setup_audio_visualization(app_handle: AppHandle) {
                     let channels = (*format_ptr).nChannels as usize;
                     let bits_per_sample = (*format_ptr).wBitsPerSample;
                     let bytes_per_sample = (bits_per_sample / 8) as usize;
+                    let rate = (*format_ptr).nSamplesPerSec;
+                    // The shared-mode mix format is nearly always 32-bit float:
+                    // WAVE_FORMAT_IEEE_FLOAT (3), or WAVE_FORMAT_EXTENSIBLE
+                    // (0xFFFE) whose SubFormat GUID (at byte 24) starts with 3.
+                    let tag = (*format_ptr).wFormatTag;
+                    let is_float = bits_per_sample == 32
+                        && (tag == 3
+                            || (tag == 0xFFFE
+                                && std::ptr::read_unaligned(
+                                    (format_ptr as *const u8).add(24) as *const u32,
+                                ) == 3));
 
                     if bytes_per_sample == 0 || channels == 0 || bytes_per_sample > 4 {
                         CoTaskMemFree(Some(format_ptr as *const _));
@@ -694,18 +701,14 @@ pub fn setup_audio_visualization(app_handle: AppHandle) {
                         .Start()
                         .map_err(|e| format!("Start failed: {:?}", e))?;
 
-                    const FFT_SIZE: usize = 512;
-                    let mut fft_buffer = vec![0.0f32; FFT_SIZE];
-                    let mut fft_input: Vec<rustfft::num_complex::Complex<f32>> =
-                        vec![rustfft::num_complex::Complex::new(0.0, 0.0); FFT_SIZE];
-                    let mut buffer_pos = 0;
-
-                    let mut planner = rustfft::FftPlanner::<f32>::new();
-                    let fft = planner.plan_fft_forward(FFT_SIZE);
+                    // cava-style analysis (cava.rs), one frame per tick.
+                    const FPS: u32 = 40;
+                    let mut cava = crate::cava::Cava::new(rate, FPS as f32);
+                    let mut mono: Vec<f32> = Vec::with_capacity(rate as usize / 10);
 
                     let mut last_device_check = std::time::Instant::now();
                     loop {
-                        std::thread::sleep(std::time::Duration::from_millis(32));
+                        std::thread::sleep(std::time::Duration::from_millis(1000 / FPS as u64));
 
                         if last_device_check.elapsed().as_secs() >= 2 {
                             last_device_check = std::time::Instant::now();
@@ -781,104 +784,53 @@ pub fn setup_audio_visualization(app_handle: AppHandle) {
                                 break;
                             }
 
-                            if !data_ptr.is_null()
-                                && num_frames > 0
-                                && bytes_per_sample > 0
-                                && channels > 0
-                            {
+                            // AUDCLNT_BUFFERFLAGS_SILENT: the buffer holds no real data.
+                            let silent = flags & 0x2 != 0;
+                            if !data_ptr.is_null() && num_frames > 0 {
                                 let stride = channels * bytes_per_sample;
                                 for frame in 0..num_frames as usize {
-                                    let frame_offset = frame * stride;
-                                    let mut sample_val: i64 = 0;
+                                    if silent {
+                                        mono.push(0.0);
+                                        continue;
+                                    }
+                                    let mut sum = 0.0f32;
                                     for ch in 0..channels {
-                                        let sample_offset = frame_offset + ch * bytes_per_sample;
-                                        let sample: i64 = match bytes_per_sample {
-                                            2 => {
-                                                *(data_ptr.add(sample_offset) as *const i16) as i64
+                                        let at = data_ptr.add(frame * stride + ch * bytes_per_sample);
+                                        sum += match (bytes_per_sample, is_float) {
+                                            (4, true) => std::ptr::read_unaligned(at as *const f32),
+                                            (4, false) => {
+                                                std::ptr::read_unaligned(at as *const i32) as f32
+                                                    / 2147483648.0
                                             }
-                                            4 => {
-                                                *(data_ptr.add(sample_offset) as *const i32) as i64
+                                            (2, _) => {
+                                                std::ptr::read_unaligned(at as *const i16) as f32
+                                                    / 32768.0
                                             }
-                                            _ => 0,
+                                            _ => 0.0,
                                         };
-                                        sample_val = sample_val.wrapping_add(sample);
                                     }
-                                    sample_val /= channels as i64;
-                                    let normalized = match bytes_per_sample {
-                                        2 => (sample_val as f32) / 32768.0,
-                                        4 => (sample_val as f32) / 2147483648.0,
-                                        _ => 0.0,
-                                    };
-                                    if buffer_pos < FFT_SIZE {
-                                        let window = 0.5
-                                            * (1.0
-                                                - (2.0 * std::f32::consts::PI * buffer_pos as f32
-                                                    / FFT_SIZE as f32)
-                                                    .cos());
-                                        fft_buffer[buffer_pos] = normalized * window;
-                                        buffer_pos += 1;
-                                    }
-                                    if buffer_pos >= FFT_SIZE {
-                                        // Run FFT on the windowed buffer
-                                        for (i, &sample) in fft_buffer.iter().enumerate() {
-                                            fft_input[i] =
-                                                rustfft::num_complex::Complex::new(sample, 0.0);
-                                        }
-                                        fft.process(&mut fft_input);
-
-                                        let band_ranges =
-                                            [(1, 2), (2, 6), (6, 18), (18, 60), (60, 200)];
-                                        let mut output = [0.0f32; NUM_BANDS];
-                                        for (band_idx, &(bin_start, bin_end)) in
-                                            band_ranges.iter().enumerate()
-                                        {
-                                            let mut total_mag = 0.0f32;
-                                            let mut count = 0u32;
-                                            for bin in bin_start..bin_end {
-                                                if bin >= FFT_SIZE / 2 {
-                                                    break;
-                                                }
-                                                let mag = fft_input[bin].norm();
-                                                total_mag += mag;
-                                                count += 1;
-                                            }
-                                            let avg_mag = total_mag / count.max(1) as f32;
-                                            let mut scaled_mag = avg_mag;
-                                            let weighting = [1.2, 1.2, 1.5, 2.8, 5.0];
-                                            scaled_mag *= weighting[band_idx];
-                                            if scaled_mag > max_band_energies[band_idx] {
-                                                max_band_energies[band_idx] = scaled_mag;
-                                            } else {
-                                                max_band_energies[band_idx] *= 0.99;
-                                            }
-                                            let target = (scaled_mag
-                                                / max_band_energies[band_idx].max(0.12))
-                                            .min(1.0)
-                                            .powf(0.75);
-                                            let is_rising = target > prev_values[band_idx];
-                                            let smooth_factor = if is_rising { 0.10 } else { 0.20 };
-                                            output[band_idx] = prev_values[band_idx]
-                                                * smooth_factor
-                                                + target * (1.0 - smooth_factor);
-                                            output[band_idx] = output[band_idx].clamp(0.18, 1.0);
-                                            prev_values[band_idx] = output[band_idx];
-                                        }
-                                        let _ = app_handle.emit(
-                                            "audio-visualization",
-                                            AudioVisualizationData {
-                                                frequencies: output.to_vec(),
-                                            },
-                                        );
-                                        buffer_pos = 0;
-                                    }
+                                    mono.push(sum / channels as f32);
                                 }
-                                let _ = capture_client.ReleaseBuffer(num_frames);
                             }
+                            let _ = capture_client.ReleaseBuffer(num_frames);
                         }
 
                         if device_invalidated {
                             return Err("Device invalidated".into());
                         }
+                        // Loopback delivers nothing while the output is silent:
+                        // feed a tick of silence so the bars fall instead of freezing.
+                        if mono.is_empty() {
+                            mono.resize((rate / FPS) as usize, 0.0);
+                        }
+                        cava.push(&mono);
+                        mono.clear();
+                        let _ = app_handle.emit(
+                            "audio-visualization",
+                            AudioVisualizationData {
+                                frequencies: cava.frame(),
+                            },
+                        );
                     }
                 })();
 
