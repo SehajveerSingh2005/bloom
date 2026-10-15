@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, Window};
-use windows::core::Interface;
+use windows::core::{Interface, GUID};
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 
@@ -510,34 +510,27 @@ const START_TOGGLE_DEBOUNCE_MS: i64 = 80;
 /// A zero-length tap is dropped by the shell and never opens Start.
 const START_WIN_KEY_HOLD_MS: u64 = 40;
 
-fn send_key_tap(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY, hold_ms: u64) {
+/// Presses `vks` in order, holds them for `hold_ms`, then releases them in
+/// reverse: a single key, or a shortcut such as Win+Tab.
+fn send_key_tap(vks: &[windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY], hold_ms: u64) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYEVENTF_KEYUP,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VIRTUAL_KEY,
     };
-    let down = [INPUT {
-        r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+    let key = |vk: &VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS| INPUT {
+        r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
-                wVk: vk,
+                wVk: *vk,
                 wScan: 0,
-                dwFlags: Default::default(),
+                dwFlags: flags,
                 time: 0,
                 dwExtraInfo: 0,
             },
         },
-    }];
-    let up = [INPUT {
-        r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: vk,
-                wScan: 0,
-                dwFlags: KEYEVENTF_KEYUP,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    }];
+    };
+    let down: Vec<INPUT> = vks.iter().map(|vk| key(vk, Default::default())).collect();
+    let up: Vec<INPUT> = vks.iter().rev().map(|vk| key(vk, KEYEVENTF_KEYUP)).collect();
     unsafe {
         SendInput(&down, std::mem::size_of::<INPUT>() as i32);
         if hold_ms > 0 {
@@ -605,9 +598,9 @@ fn toggle_start_menu() {
     tauri::async_runtime::spawn_blocking(move || {
         use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_LWIN};
         if is_start_menu_open() {
-            send_key_tap(VK_ESCAPE, 0);
+            send_key_tap(&[VK_ESCAPE], 0);
         } else {
-            send_key_tap(VK_LWIN, START_WIN_KEY_HOLD_MS);
+            send_key_tap(&[VK_LWIN], START_WIN_KEY_HOLD_MS);
         }
     });
 }
@@ -616,6 +609,14 @@ fn toggle_start_menu() {
 pub async fn open_app(app: AppHandle, app_name: String) {
     if app_name == "start" {
         toggle_start_menu();
+        return;
+    }
+    // Task View (the dock's Desktops button): Win+Tab, sent like Start's Win tap.
+    if app_name == "task-view" {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{VK_LWIN, VK_TAB};
+        tauri::async_runtime::spawn_blocking(|| {
+            send_key_tap(&[VK_LWIN, VK_TAB], START_WIN_KEY_HOLD_MS)
+        });
         return;
     }
 
@@ -3984,6 +3985,50 @@ pub async fn show_tray_context_menu(tray_id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || crate::tray::interact(&tray_id, true))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Shows or hides the touch keyboard like the taskbar's keyboard button, via
+/// the shell's ITipInvocation, starting TabTip.exe first if it isn't running.
+#[tauri::command]
+pub async fn toggle_touch_keyboard() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| unsafe {
+        use windows::core::{w, IUnknown, HRESULT, HSTRING, PCWSTR};
+        use windows::Win32::System::Com::{
+            CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
+        };
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetDesktopWindow, SW_SHOWNORMAL};
+        const CLSID_UIHOSTNOLAUNCH: GUID = GUID::from_u128(0x4ce576fa_83dc_4f88_951c_9d0782b4e376);
+        const IID_ITIPINVOCATION: GUID = GUID::from_u128(0x37c994e7_432b_4834_a2f7_dce1f13b834b);
+
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let running = || FindWindowW(w!("IPTip_Main_Window"), PCWSTR::null()).is_ok();
+        if !running() {
+            let common = std::env::var("CommonProgramW6432")
+                .unwrap_or_else(|_| r"C:\Program Files\Common Files".into());
+            let tabtip = HSTRING::from(format!(r"{common}\microsoft shared\ink\TabTip.exe"));
+            ShellExecuteW(None, w!("open"), &tabtip, PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+            for _ in 0..20 {
+                if running() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        let tip: IUnknown = CoCreateInstance(&CLSID_UIHOSTNOLAUNCH, None, CLSCTX_ALL)
+            .map_err(|e| e.to_string())?;
+        let mut raw = std::ptr::null_mut();
+        tip.query(&IID_ITIPINVOCATION, &mut raw).ok().map_err(|e| e.to_string())?;
+        // ITipInvocation isn't in the windows crate; its only method, Toggle,
+        // follows IUnknown's three in the vtable. from_raw releases it on drop.
+        let tip = IUnknown::from_raw(raw);
+        let vtable = *(raw as *const *const usize);
+        let toggle: unsafe extern "system" fn(*mut std::ffi::c_void, HWND) -> HRESULT =
+            std::mem::transmute(*vtable.add(3));
+        toggle(tip.as_raw(), GetDesktopWindow()).ok().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(serde::Deserialize)]

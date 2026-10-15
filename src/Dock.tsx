@@ -5,7 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import "./Dock.css";
 import { EdgeSurface } from "./components/EdgeSurface";
 import { initTheme } from "./theme";
-import { useSettingsSync } from "./hooks/useSettingsSync";
+import { useBoolSetting, useSettingsSync } from "./hooks/useSettingsSync";
+import { Copy, Keyboard } from "lucide-react";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 
 import { mergeTrayApps, selectDockTrayApps, type AppInfo, type TrayApp } from "./dockApps";
@@ -149,6 +150,9 @@ const Dock = memo(function Dock() {
 		() => localStorage.getItem("bloom-dock-extras-position") || "off"
 	);
 	const [dockExtras, setDockExtras] = useState<DockExtra[]>([]);
+	const [startButton] = useBoolSetting("bloom-start-button", true);
+	const [desktopsButton] = useBoolSetting("bloom-desktops-button", false);
+	const [keyboardButton] = useBoolSetting("bloom-touch-keyboard-button", false);
 	const [dockExtrasRevision, setDockExtrasRevision] = useState(0);
 	const [isMaximized, setIsMaximized] = useState(false);
 	const [previewData, setPreviewData] = useState<{
@@ -1015,6 +1019,38 @@ const Dock = memo(function Dock() {
 		tap: { scale: 0.95 }
 	};
 
+	// A fixed system button (Task View) with the app icons' hover and press.
+	const renderSystemItem = (key: string, label: string, onClick: () => void, icon: React.ReactNode) => (
+		<motion.div
+			key={key}
+			initial={ITEM_INITIAL}
+			animate={ITEM_ANIMATE}
+			transition={ITEM_ENTRY_TRANSITION}
+			className="dock-icon-wrapper"
+			onMouseEnter={() => setHoveredApp(key)}
+			onMouseLeave={() => {
+				setHoveredApp(null);
+				setPressedApp(null);
+			}}
+		>
+			{(!dockPreviewEnabled || hoveredApp === key) && <div className="tooltip">{label}</div>}
+			<motion.div
+				className="dock-icon"
+				variants={iconVariants}
+				animate={pressedApp === key ? "tap" : hoveredApp === key ? "hover" : "idle"}
+				onPointerDown={() => setPressedApp(key)}
+				onPointerUp={() => setPressedApp(null)}
+				onPointerCancel={() => setPressedApp(null)}
+				onClick={(e) => {
+					e.stopPropagation();
+					onClick();
+				}}
+			>
+				{icon}
+			</motion.div>
+		</motion.div>
+	);
+
 	const renderExtra = (extra: DockExtra) => (
 		<motion.div
 			key={extra.id}
@@ -1124,7 +1160,7 @@ const Dock = memo(function Dock() {
 								transition={{ duration: 0.15 }}
 								className="dock-reorder-container"
 							>
-								{startItem && (
+								{startItem && startButton && (
 									<motion.div
 										initial={{ opacity: 0, scale: 0 }}
 										animate={{ opacity: 1, scale: 1 }}
@@ -1174,6 +1210,13 @@ const Dock = memo(function Dock() {
 										</motion.div>
 									</motion.div>
 								)}
+								{desktopsButton &&
+									renderSystemItem(
+										"task-view",
+										"Task View",
+										() => invoke("open_app", { appName: "task-view" }),
+										<Copy />
+									)}
 
 								{dockExtrasPosition === "left" && dockExtras.length > 0 && (
 									<>
@@ -1353,7 +1396,7 @@ const Dock = memo(function Dock() {
 
 								{dockSeparatorEnabled &&
 									unpinnedItems.length > 0 &&
-									(pinnedItems.length > 0 || startItem) && (
+									(pinnedItems.length > 0 || (startItem && startButton) || desktopsButton) && (
 										<div
 											className="dock-app-divider"
 											role="separator"
@@ -1515,6 +1558,18 @@ const Dock = memo(function Dock() {
 										/>
 										{dockExtras.map((extra) => renderExtra(extra))}
 									</>
+								)}
+								{keyboardButton && (
+									<button
+										className="dock-mini-btn"
+										title="Touch keyboard"
+										onClick={(e) => {
+											e.stopPropagation();
+											invoke("toggle_touch_keyboard").catch(showActionError);
+										}}
+									>
+										<Keyboard size={16} />
+									</button>
 								)}
 							</motion.div>
 						)}

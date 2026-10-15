@@ -1,5 +1,43 @@
-import { Palette, Droplet, Contrast, Droplets, Sun, Square, Maximize2 } from "lucide-react";
+import {
+	Palette,
+	Droplet,
+	Contrast,
+	Droplets,
+	Sun,
+	Square,
+	Maximize2,
+	LayoutGrid,
+	Copy,
+	Keyboard
+} from "lucide-react";
 import { SettingRow } from "./SettingRow";
+import { saveSetting } from "./useSettings";
+import { useBoolSetting } from "../hooks/useSettingsSync";
+import type { SettingRowProps } from "./types";
+
+// A dock button's show/hide switch; the dock follows the setting live.
+function DockButtonToggle({
+	setting,
+	fallback,
+	...row
+}: Omit<SettingRowProps, "children"> & { setting: string; fallback: boolean }) {
+	const [on, setOn] = useBoolSetting(setting, fallback);
+	return (
+		<SettingRow {...row}>
+			<label className="toggle-switch">
+				<input
+					type="checkbox"
+					checked={on}
+					onChange={() => {
+						setOn(!on);
+						saveSetting(setting, String(!on));
+					}}
+				/>
+				<span className="slider"></span>
+			</label>
+		</SettingRow>
+	);
+}
 
 interface AppearanceTabProps {
 	themeMode: string;
@@ -162,6 +200,32 @@ export function AppearanceTab({
 						</button>
 					</div>
 				</SettingRow>
+			</div>
+
+			<div className="setting-group-label">Dock Buttons</div>
+			<div className="setting-group">
+				<DockButtonToggle
+					setting="bloom-start-button"
+					fallback
+					icon={LayoutGrid}
+					label="Start button"
+					desc="Opens the Start menu"
+				/>
+				<DockButtonToggle
+					setting="bloom-desktops-button"
+					fallback={false}
+					icon={Copy}
+					label="Desktops button"
+					desc="Opens Task View, right of Start"
+				/>
+				<DockButtonToggle
+					setting="bloom-touch-keyboard-button"
+					fallback={false}
+					icon={Keyboard}
+					label="Touch keyboard button"
+					desc="Shows or hides the on-screen keyboard"
+					divider={false}
+				/>
 			</div>
 		</>
 	);
