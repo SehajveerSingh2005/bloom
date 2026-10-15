@@ -3176,10 +3176,24 @@ pub async fn get_wifi_status() -> Result<WifiStatus, String> {
         } else {
             None
         };
+        // A cable is plugged in and connected (IANA type 6 is Ethernet, USB
+        // adapters included), even when Windows still routes the internet over
+        // Wi-Fi on the same router. Virtual adapters (VirtualBox, Hyper-V) have
+        // no connection profile, so they don't count.
+        use windows::Networking::Connectivity::{NetworkConnectivityLevel, NetworkInformation};
+        let ethernet = NetworkInformation::GetConnectionProfiles().is_ok_and(|profiles| {
+            (0..profiles.Size().unwrap_or(0)).any(|i| {
+                profiles.GetAt(i).is_ok_and(|p| {
+                    p.NetworkAdapter().and_then(|a| a.IanaInterfaceType()).is_ok_and(|t| t == 6)
+                        && p.GetNetworkConnectivityLevel().is_ok_and(|l| l != NetworkConnectivityLevel::None)
+                })
+            })
+        });
         Ok(WifiStatus {
             enabled,
             connected: ssid.is_some(),
             ssid,
+            ethernet,
         })
     })
     .await

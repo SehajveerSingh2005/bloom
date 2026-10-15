@@ -3350,6 +3350,9 @@ fn lock_main_appbar() -> std::sync::MutexGuard<'static, ()> {
 /// Apply a reservation decision to the main window. Callers must hold
 /// `MAIN_APPBAR_LOCK`.
 fn set_main_appbar_reservation(main_win: tauri::WebviewWindow, reserve: bool) {
+    // Info centre: the notch is hidden and its content lives in the dock, so the
+    // top strip is never reserved.
+    let reserve = reserve && !crate::utils::info_centre_enabled(main_win.app_handle());
     if reserve {
         register_appbar(main_win);
     } else if let Ok(hwnd) = main_win.hwnd() {

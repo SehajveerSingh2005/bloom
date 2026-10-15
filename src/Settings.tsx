@@ -157,6 +157,8 @@ function SettingsApp() {
 						<NotchTab
 							notchMode={settings.notchMode}
 							setNotchModeValue={settings.setNotchModeValue}
+							infoCentre={settings.infoCentre}
+							toggleInfoCentre={settings.toggleInfoCentre}
 							notchEdgeDelay={settings.notchEdgeDelay}
 							handleNotchEdgeDelayChange={settings.handleNotchEdgeDelayChange}
 							calendarEnabled={settings.calendarEnabled}

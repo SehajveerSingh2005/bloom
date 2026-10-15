@@ -741,6 +741,11 @@ pub fn get_bloom_scale(_app: &tauri::AppHandle) -> f64 {
         .unwrap_or(1.0)
 }
 
+/// `bloom-info-centre` ("Merge with Dock"): the dock carries the notch's content.
+pub fn info_centre_enabled(app: &tauri::AppHandle) -> bool {
+    get_setting_str(app, "bloom-info-centre").is_some_and(|v| v == "true")
+}
+
 /// Read any string value from the settings cache. Returns None if the key is absent.
 pub fn get_setting_str(_app: &tauri::AppHandle, key: &str) -> Option<String> {
     let cache = crate::state::SETTINGS_CACHE.get()?;
