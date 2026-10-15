@@ -2879,6 +2879,7 @@ unsafe extern "system" fn mouse_hook_proc(
                     // The overlay applies `bloom-scale` as CSS zoom, so the cards
                     // are larger than 42x196 CSS px for non-default scales.
                     let bloom_scale = crate::utils::get_bloom_scale(app_handle);
+                    let hud_up = crate::state::OVERLAY_HUD_UP.load(Ordering::Relaxed);
                     let over_left = in_mixer
                         || if let Ok(Some(m)) = ov_win.primary_monitor() {
                             let ms = m.size();
@@ -2912,7 +2913,9 @@ unsafe extern "system" fn mouse_hook_proc(
                         false
                     };
 
-                    let should_ignore = !(over_left || over_right);
+                    // The edge rects only count while a HUD card is up: an
+                    // invisible card must not swallow clicks at the screen edge.
+                    let should_ignore = !(in_mixer || (hud_up && (over_left || over_right)));
                     let prev = MH_LAST_OV_IGNORE.load(Ordering::Relaxed);
                     let new_val = if should_ignore { 1 } else { 0 };
                     if prev != new_val {
