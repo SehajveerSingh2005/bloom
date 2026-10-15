@@ -3,6 +3,7 @@
 mod bluetooth;
 mod commands;
 mod dock_extras;
+mod glass;
 mod services;
 mod shelf;
 mod shelf_preview;
@@ -123,6 +124,7 @@ fn main() {
             open_app,
             launch_new_instance,
             update_dock_rect,
+            glass::set_glass,
             update_notch_rect,
             set_dock_hovered,
             set_notch_hovered,

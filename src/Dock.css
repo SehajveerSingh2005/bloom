@@ -783,3 +783,18 @@ body {
 	background: #888;
 	box-shadow: none;
 }
+
+/* Glass (Appearance, <html class="glass">). The compositor frosts what is
+   behind the dock (glass.rs, useGlass); this is the material on top: a much
+   lighter tint so the frost shows through, and a sheen fading down. */
+html.glass:not(.no-blur) .dock {
+	--surface-bg: color-mix(in srgb, var(--bloom-bg, rgba(0, 0, 0, 0.8)) 52%, transparent);
+}
+html.glass:not(.no-blur) .dock > .edge-surface::before {
+	background-image: linear-gradient(
+		180deg,
+		rgba(255, 255, 255, 0.12) 0%,
+		rgba(255, 255, 255, 0.03) 40%,
+		rgba(255, 255, 255, 0) 100%
+	);
+}

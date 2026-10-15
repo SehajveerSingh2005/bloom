@@ -23,6 +23,7 @@ import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
 import { useAnnouncement } from "./hooks/useAnnouncement";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
+import { useGlass, useGlassEnabled } from "./hooks/useGlass";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
@@ -706,6 +707,10 @@ function App() {
 			return () => clearTimeout(timer);
 		}
 	}, [isAnyInteraction]);
+
+	// Frosted glass under the notch (Appearance, Glass).
+	const glass = useGlassEnabled();
+	useGlass(() => (windowLabel === "main" ? [bloomRef.current] : []), glass);
 
 	useEffect(() => {
 		if (windowLabel === "main") {

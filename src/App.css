@@ -2361,3 +2361,14 @@ img {
 	font-size: 11px;
 	opacity: 0.6;
 }
+
+/* Glass (Appearance, <html class="glass">). The compositor frosts what is
+   behind the notch (glass.rs, useGlass); this is the material on top: a
+   lighter tint so the frost shows, and a faint sheen. "no-blur" is set when
+   Windows can't blur (transparency effects off, energy saver on). */
+html.glass:not(.no-blur) .bloom {
+	--notch-bg: color-mix(in srgb, var(--bloom-bg, rgba(0, 0, 0, 0.8)) 52%, transparent);
+}
+html.glass:not(.no-blur) .bloom > .edge-surface::before {
+	background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 60%);
+}

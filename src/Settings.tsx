@@ -143,6 +143,8 @@ function SettingsApp() {
 							handleThemeColorChange={settings.handleThemeColorChange}
 							themeOpacity={settings.themeOpacity}
 							handleOpacityChange={settings.handleOpacityChange}
+							glassEnabled={settings.glassEnabled}
+							toggleGlass={settings.toggleGlass}
 							themeSaturation={settings.themeSaturation}
 							handleSaturationChange={settings.handleSaturationChange}
 							themeBrightness={settings.themeBrightness}

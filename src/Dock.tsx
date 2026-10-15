@@ -7,6 +7,7 @@ import { EdgeSurface } from "./components/EdgeSurface";
 import { initTheme } from "./theme";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
+import { useGlass, useGlassEnabled } from "./hooks/useGlass";
 
 import { mergeTrayApps, selectDockTrayApps, type AppInfo, type TrayApp } from "./dockApps";
 import { removeCustomFolder, type DockExtra } from "./dockExtras";
@@ -181,6 +182,9 @@ const Dock = memo(function Dock() {
 	const iconPickerTargetRef = useRef<string | null>(null);
 	const toastTimerRef = useRef<any>(null);
 	const dockRef = useRef<HTMLDivElement>(null);
+	// Frosted glass under the dock (Appearance, Glass).
+	const glass = useGlassEnabled();
+	useGlass(() => [dockRef.current], glass);
 	const [popupBottom, setPopupBottom] = useState(56);
 	const pinnedItemsRef = useRef<AppInfo[]>([]);
 	const handleAppClickRef = useRef<(app: AppInfo) => void>(() => {});
