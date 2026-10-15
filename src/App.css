@@ -2361,3 +2361,18 @@ img {
 	font-size: 11px;
 	opacity: 0.6;
 }
+
+/* Shown over a control-centre slider when the system rejected the change. */
+.cc-slider-error {
+	position: absolute;
+	right: 0;
+	top: 50%;
+	transform: translateY(-50%);
+	padding: 1px 8px;
+	border-radius: 9px;
+	font-size: 10px;
+	white-space: nowrap;
+	color: #fff;
+	background: rgba(200, 50, 50, 0.92);
+	pointer-events: none;
+}

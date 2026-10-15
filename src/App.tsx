@@ -21,6 +21,7 @@ import { CompactMediaPlayer } from "./CompactMediaPlayer";
 import { useWeather } from "./hooks/useWeather";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
+import { useSliderSync, useTransientError } from "./hooks/useSliderSync";
 import { useAnnouncement } from "./hooks/useAnnouncement";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -2016,9 +2017,28 @@ function App() {
 		initBattery();
 	}, []);
 
+	// Live levels from the system. Used on mount, when the command centre
+	// opens, and once a slider settles after a drag.
+	const syncVolume = () =>
+		invoke<{ volume: number; is_muted: boolean }>("get_volume_state")
+			.then((state) => {
+				setVolume(state.volume);
+				setIsMuted(state.is_muted);
+			})
+			.catch(() => {});
+	const syncBrightness = () =>
+		invoke<number>("get_brightness")
+			.then(setCurrentBrightness)
+			.catch(() => {});
+	const volumeSync = useSliderSync(syncVolume);
+	const brightnessSync = useSliderSync(syncBrightness);
+	const volumeError = useTransientError("volume-error");
+	const brightnessError = useTransientError("brightness-error");
+
 	// Listen for Volume Changes
 	useEffect(() => {
 		const unlisten = listen<{ volume: number; is_muted: boolean }>("volume-change", (event) => {
+			if (!volumeSync.accepts()) return;
 			setVolume(event.payload.volume);
 			setIsMuted(event.payload.is_muted);
 		});
@@ -2105,15 +2125,8 @@ function App() {
 		invoke<boolean>("get_battery_saver_state")
 			.then(setBatterySaverEnabled)
 			.catch(() => {});
-		invoke<{ volume: number; is_muted: boolean }>("get_volume_state")
-			.then((state) => {
-				setVolume(state.volume);
-				setIsMuted(state.is_muted);
-			})
-			.catch(() => {});
-		invoke<number>("get_brightness")
-			.then(setCurrentBrightness)
-			.catch(() => {});
+		void syncVolume();
+		void syncBrightness();
 
 		// Poll battery saver state every 5s (since we can't listen for changes)
 		const interval = setInterval(() => {
@@ -2123,6 +2136,13 @@ function App() {
 		}, 5000);
 		return () => clearInterval(interval);
 	}, []);
+
+	// Events can be missed while the window sleeps; re-read when the panel opens.
+	useEffect(() => {
+		if (bloomMode !== "command-center") return;
+		void syncVolume();
+		void syncBrightness();
+	}, [bloomMode]);
 
 	// Refresh Wi-Fi status while the command center is open so changes made
 	// outside Bloom (keyboard toggle, Windows quick settings) show up.
@@ -2160,6 +2180,7 @@ function App() {
 	// Listen for brightness changes
 	useEffect(() => {
 		const unlisten = listen<{ brightness: number }>("brightness-change", (event) => {
+			if (!brightnessSync.accepts()) return;
 			setCurrentBrightness(event.payload.brightness);
 		});
 		return () => {
@@ -2271,12 +2292,13 @@ function App() {
 
 	const handleVolumeChange = useCallback(
 		(newVol: number) => {
+			volumeSync.touch();
 			setVolume(newVol);
 			// set_volume unmutes for any non-zero level.
 			setIsMuted(newVol === 0);
 			sendVolume(newVol);
 		},
-		[sendVolume]
+		[sendVolume, volumeSync]
 	);
 
 	// WiFi toggle
@@ -2326,10 +2348,11 @@ function App() {
 
 	const handleBrightnessChange = useCallback(
 		(newVal: number) => {
+			brightnessSync.touch();
 			setCurrentBrightness(newVal);
 			sendBrightness(newVal);
 		},
-		[sendBrightness]
+		[sendBrightness, brightnessSync]
 	);
 
 	// Open system tray (unhide taskbar and invoke Win+B)
@@ -3483,6 +3506,11 @@ function App() {
 													<span className="cc-classic-percentage">
 														{Math.round(displayVolume * 100)}%
 													</span>
+													{volumeError && (
+														<div className="cc-slider-error" role="alert">
+															{volumeError}
+														</div>
+													)}
 												</div>
 
 												{/* Brightness Slider */}
@@ -3509,6 +3537,11 @@ function App() {
 														/>
 													</div>
 													<span className="cc-classic-percentage">{currentBrightness}%</span>
+													{brightnessError && (
+														<div className="cc-slider-error" role="alert">
+															{brightnessError}
+														</div>
+													)}
 												</div>
 											</div>
 										</motion.div>

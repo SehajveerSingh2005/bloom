@@ -86,7 +86,6 @@ fn main() {
         }
     }
 
-    setup_brightness_worker();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -336,6 +335,7 @@ fn main() {
             }
             setup_thumbnail_capture(app.handle().clone());
             trigger_app_scan();
+            setup_brightness_worker(app.handle().clone());
             let tx = setup_system_worker(app.handle().clone());
             let _ = COMMAND_SENDER.set(tx.clone());
             services::setup_keyboard_hook(app.handle().clone());
