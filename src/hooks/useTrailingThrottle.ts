@@ -27,6 +27,10 @@ export function useTrailingThrottle<Args extends unknown[]>(
 		(...args: Args) => {
 			const elapsed = Date.now() - lastCallRef.current;
 			if (elapsed >= intervalMs) {
+				// A late timer must not replay an older value after this one.
+				if (timerRef.current) clearTimeout(timerRef.current);
+				timerRef.current = null;
+				pendingArgsRef.current = null;
 				lastCallRef.current = Date.now();
 				callbackRef.current(...args);
 				return;

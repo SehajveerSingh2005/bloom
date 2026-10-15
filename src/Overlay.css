@@ -474,3 +474,9 @@ body,
 .light-mode .brightness-notch-bar {
 	background: rgba(0, 0, 0, 0.12);
 }
+
+/* The system rejected the last brightness change (title has the message). */
+.brightness-notch-bar.error,
+.light-mode .brightness-notch-bar.error {
+	background: rgba(220, 60, 60, 0.55);
+}

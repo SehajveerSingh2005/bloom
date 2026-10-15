@@ -57,6 +57,7 @@ windows = { version = "0.61", features = [
 	"Win32_System_IO",
 	"Win32_Security",
 	"Win32_System_Registry",
+	"Win32_System_Power",
 	"Win32_Devices_FunctionDiscovery",
 	"Devices_Radios",
 	"Devices_Bluetooth",
