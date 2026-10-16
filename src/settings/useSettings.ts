@@ -15,7 +15,7 @@ import {
 } from "../dockExtras";
 import type { WidgetConfig } from "./types";
 
-function saveSetting(key: string, value: string) {
+export function saveSetting(key: string, value: string) {
 	localStorage.setItem(key, value);
 	invoke("save_setting", { key, value }).catch(console.error);
 }

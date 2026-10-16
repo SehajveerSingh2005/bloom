@@ -452,24 +452,10 @@ img {
 	position: relative;
 }
 
-.visualizer-horizontal {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	gap: 2.5px;
-	height: 20px;
-	width: 28px;
-	position: relative;
-}
-
-.visualizer-horizontal .bar-horizontal {
-	width: 3px;
-	height: 100%;
-	background: var(--bloom-text, white);
-	box-shadow: 0 0 8px var(--bloom-border, rgba(255, 255, 255, 0.3));
-	border-radius: 2px;
-	transform-origin: center;
-	will-change: transform;
+/* The audio visualizer's canvas (Visualizer.tsx). */
+.visualizer-canvas {
+	display: block;
+	flex: none;
 }
 
 /* Album art (compact mode) */

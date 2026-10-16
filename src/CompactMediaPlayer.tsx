@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
-import { Visualizer } from "./App";
+import { Visualizer } from "./Visualizer";
 import {
 	PlayIcon,
 	PauseIcon,

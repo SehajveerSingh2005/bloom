@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bluetooth;
+mod cava;
 mod commands;
 mod dock_extras;
 mod services;

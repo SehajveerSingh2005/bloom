@@ -82,6 +82,8 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | `bloom-media-compact-glow-enabled` | `"true"` / `"false"`      | `"true"`    | Glow effect around the collapsed compact thumbnail.                                             |
 | `bloom-media-visualizer-enabled`   | `"true"` / `"false"`      | `"true"`    | Audio visualizer bars in music mode. Also accepts `bloom-visualizer-enabled` (legacy alias).    |
 | `bloom-media-album-art-enabled`    | `"true"` / `"false"`      | `"true"`    | Show album artwork in the notch music display.                                                  |
+| `bloom-viz-style`                  | `"bars"` / `"wave"` / `"blocks"` | `"bars"` | Audio visualizer style: round bars, a mirrored wave, or stacked blocks.                     |
+| `bloom-viz-color`                  | `"mono"` / `"smooth"` / `"rainbow"` | `"mono"` | Audio visualizer colour: the text colour, a gradient around the accent, or a drifting rainbow. |
 
 ### Overlays
 
