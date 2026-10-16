@@ -1286,12 +1286,26 @@ pub(crate) fn browser_web_app_id_from_aumid(id: &str) -> Option<String> {
     }
     if let Some(idx) = id.find("_crx_") {
         if let Some(segment) = id[idx + 5..].split('.').next() {
-            if is_web_app_id(segment) {
+            // Chrome also shortens it to the first 5 and last 10 characters
+            // ("Chrome._crx_cinhiknlkffjgod" is YouTube Music); the icon lookup
+            // matches that form against the profile's app folders.
+            let is_short_id =
+                segment.len() == 15 && segment.bytes().all(|b| (b'a'..=b'p').contains(&b));
+            if is_web_app_id(segment) || is_short_id {
                 return Some(segment.to_string());
             }
         }
     }
     None
+}
+
+/// The installed web app folder an app id names: the id itself, or the full
+/// id a shortened one (first 5 + last 10 characters) stands for.
+fn web_app_dir_matches(name: &str, app_id: &str) -> bool {
+    if name.eq_ignore_ascii_case(app_id) {
+        return true;
+    }
+    app_id.len() == 15 && name.len() == 32 && name.starts_with(&app_id[..5]) && name.ends_with(&app_id[5..])
 }
 
 /// True when a window AppUserModelID belongs to a browser-hosted app (installed
@@ -1407,10 +1421,18 @@ fn find_browser_pwa_icon(executable_path: &str, args: &str) -> Option<String> {
                 continue;
             }
 
+            let manifests = web_apps.join("Manifest Resources");
+            let full_id = std::fs::read_dir(&manifests)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .find(|name| web_app_dir_matches(name, &app_id))
+                .unwrap_or_else(|| app_id.clone());
             let candidates = [
-                web_apps.join("Manifest Resources").join(&app_id),
-                web_apps.join(&app_id),
-                web_apps.join(format!("_crx_{}", app_id)),
+                manifests.join(&full_id),
+                web_apps.join(&full_id),
+                web_apps.join(format!("_crx_{}", full_id)),
             ];
             for dir in candidates {
                 if let Some(icon) = find_largest_image_in_dir(&dir) {
@@ -3893,6 +3915,13 @@ mod pwa_icon_tests {
             None
         );
         assert_eq!(browser_web_app_id_from_aumid("MSEdge"), None);
+        // Chrome's shortened form (YouTube Music) finds its full app folder.
+        assert_eq!(
+            browser_web_app_id_from_aumid("Chrome._crx_cinhiknlkffjgod.UserData.Profile1").as_deref(),
+            Some("cinhiknlkffjgod")
+        );
+        assert!(web_app_dir_matches("cinhimbnkkaeohfgghhklpknlkffjgod", "cinhiknlkffjgod"));
+        assert!(!web_app_dir_matches("pommaclcbfghclhalboakcipcmmndhcj", "cinhiknlkffjgod"));
     }
 
     #[test]
