@@ -1,6 +1,6 @@
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, memo } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getVersion } from "@tauri-apps/api/app";
@@ -18,11 +18,13 @@ import {
 	HeadphonesIcon
 } from "./icons";
 import { CompactMediaPlayer } from "./CompactMediaPlayer";
+import { getTimerChimeCtx, playTimerChime } from "./chime";
 import { useWeather } from "./hooks/useWeather";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useTrailingThrottle } from "./hooks/useTrailingThrottle";
 import { useAnnouncement } from "./hooks/useAnnouncement";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
+import { useInfoCentre } from "./hooks/useInfoCentre";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
@@ -88,59 +90,6 @@ const formatTimerDigits = (digits: string): string => {
 	const secs = digits.slice(-2).padStart(2, "0");
 	const mins = parseInt(digits.slice(0, -2) || "0", 10);
 	return `${mins}:${secs}`;
-};
-
-// Completion chime for the Pomodoro timer. Synthesized with the Web Audio API
-// so no audio asset is needed; created on the Start click so the webview's
-// autoplay policy lets it play when the timer ends.
-let timerChimeCtx: AudioContext | null = null;
-
-const getTimerChimeCtx = (): AudioContext | null => {
-	try {
-		if (!timerChimeCtx) timerChimeCtx = new AudioContext();
-		if (timerChimeCtx.state === "suspended") timerChimeCtx.resume().catch(() => {});
-		return timerChimeCtx;
-	} catch {
-		return null;
-	}
-};
-
-const playTimerChime = () => {
-	const ctx = getTimerChimeCtx();
-	if (!ctx) return;
-	const start = ctx.currentTime + 0.02;
-	const master = ctx.createGain();
-	master.gain.value = 0.45;
-	master.connect(ctx.destination);
-
-	// Soft rising bell arpeggio (A5–C#6–E6) with a quiet octave harmonic.
-	const notes = [
-		{ freq: 880.0, at: 0 },
-		{ freq: 1108.73, at: 0.18 },
-		{ freq: 1318.51, at: 0.36 }
-	];
-	notes.forEach(({ freq, at }) => {
-		const osc = ctx.createOscillator();
-		const harmonic = ctx.createOscillator();
-		const gain = ctx.createGain();
-		const harmonicGain = ctx.createGain();
-		osc.type = "sine";
-		osc.frequency.value = freq;
-		harmonic.type = "sine";
-		harmonic.frequency.value = freq * 2.01;
-		harmonicGain.gain.value = 0.12;
-		gain.gain.setValueAtTime(0.0001, start + at);
-		gain.gain.exponentialRampToValueAtTime(0.32, start + at + 0.02);
-		gain.gain.exponentialRampToValueAtTime(0.0001, start + at + 1.4);
-		osc.connect(gain);
-		harmonic.connect(harmonicGain);
-		harmonicGain.connect(gain);
-		gain.connect(master);
-		osc.start(start + at);
-		harmonic.start(start + at);
-		osc.stop(start + at + 1.5);
-		harmonic.stop(start + at + 1.5);
-	});
 };
 
 // Simple SVG icons
@@ -722,13 +671,24 @@ function App() {
 		}
 	}, [isVisible, isHidden, windowLabel]);
 
+	// Merged into the dock ("Merge with Dock"), the dock carries the notch's
+	// content and the notch draws nothing. The window keeps running: it drives
+	// dock start-up and AppBar syncing, and owns the shelf list.
+	const [infoCentre, setInfoCentre] = useInfoCentre();
+	const infoCentreRef = useRef(infoCentre);
+	infoCentreRef.current = infoCentre;
+
 	useEffect(() => {
 		const updateRect = () => {
-			if (bloomRef.current && windowLabel === "main") {
-				// Activity bubbles sit beside the pill and must stay clickable too.
-				const rects = [bloomRef.current, musicBubbleRef.current, shelfBubbleRef.current]
-					.filter((el): el is NonNullable<typeof el> => el !== null)
-					.map((el) => el.getBoundingClientRect());
+			if (windowLabel === "main" && (infoCentreRef.current || bloomRef.current)) {
+				// Off-screen while merged (the notch isn't rendered then), so no
+				// part of the top edge turns interactive. Otherwise the pill plus
+				// its activity bubbles, which sit beside it and must stay clickable.
+				const rects = infoCentreRef.current
+					? [new DOMRect(-100000, 0, 0, 0)]
+					: [bloomRef.current, musicBubbleRef.current, shelfBubbleRef.current]
+							.filter((el): el is NonNullable<typeof el> => el !== null)
+							.map((el) => el.getBoundingClientRect());
 				const left = Math.min(...rects.map((r) => r.left));
 				const top = Math.min(...rects.map((r) => r.top));
 				const right = Math.max(...rects.map((r) => r.right));
@@ -754,7 +714,7 @@ function App() {
 			window.removeEventListener("resize", updateRect);
 			observer.disconnect();
 		};
-	}, [isExpanded, isHidden, windowLabel, scale]);
+	}, [isExpanded, isHidden, windowLabel, scale, infoCentre]);
 
 	useEffect(() => {
 		if (!windowLabel) return;
@@ -931,6 +891,7 @@ function App() {
 
 				setSettingsWeatherEnabled(getVal("bloom-weather-enabled", "true") !== "false");
 				setSettingsCalendarEnabled(getVal("bloom-calendar-enabled", "true") !== "false");
+				setInfoCentre(getVal("bloom-info-centre", "false") === "true");
 				setSettingsTimerSoundEnabled(getVal("bloom-timer-sound-enabled", "true") !== "false");
 				setSettingsMusicModeEnabled(getVal("bloom-music-mode-enabled", "true") !== "false");
 				setRememberPanelEnabled(
@@ -1144,6 +1105,12 @@ function App() {
 		invoke("change_dock_mode", { mode: dockMode });
 		setTimeout(() => invoke("sync_appbar"), 200);
 	}, [dockMode, windowLabel]);
+
+	// Merging into the dock (or back) frees or restores the notch's reserved
+	// band at the top; the backend decides from the saved setting.
+	useEffect(() => {
+		if (windowLabel === "main") invoke("sync_appbar").catch(() => {});
+	}, [infoCentre, windowLabel]);
 
 	// Side effects: notch-mode (skip first render)
 	useEffect(() => {
@@ -1461,6 +1428,10 @@ function App() {
 	// the current list.
 	const shelfItemsRef = useRef<ShelfItem[]>(shelfItems);
 	shelfItemsRef.current = shelfItems;
+	// The dock's Shelf tab (merged mode) mirrors this list.
+	useEffect(() => {
+		emit("shelf-items", shelfItems).catch(() => {});
+	}, [shelfItems]);
 	// Tiles that were just added get an entrance animation; ones restored when
 	// the panel reopens do not (the panel itself already fades in).
 	const shelfNewIdsRef = useRef<Set<string>>(new Set());
@@ -1571,10 +1542,13 @@ function App() {
 		let unlisteners: (() => void)[] = [];
 		let cancelled = false;
 
-		const enter = (event: { payload: { paths?: string[]; text?: string } }) => {
+		// The dock has the same drop target (merged mode shows the shelf there):
+		// its drops still land in this list, but the notch panel stays put.
+		type ShelfDragPayload = { paths?: string[]; text?: string; window?: string };
+		const enter = (event: { payload: ShelfDragPayload }) => {
 			// Our own drag-out starts with the cursor over the notch; ignore
 			// the enter it causes instead of flashing the hover state.
-			if (shelfSelfDragRef.current) return;
+			if (shelfSelfDragRef.current || event.payload.window === "dock") return;
 			console.info("[shelf] drag-enter:", event.payload.paths ?? event.payload.text);
 			setIsDragHovering(true);
 			const prev = bloomModeRef.current;
@@ -1585,7 +1559,8 @@ function App() {
 			setIsOpen(true);
 			setBloomMode("shelf");
 		};
-		const leave = () => {
+		const leave = (event: { payload: ShelfDragPayload | null }) => {
+			if (event.payload?.window === "dock") return;
 			setIsDragHovering(false);
 			if (shelfDragActiveRef.current) {
 				shelfDragActiveRef.current = false;
@@ -1595,7 +1570,12 @@ function App() {
 				}
 			}
 		};
-		const drop = (event: { payload: { paths?: string[]; text?: string } }) => {
+		const drop = (event: { payload: ShelfDragPayload }) => {
+			if (event.payload.window === "dock") {
+				addShelfItems(event.payload.paths ?? []);
+				if (event.payload.text) addShelfText(event.payload.text);
+				return;
+			}
 			setIsDragHovering(false);
 			shelfDragActiveRef.current = false;
 			shelfSelfDropAtRef.current = Date.now();
@@ -1613,9 +1593,15 @@ function App() {
 		};
 
 		Promise.all([
-			listen<{ paths?: string[]; text?: string }>("shelf-drag-enter", enter),
-			listen("shelf-drag-leave", leave),
-			listen<{ paths?: string[]; text?: string }>("shelf-drag-drop", drop)
+			listen<ShelfDragPayload>("shelf-drag-enter", enter),
+			listen<ShelfDragPayload | null>("shelf-drag-leave", leave),
+			listen<ShelfDragPayload>("shelf-drag-drop", drop),
+			// The dock's Shelf tab shows this list and removes through it, so
+			// the notch stays the only owner of the items.
+			listen("shelf-request", () => emit("shelf-items", shelfItemsRef.current)),
+			listen<string>("shelf-remove", (e) =>
+				setShelfItems((prev) => prev.filter((i) => i.id !== e.payload))
+			)
 		])
 			.then((fns) => {
 				if (cancelled) {
@@ -2560,6 +2546,10 @@ function App() {
 			setCompactVolumeExpanded(false);
 		}
 	}, [isHovered, mediaLayout, bloomMode]);
+
+	// Merged into the dock: render nothing. A hidden notch would keep its
+	// animation loops running every frame for nobody.
+	if (infoCentre) return <div className="screen" style={{ display: "none" }} />;
 
 	return (
 		<div className="screen" style={{ overflow: "hidden" }}>

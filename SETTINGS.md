@@ -60,6 +60,10 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | Key                         | Type                              | Default  | Description                                                                                              |
 | --------------------------- | --------------------------------- | -------- | -------------------------------------------------------------------------------------------------------- |
 | `bloom-calendar-enabled`    | `"true"` / `"false"`              | `"true"` | Enable calendar/timer mode in the notch.                                                                 |
+| `bloom-info-centre`         | `"true"` / `"false"`              | `"false"` | Merge the notch into the dock as one info centre ("Merge with Dock").                                    |
+| `bloom-ic-hidden-tabs`      | comma list                        | `""`     | Info centre tabs hidden in merged mode (`media`, `calendar`, `timer`, `shelf`; Controls can't be hidden). |
+| `bloom-ic-tab-order`        | comma list                        | `""`     | Info centre tab order in merged mode; tabs it doesn't list keep their default place.                     |
+| `bloom-ic-stretch-ms`       | number (150-900)                  | `"400"`  | Merged mode: how long, in ms, the info panel takes to stretch up out of the dock and back.                |
 | `bloom-music-mode-enabled`  | `"true"` / `"false"`              | `"true"` | Enable interactive music media widget.                                                                   |
 | `bloom-music-compact-notch` | `"true"` / `"false"`              | `"true"` | Show compact music display (visualizer + artwork) in collapsed notch.                                    |
 | `bloom-notch-remember-panel` | `"true"` / `"false"` | `"true"` | Click opens the last-used panel when on; when off, click opens `bloom-notch-default-panel`. |

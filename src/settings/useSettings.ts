@@ -15,7 +15,7 @@ import {
 } from "../dockExtras";
 import type { WidgetConfig } from "./types";
 
-function saveSetting(key: string, value: string) {
+export function saveSetting(key: string, value: string) {
 	localStorage.setItem(key, value);
 	invoke("save_setting", { key, value }).catch(console.error);
 }
@@ -28,6 +28,9 @@ export function useSettings() {
 	const [autostart, setAutostart] = useState(false);
 	const [weatherEnabled, setWeatherEnabled] = useState(true);
 	const [calendarEnabled, setCalendarEnabled] = useState(true);
+	const [infoCentre, setInfoCentre] = useState(
+		() => localStorage.getItem("bloom-info-centre") === "true"
+	);
 	const [timerSoundEnabled, setTimerSoundEnabled] = useState(
 		() => localStorage.getItem("bloom-timer-sound-enabled") !== "false"
 	);
@@ -183,6 +186,7 @@ export function useSettings() {
 
 			apply(getVal("bloom-weather-enabled"), setWeatherEnabled, readBool);
 			apply(getVal("bloom-calendar-enabled"), setCalendarEnabled, readBool);
+			apply(getVal("bloom-info-centre"), setInfoCentre, readBool);
 			apply(getVal("bloom-timer-sound-enabled"), setTimerSoundEnabled, readBool);
 			apply(getVal("bloom-music-mode-enabled"), setMusicModeEnabled, readBool);
 			apply(getVal("bloom-notch-remember-panel") ?? getVal("bloom-notch-click-to-open"),
@@ -281,6 +285,7 @@ export function useSettings() {
 		"bloom-dock-extras-custom-folders": setDockExtrasCustomFolders,
 		"bloom-weather-enabled": setWeatherEnabled,
 		"bloom-calendar-enabled": setCalendarEnabled,
+		"bloom-info-centre": setInfoCentre,
 		"bloom-timer-sound-enabled": setTimerSoundEnabled,
 		"bloom-music-mode-enabled": setMusicModeEnabled,
 		"bloom-notch-remember-panel": setNotchRememberPanel,
@@ -441,6 +446,12 @@ export function useSettings() {
 		const next = !calendarEnabled;
 		setCalendarEnabled(next);
 		saveSetting("bloom-calendar-enabled", String(next));
+	};
+
+	const toggleInfoCentre = () => {
+		const next = !infoCentre;
+		setInfoCentre(next);
+		saveSetting("bloom-info-centre", String(next));
 	};
 
 	const toggleTimerSound = () => {
@@ -881,6 +892,8 @@ export function useSettings() {
 		handleNotchEdgeDelayChange,
 		calendarEnabled,
 		toggleCalendar,
+		infoCentre,
+		toggleInfoCentre,
 		timerSoundEnabled,
 		toggleTimerSound,
 		musicModeEnabled,
