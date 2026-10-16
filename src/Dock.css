@@ -783,3 +783,27 @@ body {
 	background: #888;
 	box-shadow: none;
 }
+
+/* The touch keyboard button: smaller than an app icon, at the dock's end. */
+.dock-mini-btn {
+	width: 28px;
+	height: 28px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: none;
+	border-radius: 9px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	transition:
+		background 0.15s,
+		transform 0.1s ease-out;
+}
+.dock-mini-btn:hover {
+	background: rgba(127, 127, 127, 0.16);
+}
+.dock-mini-btn:active {
+	transform: scale(0.92);
+}

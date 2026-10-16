@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 function convertSettingValue(value: any): any {
@@ -64,4 +64,14 @@ export function useSettingsSync(
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, deps ?? []);
+}
+
+/** A "true"/"false" setting, read from the local mirror and kept live across windows. */
+export function useBoolSetting(key: string, fallback: boolean) {
+	const [on, setOn] = useState(() => {
+		const v = localStorage.getItem(key);
+		return v === null ? fallback : v === "true";
+	});
+	useSettingsSync({ [key]: (v) => setOn(v === true) });
+	return [on, setOn] as const;
 }
