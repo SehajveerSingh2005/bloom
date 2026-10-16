@@ -145,6 +145,7 @@ fn main() {
             get_tray_apps,
             show_tray_context_menu,
             activate_tray_icon,
+            show_app_menu,
             open_system_action,
             get_app_icon,
             get_installed_apps,
