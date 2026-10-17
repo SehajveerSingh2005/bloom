@@ -198,6 +198,7 @@ fn main() {
             dock_extras::get_dock_extras,
             dock_extras::open_dock_extra,
             dock_extras::eject_dock_extra,
+            dock_extras::get_dock_drives,
             wifi::wifi_list_networks,
             wifi::wifi_scan,
             wifi::wifi_connect,

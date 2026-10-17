@@ -1,14 +1,50 @@
 import { describe, expect, test } from "bun:test";
 import {
 	addCustomFolder,
+	driveLetter,
 	folderNameFromPath,
+	hideDrive,
 	parseCustomFolders,
 	parseEnabledFolders,
+	parseHiddenDrives,
 	removeCustomFolder,
 	serializeEnabledFolders,
 	toggleEnabledFolder,
-	type CustomFolder
+	toggleHiddenDrive,
+	type CustomFolder,
+	type DockExtra
 } from "../src/dockExtras";
+
+describe("dock extras hidden drives", () => {
+	test("parses letters loosely and ignores anything else", () => {
+		expect(parseHiddenDrives(null)).toEqual([]);
+		expect(parseHiddenDrives("")).toEqual([]);
+		expect(parseHiddenDrives("d, E,,c")).toEqual(["D", "E", "C"]);
+		expect(parseHiddenDrives("D:,EF,1,z")).toEqual(["Z"]);
+	});
+
+	test("toggling and hiding keep a sorted, unique list", () => {
+		expect(toggleHiddenDrive(null, "e")).toBe("E");
+		expect(toggleHiddenDrive("E", "d")).toBe("D,E");
+		expect(toggleHiddenDrive("D,E", "D")).toBe("E");
+		expect(toggleHiddenDrive("E", "e")).toBe("");
+		expect(hideDrive("E", "d")).toBe("D,E");
+		expect(hideDrive("D,E", "e")).toBe("D,E");
+	});
+
+	test("reads the letter from a drive extra's id only", () => {
+		const extra = (id: string): DockExtra => ({
+			id,
+			kind: "drive",
+			name: "",
+			path: "",
+			icon: null,
+			removable: false
+		});
+		expect(driveLetter(extra("drive:D"))).toBe("D");
+		expect(driveLetter(extra("folder:downloads"))).toBeNull();
+	});
+});
 
 describe("dock extras folder settings", () => {
 	test("enabled folders default to downloads and parse loosely", () => {
