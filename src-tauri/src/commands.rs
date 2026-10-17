@@ -475,15 +475,7 @@ pub async fn change_notch_mode(app: AppHandle, mode: String) {
             });
         }
         // Reposition window to span the full primary monitor so CSS justify-content:center works
-        if let Ok(Some(monitor)) = main_win.primary_monitor() {
-            let m_pos = monitor.position();
-            let m_size = monitor.size();
-            let scale = monitor.scale_factor();
-            let bloom_scale = crate::utils::get_bloom_scale(&app);
-            let target_height = (420.0 * bloom_scale * scale) as u32;
-            let _ = main_win.set_position(tauri::PhysicalPosition::new(m_pos.x, m_pos.y));
-            let _ = main_win.set_size(tauri::PhysicalSize::new(m_size.width, target_height));
-        }
+        crate::services::reposition_main_window(&app);
 
         let current = CURRENT_NOTCH_OVERLAP.load(Ordering::Relaxed);
         if current != -1 {
