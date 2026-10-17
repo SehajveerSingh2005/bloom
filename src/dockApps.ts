@@ -18,6 +18,14 @@ export interface TrayApp {
 	window_handles: number[];
 }
 
+// A background item must never fall through to the executable launch route.
+export function backgroundTrayId(app: AppInfo): string {
+	if (app.tray_ids?.length !== 1) {
+		throw new Error("Select this app's tray icon from its dock context menu.");
+	}
+	return app.tray_ids[0];
+}
+
 const trayPath = (app: TrayApp) => app.path.toLowerCase().replace(/\\/g, "/");
 
 const ownsVisibleWindow = (window: AppInfo, tray: TrayApp) =>

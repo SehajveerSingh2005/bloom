@@ -42,6 +42,19 @@ native tray and restores the taskbar on completion or error, without changing
 AppBar state or icon promotion preferences. Windows' connection/transaction
 timeouts bound UIA provider calls.
 
+The overflow chevron is identified by the unique `SystemTrayIcon` AutomationId
+and `SystemTray.NormalButton` class pair, never by its translated name. A bounded
+second toggle recovers an Explorer flyout that remained logically open after
+its host was hidden. Ambiguous chevrons are rejected without invoking anything.
+If locating a tray button fails on a normal click, Bloom restores Explorer first
+and may restore a single titled, unowned, non-tool main window with the exact
+same executable path. Shared browser/system hosts are excluded. This fallback
+never launches an executable, never runs after an attempted icon invocation,
+and never replaces a native context-menu request. Missing or multiple candidate
+windows retain the original tray error. Background dock items with zero or
+multiple tray identities cannot fall through to the launch route; users choose
+an explicit icon from the dock context menu when several are present.
+
 The registry layout and Explorer's UIA tree are Windows implementation details.
 Windows versions or alternative shells that do not expose them keep the existing
 window-based dock behavior. Windows 10 tray discovery is not implemented here.
@@ -87,6 +100,15 @@ Manual acceptance checks (required before merging):
 11. Toggle App Separator off and on: only the divider changes; unpinned apps stay
     on the right. Open pinned Bloom and check that Settings appears without a
     second unpinned Bloom icon. File Explorer must not show Bluetooth tray actions.
+12. On English and Spanish Windows 11, close WhatsApp and ChatGPT to the tray,
+    then activate them from Bloom. Repeat with the overflow initially uncreated,
+    visible, and previously opened then hidden. Check both promoted and overflow
+    icons, unchanged process counts, native right-click menus, and restored
+    taskbar state on success and failure.
+13. With tray UIA discovery unavailable, check the window fallback: one matching
+    main window can be restored; zero or several candidates, tool/message-only
+    windows and shared hosts must retain the error. A right-click must never
+    restore a main window or launch a process.
 
 Live discovery, the Discord background dot, and Discord's native context menu
 have been exercised on the development machine. The broader compatibility,

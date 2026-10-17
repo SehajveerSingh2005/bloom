@@ -274,6 +274,10 @@ struct TrayExposure {
     overflow: Option<HWND>,
 }
 
+fn is_overflow_chevron(automation_id: &str, class_name: &str) -> bool {
+    automation_id == "SystemTrayIcon" && class_name == "SystemTray.NormalButton"
+}
+
 impl TrayExposure {
     unsafe fn new() -> Result<Self, String> {
         use std::sync::atomic::Ordering;
@@ -386,28 +390,31 @@ impl TrayExposure {
             .map_err(|e| e.to_string())?;
         // Only invoke the known overflow chevron. Win+B/Space can accidentally
         // activate another app when all notification icons are promoted.
+        let mut chevrons = Vec::new();
         for index in 0..elements.Length().unwrap_or(0) {
             let Ok(element) = elements.GetElement(index) else {
                 continue;
             };
-            if element
-                .CurrentAutomationId()
-                .is_ok_and(|s| s == "SystemTrayIcon")
-                && element
-                    .CurrentName()
-                    .is_ok_and(|s| s.to_string().starts_with("Show Hidden Icons"))
-            {
-                let pattern = element
-                    .GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
-                    .map_err(|e| e.to_string())?;
-                if element
-                    .CurrentName()
-                    .is_ok_and(|name| name.to_string().ends_with("Hide"))
-                {
-                    // Explorer remembers an open chevron even after Bloom hides
-                    // its host; close that stale state before reopening it.
-                    pattern.Invoke().map_err(|e| e.to_string())?;
-                }
+            if is_overflow_chevron(
+                &element
+                    .CurrentAutomationId()
+                    .unwrap_or_default()
+                    .to_string(),
+                &element.CurrentClassName().unwrap_or_default().to_string(),
+            ) {
+                chevrons.push(element);
+            }
+        }
+        // The class/ID pair distinguishes the chevron from notification icons
+        // and Quick Settings, independent of the localized accessible name.
+        if let [element] = chevrons.as_slice() {
+            let pattern = element
+                .GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+                .map_err(|e| e.to_string())?;
+            // Invoke is a toggle. A cached host can be hidden while Explorer
+            // still considers it open. Retry once after observing no usable
+            // overflow, rather than guessing that state from a translated name.
+            for _ in 0..2 {
                 pattern.Invoke().map_err(|e| e.to_string())?;
                 for _ in 0..20 {
                     if let Ok(hwnd) = find_overflow() {
@@ -418,7 +425,6 @@ impl TrayExposure {
                     }
                     std::thread::sleep(std::time::Duration::from_millis(30));
                 }
-                break;
             }
         }
         Err(
@@ -746,6 +752,52 @@ unsafe fn wait_for_menu_close(menu: HWND) {
     }
 }
 
+/// Recover only a uniquely identified, titled main window. Message-only icon
+/// owners, tool windows and ambiguous multi-window apps must never be shown.
+unsafe fn restore_existing_window(path: &str) -> bool {
+    let shared_host = std::path::Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .is_some_and(|name| {
+            matches!(
+                name.as_str(),
+                "explorer.exe"
+                    | "msedge.exe"
+                    | "chrome.exe"
+                    | "brave.exe"
+                    | "applicationframehost.exe"
+            )
+        });
+    if shared_host {
+        return false;
+    }
+    let candidates: Vec<_> = process_windows()
+        .into_iter()
+        .filter(|(handle, exe)| {
+            let hwnd = HWND(*handle as _);
+            exe.eq_ignore_ascii_case(path)
+                && GetAncestor(hwnd, GA_ROOT) == hwnd
+                && GetWindow(hwnd, GW_OWNER).unwrap_or_default().is_invalid()
+                && GetWindowLongW(hwnd, GWL_STYLE) as u32 & WS_CAPTION.0 == WS_CAPTION.0
+                && GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 == 0
+                && GetWindowTextLengthW(hwnd) > 0
+        })
+        .collect();
+    let [(handle, _)] = candidates.as_slice() else {
+        return false;
+    };
+    let hwnd = HWND(*handle as _);
+    // Revalidate ownership immediately before changing a window: handles can
+    // disappear or be reused while Explorer's UIA provider is responding.
+    let mut pid = 0;
+    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if !crate::commands::process_image_path(pid).is_some_and(|exe| exe.eq_ignore_ascii_case(path)) {
+        return false;
+    }
+    let _ = ShowWindow(hwnd, SW_RESTORE);
+    SetForegroundWindow(hwnd).as_bool()
+}
+
 pub fn interact(key: &str, context_menu: bool) -> Result<(), String> {
     unsafe {
         let _com = ComApartment::new()?;
@@ -763,11 +815,25 @@ pub fn interact(key: &str, context_menu: bool) -> Result<(), String> {
             let _ = options.SetTransactionTimeout(2000);
         }
         let mut exposure = TrayExposure::new()?;
-        let element = if icon.promoted {
-            find_promoted_icon(&automation, icon)?
-        } else {
-            exposure.expose_overflow(&automation)?;
-            find_overflow_icon(&automation, &icons, icon)?
+        let element = (|| {
+            if icon.promoted {
+                find_promoted_icon(&automation, icon)
+            } else {
+                exposure.expose_overflow(&automation)?;
+                find_overflow_icon(&automation, &icons, icon)
+            }
+        })();
+        let element = match element {
+            Ok(element) => element,
+            Err(error) => {
+                // Restore Explorer before foregrounding the app. Never relaunch
+                // an executable, and never substitute a window for a tray menu.
+                drop(exposure);
+                if !context_menu && restore_existing_window(&icon.path) {
+                    return Ok(());
+                }
+                return Err(error);
+            }
         };
         Shell_NotifyIconGetRect(&icon.identifier)
             .map_err(|_| "This tray icon is no longer running.")?;
@@ -800,6 +866,24 @@ pub fn interact(key: &str, context_menu: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn chevron_identity_does_not_use_localized_names() {
+        assert!(is_overflow_chevron(
+            "SystemTrayIcon",
+            "SystemTray.NormalButton"
+        ));
+        assert!(!is_overflow_chevron(
+            "NotifyItemIcon",
+            "SystemTray.NormalButton"
+        ));
+        assert!(!is_overflow_chevron(
+            "SystemTrayIcon",
+            "SystemTray.OmniButton"
+        ));
+        assert!(!is_overflow_chevron("", "SystemTray.NormalButton"));
+        assert!(!is_overflow_chevron("SystemTrayIcon", ""));
+    }
+
     #[test]
     #[ignore = "read-only check against the current Windows desktop"]
     fn live_tray_discovery() {

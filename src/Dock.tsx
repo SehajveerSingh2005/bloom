@@ -8,7 +8,7 @@ import { initTheme } from "./theme";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 
-import { mergeTrayApps, selectDockTrayApps, type AppInfo, type TrayApp } from "./dockApps";
+import { backgroundTrayId, mergeTrayApps, selectDockTrayApps, type AppInfo, type TrayApp } from "./dockApps";
 import { removeCustomFolder, type DockExtra } from "./dockExtras";
 
 // Host processes (Edge/Chrome/Brave/ApplicationFrameHost) run every PWA/UWP
@@ -649,8 +649,8 @@ const Dock = memo(function Dock() {
 		try {
 			if (app.path === "start") {
 				await invoke("open_app", { appName: "start" });
-			} else if (app.is_background && app.tray_ids?.length === 1) {
-				await invoke("activate_tray_icon", { trayId: app.tray_ids[0] });
+			} else if (app.is_background) {
+				await invoke("activate_tray_icon", { trayId: backgroundTrayId(app) });
 			} else if (app.all_hwnds && app.all_hwnds.length > 1) {
 				// Several windows: bring the most recent forward, then cycle.
 				await invoke("focus_app_windows", { hwnds: app.all_hwnds.map(([hwnd]) => hwnd) });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mergeTrayApps, selectDockTrayApps, type AppInfo, type TrayApp } from "../src/dockApps";
+import { backgroundTrayId, mergeTrayApps, selectDockTrayApps, type AppInfo, type TrayApp } from "../src/dockApps";
 const tray: TrayApp = {
 	name: "Discord",
 	path: "C:\\Apps\\Discord.exe",
@@ -15,6 +15,14 @@ const windowApp: AppInfo = {
 	all_hwnds: [[11, "Discord"]]
 };
 describe("dock tray lifecycle", () => {
+	test("activates only an unambiguous background tray identity", () => {
+		expect(backgroundTrayId({ ...windowApp, is_background: true, tray_ids: ["42"] })).toBe("42");
+		for (const tray_ids of [undefined, [], ["42", "43"]]) {
+			expect(() => backgroundTrayId({ ...windowApp, is_background: true, tray_ids })).toThrow(
+				"Select this app's tray icon"
+			);
+		}
+	});
 	test("does not show every tray app when the dock starts", () => {
 		const selected = selectDockTrayApps([], [tray], new Set(), () => false);
 		expect(selected.visible).toEqual([]);
