@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getVersion } from "@tauri-apps/api/app";
 import type { UpdateCheckResult } from "./updater";
+import { batteryTooltip, type BatteryDetails } from "./batteryTooltip";
 import "./App.css";
 import { initTheme } from "./theme";
 import {
@@ -508,6 +509,18 @@ function App() {
 
 	const [batteryLevel, setBatteryLevel] = useState(100);
 	const [isCharging, setIsCharging] = useState(false);
+	// Fetched when the pointer reaches the battery widget, for its tooltip.
+	const [batteryDetails, setBatteryDetails] = useState<BatteryDetails | null>(null);
+	// The status widget whose tooltip is open, the side of the pill it hangs
+	// from, and the distance from the widget to just past that edge.
+	const [statusTooltip, setStatusTooltip] = useState<{
+		id: string;
+		side: "below" | "left" | "right";
+		offset: number;
+	} | null>(null);
+	const statusTooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Width the hovered status strip needs so neither side runs into the clock.
+	const [statusFitWidth, setStatusFitWidth] = useState(0);
 	const [showPowerPulse, setShowPowerPulse] = useState(false);
 	const [showLowBatteryPulse, setShowLowBatteryPulse] = useState(false);
 	const [lowBatteryThreshold, setLowBatteryThreshold] = useState(() =>
@@ -684,6 +697,10 @@ function App() {
 	const [isOverlapped, setIsOverlapped] = useState(false);
 	const [interactionState, setInteractionState] = useState<"active" | "grace" | "none">("none");
 	const bloomRef = useRef<HTMLDivElement>(null);
+	// Measured to fit the hovered status strip; see statusFitWidth.
+	const leftWidgetsRef = useRef<HTMLDivElement>(null);
+	const rightWidgetsRef = useRef<HTMLDivElement>(null);
+	const timeCenterRef = useRef<HTMLDivElement>(null);
 	const musicBubbleRef = useRef<HTMLButtonElement>(null);
 	const shelfBubbleRef = useRef<HTMLButtonElement>(null);
 	const reportNotchRect = useRef<() => void>(() => {});
@@ -2335,6 +2352,77 @@ function App() {
 		}
 	}, [bluetoothEnabled]);
 
+	// The notch never takes focus, and native `title` tooltips only show for an
+	// active window, so the status widgets draw their own. A tooltip opens
+	// after a tooltip-like delay, by which time the battery details fetched on
+	// enter are in. Under the status strip it hangs below the pill; once the
+	// notch is open the pill is the tall panel, so it sits beside the pill on
+	// the widget's side instead, level with the widget.
+	const showStatusTooltip = useCallback(
+		(id: string, widget: HTMLElement) => {
+			if (statusTooltipTimerRef.current) clearTimeout(statusTooltipTimerRef.current);
+			statusTooltipTimerRef.current = setTimeout(() => {
+				const pill = bloomRef.current?.getBoundingClientRect();
+				const own = widget.getBoundingClientRect();
+				// Client rects are zoomed by the notch scale; offsets are not.
+				if (!pill) {
+					setStatusTooltip({ id, side: "below", offset: 8 });
+				} else if (!isOpen) {
+					const gap = (pill.bottom - own.bottom) / scale;
+					setStatusTooltip({ id, side: "below", offset: Math.max(0, gap) + 8 });
+				} else if (own.left + own.width / 2 >= pill.left + pill.width / 2) {
+					const gap = (pill.right - own.right) / scale;
+					setStatusTooltip({ id, side: "right", offset: Math.max(0, gap) + 10 });
+				} else {
+					const gap = (own.left - pill.left) / scale;
+					setStatusTooltip({ id, side: "left", offset: Math.max(0, gap) + 10 });
+				}
+			}, 400);
+		},
+		[scale, isOpen]
+	);
+
+	const hideStatusTooltip = useCallback(() => {
+		if (statusTooltipTimerRef.current) clearTimeout(statusTooltipTimerRef.current);
+		statusTooltipTimerRef.current = null;
+		setStatusTooltip(null);
+	}, []);
+
+	// Widgets unmount when the notch collapses, without a mouse leave, and an
+	// open card is placed for the notch's shape when it opened.
+	useEffect(() => {
+		hideStatusTooltip();
+	}, [isHovered, isOpen, hideStatusTooltip]);
+
+	// Both sides of the status strip get equal width around the centered
+	// clock, so the notch must fit the clock plus twice the wider side. Widget
+	// widths vary (network speed especially), so they are measured rather than
+	// counted. The width only grows during a hover, so a live label getting
+	// shorter doesn't make the notch jitter. Layout widths are unaffected by
+	// the notch scale.
+	useLayoutEffect(() => {
+		if (!isHovered || bloomMode !== "status") {
+			if (statusFitWidth !== 0) setStatusFitWidth(0);
+			return;
+		}
+		// offsetWidth, not scrollWidth: an open tooltip card overflows its
+		// widget and must not widen the notch.
+		const side = Math.max(
+			leftWidgetsRef.current?.offsetWidth ?? 0,
+			rightWidgetsRef.current?.offsetWidth ?? 0
+		);
+		const clock = timeCenterRef.current?.offsetWidth ?? 0;
+		// The pill's 12px padding on each side, and a 10px gap to the clock.
+		const needed = Math.ceil(clock + 2 * (side + 10) + 24);
+		if (side > 0 && needed > statusFitWidth) setStatusFitWidth(needed);
+	});
+
+	const refreshBatteryDetails = useCallback(() => {
+		invoke<BatteryDetails>("get_battery_details")
+			.then(setBatteryDetails)
+			.catch((err) => console.error("Failed to read battery details:", err));
+	}, []);
+
 	// Battery Saver - opens settings (no public API to toggle without admin)
 	const openBatterySaverSettings = useCallback(async () => {
 		try {
@@ -2435,63 +2523,133 @@ function App() {
 		}
 	};
 
+	// Where a status tooltip card sits and how it slides in, by placement.
+	const statusTooltipMotion = (side: "below" | "left" | "right", offset: number) => {
+		if (side === "below") {
+			return {
+				style: { top: `calc(100% + ${offset}px)`, left: "50%" },
+				hidden: { opacity: 0, x: "-50%", y: -4 },
+				shown: { opacity: 1, x: "-50%", y: 0 }
+			};
+		}
+		// Top-aligned with the widget rather than centered on it: the widgets
+		// sit near the top of the screen, which would cut a centered card off.
+		const nudge = side === "right" ? -4 : 4;
+		return {
+			style: { top: -8, [side === "right" ? "left" : "right"]: `calc(100% + ${offset}px)` },
+			hidden: { opacity: 0, x: nudge, y: 0 },
+			shown: { opacity: 1, x: 0, y: 0 }
+		};
+	};
+
+	// A status widget with its tooltip card, which hangs outside the pill.
+	const statusWidget = (
+		id: string,
+		tooltip: string,
+		content: React.ReactNode,
+		onEnter?: () => void
+	) => (
+		<div
+			className="passive-feature"
+			key={id}
+			onMouseEnter={(e) => {
+				onEnter?.();
+				showStatusTooltip(id, e.currentTarget);
+			}}
+			onMouseLeave={hideStatusTooltip}
+		>
+			{content}
+			<AnimatePresence>
+				{statusTooltip?.id === id &&
+					(() => {
+						const placed = statusTooltipMotion(statusTooltip.side, statusTooltip.offset);
+						return (
+							<motion.div
+								className="status-tooltip"
+								style={placed.style}
+								initial={placed.hidden}
+								animate={placed.shown}
+								exit={placed.hidden}
+								transition={{ duration: 0.15 }}
+							>
+								{tooltip}
+							</motion.div>
+						);
+					})()}
+			</AnimatePresence>
+		</div>
+	);
+
 	// Render a status widget by ID
 	const renderStatusWidget = (id: string) => {
 		switch (id) {
 			case "weather":
 				if (!settingsWeatherEnabled || temperature === null) return null;
-				return (
-					<div
-						className="passive-feature"
-						key="weather"
-						title={cityName ? `${weatherCondition} — ${cityName}` : weatherCondition}
-					>
+				return statusWidget(
+					"weather",
+					cityName ? `${weatherCondition} — ${cityName}` : weatherCondition,
+					<>
 						<WeatherIcon size={12} strokeWidth={2.2} />
 						<span className="label">
 							{temperature}°{tempUnit === "fahrenheit" ? "F" : "C"}
 						</span>
-					</div>
+					</>
 				);
 			case "battery":
-				return (
-					<div className="passive-feature" key="battery">
+				return statusWidget(
+					"battery",
+					batteryTooltip(
+						batteryDetails,
+						{ level: batteryLevel, charging: isCharging },
+						batterySaverEnabled
+					),
+					<>
 						<BatteryIcon
 							charging={isCharging}
 							level={batteryLevel}
 							threshold={lowBatteryThreshold}
 						/>
 						<span className="label">{batteryLevel}%</span>
-					</div>
+					</>,
+					refreshBatteryDetails
 				);
 			case "cpu":
-				return (
-					<div className="passive-feature" key="cpu" title="CPU Usage">
+				return statusWidget(
+					"cpu",
+					"CPU Usage",
+					<>
 						<Cpu size={12} strokeWidth={2} />
 						<span className="label">{cpuUsage}%</span>
-					</div>
+					</>
 				);
 			case "ram":
-				return (
-					<div className="passive-feature" key="ram" title="RAM Usage">
+				return statusWidget(
+					"ram",
+					"RAM Usage",
+					<>
 						<MemoryStick size={12} strokeWidth={2} />
 						<span className="label">{Math.round(ramUsage)}%</span>
-					</div>
+					</>
 				);
 			case "disk":
-				return (
-					<div className="passive-feature" key="disk" title="Free Disk Space">
+				return statusWidget(
+					"disk",
+					"Free Disk Space",
+					<>
 						<HardDrive size={12} strokeWidth={2} />
 						<span className="label">{diskSpace}GB</span>
-					</div>
+					</>
 				);
 			case "net":
-				return (
-					<div className="passive-feature" key="net" title="Network Speed">
+				return statusWidget(
+					"net",
+					"Network Speed",
+					<>
 						<ArrowUpDown size={12} strokeWidth={2} />
 						<span className="label">
 							↑{formatBytes(netUpSpeed)} ↓{formatBytes(netDownSpeed)}
 						</span>
-					</div>
+					</>
 				);
 			default:
 				return null;
@@ -2528,7 +2686,7 @@ function App() {
 		}
 		if (bloomMode === "status" && isHovered) {
 			const totalWidgets = statusWidgets.left.length + statusWidgets.right.length;
-			return Math.min(200 + totalWidgets * 50, 380) - clock24hTrim;
+			return Math.max(Math.min(200 + totalWidgets * 50, 380) - clock24hTrim, statusFitWidth);
 		}
 		if (isMusicMode && isOpen) return mediaLayout === "compact" ? 300 : 340;
 		if ((showPowerPulse || showLowBatteryPulse || showUpdatePulse) && !isHovered) return 200;
@@ -3063,6 +3221,7 @@ function App() {
 																) : !showCompactMusicIcons && isHovered && statusWidgets.left.length > 0 ? (
 																	<motion.div
 																		key="left-widgets"
+																		ref={leftWidgetsRef}
 																		className="passive-features-group"
 																		initial={{ opacity: 0 }}
 																		animate={{ opacity: 1 }}
@@ -3075,7 +3234,7 @@ function App() {
 															</div>
 
 															{/* Center - Time (always visible) */}
-															<div className="time-center">
+															<div className="time-center" ref={timeCenterRef}>
 																<AnimatePresence>
 																	{showPanelArrows && (
 																		<motion.button
@@ -3226,6 +3385,7 @@ function App() {
 																) : !showCompactMusicIcons && isHovered && statusWidgets.right.length > 0 ? (
 																	<motion.div
 																		key="right-widgets"
+																		ref={rightWidgetsRef}
 																		className="passive-features-group"
 																		initial={{ opacity: 0 }}
 																		animate={{ opacity: 1 }}

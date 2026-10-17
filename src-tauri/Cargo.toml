@@ -64,6 +64,8 @@ windows = { version = "0.61", features = [
 	"Foundation_Collections",
 	"Win32_Media_KernelStreaming",
 	"System_Power",
+	"Devices_Power",
+	"Win32_System_Power",
 	"Win32_NetworkManagement_IpHelper",
 	"Win32_NetworkManagement_Ndis",
 	"Win32_NetworkManagement_WiFi",

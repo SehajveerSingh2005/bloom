@@ -416,10 +416,30 @@ img {
 }
 
 .passive-feature {
+	position: relative;
 	display: flex;
 	align-items: center;
 	gap: 5px;
 	color: var(--bloom-text, rgba(255, 255, 255, 0.9));
+}
+
+/* Drawn by the notch because native tooltips never show for it (see
+   showStatusTooltip in App.tsx). Hangs outside the pill, display-only;
+   App.tsx places it below or beside the pill. */
+.status-tooltip {
+	position: absolute;
+	z-index: 20;
+	pointer-events: none;
+	padding: 8px 11px;
+	border-radius: 11px;
+	background: var(--bloom-bg-expanded, rgba(20, 20, 20, 0.92));
+	color: var(--bloom-text, white);
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+	font-size: 11px;
+	font-weight: 500;
+	line-height: 1.5;
+	white-space: pre;
+	text-align: left;
 }
 
 .passive-feature .label {

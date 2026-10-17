@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod battery;
 mod bluetooth;
 mod commands;
 mod diagnostics;
@@ -184,6 +185,7 @@ fn main() {
             set_brightness,
             get_battery_saver_state,
             open_battery_saver_settings,
+            battery::get_battery_details,
             get_system_accent_color,
             get_cpu_usage,
             get_ram_usage,
