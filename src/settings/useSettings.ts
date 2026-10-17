@@ -104,6 +104,10 @@ export function useSettings() {
 	const [dockExtrasRecycleBin, setDockExtrasRecycleBin] = useState(
 		() => localStorage.getItem("bloom-dock-extras-recycle-bin") !== "false"
 	);
+	// Off unless turned on, so existing docks don't change.
+	const [dockTaskView, setDockTaskView] = useState(
+		() => localStorage.getItem("bloom-dock-task-view") === "true"
+	);
 	const [dockExtrasFolders, setDockExtrasFolders] = useState(
 		() => localStorage.getItem("bloom-dock-extras-folders") ?? DEFAULT_ENABLED_FOLDERS
 	);
@@ -211,6 +215,7 @@ export function useSettings() {
 			apply(getVal("bloom-dock-extras-position"), setDockExtrasPosition, (v) => v);
 			apply(getVal("bloom-dock-extras-drives"), setDockExtrasDrives, readBool);
 			apply(getVal("bloom-dock-extras-recycle-bin"), setDockExtrasRecycleBin, readBool);
+			apply(getVal("bloom-dock-task-view"), setDockTaskView, readBool);
 			apply(getVal("bloom-dock-extras-folders"), setDockExtrasFolders, (v) => v);
 			apply(getVal("bloom-dock-extras-custom-folders"), setDockExtrasCustomFolders, (v) => v);
 
@@ -342,6 +347,7 @@ export function useSettings() {
 		"bloom-dock-extras-position": setDockExtrasPosition,
 		"bloom-dock-extras-drives": setDockExtrasDrives,
 		"bloom-dock-extras-recycle-bin": setDockExtrasRecycleBin,
+		"bloom-dock-task-view": setDockTaskView,
 		"bloom-dock-extras-folders": setDockExtrasFolders,
 		"bloom-dock-extras-custom-folders": setDockExtrasCustomFolders,
 		"bloom-weather-enabled": setWeatherEnabled,
@@ -666,6 +672,12 @@ export function useSettings() {
 		saveSetting("bloom-dock-extras-recycle-bin", String(next));
 	};
 
+	const toggleDockTaskView = () => {
+		const next = !dockTaskView;
+		setDockTaskView(next);
+		saveSetting("bloom-dock-task-view", String(next));
+	};
+
 	const toggleDockExtraFolder = (id: string) => {
 		const next = toggleEnabledFolder(dockExtrasFolders, id);
 		setDockExtrasFolders(next);
@@ -985,6 +997,8 @@ export function useSettings() {
 		toggleDockExtrasDrives,
 		dockExtrasRecycleBin,
 		toggleDockExtrasRecycleBin,
+		dockTaskView,
+		toggleDockTaskView,
 		dockExtrasFolders,
 		toggleDockExtraFolder,
 		dockExtrasCustomFolders,

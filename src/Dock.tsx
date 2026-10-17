@@ -105,6 +105,16 @@ const isIdentifier = (p: string) => !p.includes("/") && !p.includes("\\");
 
 // Resolve the configured start-button icon to a public asset, or to the data
 // URI of a user-uploaded icon (stored with a "custom:" prefix).
+// Task View's glyph: a window in front of another, as on the taskbar.
+function TaskViewIcon() {
+	return (
+		<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round">
+			<rect x="3.5" y="7.5" width="13" height="13" rx="3" />
+			<path d="M8 3.5h9.5a3 3 0 0 1 3 3V16" />
+		</svg>
+	);
+}
+
 function resolveStartIcon(startIcon: string): string {
 	if (startIcon === "bloom-colorful") return "/bloom-colorful.png";
 	if (startIcon === "bloom-golden") return "/bloom-golden.png";
@@ -165,6 +175,9 @@ const Dock = memo(function Dock() {
 	const [dockAdaptive, setDockAdaptive] = useState(
 		() => localStorage.getItem("bloom-dock-adaptive") === "true"
 	);
+	const [dockTaskView, setDockTaskView] = useState(
+		() => localStorage.getItem("bloom-dock-task-view") === "true"
+	);
 	const [startIcon, setStartIcon] = useState(
 		() => localStorage.getItem("bloom-start-icon") || "default"
 	);
@@ -189,6 +202,7 @@ const Dock = memo(function Dock() {
 		y: number;
 		app: AppInfo | null;
 		extra?: DockExtra | null;
+		taskView?: boolean;
 	} | null>(null);
 	const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
 	const [activeOrder, setActiveOrder] = useState<string[]>([]);
@@ -360,6 +374,7 @@ const Dock = memo(function Dock() {
 
 			const adaptive = getVal("bloom-dock-adaptive", "false");
 			setDockAdaptive(adaptive === "true");
+			setDockTaskView(getVal("bloom-dock-task-view", "false") === "true");
 
 			const startIconVal = getVal("bloom-start-icon", "default") || "default";
 			setStartIcon(startIconVal);
@@ -435,6 +450,7 @@ const Dock = memo(function Dock() {
 		"bloom-dock-icon-only": setDockIconOnly,
 		"bloom-dock-separator-enabled": setDockSeparatorEnabled,
 		"bloom-dock-adaptive": setDockAdaptive,
+		"bloom-dock-task-view": setDockTaskView,
 		"bloom-start-icon": setStartIcon,
 		"bloom-scale": setScale,
 		"bloom-dock-extras-position": setDockExtrasPosition,
@@ -752,6 +768,20 @@ const Dock = memo(function Dock() {
 			key: "bloom-dock-extras-custom-folders",
 			value: next
 		}).catch(console.error);
+		closeMenu();
+	};
+
+	const openTaskView = () => {
+		invoke("open_system_action", { action: "task-view" }).catch(showActionError);
+	};
+
+	// Like the taskbar's "Hide Task View button"; Settings turns it back on.
+	const hideTaskView = () => {
+		setDockTaskView(false);
+		localStorage.setItem("bloom-dock-task-view", "false");
+		invoke("save_setting", { key: "bloom-dock-task-view", value: "false" }).catch(
+			showActionError
+		);
 		closeMenu();
 	};
 
@@ -1207,6 +1237,50 @@ const Dock = memo(function Dock() {
 									</motion.div>
 								)}
 
+								{dockTaskView && (
+									<motion.div
+										key="task-view"
+										initial={{ opacity: 0, scale: 0 }}
+										animate={{ opacity: 1, scale: 1 }}
+										exit={{ opacity: 0, scale: 0, transition: { duration: 0.12 } }}
+										className="dock-icon-wrapper"
+										onContextMenu={(e) => {
+											e.stopPropagation();
+											e.preventDefault();
+											setContextMenu({ x: e.clientX, y: e.clientY, app: null, taskView: true });
+										}}
+										onMouseEnter={() => setHoveredApp("task-view")}
+										onMouseLeave={() => {
+											setHoveredApp(null);
+											setPressedApp(null);
+										}}
+									>
+										{(!dockPreviewEnabled || hoveredApp === "task-view") && (
+											<div className="tooltip">Task View</div>
+										)}
+										<motion.div
+											className="dock-icon"
+											variants={iconVariants}
+											animate={
+												pressedApp === "task-view"
+													? "tap"
+													: hoveredApp === "task-view"
+														? "hover"
+														: "idle"
+											}
+											onPointerDown={() => setPressedApp("task-view")}
+											onPointerUp={() => setPressedApp(null)}
+											onPointerCancel={() => setPressedApp(null)}
+											onClick={(e) => {
+												e.stopPropagation();
+												openTaskView();
+											}}
+										>
+											<TaskViewIcon />
+										</motion.div>
+									</motion.div>
+								)}
+
 								{dockExtrasPosition === "left" && dockExtras.length > 0 && (
 									<>
 										{dockExtras.map((extra) => renderExtra(extra))}
@@ -1566,7 +1640,9 @@ const Dock = memo(function Dock() {
 					}}
 					onClick={(e) => e.stopPropagation()}
 				>
-					{!contextMenu.extra && (!contextMenu.app || contextMenu.app.path === "start") && (
+					{!contextMenu.extra &&
+						!contextMenu.taskView &&
+						(!contextMenu.app || contextMenu.app.path === "start") && (
 						<div
 							style={{
 								maxHeight: Math.max(64, window.innerHeight / scale - 200),
@@ -1631,6 +1707,22 @@ const Dock = memo(function Dock() {
 									</div>
 								</>
 							)}
+						</>
+					) : contextMenu.taskView ? (
+						<>
+							<div
+								className="menu-item"
+								onClick={() => {
+									closeMenu();
+									openTaskView();
+								}}
+							>
+								Open Task View
+							</div>
+							<div className="menu-divider" />
+							<div className="menu-item" onClick={hideTaskView}>
+								Hide Task View
+							</div>
 						</>
 					) : contextMenu.app ? (
 						<>

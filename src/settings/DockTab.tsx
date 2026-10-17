@@ -13,6 +13,7 @@ import {
 	LayoutPanelLeft,
 	HardDrive,
 	Trash2,
+	Copy,
 	FolderOpen,
 	FolderPlus,
 	Plus,
@@ -67,6 +68,8 @@ interface DockTabProps {
 	toggleDockExtrasDrives: () => void;
 	dockExtrasRecycleBin: boolean;
 	toggleDockExtrasRecycleBin: () => void;
+	dockTaskView: boolean;
+	toggleDockTaskView: () => void;
 	dockExtrasFolders: string;
 	toggleDockExtraFolder: (id: string) => void;
 	dockExtrasCustomFolders: string;
@@ -99,6 +102,8 @@ export function DockTab({
 	toggleDockExtrasDrives,
 	dockExtrasRecycleBin,
 	toggleDockExtrasRecycleBin,
+	dockTaskView,
+	toggleDockTaskView,
 	dockExtrasFolders,
 	toggleDockExtraFolder,
 	dockExtrasCustomFolders,
@@ -194,6 +199,13 @@ export function DockTab({
 									checked={dockSeparatorEnabled}
 									onChange={toggleDockSeparator}
 								/>
+								<span className="slider"></span>
+							</label>
+						</SettingRow>
+
+						<SettingRow icon={Copy} label="Task View" desc="Show the Task View button beside Start">
+							<label className="toggle-switch">
+								<input type="checkbox" checked={dockTaskView} onChange={toggleDockTaskView} />
 								<span className="slider"></span>
 							</label>
 						</SettingRow>

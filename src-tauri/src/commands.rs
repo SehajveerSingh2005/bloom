@@ -4138,6 +4138,7 @@ pub enum SystemAction {
     InstalledApps,
     PowerOptions,
     NetworkConnections,
+    TaskView,
 }
 
 #[tauri::command]
@@ -4171,6 +4172,13 @@ pub async fn open_system_action(action: SystemAction) -> Result<(), String> {
             SystemAction::InstalledApps => ("ms-settings:appsfeatures".into(), String::new()),
             SystemAction::PowerOptions => ("ms-settings:powersleep".into(), String::new()),
             SystemAction::NetworkConnections => ("ms-settings:network".into(), String::new()),
+            // Task View's shell folder opens Task View like the taskbar's
+            // button, without sending Win+Tab, which a held Ctrl or Shift
+            // would turn into a different shortcut.
+            SystemAction::TaskView => (
+                "explorer.exe".into(),
+                "shell:::{3080F90E-D7AD-11D9-BD98-0000947B0257}".into(),
+            ),
         };
         let file: Vec<u16> = file.encode_utf16().chain(Some(0)).collect();
         let args: Vec<u16> = args.encode_utf16().chain(Some(0)).collect();
