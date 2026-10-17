@@ -923,6 +923,111 @@ pub async fn get_active_windows() -> Vec<AppInfo> {
     .unwrap_or_default()
 }
 
+/// Where to put a window whose restore rectangle is on no screen, in screen
+/// coordinates: centered in `work`, at its own size if that is at least a
+/// third of the work area each way (shrunk to fit), otherwise at two thirds
+/// of the work area. An off-screen restore rectangle usually carries a broken
+/// size too, such as an app's minimum size.
+fn on_screen_restore_rect(
+    normal: windows::Win32::Foundation::RECT,
+    work: windows::Win32::Foundation::RECT,
+) -> windows::Win32::Foundation::RECT {
+    let work_w = work.right - work.left;
+    let work_h = work.bottom - work.top;
+    let fit = |size: i32, available: i32| {
+        if size >= available / 3 {
+            size.min(available)
+        } else {
+            available * 2 / 3
+        }
+    };
+    let w = fit(normal.right - normal.left, work_w);
+    let h = fit(normal.bottom - normal.top, work_h);
+    let left = work.left + (work_w - w) / 2;
+    let top = work.top + (work_h - h) / 2;
+    windows::Win32::Foundation::RECT {
+        left,
+        top,
+        right: left + w,
+        bottom: top + h,
+    }
+}
+
+/// Before the dock restores a minimized window: if the position Windows will
+/// restore it to lies on no monitor, move that position onto the monitor
+/// under the cursor (the dock's), so the window doesn't come back off-screen.
+/// Apps can leave the off-screen spot Windows parks minimized windows at
+/// (-32000, -32000) as their restore position, and the taskbar would restore
+/// them there too.
+unsafe fn bring_restore_position_on_screen(hwnd: HWND) {
+    use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONULL,
+        MONITOR_DEFAULTTOPRIMARY,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetWindowLongW, GetWindowPlacement, SetWindowPlacement, GWL_EXSTYLE,
+        WINDOWPLACEMENT, WS_EX_TOOLWINDOW,
+    };
+
+    let mut placement = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+    if GetWindowPlacement(hwnd, &mut placement).is_err() {
+        return;
+    }
+
+    // The restore rectangle is in workspace coordinates (offset by the
+    // primary monitor's work area origin) unless the window is a tool window.
+    let monitor_info = |monitor| {
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        GetMonitorInfoW(monitor, &mut info)
+            .as_bool()
+            .then_some(info)
+    };
+    let Some(primary) = monitor_info(MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY))
+    else {
+        return;
+    };
+    let tool_window = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0;
+    let (dx, dy) = if tool_window {
+        (0, 0)
+    } else {
+        (
+            primary.rcWork.left - primary.rcMonitor.left,
+            primary.rcWork.top - primary.rcMonitor.top,
+        )
+    };
+    let normal = placement.rcNormalPosition;
+    let on_screen = RECT {
+        left: normal.left + dx,
+        top: normal.top + dy,
+        right: normal.right + dx,
+        bottom: normal.bottom + dy,
+    };
+    if !MonitorFromRect(&on_screen, MONITOR_DEFAULTTONULL).is_invalid() {
+        return;
+    }
+
+    let mut cursor = POINT::default();
+    let _ = GetCursorPos(&mut cursor);
+    let Some(target) = monitor_info(MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)) else {
+        return;
+    };
+    let rect = on_screen_restore_rect(on_screen, target.rcWork);
+    placement.rcNormalPosition = RECT {
+        left: rect.left - dx,
+        top: rect.top - dy,
+        right: rect.right - dx,
+        bottom: rect.bottom - dy,
+    };
+    let _ = SetWindowPlacement(hwnd, &placement);
+}
+
 /// The window outside Bloom that most recently became the foreground window.
 fn last_focused_window() -> Option<HWND> {
     let map = crate::state::FOCUS_TIMESTAMPS.get()?.lock().ok()?;
@@ -974,6 +1079,7 @@ pub async fn focus_window(app: AppHandle, hwnd: isize) -> bool {
             let _ = ShowWindow(hwnd, SW_SHOW);
         }
         if IsIconic(hwnd).as_bool() {
+            bring_restore_position_on_screen(hwnd);
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
 
@@ -1023,6 +1129,7 @@ pub async fn focus_app_windows(hwnds: Vec<isize>) {
             let _ = ShowWindow(hwnd, SW_SHOW);
         }
         if IsIconic(hwnd).as_bool() {
+            bring_restore_position_on_screen(hwnd);
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
         let _ = SetForegroundWindow(hwnd);
@@ -3906,6 +4013,49 @@ mod settings_import_tests {
         assert!(read_settings_import(FailedReader)
             .unwrap_err()
             .contains("read failed"));
+    }
+}
+
+#[cfg(test)]
+mod restore_rect_tests {
+    use super::*;
+    use windows::Win32::Foundation::RECT;
+
+    fn rect(left: i32, top: i32, w: i32, h: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right: left + w,
+            bottom: top + h,
+        }
+    }
+
+    #[test]
+    fn keeps_a_usable_size_and_centers_it() {
+        let work = rect(0, 0, 2880, 1800);
+        assert_eq!(
+            on_screen_restore_rect(rect(-32000, -32000, 1200, 800), work),
+            rect(840, 500, 1200, 800)
+        );
+    }
+
+    #[test]
+    fn replaces_a_stub_size_with_two_thirds_of_the_work_area() {
+        // A Windows Terminal left at its minimum size at the parking spot.
+        let work = rect(0, 0, 2880, 1800);
+        assert_eq!(
+            on_screen_restore_rect(rect(-32000, -32000, 945, 200), work),
+            rect(480, 300, 1920, 1200)
+        );
+    }
+
+    #[test]
+    fn shrinks_an_oversized_window_to_the_work_area_of_its_monitor() {
+        let work = rect(2880, 100, 1920, 980);
+        assert_eq!(
+            on_screen_restore_rect(rect(-32000, -32000, 3000, 2000), work),
+            work
+        );
     }
 }
 
