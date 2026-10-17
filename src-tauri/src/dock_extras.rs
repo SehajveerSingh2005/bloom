@@ -293,6 +293,22 @@ fn list_custom_folders(raw: &str) -> Vec<DockExtra> {
         .collect()
 }
 
+/// Drive letters hidden from the extras, e.g. "D,E". Hidden rather than shown
+/// letters are stored, so a newly connected drive appears by default.
+fn parse_hidden_drives(raw: &str) -> Vec<char> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|letter| letter.len() == 1)
+        .filter_map(|letter| letter.chars().next())
+        .filter(char::is_ascii_alphabetic)
+        .map(|letter| letter.to_ascii_uppercase())
+        .collect()
+}
+
+fn drive_letter(extra: &DockExtra) -> Option<char> {
+    extra.id.strip_prefix("drive:")?.chars().next()
+}
+
 fn parse_enabled_folders(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(|id| id.trim().to_lowercase())
@@ -358,6 +374,9 @@ pub async fn get_dock_extras(app: AppHandle) -> Vec<DockExtra> {
     let bin_enabled = get_setting_str(&app, "bloom-dock-extras-recycle-bin")
         .unwrap_or_else(|| "true".into())
         != "false";
+    let hidden_drives = parse_hidden_drives(
+        &get_setting_str(&app, "bloom-dock-extras-hidden-drives").unwrap_or_default(),
+    );
     let folders =
         get_setting_str(&app, "bloom-dock-extras-folders").unwrap_or_else(|| "downloads".into());
     let custom =
@@ -371,7 +390,11 @@ pub async fn get_dock_extras(app: AppHandle) -> Vec<DockExtra> {
 
         let mut extras = Vec::new();
         if drives_enabled {
-            extras.extend(list_drives());
+            extras.extend(
+                list_drives().into_iter().filter(|drive| {
+                    drive_letter(drive).is_none_or(|l| !hidden_drives.contains(&l))
+                }),
+            );
         }
         extras.extend(list_known_folders(&parse_enabled_folders(&folders)));
         extras.extend(list_custom_folders(&custom));
@@ -383,6 +406,23 @@ pub async fn get_dock_extras(app: AppHandle) -> Vec<DockExtra> {
             unsafe { CoUninitialize() };
         }
         extras
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Every connected drive, hidden or not, for the drive picker in Settings.
+#[tauri::command]
+pub async fn get_dock_drives() -> Vec<DockExtra> {
+    tauri::async_runtime::spawn_blocking(|| {
+        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+        // WIC encodes the drive icons, as in get_dock_extras.
+        let com_initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).is_ok() };
+        let drives = list_drives();
+        if com_initialized {
+            unsafe { CoUninitialize() };
+        }
+        drives
     })
     .await
     .unwrap_or_default()
@@ -487,6 +527,14 @@ mod tests {
             drive_display_name(None, None, DRIVE_CDROM, 'D'),
             "DVD Drive (D:)"
         );
+    }
+
+    #[test]
+    fn parses_hidden_drive_letters() {
+        assert_eq!(parse_hidden_drives(""), Vec::<char>::new());
+        assert_eq!(parse_hidden_drives("d, E,,c"), vec!['D', 'E', 'C']);
+        // Anything but a single letter is ignored.
+        assert_eq!(parse_hidden_drives("D:,EF,1,z"), vec!['Z']);
     }
 
     #[test]

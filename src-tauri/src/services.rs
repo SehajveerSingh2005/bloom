@@ -436,6 +436,9 @@ unsafe extern "system" fn focus_event_proc(
     _event_thread: u32,
     _ms_event_time: u32,
 ) {
+    // Before any filtering: Start closing can hand the foreground to anything,
+    // including no window or a tool window.
+    crate::commands::note_foreground_for_start(hwnd);
     if hwnd.0.is_null() {
         return;
     }

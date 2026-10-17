@@ -48,6 +48,37 @@ export function toggleEnabledFolder(raw: string | null, id: string): string {
 	return next.length === 0 ? "none" : serializeEnabledFolders(next);
 }
 
+/** A drive extra's letter, from its "drive:D" id. */
+export function driveLetter(extra: DockExtra): string | null {
+	const match = /^drive:([A-Za-z])$/.exec(extra.id);
+	return match ? match[1].toUpperCase() : null;
+}
+
+/** Hidden drive letters, e.g. "D,E"; matches the backend's parsing. */
+export function parseHiddenDrives(raw: string | null): string[] {
+	if (!raw) return [];
+	return raw
+		.split(",")
+		.map((letter) => letter.trim().toUpperCase())
+		.filter((letter) => /^[A-Z]$/.test(letter));
+}
+
+function serializeHiddenDrives(letters: string[]): string {
+	return [...new Set(letters)].sort().join(",");
+}
+
+export function toggleHiddenDrive(raw: string | null, letter: string): string {
+	const hidden = parseHiddenDrives(raw);
+	const upper = letter.toUpperCase();
+	return serializeHiddenDrives(
+		hidden.includes(upper) ? hidden.filter((existing) => existing !== upper) : [...hidden, upper]
+	);
+}
+
+export function hideDrive(raw: string | null, letter: string): string {
+	return serializeHiddenDrives([...parseHiddenDrives(raw), letter.toUpperCase()]);
+}
+
 export function parseCustomFolders(raw: string | null): CustomFolder[] {
 	if (!raw) return [];
 	try {
