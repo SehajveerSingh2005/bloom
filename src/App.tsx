@@ -678,6 +678,7 @@ function App() {
 	announcementOpenRef.current = announcementOpen;
 
 	const [isVisible, setIsVisible] = useState(true);
+	const [captureUiActive, setCaptureUiActive] = useState(false);
 	const [isImpacted, setIsImpacted] = useState(false);
 	const [isExpanded, setIsExpanded] = useState(false);
 	const [startupAnimating, setStartupAnimating] = useState(false);
@@ -714,9 +715,10 @@ function App() {
 
 	const isAnyInteraction = isHovered || isNotchHovered || isEdgeHovered;
 	const isHidden =
-		!startupAnimating &&
-		((notchMode === "smart" && isOverlapped && interactionState === "none") ||
-			(notchMode === "peek" && interactionState === "none" && !eventPeek));
+		captureUiActive ||
+		(!startupAnimating &&
+			((notchMode === "smart" && isOverlapped && interactionState === "none") ||
+				(notchMode === "peek" && interactionState === "none" && !eventPeek)));
 
 	useEffect(() => {
 		if (isAnyInteraction) {
@@ -1042,6 +1044,13 @@ function App() {
 			setIsVisible(event.payload);
 		});
 
+		// The backend sets this while a Snipping Tool session is up. The notch
+		// window stays alive (it is never hidden away), so the UI is rendered
+		// out and input stays click-through until the capture session ends.
+		const unlistenCaptureUi = listen<boolean>("capture-ui-active", (event) => {
+			setCaptureUiActive(event.payload);
+		});
+
 		const unlistenNotchOverlap = listen<boolean>("notch-overlap", (event) => {
 			setIsOverlapped(event.payload);
 		});
@@ -1059,6 +1068,7 @@ function App() {
 
 		return () => {
 			unlistenVisibility.then((f) => f());
+			unlistenCaptureUi.then((f) => f());
 			unlistenNotchOverlap.then((f) => f());
 			unlistenNotchEdgeHover.then((f) => f());
 			unlistenNotchPointerLeft.then((f) => f());

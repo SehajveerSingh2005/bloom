@@ -2240,13 +2240,28 @@ fn apply_capture_ui_state(app: &AppHandle, active: bool) {
     if SHUTTING_DOWN.load(Ordering::Relaxed) {
         return;
     }
+    crate::diagnostics::record("capture_ui", if active { "active" } else { "inactive" });
     if let Some(main_win) = app.get_webview_window("main") {
         if active {
+            // Never hide the notch window for the capture UI. Windows re-shows
+            // it at a default placement after the Snipping Tool closes (issue
+            // #265), and the show/hide cycle also rewrites the window styles
+            // and leaves the restored window briefly input-interactive again.
+            // Click-through input plus the `capture-ui-active` flag that the
+            // frontend renders is enough to stay out of the capture's way.
             let _ = main_win.set_ignore_cursor_events(true);
-            let _ = main_win.hide();
+            let _ = app.emit("capture-ui-active", true);
         } else {
-            let _ = main_win.show();
+            // Defensive: restore the window if any other path hid it.
+            if !main_win.is_visible().unwrap_or(false) {
+                let _ = main_win.show();
+            }
             reconcile_main_appbar(app);
+            // Reconcile only re-posts the fixed-mode AppBar rect; smart and
+            // peek have no positioning path of their own, so re-apply the
+            // full-width top placement after every capture session.
+            reposition_main_window(app);
+            let _ = app.emit("capture-ui-active", false);
         }
     }
     if active {
@@ -2255,6 +2270,11 @@ fn apply_capture_ui_state(app: &AppHandle, active: bool) {
         }
         if let Some(ov_win) = app.get_webview_window("overlay") {
             let _ = ov_win.set_ignore_cursor_events(true);
+        }
+        // The webview cannot send its own mouseleave once the window is
+        // click-through: clear any hover it is still holding for it.
+        if NOTCH_IS_HOVERED.swap(false, Ordering::Relaxed) {
+            let _ = app.emit("notch-pointer-left", ());
         }
     }
     // Force the mouse hook to re-evaluate hit-testing on the next move.
@@ -3571,6 +3591,25 @@ pub fn reconcile_main_appbar(app: &AppHandle) {
     let mode = get_setting_str(app, "bloom-notch-mode");
     if let Some(main_win) = app.get_webview_window("main") {
         set_main_appbar_reservation(main_win, notch_mode_reserves_work_area(mode.as_deref()));
+    }
+}
+
+/// Re-apply the notch window's full-width top placement. Fixed mode also gets
+/// this from the AppBar registration, but smart and peek have no positioning
+/// path of their own, so a window Windows moved while it was not visible would
+/// otherwise stay wherever it ended up.
+pub fn reposition_main_window(app: &AppHandle) {
+    let Some(main_win) = app.get_webview_window("main") else {
+        return;
+    };
+    if let Ok(Some(monitor)) = main_win.primary_monitor() {
+        let m_pos = monitor.position();
+        let m_size = monitor.size();
+        let scale = monitor.scale_factor();
+        let bloom_scale = crate::utils::get_bloom_scale(app);
+        let target_height = (420.0 * bloom_scale * scale) as u32;
+        let _ = main_win.set_position(tauri::PhysicalPosition::new(m_pos.x, m_pos.y));
+        let _ = main_win.set_size(tauri::PhysicalSize::new(m_size.width, target_height));
     }
 }
 
