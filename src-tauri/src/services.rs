@@ -2471,6 +2471,17 @@ fn top_edge_armed_for(
     false
 }
 
+/// Trust the window, not the cache: if a window's click-through flag is lost
+/// behind our back, the cached state still says "ignoring" and the window
+/// (the 420 px notch window or the 600 px dock window) swallows every click
+/// under it. One style read per update heals it on the next mouse move.
+fn click_through_drifted(win: &tauri::WebviewWindow, want: bool) -> bool {
+    win.hwnd().is_ok_and(|h| unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, WS_EX_TRANSPARENT};
+        ((GetWindowLongPtrW(h, GWL_EXSTYLE) as u32 & WS_EX_TRANSPARENT.0) != 0) != want
+    })
+}
+
 /// Hover + click-through state for the notch window. Shared by the mouse hook
 /// (on movement) and the top-edge watchdog (to finish a stationary dwell).
 fn update_main_interaction(
@@ -2606,10 +2617,14 @@ fn update_main_interaction(
         MH_LAST_TOP_EDGE_HOVER.store(new_val, Ordering::Relaxed);
     }
 
-    let final_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
+    // Only the notch's own footprint takes clicks. MENU_IS_OPEN belongs to the
+    // dock's menus (Dock.tsx): letting it keep this window interactive turned
+    // the whole notch window (the top of the screen) into a click blocker
+    // whenever a dock menu was open or its flag was left set.
+    let final_ignore = !is_click_interactive;
     let prev_ignore = MH_LAST_MAIN_IGNORE.load(Ordering::Relaxed);
     let new_ignore = if final_ignore { 1 } else { 0 };
-    if prev_ignore != new_ignore {
+    if prev_ignore != new_ignore || click_through_drifted(&main_win, final_ignore) {
         // Z-order re-assertion is a synchronous window operation; skip it
         // while a drag may be active, where it can visibly hitch the drag.
         if !drag_held {
@@ -2857,10 +2872,14 @@ fn update_dock_interaction(
         MH_LAST_EDGE_HOVER.store(new_val, Ordering::Relaxed);
     }
 
-    let should_ignore = !is_click_interactive && !MENU_IS_OPEN.load(Ordering::Relaxed);
+    // An open menu takes clicks only inside its own rect (checked above); a
+    // click anywhere else reaches the app under it, and the dock's blur
+    // handler closes the menu. Keeping the whole dock window interactive
+    // while a menu was open blocked clicks along the bottom of the screen.
+    let should_ignore = !is_click_interactive;
     let prev_ignore = MH_LAST_DOCK_IGNORE.load(Ordering::Relaxed);
     let new_ignore = if should_ignore { 1 } else { 0 };
-    if prev_ignore != new_ignore {
+    if prev_ignore != new_ignore || click_through_drifted(&dock_win, should_ignore) {
         if let Ok(hwnd) = dock_win.hwnd() {
             re_assert_topmost(hwnd);
         }
