@@ -4,6 +4,11 @@ title: "[Bug]: "
 labels:
   - bug
 body:
+  - type: markdown
+    attributes:
+      value: >-
+        Search open and closed issues first. Please include the version you actually tested: a report against the latest release may still be valid even when a fix has only reached main. No approval is needed to report a bug.
+
   - type: input
     id: bloom-version
     attributes:
@@ -63,3 +68,4 @@ body:
       description: Drag and drop files here. Visual bugs are much easier to fix with a recording.
     validations:
       required: false
+

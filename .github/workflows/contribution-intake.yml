@@ -1,0 +1,35 @@
+name: Contribution intake
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: contribution-intake-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  advise:
+    runs-on: ubuntu-latest
+    # Advisory only: this job must not become a required merge check.
+    continue-on-error: true
+    steps:
+      # Always use trusted default-branch code. Never check out or execute the PR.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Leave a non-blocking scope reminder
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/contribution-intake.mjs

@@ -4,11 +4,16 @@ title: "[Feature]: "
 labels:
   - enhancement
 body:
+  - type: markdown
+    attributes:
+      value: >-
+        One user problem per request, please. Search existing issues first. An open issue or automated label is not feature approval: wait for a maintainer to agree on the scope (accepted label) before implementing a larger change. Prototypes can stay in a fork or draft while discussing.
+
   - type: textarea
     id: idea
     attributes:
       label: What's your idea?
-      description: What should Bloom do, and what problem does it solve for you?
+      description: Describe one user problem and the smallest change that would solve it. Explain how it fits the existing dock, notch, or controls.
     validations:
       required: true
 
@@ -34,3 +39,4 @@ body:
       description: Drag and drop images or links to similar apps here.
     validations:
       required: false
+

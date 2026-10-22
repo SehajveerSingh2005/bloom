@@ -1,21 +1,25 @@
-## What does this PR do?
+## What changes, and why?
 
-A short description of the change and why it is needed.
+Describe the user-visible problem and resulting behavior. Keep this PR focused.
 
-## Related issue
+## Change type
 
-Closes #
+- [ ] Small bug fix
+- [ ] Documentation / maintenance
+- [ ] New feature or broader behavior change
 
-> Feature and behavior-change PRs must link an issue where the approach was discussed and approved. PRs without one may be closed without review.
+## Related issue and agreed scope
 
-## How was this tested?
+Closes # (only if fully resolved), Related to #, or explain why this small fix needs no issue.
 
-Describe how you verified the change on Windows. Screenshots or recordings are welcome for UI changes.
+For a new feature or larger change, link the issue with maintainer agreement (`accepted` label). Opening an issue or passing CI alone is not approval. Drafts/prototypes are welcome for discussion; please wait for feedback before opening a batch of feature PRs.
+
+## Validation
+
+What did you actually check? For Windows behavior, include the relevant Windows version and reproduction result. If desktop testing is unavailable, say what still needs checking. Docs-only changes need no desktop test.
 
 ## Checklist
 
-- [ ] I read CONTRIBUTING.md
-- [ ] This change has a linked, approved issue (required for features)
-- [ ] CI passes
-- [ ] The change is focused on one thing
-- [ ] Tested on Windows
+- [ ] I read CONTRIBUTING.md and kept the change focused
+- [ ] For a feature/larger change, a maintainer agreed on the linked issue's scope (otherwise N/A)
+- [ ] I described actual checks and any remaining validation

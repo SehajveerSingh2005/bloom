@@ -1,53 +1,68 @@
 # Contributing to Bloom
 
-Thanks for wanting to help. Bloom is a Windows desktop companion built with Tauri — a Rust core and a React/TypeScript UI.
+Bloom is a lightweight Windows desktop companion: a dock, a notch, and a small set of system controls. Contributions should make those surfaces more reliable, useful, and consistent.
 
-## Before you start
+## Pick the shortest path
 
-**Issues come first.** Bloom is a small project, so unsolicited feature PRs are hard to keep up with — however good the code is.
+- **Small bug fix, documentation, or typo:** a focused PR is welcome directly. Explain the problem and how you checked it. An issue is helpful, not mandatory.
+- **New feature, larger behavior change, refactor, or dependency:** open one focused issue first and wait for a maintainer to agree on the scope and approach. A draft or prototype can help discussion, but is not a promise of review or acceptance.
+- **Already reported:** add reproduction details or offer to help on the existing issue instead of opening another.
+- A bug report needs no prior approval. Reports against the latest release are welcome even when a fix may already be on main; mention which version you tested.
 
-- Bugs and feature ideas go through the issue templates. They keep triage automatic.
-- For anything large (new features, behavior changes, refactors, new dependencies), open an issue and wait for a maintainer to agree on the approach before writing code.
-- PRs that implement an unapproved feature may be closed without review. Please don't take it personally; it isn't a comment on your code.
-- Small fixes (typos, docs, crash fixes with an obvious cause) can go straight to a pull request with a clear description.
+An issue being open, a bot label, passing CI, or another contributor agreeing is not feature approval. Maintainers use the `accepted` label after agreeing on an implementation scope. Earlier explicit maintainer agreement still counts; ask for the label if an advisory misses it.
+
+## Scope and review capacity
+
+Prioritize shell correctness, input/focus behavior, accessibility, and low idle CPU/memory use. Keep the dock for apps and the notch for compact information and controls. Native Windows fallbacks are preferable to duplicating whole applications.
+
+A replacement Start menu, embedded AI assistant, desktop widget framework, arbitrary CSS/plugin system, or additional operating-system port needs a separate maintainer-backed plan; these are not part of the current roadmap.
+
+Please discuss one substantial proposal at a time and wait for feedback before opening a batch of feature PRs. There is no numerical PR quota, and independent bug fixes are welcome. Keep speculative work in your fork or a draft while scope is discussed.
+
+## Issues
+
+Use the bug or feature form and search both open and closed issues first.
+
+- Bugs: Bloom/Windows versions, expected versus actual behavior, and a short reproduction. Screenshots, logs, or a recording help when available; they are not a barrier to reporting.
+- Features: one user problem, a small proposed change, and how it fits the existing UI.
+- `needs-discussion`: scope or approach is not yet agreed. This is not a rejection.
+- `accepted`: a maintainer has agreed on the scope; it is not a delivery date or permission to expand the feature.
+- `needs-info` / `needs-testing`: the next useful step is more detail or validation.
+- Completed issues close with a fix/reference. Duplicates link to the canonical thread. Not-planned proposals close with a reason and can be revisited if the direction changes.
+- Bugs are not automatically closed for inactivity. A missing local reproduction is not proof that a bug is fixed.
+
+Automated intake is advisory: it may label a feature PR and leave one updated reminder, but it does not close work, approve features, or add a required merge gate. Editing the PR description or pushing an update refreshes the reminder.
 
 ## Setup
 
-Requirements:
-
-- Windows 10 or 11
-- [Bun](https://bun.sh) 1.4+
-- Rust stable
-- Visual Studio C++ build tools (required by Tauri)
+Windows 10 or 11, Bun 1.4+, Rust stable, and Visual Studio C++ build tools are required.
 
 ```bash
 bun install
 bun run tauri dev
 ```
 
-Useful commands:
+Do not run a separate Vite dev server alongside Tauri.
 
-| Command               | What it does                          |
-| --------------------- | ------------------------------------- |
-| `bun run build`       | Typecheck and build the frontend      |
-| `bun run tauri build` | Build the full app                    |
-| `bun run bump <ver>`  | Bump the version in all manifests     |
-| `bun run format`      | Formats the frontend and backend code |
-
-## Making changes
-
-- Branch from `main` and keep each pull request focused on one change.
-- Match the existing code style. Do not add dependencies unless they are really needed.
-- Commit messages follow conventional commits (`feat:`, `fix:`, `chore:`), because release notes are generated from them.
-- Test your change on Windows before opening the PR — this is a Windows-first app.
+| Command | Purpose |
+| --- | --- |
+| `bun run build` | Frontend typecheck and production build |
+| `cargo check --locked` in `src-tauri` | Rust compile check |
+| `cargo clippy --locked --all-targets` in `src-tauri` | Rust diagnostics |
+| `cargo test --locked` in `src-tauri` | Rust unit tests (not run by CI) |
+| `bun run tauri build` | Build the app |
+| `bun run format` | Format frontend and Rust |
 
 ## Pull requests
 
-- Every feature or behavior-change PR must link the approved issue it implements (`Closes #123`). If there is no issue yet, open one and discuss the approach first.
-- CI must pass (frontend build, `cargo check`, clippy, CodeQL).
-- Fill in the PR template: what changed, which issue it closes, and how you tested it.
-- Keep the diff readable. Unrelated cleanups belong in a separate PR.
+Branch from current main and keep each PR focused. Link an issue when one exists; use `Closes #123` only when the whole issue is resolved. Describe partial work as `Related to #123`.
+
+State what you actually tested. Windows behavior changes need an appropriate Windows reproduction/check before merging; a cross-platform build or unit test alone does not verify window focus, taskbar restoration, tray actions, or DPI behavior. If you cannot test locally, say so and leave the PR as a draft or request help. Documentation changes do not need desktop testing.
+
+CI must pass before merge. A passing build does not establish product fit or replace review. Match the code style, avoid unnecessary dependencies, and use conventional commit messages (`feat:`, `fix:`, `chore:`) for release notes. Keep unrelated cleanups separate.
+
+Feature PRs without agreed scope may be closed with a pointer back to the issue; they can be reopened or replaced after discussion. We review the change and its fit, not the contributor's PR count.
 
 ## License
 
-Bloom is licensed under GPL-3.0. By contributing, you agree that your contributions are licensed under the same terms.
+Bloom is GPL-3.0. Contributions are licensed under the same terms.
