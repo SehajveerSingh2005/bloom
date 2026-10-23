@@ -14,12 +14,15 @@ import {
 	Smartphone,
 	Watch
 } from "lucide-react";
+import { deviceArtFor } from "../devices/deviceArtFor";
+import { DEVICE_LOOKS, deviceLookFor, setDeviceLook } from "../devices/deviceLooks";
 import "./QuickPanel.css";
 
 interface BtDevice {
 	id: string;
 	name: string;
 	kind: string;
+	form: string | null;
 	connected: boolean;
 	battery: number | null;
 	can_connect: boolean;
@@ -88,6 +91,8 @@ export function BluetoothPanel({ enabled, onToggle, onBack, onPinChange }: Bluet
 	const [pairing, setPairing] = useState<string | null>(null);
 	const [prompt, setPrompt] = useState<BtPairingRequest | null>(null);
 	const [pin, setPin] = useState("");
+	// Bumped when a device's look is picked, so its row shows the new pick.
+	const [, setLooksVersion] = useState(0);
 
 	const refresh = useCallback(async () => {
 		try {
@@ -292,6 +297,35 @@ export function BluetoothPanel({ enabled, onToggle, onBack, onPinChange }: Bluet
 		);
 	};
 
+	// What the connection popup draws for an audio device. Its guess comes
+	// from the name and class; a neckband or a device named with a model code
+	// can't be told apart from headphones, so it can be picked here.
+	const renderLooks = (d: BtDevice) => {
+		const picked = deviceLookFor(d.name);
+		const shown = picked ?? deviceArtFor(d);
+		return (
+			<div className="qp-chips" role="radiogroup" aria-label="Looks like">
+				<span className="qp-note">Looks like</span>
+				{DEVICE_LOOKS.map((look) => (
+					<button
+						key={look.art}
+						className={`qp-chip ${shown === look.art ? "on" : ""}`}
+						role="radio"
+						aria-checked={shown === look.art}
+						onClick={() => {
+							// Picking what Bloom would guess anyway clears the pick,
+							// so a later, better guess still applies.
+							setDeviceLook(d.name, look.art === deviceArtFor(d) ? null : look.art);
+							setLooksVersion((v) => v + 1);
+						}}
+					>
+						{look.label}
+					</button>
+				))}
+			</div>
+		);
+	};
+
 	const renderDevices = () => {
 		if (devices === null) {
 			return (
@@ -335,6 +369,7 @@ export function BluetoothPanel({ enabled, onToggle, onBack, onPinChange }: Bluet
 							</button>
 							{expanded && (
 								<div className="qp-row-actions">
+									{d.kind === "audio" && renderLooks(d)}
 									{!d.can_connect && (
 										<span className="qp-note">
 											Connects on its own when it's turned on and in range.

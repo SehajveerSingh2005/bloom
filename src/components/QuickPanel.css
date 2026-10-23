@@ -224,6 +224,39 @@
 	gap: 6px;
 }
 
+.qp-chips {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+
+.qp-chip {
+	height: 20px;
+	padding: 0 8px;
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
+	border-radius: 10px;
+	background: transparent;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.55));
+	font: inherit;
+	font-size: 10px;
+	font-weight: 600;
+	cursor: pointer;
+	transition:
+		background 0.15s ease,
+		color 0.15s ease;
+}
+
+.qp-chip:hover {
+	color: var(--bloom-text, white);
+}
+
+.qp-chip.on {
+	background: var(--bloom-text, white);
+	border-color: var(--bloom-text, white);
+	color: var(--bloom-bg-expanded, black);
+}
+
 .qp-btn {
 	min-width: 64px;
 	height: 24px;

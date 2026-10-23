@@ -68,6 +68,7 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | `bloom-notch-default-panel` | `"calendar"` / `"command-center"` | `"calendar"` | Fixed panel opened on click when panel memory is off. If calendar is disabled, Command Center opens instead. |
 | `bloom-notch-last-panel`    | `"calendar"` / `"command-center"` | (unset)  | Last panel the notch was left on, saved by Bloom while panel memory is on. |
 | `bloom-notch-click-to-open` | `"true"` / `"false"` | (legacy) | Old setting read only when `bloom-notch-remember-panel` is absent; `"false"` now selects fixed-panel behavior. |
+| `bloom-device-looks` | JSON object, device name → `"headphones"` / `"round-buds"` / `"stem-buds"` / `"neckband"` / `"speaker"` | (unset) | The drawing a Bluetooth audio device's connection popup uses, picked under "Looks like" in the notch's Bluetooth view. Devices without a pick are guessed from their name and class. |
 
 ### Shelf
 
