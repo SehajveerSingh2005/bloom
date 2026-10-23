@@ -20,6 +20,13 @@ function readBool(val: string | null): boolean {
 	return val === "true";
 }
 
+/** The notch panels a click can open. */
+export type NotchPanelChoice = "calendar" | "command-center" | "devices";
+
+function asPanelChoice(val: unknown): NotchPanelChoice {
+	return val === "command-center" || val === "devices" ? val : "calendar";
+}
+
 export function useSettings() {
 	const [saveError, setSaveError] = useState(
 		() => sessionStorage.getItem("bloom-settings-save-error") !== null
@@ -37,9 +44,8 @@ export function useSettings() {
 		() => (localStorage.getItem("bloom-notch-remember-panel") ??
 			localStorage.getItem("bloom-notch-click-to-open")) !== "false"
 	);
-	const [notchDefaultPanel, setNotchDefaultPanel] = useState<"calendar" | "command-center">(
-		() => localStorage.getItem("bloom-notch-default-panel") === "command-center"
-			? "command-center" : "calendar"
+	const [notchDefaultPanel, setNotchDefaultPanel] = useState<NotchPanelChoice>(() =>
+		asPanelChoice(localStorage.getItem("bloom-notch-default-panel"))
 	);
 	const [musicCompactNotch, setMusicCompactNotch] = useState(true);
 	const [shelfPersist, setShelfPersist] = useState(
@@ -195,8 +201,7 @@ export function useSettings() {
 			apply(getVal("bloom-music-mode-enabled"), setMusicModeEnabled, readBool);
 			apply(getVal("bloom-notch-remember-panel") ?? getVal("bloom-notch-click-to-open"),
 				setNotchRememberPanel, readBool);
-			apply(getVal("bloom-notch-default-panel"), setNotchDefaultPanel,
-				(v) => v === "command-center" ? "command-center" : "calendar");
+			apply(getVal("bloom-notch-default-panel"), setNotchDefaultPanel, asPanelChoice);
 			apply(getVal("bloom-music-compact-notch"), setMusicCompactNotch, readBool);
 			apply(getVal("bloom-shelf-persist"), setShelfPersist, readBool);
 			apply(getVal("bloom-volume-overlay-enabled"), setVolumeOverlayEnabled, readBool);
@@ -362,7 +367,7 @@ export function useSettings() {
 		"bloom-music-mode-enabled": setMusicModeEnabled,
 		"bloom-notch-remember-panel": setNotchRememberPanel,
 		"bloom-notch-default-panel": (v: unknown) =>
-			setNotchDefaultPanel(v === "command-center" ? "command-center" : "calendar"),
+			setNotchDefaultPanel(asPanelChoice(v)),
 		"bloom-music-compact-notch": setMusicCompactNotch,
 		"bloom-media-ambience-enabled": setMediaAmbienceEnabled,
 		"bloom-media-compact-glow-enabled": setMediaCompactGlowEnabled,
@@ -538,7 +543,7 @@ export function useSettings() {
 		saveSetting("bloom-notch-remember-panel", String(next));
 	};
 
-	const changeNotchDefaultPanel = (panel: "calendar" | "command-center") => {
+	const changeNotchDefaultPanel = (panel: NotchPanelChoice) => {
 		setNotchDefaultPanel(panel);
 		saveSetting("bloom-notch-default-panel", panel);
 	};

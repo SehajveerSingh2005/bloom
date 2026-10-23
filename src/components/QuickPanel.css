@@ -224,6 +224,39 @@
 	gap: 6px;
 }
 
+.qp-chips {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+
+.qp-chip {
+	height: 20px;
+	padding: 0 8px;
+	border: 1px solid var(--bloom-border, rgba(255, 255, 255, 0.1));
+	border-radius: 10px;
+	background: transparent;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.55));
+	font: inherit;
+	font-size: 10px;
+	font-weight: 600;
+	cursor: pointer;
+	transition:
+		background 0.15s ease,
+		color 0.15s ease;
+}
+
+.qp-chip:hover {
+	color: var(--bloom-text, white);
+}
+
+.qp-chip.on {
+	background: var(--bloom-text, white);
+	border-color: var(--bloom-text, white);
+	color: var(--bloom-bg-expanded, black);
+}
+
 .qp-btn {
 	min-width: 64px;
 	height: 24px;
@@ -349,4 +382,158 @@
 	color: var(--bloom-text, white);
 	font-variant-numeric: tabular-nums;
 	letter-spacing: 0.08em;
+}
+
+/* Battery hub: connected devices' batteries, grouped by priority */
+.bh-title-icon {
+	width: 22px;
+	height: 22px;
+	margin-right: 4px;
+}
+
+.bh-list {
+	gap: 8px;
+}
+
+.bh-group ul {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.bh-group-title {
+	margin: 0 0 2px;
+	padding: 0 8px;
+	font-size: 9.5px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.5));
+}
+
+.bh-group.low .bh-group-title {
+	color: #ff453a;
+}
+
+.bh-row {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	padding: 4px 8px;
+	border-radius: 10px;
+}
+
+.bh-row:hover {
+	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.06));
+}
+
+/* Audio rows open their "Looks like" choice */
+.bh-row-button {
+	width: 100%;
+	border: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.bh-item {
+	border-radius: 10px;
+}
+
+.bh-item.expanded {
+	background: var(--bloom-group-bg, rgba(255, 255, 255, 0.06));
+}
+
+.bh-item.expanded .bh-row:hover {
+	background: transparent;
+}
+
+.bh-looks {
+	padding: 0 8px 8px 47px;
+}
+
+.bh-art {
+	flex: none;
+	width: 30px;
+	height: 30px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.bh-art > svg:not(.device-art) {
+	width: 18px;
+	height: 18px;
+}
+
+.bh-meters {
+	flex: none;
+	display: flex;
+	gap: 8px;
+}
+
+.bh-meter {
+	width: 40px;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 3px;
+}
+
+.bh-meter-value {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	font-size: 10.5px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.bh-meter-label {
+	margin-right: 2px;
+	font-size: 9px;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.5));
+}
+
+.bh-meter-bolt {
+	width: 9px;
+	height: 9px;
+	color: #32d74b;
+	fill: currentColor;
+	stroke-width: 0;
+}
+
+.bh-meter-bar {
+	width: 100%;
+	height: 3px;
+	border-radius: 2px;
+	background: rgba(255, 255, 255, 0.14);
+	overflow: hidden;
+}
+
+.bh-meter-bar > span {
+	display: block;
+	height: 100%;
+	border-radius: 2px;
+	background: #32d74b;
+	transition: width 0.4s ease;
+}
+
+.bh-meter.low .bh-meter-bar > span {
+	background: #ff453a;
+}
+
+.bh-meter.low .bh-meter-value {
+	color: #ff453a;
+}
+
+.bh-unknown {
+	flex: none;
+	font-size: 9.5px;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.5));
 }

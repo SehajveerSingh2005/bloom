@@ -13,7 +13,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use windows::core::{Interface, GUID, HSTRING};
 use windows::Devices::Bluetooth::{BluetoothDevice, BluetoothLEDevice};
@@ -52,11 +52,48 @@ pub struct BtDevice {
     /// "audio", "phone", "computer", "keyboard", "mouse", "gamepad",
     /// "wearable" or "other".
     pub kind: &'static str,
+    /// For audio devices, the form their class or appearance reports:
+    /// "earbuds", "headphones", "headset", "neckband" or "speaker".
+    pub form: Option<&'static str>,
     pub connected: bool,
     /// Percent, when the device reports it.
     pub battery: Option<u8>,
     /// Bloom can connect and disconnect it (headphones and speakers).
     pub can_connect: bool,
+}
+
+#[derive(Clone, Serialize)]
+pub struct BtConnectionEvent {
+    pub id: String,
+    pub name: String,
+    pub kind: &'static str,
+    pub form: Option<&'static str>,
+    pub connected: bool,
+    pub battery: Option<u8>,
+}
+
+fn connection_changes(before: &[BtDevice], after: &[BtDevice]) -> Vec<BtConnectionEvent> {
+    let previous: HashMap<&str, &BtDevice> = before.iter().map(|d| (d.id.as_str(), d)).collect();
+    after
+        .iter()
+        .filter_map(|device| {
+            // The representative ID can switch between a device's classic
+            // and LE endpoints as Windows updates their metadata.
+            let old = previous
+                .get(device.id.as_str())
+                .copied()
+                .or_else(|| before.iter().find(|old| old.name == device.name))?;
+            let was_connected = old.connected;
+            (was_connected != device.connected).then(|| BtConnectionEvent {
+                id: device.id.clone(),
+                name: device.name.clone(),
+                kind: device.kind,
+                form: device.form,
+                connected: device.connected,
+                battery: device.battery,
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Serialize)]
@@ -147,21 +184,55 @@ fn le_kind(category: u16, subcategory: u16) -> &'static str {
     }
 }
 
-fn device_kind(id: &HSTRING) -> &'static str {
+/// The form of a classic audio device from its minor class: headsets and
+/// hands-free kits, headphones, or speakers (loudspeaker, portable, hi-fi).
+fn classic_form(raw: u32) -> Option<&'static str> {
+    let major = (raw >> 8) & 0x1F;
+    let minor = (raw >> 2) & 0x3F;
+    match (major, minor) {
+        (4, 1 | 2) => Some("headset"),
+        (4, 6) => Some("headphones"),
+        (4, 5 | 7 | 10) => Some("speaker"),
+        _ => None,
+    }
+}
+
+/// The form of an LE audio device from its appearance: a speaker, a
+/// wearable audio device's subcategory, or a hearing aid (worn like earbuds).
+fn le_form(category: u16, subcategory: u16) -> Option<&'static str> {
+    match (category, subcategory) {
+        (0x21, _) => Some("speaker"),
+        (0x25, 0x01) => Some("earbuds"),
+        (0x25, 0x02) => Some("headset"),
+        (0x25, 0x03) => Some("headphones"),
+        (0x25, 0x04) => Some("neckband"),
+        (0x29, _) => Some("earbuds"),
+        _ => None,
+    }
+}
+
+/// A device's kind and, for audio devices, its form.
+fn device_type(id: &HSTRING) -> (&'static str, Option<&'static str>) {
     if let Ok(device) = BluetoothDevice::FromIdAsync(id).and_then(|op| op.get()) {
         if let Ok(raw) = device.ClassOfDevice().and_then(|c| c.RawValue()) {
-            return classic_kind(raw);
+            return (classic_kind(raw), classic_form(raw));
         }
     }
     if let Ok(device) = BluetoothLEDevice::FromIdAsync(id).and_then(|op| op.get()) {
         if let Ok(appearance) = device.Appearance() {
-            return le_kind(
-                appearance.Category().unwrap_or(0),
-                appearance.SubCategory().unwrap_or(0),
+            let category = appearance.Category().unwrap_or(0);
+            let subcategory = appearance.SubCategory().unwrap_or(0);
+            return (
+                le_kind(category, subcategory),
+                le_form(category, subcategory),
             );
         }
     }
-    "other"
+    ("other", None)
+}
+
+fn device_kind(id: &HSTRING) -> &'static str {
+    device_type(id).0
 }
 
 fn battery_level(container: &GUID) -> Option<u8> {
@@ -282,10 +353,12 @@ fn list_sync() -> Vec<BtDevice> {
             let name = info.Name().map(|n| n.to_string()).unwrap_or_default();
             let connected = prop::<bool>(&info, PROP_CONNECTED).unwrap_or(false);
             let container = prop::<GUID>(&info, PROP_CONTAINER);
+            let (kind, form) = device_type(&id);
             let device = BtDevice {
                 id: id.to_string(),
                 name,
-                kind: device_kind(&id),
+                kind,
+                form,
                 connected,
                 battery: None,
                 can_connect: container.is_some_and(|c| audio.contains_key(&c)),
@@ -299,6 +372,7 @@ fn list_sync() -> Vec<BtDevice> {
                         .entry(container)
                         .and_modify(|existing| {
                             existing.connected |= device.connected;
+                            existing.form = existing.form.or(device.form);
                             if existing.kind == "other" {
                                 existing.kind = device.kind;
                             }
@@ -332,6 +406,7 @@ fn list_sync() -> Vec<BtDevice> {
                 existing.connected |= device.connected;
                 existing.can_connect |= device.can_connect;
                 existing.battery = existing.battery.or(device.battery);
+                existing.form = existing.form.or(device.form);
                 // Keep the entry whose type is known, as it's the one Windows
                 // describes fully.
                 if existing.kind == "other" && device.kind != "other" {
@@ -412,6 +487,128 @@ fn emit<S: Serialize + Clone>(event: &str, payload: S) {
     }
 }
 
+#[derive(Clone, Serialize)]
+pub struct BtBatteryEvent {
+    pub id: String,
+    pub battery: u8,
+}
+
+/// The battery level of a connected device, found by id or, as its id can
+/// switch between its classic and LE endpoints, by name.
+fn connected_battery(devices: &[BtDevice], id: &str, name: &str) -> Option<u8> {
+    devices
+        .iter()
+        .find(|d| d.id == id)
+        .or_else(|| devices.iter().find(|d| d.name == name))
+        .filter(|d| d.connected)
+        .and_then(|d| d.battery)
+}
+
+/// Windows often reports a device's battery a moment after it connects, so
+/// a connection reported without one is checked again shortly after, and
+/// the level sent as `bluetooth-battery` once it's known.
+fn follow_up_battery(id: String, name: String) {
+    std::thread::spawn(move || {
+        com_init();
+        for wait in [1500, 2000] {
+            std::thread::sleep(Duration::from_millis(wait));
+            if let Some(battery) = connected_battery(&list_sync(), &id, &name) {
+                emit("bluetooth-battery", BtBatteryEvent { id, battery });
+                return;
+            }
+        }
+    });
+}
+
+#[derive(Clone, Serialize)]
+pub struct BtBudsEvent {
+    pub id: String,
+    #[serde(flatten)]
+    pub battery: crate::buds::BudsBattery,
+}
+
+/// When each device's buds were last read, by name.
+static BUDS_READ: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
+/// How soon a device's buds can be read again for Battery hub.
+const BUDS_REFRESH: Duration = Duration::from_secs(90);
+
+/// Whether a device's buds were read too recently to read again.
+fn buds_read_recently(name: &str) -> bool {
+    BUDS_READ
+        .lock()
+        .ok()
+        .and_then(|read| read.as_ref()?.get(name).copied())
+        .is_some_and(|at| at.elapsed() < BUDS_REFRESH)
+}
+
+/// Reads each bud's and the case's battery again for the connected audio
+/// devices, for Battery hub; results arrive as `bluetooth-buds`. A device
+/// read in the last 90 seconds is skipped.
+#[tauri::command]
+pub async fn bluetooth_refresh_buds() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        com_init();
+        for device in list_sync() {
+            if device.connected && device.kind == "audio" && !buds_read_recently(&device.name) {
+                follow_up_buds(device.id, device.name);
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Reads each bud's and the case's battery for an audio device that just
+/// connected, if it's earbuds that report them, and sends it as
+/// `bluetooth-buds`.
+fn follow_up_buds(id: String, name: String) {
+    if let Ok(mut read) = BUDS_READ.lock() {
+        read.get_or_insert_with(HashMap::new)
+            .insert(name.clone(), Instant::now());
+    }
+    std::thread::spawn(move || {
+        com_init();
+        let Some(container) = CONTAINERS
+            .lock()
+            .ok()
+            .and_then(|cache| cache.as_ref()?.get(&id).copied())
+        else {
+            return;
+        };
+        let aqs = HSTRING::from(format!("System.Devices.ContainerId:=\"{{{container:?}}}\""));
+        let apple_model = find_all(&aqs, &[], DeviceInformationKind::Device)
+            .iter()
+            .filter_map(|info| info.Id().ok())
+            .filter_map(|id| crate::buds::vendor_product(&id.to_string()))
+            .find(|(vendor, _)| *vendor == crate::buds::APPLE_VENDOR)
+            .map(|(_, product)| product);
+        let battery = match apple_model {
+            Some(model) => crate::buds::read_apple(model, Duration::from_secs(6)),
+            None => {
+                // RFCOMM runs over the classic link.
+                let classic = CONTAINERS.lock().ok().and_then(|cache| {
+                    cache
+                        .as_ref()?
+                        .iter()
+                        .find(|(id, c)| **c == container && id.starts_with("Bluetooth#"))
+                        .map(|(id, _)| id.clone())
+                });
+                classic.and_then(|classic| {
+                    crate::buds::read_rfcomm_battery(&classic, &name, Duration::from_secs(4))
+                })
+            }
+        };
+        if let Some(battery) = battery.filter(crate::buds::BudsBattery::is_split) {
+            emit("bluetooth-buds", BtBudsEvent { id, battery });
+        }
+    });
+}
+
+fn notify_paired_change(tx: &Sender<()>) {
+    emit("bluetooth-changed", ());
+    let _ = tx.send(());
+}
+
 fn watch(
     selector: &HSTRING,
     on_added: impl Fn(&DeviceInformation) + Send + Sync + 'static,
@@ -457,14 +654,46 @@ pub fn setup_bluetooth_notifications(app: AppHandle) {
     let _ = APP.set(app);
     std::thread::spawn(|| {
         com_init();
+        // Take a baseline before starting the watchers. Their initial Added
+        // callbacks describe devices already connected at startup.
+        let baseline = list_sync();
+        let (changed_tx, changed_rx) = channel::<()>();
+        std::thread::spawn(move || {
+            com_init();
+            let started = Instant::now();
+            let mut previous = baseline;
+            while changed_rx.recv().is_ok() {
+                // Coalesce classic and LE updates for the same physical device.
+                std::thread::sleep(Duration::from_millis(250));
+                while changed_rx.try_recv().is_ok() {}
+                let current = list_sync();
+                if started.elapsed() >= Duration::from_secs(5) {
+                    for change in connection_changes(&previous, &current) {
+                        let needs_battery = change.connected && change.battery.is_none();
+                        let earbuds = change.connected && change.kind == "audio";
+                        let (id, name) = (change.id.clone(), change.name.clone());
+                        emit("bluetooth-connection", change);
+                        if needs_battery {
+                            follow_up_battery(id.clone(), name.clone());
+                        }
+                        if earbuds {
+                            follow_up_buds(id, name);
+                        }
+                    }
+                }
+                previous = current;
+            }
+        });
         let mut watchers = Vec::new();
         for selector in selectors(true) {
-            let changed = || emit("bluetooth-changed", ());
+            let added_tx = changed_tx.clone();
+            let updated_tx = changed_tx.clone();
+            let removed_tx = changed_tx.clone();
             if let Ok(watcher) = watch(
                 &selector,
-                move |_| changed(),
-                move |_| changed(),
-                move |_| changed(),
+                move |_| notify_paired_change(&added_tx),
+                move |_| notify_paired_change(&updated_tx),
+                move |_| notify_paired_change(&removed_tx),
             ) {
                 watchers.push(watcher);
             }
@@ -711,6 +940,44 @@ pub async fn bluetooth_unpair(id: String) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    fn sample_device(id: &str, connected: bool) -> BtDevice {
+        BtDevice {
+            id: id.into(),
+            name: id.into(),
+            kind: "audio",
+            form: None,
+            connected,
+            battery: Some(72),
+            can_connect: true,
+        }
+    }
+
+    #[test]
+    fn reports_only_existing_device_connection_transitions() {
+        let before = [sample_device("a", false), sample_device("b", true)];
+        let after = [
+            sample_device("a", true),
+            sample_device("b", true),
+            sample_device("c", true),
+        ];
+        let changes = connection_changes(&before, &after);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].id, "a");
+        assert!(changes[0].connected);
+        assert_eq!(changes[0].battery, Some(72));
+
+        let changes = connection_changes(&after, &before);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].id, "a");
+        assert!(!changes[0].connected);
+
+        let mut renamed_endpoint = sample_device("new-le-id", true);
+        renamed_endpoint.name = "Headphones".into();
+        let mut old_endpoint = sample_device("old-classic-id", true);
+        old_endpoint.name = "Headphones".into();
+        assert!(connection_changes(&[old_endpoint], &[renamed_endpoint]).is_empty());
+    }
+
     #[test]
     fn maps_classic_classes() {
         // Major class in bits 8-12, minor in bits 2-7.
@@ -730,5 +997,39 @@ mod tests {
         assert_eq!(le_kind(0x03, 0), "wearable");
         assert_eq!(le_kind(0x25, 0), "audio");
         assert_eq!(le_kind(0x00, 0), "other");
+    }
+
+    #[test]
+    fn finds_a_connected_device_battery_by_id_or_name() {
+        let mut le = sample_device("le-id", true);
+        le.name = "Headphones".into();
+        le.battery = Some(64);
+        let mut off = sample_device("off", false);
+        off.battery = Some(10);
+        let devices = [le, off];
+        assert_eq!(connected_battery(&devices, "le-id", "x"), Some(64));
+        // The id moved to the other endpoint: found by name.
+        assert_eq!(
+            connected_battery(&devices, "classic-id", "Headphones"),
+            Some(64)
+        );
+        // Disconnected or unknown devices report nothing.
+        assert_eq!(connected_battery(&devices, "off", "off"), None);
+        assert_eq!(connected_battery(&devices, "nope", "nope"), None);
+    }
+
+    #[test]
+    fn maps_audio_forms() {
+        // Audio/video major class (4) with the headset, headphones,
+        // loudspeaker and car audio minor classes.
+        assert_eq!(classic_form(0x24_0404), Some("headset"));
+        assert_eq!(classic_form(0x24_0418), Some("headphones"));
+        assert_eq!(classic_form(0x24_0414), Some("speaker"));
+        assert_eq!(classic_form(0x24_0420), None);
+        assert_eq!(classic_form(0x5A_020C), None);
+        assert_eq!(le_form(0x25, 0x01), Some("earbuds"));
+        assert_eq!(le_form(0x25, 0x04), Some("neckband"));
+        assert_eq!(le_form(0x21, 0x00), Some("speaker"));
+        assert_eq!(le_form(0x0F, 0x01), None);
     }
 }

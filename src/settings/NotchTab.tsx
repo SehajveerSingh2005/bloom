@@ -15,6 +15,7 @@ import {
 import { SettingRow } from "./SettingRow";
 import { StatusWidgetConfig } from "../components/StatusWidgetConfig";
 import type { WidgetConfig } from "./types";
+import type { NotchPanelChoice } from "./useSettings";
 
 interface NotchTabProps {
 	notchMode: string;
@@ -25,8 +26,8 @@ interface NotchTabProps {
 	toggleCalendar: () => void;
 	notchRememberPanel: boolean;
 	toggleNotchRememberPanel: () => void;
-	notchDefaultPanel: "calendar" | "command-center";
-	changeNotchDefaultPanel: (panel: "calendar" | "command-center") => void;
+	notchDefaultPanel: NotchPanelChoice;
+	changeNotchDefaultPanel: (panel: NotchPanelChoice) => void;
 	timerSoundEnabled: boolean;
 	toggleTimerSound: () => void;
 	musicModeEnabled: boolean;
@@ -153,13 +154,12 @@ export function NotchTab({
 					<SettingRow icon={PanelTop} label="Default Panel" desc="Open this panel when you click the notch">
 						<select
 							className="settings-select"
-							value={calendarEnabled ? notchDefaultPanel : "command-center"}
-							onChange={(e) =>
-								changeNotchDefaultPanel(e.target.value as "calendar" | "command-center")
-							}
+							value={!calendarEnabled && notchDefaultPanel === "calendar" ? "command-center" : notchDefaultPanel}
+							onChange={(e) => changeNotchDefaultPanel(e.target.value as NotchPanelChoice)}
 						>
 							<option value="calendar" disabled={!calendarEnabled}>Calendar</option>
 							<option value="command-center">Command Center</option>
+							<option value="devices">Connected devices</option>
 						</select>
 					</SettingRow>
 				)}
@@ -192,7 +192,8 @@ export function NotchTab({
 				</SettingRow>
 
 				{musicModeEnabled && (
-					<>
+					<details className="settings-disclosure">
+						<summary>Music options <span>Layout and visual effects</span></summary>
 						<SettingRow
 							icon={Minimize2}
 							label="Compact Mode"
@@ -251,7 +252,7 @@ export function NotchTab({
 								<span className="slider"></span>
 							</label>
 						</SettingRow>
-					</>
+					</details>
 				)}
 			</div>
 
@@ -345,7 +346,10 @@ export function NotchTab({
 
 			<div className="setting-group-label">Widgets</div>
 			<div className="setting-group">
-				<StatusWidgetConfig value={statusWidgets} onChange={handleWidgetsChange} />
+				<details className="settings-disclosure settings-disclosure-standalone">
+					<summary>Choose status widgets <span>Arrange what appears beside the clock</span></summary>
+					<StatusWidgetConfig value={statusWidgets} onChange={handleWidgetsChange} />
+				</details>
 			</div>
 		</>
 	);

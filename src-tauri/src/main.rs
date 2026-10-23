@@ -2,9 +2,11 @@
 
 mod battery;
 mod bluetooth;
+mod buds;
 mod commands;
 mod diagnostics;
 mod dock_extras;
+mod jack;
 mod services;
 mod shelf;
 mod shelf_preview;
@@ -12,6 +14,7 @@ mod state;
 mod tray;
 mod types;
 mod updater;
+mod usb;
 mod utils;
 mod wifi;
 mod window_region;
@@ -214,7 +217,10 @@ fn main() {
             bluetooth::bluetooth_discovery,
             bluetooth::bluetooth_pair,
             bluetooth::bluetooth_pairing_respond,
-            bluetooth::bluetooth_unpair
+            bluetooth::bluetooth_unpair,
+            bluetooth::bluetooth_refresh_buds,
+            usb::usb_list_devices,
+            jack::jack_list_devices
         ])
         .setup(|app| {
             init_taskbar_marker(app.handle());
@@ -374,6 +380,8 @@ fn main() {
             diagnostics::record("services_ready", "hooks and settings watcher initialized");
             wifi::setup_wifi_notifications(app.handle().clone());
             bluetooth::setup_bluetooth_notifications(app.handle().clone());
+            usb::setup_usb_notifications(app.handle().clone());
+            jack::setup_jack_notifications(app.handle().clone());
 
             // Listen for second-instance signal to open settings
             if let Some(&h_event) = SINGLE_INSTANCE_EVENT_HANDLE.get() {

@@ -1,0 +1,197 @@
+/* Bloom's device art: motion and tokens for the drawings in art.ts.
+ * Converted from the device art prototype. Every rule is scoped to
+ * .device-art; .play runs the connect animation, .leave the disconnect. */
+.device-art {
+		--hi: #fbfbfd;
+		--body: #dcdde2;
+		--shade: #a9abb3;
+		--dark: #2a2b30;
+		--accent: #f5f5f7;
+		--art: 72px;
+		--ease: cubic-bezier(0.2, 0.9, 0.25, 1.15);
+		--ease-soft: cubic-bezier(0.3, 0.7, 0.2, 1);
+	}
+
+.device-art.graphite {
+		--hi: #6b6d75;
+		--body: #3d3f46;
+		--shade: #26272c;
+		--dark: #0f1013;
+	}
+
+.device-art .dev { transform-box: view-box; transform-origin: 50% 86%; }
+
+.device-art.play .dev { animation: da-arrive 0.42s var(--ease) both; }
+
+@keyframes da-arrive { from { transform: scale(0.86); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.device-art .part { transform-box: view-box; }
+
+.device-art .accent-glow { opacity: 0; }
+
+.device-art.play .accent-glow { animation: da-glow 1.2s 0.9s var(--ease-soft) both; }
+
+@keyframes da-glow { 0% { opacity: 0; } 30% { opacity: 1; } 100% { opacity: 0.85; } }
+
+.device-art .lid-out { transform-origin: 50% var(--seam); }
+
+.device-art .lid-in { transform-origin: 50% var(--seam); transform: scaleY(0); }
+
+.device-art.play .lid-out { animation: da-fold 0.22s 0.3s ease-in both; }
+
+.device-art.play .lid-in { animation: da-unfold 0.34s 0.52s var(--ease) both; }
+
+@keyframes da-fold { to { transform: scaleY(0); } }
+
+@keyframes da-unfold { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+
+.device-art .buds { transform: translateY(3px); }
+
+.device-art.play .buds { animation: da-settle 0.5s 0.62s var(--ease) both; }
+
+@keyframes da-settle { from { transform: translateY(5px); } to { transform: translateY(0); } }
+
+.device-art .draw { stroke-dasharray: var(--len); stroke-dashoffset: 0; }
+
+.device-art.play .draw { animation: da-draw 0.55s 0.28s var(--ease-soft) both; }
+
+@keyframes da-draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+
+.device-art.play .cup-l { animation: da-cupL 0.5s 0.3s var(--ease) both; }
+
+.device-art.play .cup-r { animation: da-cupR 0.5s 0.3s var(--ease) both; }
+
+@keyframes da-cupL { from { transform: translateX(-6px); } }
+
+@keyframes da-cupR { from { transform: translateX(6px); } }
+
+.device-art.play .pop { animation: da-pop 0.4s var(--d, 0.6s) var(--ease) both; }
+
+@keyframes da-pop { from { transform: scale(0); opacity: 0; } }
+
+.device-art .pop { transform-origin: center; transform-box: fill-box; }
+
+.device-art .wave { opacity: 0; transform-origin: center; transform-box: fill-box; }
+
+.device-art.play .wave { animation: da-wave 1s var(--d, 0.8s) ease-out both; }
+
+@keyframes da-wave { 0% { opacity: 0; transform: scale(0.7); } 40% { opacity: 1; } 100% { opacity: 0; transform: scale(1.15); } }
+
+.device-art .screen-on { opacity: 0; }
+
+.device-art.play .screen-on { animation: da-wake 0.5s 0.4s ease-out both; }
+
+@keyframes da-wake { from { opacity: 0; } to { opacity: 1; } }
+
+.device-art .key { fill: var(--shade); }
+
+.device-art.play .key { animation: da-key 0.5s var(--d) ease-out both; }
+
+@keyframes da-key { 0% { fill: var(--shade); } 40% { fill: var(--accent); } 100% { fill: var(--shade); } }
+
+.device-art .port-clip { clip-path: inset(0 0 14% 0); }
+
+.device-art.play .insert { animation: da-insert 0.5s var(--ease) both; }
+
+@keyframes da-insert { from { transform: translateY(26px); } to { transform: translateY(0); } }
+
+.device-art .blink { fill: var(--shade); }
+
+.device-art.play .blink { animation: da-blink 0.9s var(--d, 0.55s) steps(1) both; }
+
+@keyframes da-blink { 0%, 40% { fill: var(--accent); } 20%, 60% { fill: var(--shade); } 80%, 100% { fill: var(--accent); } }
+
+.device-art.play .lens { animation: da-iris 0.6s 0.45s var(--ease) both; transform-origin: center; transform-box: fill-box; }
+
+@keyframes da-iris { from { transform: scale(0.3); } }
+
+.device-art.play .slide-in { animation: da-slideIn 0.5s 0.3s var(--ease) both; }
+
+@keyframes da-slideIn { from { transform: translateY(-22px); } }
+
+.device-art .btn { fill: var(--dark); }
+
+.device-art.play .btn { animation: da-btn 0.5s var(--d) ease-out both; }
+
+@keyframes da-btn { 0% { fill: var(--dark); } 35% { fill: var(--accent); } 100% { fill: var(--dark); } }
+
+.device-art .stick { transform-box: fill-box; transform-origin: center; }
+
+.device-art.play .stick { animation: da-nudge 0.5s var(--d) var(--ease) both; }
+
+@keyframes da-nudge { 40% { transform: translate(1.2px, -1px); } 100% { transform: none; } }
+
+.device-art .rumble { transform-box: view-box; transform-origin: 50% 60%; }
+
+.device-art.play .rumble { animation: da-rumble 0.42s 0.34s linear both; }
+
+@keyframes da-rumble {
+		0%, 100% { transform: none; }
+		12% { transform: translate(-1.1px, 0.3px) rotate(-0.8deg); }
+		26% { transform: translate(1px, -0.3px) rotate(0.7deg); }
+		40% { transform: translate(-0.8px, 0.2px) rotate(-0.5deg); }
+		56% { transform: translate(0.6px, -0.2px) rotate(0.35deg); }
+		72% { transform: translate(-0.3px, 0) rotate(-0.15deg); }
+	}
+
+.device-art .led { fill: var(--shade); opacity: .55; }
+
+.device-art.play .led { animation: da-led 0.3s var(--d) ease-out both; }
+
+@keyframes da-led { to { fill: var(--accent); opacity: 1; } }
+
+.device-art .pump { transform-box: fill-box; transform-origin: center; }
+
+.device-art.play .pump { animation: da-pump 0.9s var(--d) ease-in-out both; }
+
+@keyframes da-pump { 15%, 55% { transform: scaleX(1.25); } 35%, 75% { transform: scaleX(0.9); } 100% { transform: none; } }
+
+.device-art .grille { transform-box: fill-box; transform-origin: center; }
+
+.device-art.play .grille { animation: da-thump 0.9s 0.5s ease-out both; }
+
+@keyframes da-thump { 15%, 50% { transform: scale(1.025); } 32%, 68% { transform: scale(0.995); } 100% { transform: none; } }
+
+.device-art.play .snap-l { animation: da-snapL 0.4s 0.8s var(--ease) both; }
+
+.device-art.play .snap-r { animation: da-snapR 0.4s 0.8s var(--ease) both; }
+
+@keyframes da-snapL { from { transform: translateX(-5px); } }
+
+@keyframes da-snapR { from { transform: translateX(5px); } }
+
+.device-art .pulse { opacity: 0; }
+
+.device-art .bob { transform-box: fill-box; transform-origin: 50% 100%; }
+
+.device-art.play .bob { animation: da-bob 0.5s var(--d) var(--ease) both; }
+
+@keyframes da-bob { 40% { transform: translateY(-1.6px) rotate(-1.5deg); } 100% { transform: none; } }
+
+.device-art .wake { opacity: 0; }
+
+.device-art.play .wake { animation: da-wakeGlow 0.8s var(--d) ease-out both; }
+
+@keyframes da-wakeGlow { 0% { opacity: 0; } 30% { opacity: .55; } 100% { opacity: 0; } }
+
+.device-art.play .flash-in { animation: da-flashIn 0.5s 0.25s var(--ease-soft) both; }
+
+@keyframes da-flashIn { from { transform: translateY(-15px); opacity: .55; } }
+
+.device-art.play .spin { animation: da-spin 0.7s 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+
+@keyframes da-spin { from { transform: translateY(-8px); } to { transform: translateY(0); } }
+
+.device-art.play .toast { animation: da-toast 0.45s 0.85s var(--ease) both; }
+
+@keyframes da-toast { from { transform: translateY(6px); opacity: 0; } }
+
+.device-art.leave .dev { animation: da-leave 0.3s ease-in both; filter: grayscale(1); }
+
+/* On disconnect the device stays in view, shrunk a little, dimmed and gray. */
+@keyframes da-leave { to { transform: scale(0.92); opacity: 0.5; } }
+
+/* Still: drawn where the connect animation ends, for lists. Every animation
+   jumps to its last frame. */
+.device-art.still,
+.device-art.still * { animation-duration: 0s !important; animation-delay: 0s !important; }
