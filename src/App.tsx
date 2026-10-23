@@ -38,6 +38,13 @@ import { EdgeSurface } from "./components/EdgeSurface";
 import { ShelfTypeIcon } from "./components/ShelfTypeIcon";
 import { WifiPanel } from "./components/WifiPanel";
 import { BluetoothPanel } from "./components/BluetoothPanel";
+import { DeviceArt, DeviceArtDefs } from "./devices/DeviceArt";
+import { deviceArtFor } from "./devices/deviceArtFor";
+import { deviceLookFor } from "./devices/deviceLooks";
+import type { BudLevel, BudsBattery } from "./devices/connectedDevices";
+import { ConnectedDevicesPanel } from "./components/ConnectedDevicesPanel";
+import { isWiredAudio, usbArtFor, usbDisplayName, type UsbIdentity } from "./devices/usbArtFor";
+import type { DeviceArtKey } from "./devices/art";
 import {
 	Cpu,
 	MemoryStick,
@@ -53,7 +60,8 @@ import {
 	ChevronLeft,
 	ChevronRight,
 	Inbox,
-	Music
+	Music,
+	Zap
 } from "lucide-react";
 
 /**
@@ -66,10 +74,15 @@ import {
  *   Dragging files onto the notch also opens the shelf. Wheel/swipe switches
  *   between tool panels, including when a live activity occupies the pill.
  */
-type NotchPanel = "calendar" | "command-center";
-const NOTCH_PANELS: readonly NotchPanel[] = ["calendar", "command-center"];
+type NotchPanel = "calendar" | "command-center" | "devices";
+const NOTCH_PANELS: readonly NotchPanel[] = ["calendar", "command-center", "devices"];
 const asNotchPanel = (value: unknown): NotchPanel | null =>
 	NOTCH_PANELS.includes(value as NotchPanel) ? (value as NotchPanel) : null;
+
+// The Connected devices panel grows with its list between these heights;
+// the maximum is the size the panel had before it grew to fit.
+const DEVICES_MIN_HEIGHT = 150;
+const DEVICES_MAX_HEIGHT = 300;
 
 // Pomodoro timer limit.
 const MAX_TIMER_SECONDS = 180 * 60;
@@ -437,7 +450,114 @@ type BloomMode =
 	| "status"
 	| "shelf"
 	| "wifi"
-	| "bluetooth";
+	| "bluetooth"
+	| "devices"
+	| "device";
+
+// A device that just connected or disconnected, shown briefly in the pill.
+interface DeviceAlert {
+	// The device's id, so a later battery report can find its alert.
+	id: string;
+	art: DeviceArtKey;
+	name: string;
+	connected: boolean;
+	battery: number | null;
+	// Each bud's and the case's battery, for earbuds that report them.
+	buds?: BudsBattery | null;
+	// A USB device, which has no list to open when the alert is clicked.
+	usb?: boolean;
+	// Changes on every alert, so the drawing replays its animation.
+	runId: number;
+}
+
+// As sent by the backend's `bluetooth-connection` event.
+interface BluetoothConnection {
+	id: string;
+	name: string;
+	kind: string;
+	form: string | null;
+	connected: boolean;
+	battery: number | null;
+}
+
+/** A USB device plugged in or removed, from the backend's `usb-connection`. */
+interface UsbConnection extends UsbIdentity {
+	/** The device's container id. */
+	id: string;
+	connected: boolean;
+}
+
+// What a device alert says: wired and USB devices are plugged in, cards
+// inserted, everything else connected.
+const PLUGGED_ART = new Set<DeviceArtKey>([
+	"headphones-wired",
+	"earbuds-usbc",
+	"earbuds-jack",
+	"flash-drive",
+	"ssd",
+	"hub",
+	"webcam",
+	"microphone"
+]);
+function deviceAlertStatus(art: DeviceArtKey, connected: boolean, wired = false): string {
+	if (art === "sd-card") return connected ? "Inserted" : "Removed";
+	// A wired device is plugged in whatever it was picked to look like.
+	if (wired || PLUGGED_ART.has(art)) return connected ? "Plugged in" : "Unplugged";
+	return connected ? "Connected" : "Disconnected";
+}
+
+// How long a device alert stays in the pill.
+const DEVICE_ALERT_MS = { connected: 4200, disconnected: 2600 };
+// How many alerts for other devices can wait behind the one showing.
+const DEVICE_ALERT_QUEUE = 3;
+
+/** A small ring showing a device's battery, with the level in the middle. */
+function DeviceBatteryRing({ level, charging = false }: { level: number; charging?: boolean }) {
+	const r = 10.5;
+	const circumference = 2 * Math.PI * r;
+	const low = level <= 20 && !charging;
+	return (
+		<div
+			className={`device-alert-battery${low ? " low" : ""}${charging ? " charging" : ""}`}
+			title={`${level}%${charging ? ", charging" : ""}`}
+		>
+			<svg viewBox="0 0 28 28" width="28" height="28">
+				<circle cx="14" cy="14" r={r} className="track" />
+				<circle
+					cx="14"
+					cy="14"
+					r={r}
+					className="level"
+					strokeDasharray={`${(circumference * level) / 100} ${circumference}`}
+					transform="rotate(-90 14 14)"
+				/>
+			</svg>
+			<span>{level}</span>
+		</div>
+	);
+}
+
+// Each bud's and the case's battery, for earbuds that report them: a ring
+// per part with its label underneath. Parts with no reading are left out.
+function DeviceBudsBattery({ buds }: { buds: BudsBattery }) {
+	const parts: [string, BudLevel][] = [];
+	if (buds.left) parts.push(["L", buds.left]);
+	if (buds.right) parts.push(["R", buds.right]);
+	if (buds.case) parts.push(["Case", buds.case]);
+	return (
+		<div className="device-alert-buds">
+			{parts.map(([label, part]) => (
+				<div key={label} className="device-alert-bud">
+					<DeviceBatteryRing level={part.level} charging={part.charging} />
+					<span className="device-alert-bud-label">
+						{label}
+						{part.charging && <Zap className="device-alert-bud-charging" />}
+					</span>
+				</div>
+			))}
+		</div>
+	);
+}
 
 // The shelf is a short-lived stash: one row, newest first, oldest evicted.
 const SHELF_MAX_ITEMS = 10;
@@ -678,6 +798,24 @@ function App() {
 		dismissed: announcementDismissed,
 		dismiss: dismissAnnouncement
 	} = useAnnouncement();
+	const [deviceAlert, setDeviceAlert] = useState<DeviceAlert | null>(null);
+	// Each connected earbud's own levels, as last reported, for Connected devices.
+	const [budsById, setBudsById] = useState<Record<string, BudsBattery>>({});
+	// The height the Connected devices panel's content needs; the open notch
+	// follows it up to DEVICES_MAX_HEIGHT, past which the list scrolls.
+	const [devicesContentHeight, setDevicesContentHeight] = useState(DEVICES_MAX_HEIGHT);
+	// True from an alert appearing until its exit animation has finished, so
+	// the clock row only comes back once the alert has faded out.
+	const [deviceAlertOnScreen, setDeviceAlertOnScreen] = useState(false);
+	const deviceAlertRef = useRef<DeviceAlert | null>(null);
+	deviceAlertRef.current = deviceAlert;
+	const deviceAlertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(
+		() => () => {
+			if (deviceAlertTimerRef.current) clearTimeout(deviceAlertTimerRef.current);
+		},
+		[]
+	);
 	const announcementShownRef = useRef<string | null>(null);
 	const announcementOpen = !!announcement && !announcementDismissed;
 	const announcementOpenRef = useRef(false);
@@ -750,6 +888,7 @@ function App() {
 	const isAnyInteraction = isHovered || isNotchHovered || isEdgeHovered;
 	const isHidden =
 		!startupAnimating &&
+		!deviceAlertOnScreen &&
 		((notchMode === "smart" && isOverlapped && interactionState === "none") ||
 			(notchMode === "peek" && interactionState === "none" && !eventPeek));
 
@@ -918,6 +1057,14 @@ function App() {
 	const [settingsCalendarEnabled, setSettingsCalendarEnabled] = useState(
 		() => localStorage.getItem("bloom-calendar-enabled") !== "false"
 	);
+	// Which panels the notch shows. Calendar and Controls are on by default;
+	// Connected devices (and panels added later) are opt-in.
+	const [settingsControlsPanelEnabled, setSettingsControlsPanelEnabled] = useState(
+		() => localStorage.getItem("bloom-notch-command-center-enabled") !== "false"
+	);
+	const [settingsDevicesPanelEnabled, setSettingsDevicesPanelEnabled] = useState(
+		() => localStorage.getItem("bloom-notch-devices-enabled") === "true"
+	);
 	const [settingsTimerSoundEnabled, setSettingsTimerSoundEnabled] = useState(
 		() => localStorage.getItem("bloom-timer-sound-enabled") !== "false"
 	);
@@ -991,6 +1138,10 @@ function App() {
 
 				setSettingsWeatherEnabled(getVal("bloom-weather-enabled", "true") !== "false");
 				setSettingsCalendarEnabled(getVal("bloom-calendar-enabled", "true") !== "false");
+				setSettingsControlsPanelEnabled(
+					getVal("bloom-notch-command-center-enabled", "true") !== "false"
+				);
+				setSettingsDevicesPanelEnabled(getVal("bloom-notch-devices-enabled", "false") === "true");
 				setSettingsTimerSoundEnabled(getVal("bloom-timer-sound-enabled", "true") !== "false");
 				setSettingsMusicModeEnabled(getVal("bloom-music-mode-enabled", "true") !== "false");
 				setRememberPanelEnabled(
@@ -1108,6 +1259,8 @@ function App() {
 		{
 			"bloom-weather-enabled": setSettingsWeatherEnabled,
 			"bloom-calendar-enabled": setSettingsCalendarEnabled,
+			"bloom-notch-command-center-enabled": setSettingsControlsPanelEnabled,
+			"bloom-notch-devices-enabled": setSettingsDevicesPanelEnabled,
 			"bloom-timer-sound-enabled": setSettingsTimerSoundEnabled,
 			"bloom-music-mode-enabled": setSettingsMusicModeEnabled,
 			"bloom-notch-remember-panel": setRememberPanelEnabled,
@@ -1501,7 +1654,8 @@ function App() {
 			prev === "status" ||
 			prev === "shelf" ||
 			prev === "wifi" ||
-			prev === "bluetooth"
+			prev === "bluetooth" ||
+			prev === "devices"
 				? restingModeRef.current
 				: prev
 		);
@@ -1753,9 +1907,17 @@ function App() {
 		if (cycleBloomMode(delta > 0 ? 1 : -1)) lastScrollTime.current = now;
 	};
 
-	function panelAvailable(panel: NotchPanel) {
+	function panelEnabled(panel: NotchPanel) {
 		if (panel === "calendar") return settingsCalendarEnabled;
-		return true;
+		if (panel === "command-center") return settingsControlsPanelEnabled;
+		return settingsDevicesPanelEnabled;
+	}
+
+	// Settings keeps at least one panel on; if a hand-edited settings file turns
+	// them all off, Controls stays so the open notch is never empty.
+	function panelAvailable(panel: NotchPanel) {
+		if (!NOTCH_PANELS.some(panelEnabled)) return panel === "command-center";
+		return panelEnabled(panel);
 	}
 
 	// Wheel and swipe navigate panels, even from a collapsed live activity.
@@ -1971,10 +2133,11 @@ function App() {
 	bloomModeRef.current = bloomMode;
 
 	// A click opens the last-used panel when memory is enabled, otherwise the
-	// selected default. The controls panel is always available as a fallback.
+	// selected default. If that panel is turned off, the first one that's on.
 	const openingPanel = (): NotchPanel => {
 		const preferred = rememberPanelEnabled ? lastPanel ?? defaultPanel : defaultPanel;
-		return panelAvailable(preferred) ? preferred : "command-center";
+		if (panelAvailable(preferred)) return preferred;
+		return NOTCH_PANELS.find(panelAvailable) ?? "command-center";
 	};
 
 	// Expands the notch into a panel, or into an activity's own view.
@@ -2019,12 +2182,19 @@ function App() {
 		lastPlayingRef.current = isPlaying;
 	}, [isPlaying, mediaInfo.title, notchMode, triggerEventPeek]);
 
-	// Reset bloom mode when calendar setting is disabled
+	// Leave a panel that has just been turned off in Settings.
 	useEffect(() => {
-		if (!settingsCalendarEnabled && bloomMode === "calendar") {
+		const panel = asNotchPanel(bloomMode);
+		if (panel && !panelAvailable(panel)) {
 			setBloomMode(isOpen ? openingPanel() : collapsedMode);
 		}
-	}, [settingsCalendarEnabled, bloomMode, isOpen]);
+	}, [
+		settingsCalendarEnabled,
+		settingsControlsPanelEnabled,
+		settingsDevicesPanelEnabled,
+		bloomMode,
+		isOpen
+	]);
 
 	// Leave the music view when music is turned off or the player ends its media
 	// session: an open notch falls back to the remembered panel.
@@ -2033,6 +2203,157 @@ function App() {
 			setBloomMode(isOpen ? openingPanel() : collapsedMode);
 		}
 	}, [settingsMusicModeEnabled, mediaInfo.has_media, bloomMode, isOpen]);
+
+	// A device connecting or disconnecting takes the pill for a few seconds,
+	// like the Dynamic Island: its drawing, name and battery. It never takes
+	// over a notch the user has open, an announcement or the shelf. In peek
+	// and smart modes it shows the notch for as long as it lasts.
+	//
+	// Alerts for other devices wait their turn (two drives plugged in
+	// together show one after the other); a newer alert for the device on
+	// screen replaces it. The queue is short: a burst of devices shouldn't
+	// hold the notch for long.
+	const deviceAlertQueueRef = useRef<Omit<DeviceAlert, "runId">[]>([]);
+	const presentDeviceAlertRef = useRef<(alert: Omit<DeviceAlert, "runId">) => void>(() => {});
+	presentDeviceAlertRef.current = (alert) => {
+		const duration = alert.connected ? DEVICE_ALERT_MS.connected : DEVICE_ALERT_MS.disconnected;
+		setDeviceAlert({ ...alert, runId: Date.now() });
+		setDeviceAlertOnScreen(true);
+		setBloomMode("device");
+		if (notchMode === "peek") triggerEventPeek(duration);
+		if (deviceAlertTimerRef.current) clearTimeout(deviceAlertTimerRef.current);
+		deviceAlertTimerRef.current = setTimeout(() => {
+			const next = deviceAlertQueueRef.current.shift();
+			if (next && !isOpenRef.current) presentDeviceAlertRef.current(next);
+			else {
+				deviceAlertQueueRef.current = [];
+				setDeviceAlert(null);
+			}
+		}, duration);
+	};
+	const showDeviceAlert = useCallback((alert: Omit<DeviceAlert, "runId">) => {
+		const mode = bloomModeRef.current;
+		if (isOpenRef.current || mode === "announcement" || mode === "shelf") return;
+		const current = deviceAlertRef.current;
+		if (current && current.id !== alert.id) {
+			const queue = deviceAlertQueueRef.current.filter((queued) => queued.id !== alert.id);
+			deviceAlertQueueRef.current = [...queue, alert].slice(-DEVICE_ALERT_QUEUE);
+			return;
+		}
+		presentDeviceAlertRef.current(alert);
+	}, []);
+
+	useEffect(() => {
+		if (windowLabel !== "main") return;
+		const unlistenConnection = listen<BluetoothConnection>("bluetooth-connection", ({ payload }) => {
+			showDeviceAlert({
+				id: payload.id,
+				art: deviceLookFor(payload.name) ?? deviceArtFor(payload),
+				name: payload.name,
+				connected: payload.connected,
+				battery: payload.battery
+			});
+			// A disconnected device's bud levels are out of date by its next connect.
+			if (!payload.connected) {
+				setBudsById((all) => {
+					if (!(payload.id in all)) return all;
+					const { [payload.id]: _gone, ...rest } = all;
+					return rest;
+				});
+			}
+		});
+		// Windows often reports a battery level a moment after the device
+		// connects; fill it into the alert if that device is still showing.
+		const unlistenBattery = listen<{ id: string; battery: number }>("bluetooth-battery", ({ payload }) => {
+			setDeviceAlert((alert) =>
+				alert && alert.id === payload.id && alert.connected ? { ...alert, battery: payload.battery } : alert
+			);
+		});
+		// Earbuds that report each bud's and the case's level send them a
+		// moment after connecting.
+		const unlistenBuds = listen<BudsBattery & { id: string }>("bluetooth-buds", ({ payload }) => {
+			const { id, ...buds } = payload;
+			setDeviceAlert((alert) => (alert && alert.id === id && alert.connected ? { ...alert, buds } : alert));
+			setBudsById((all) => ({ ...all, [id]: buds }));
+		});
+		// USB devices, and what's plugged into the 3.5 mm jack. A wired audio
+		// device's drawing can be picked in Connected devices.
+		const showWired = ({ payload }: { payload: UsbConnection }) => {
+			const name = usbDisplayName(payload);
+			showDeviceAlert({
+				id: payload.id,
+				art: (isWiredAudio(payload.class) ? deviceLookFor(name) : null) ?? usbArtFor(payload),
+				name,
+				connected: payload.connected,
+				battery: null,
+				usb: true
+			});
+		};
+		const unlistenUsb = listen<UsbConnection>("usb-connection", showWired);
+		const unlistenJack = listen<UsbConnection>("wired-audio-connection", showWired);
+		return () => {
+			unlistenConnection.then((f) => f());
+			unlistenBattery.then((f) => f());
+			unlistenUsb.then((f) => f());
+			unlistenJack.then((f) => f());
+			unlistenBuds.then((f) => f());
+		};
+	}, [windowLabel, showDeviceAlert]);
+
+	// In a dev build, any drawing can be shown from the console, e.g.
+	// __bloomDeviceAlert("stem-buds", "AirPods Pro", true, 82), and a late
+	// battery report sent with __bloomDeviceBattery("dev", 64).
+	useEffect(() => {
+		if (!import.meta.env.DEV) return;
+		const w = window as unknown as Record<string, unknown>;
+		w.__bloomDeviceAlert = (art: DeviceArtKey, name: string, connected = true, battery: number | null = null) =>
+			showDeviceAlert({ id: "dev", art, name, connected, battery });
+		// __bloomUsb("disk", "SanDisk Cruzer Blade USB Device", true, "a")
+		// stands in for the backend's usb-connection event.
+		w.__bloomUsb = (kind: string, name: string, connected = true, id = "usb-dev") =>
+			showDeviceAlert({
+				id,
+				art: usbArtFor({ class: kind, name }),
+				name: usbDisplayName({ class: kind, name }),
+				connected,
+				battery: null,
+				usb: true
+			});
+		// __bloomDeviceBuds("dev", [90, false], [80, true], [40, false]) stands
+		// in for bluetooth-buds; pass null for a part with no reading.
+		const part = (p: [number, boolean] | null) => (p ? { level: p[0], charging: p[1] } : null);
+		w.__bloomDeviceBuds = (
+			id: string,
+			left: [number, boolean] | null,
+			right: [number, boolean] | null,
+			caseLevel: [number, boolean] | null
+		) =>
+			setDeviceAlert((alert) =>
+				alert && alert.id === id && alert.connected
+					? { ...alert, buds: { left: part(left), right: part(right), case: part(caseLevel) } }
+					: alert
+			);
+		w.__bloomDeviceBattery = (id: string, battery: number) =>
+			setDeviceAlert((alert) => (alert && alert.id === id && alert.connected ? { ...alert, battery } : alert));
+	}, [showDeviceAlert]);
+
+	// The clock row normally returns when the alert's exit animation ends.
+	// If the alert never rendered (the notch was still starting up), there's
+	// no exit to wait for, so bring it back shortly after the alert ends.
+	useEffect(() => {
+		if (deviceAlert) return;
+		const timer = setTimeout(() => setDeviceAlertOnScreen(false), 400);
+		return () => clearTimeout(timer);
+	}, [deviceAlert]);
+
+	// Back to the resting view once the alert is over.
+	useEffect(() => {
+		if (bloomMode === "device" && !deviceAlert) {
+			setBloomMode(isOpenRef.current ? openingPanel() : collapsedMode);
+		}
+		// openingPanel only reads settings state already in this render.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [bloomMode, deviceAlert, collapsedMode]);
 
 	// The collapsed notch always shows its current live activity: music while a
 	// session exists, the timer (with music in its bubble) once one is set, and
@@ -2714,10 +3035,11 @@ function App() {
 	// Calculate width dynamically based on enabled features
 	const getDynamicWidth = () => {
 		if (bloomMode === "announcement" && announcement && !announcementDismissed) return 380;
+		if (bloomMode === "device" && deviceAlert) return 330;
 		if (isCalendarMode) return 480;
 		if (bloomMode === "shelf") return 380;
 		if (bloomMode === "command-center" && isOpen) return 350;
-		if (bloomMode === "wifi" || bloomMode === "bluetooth") return 350;
+		if (bloomMode === "wifi" || bloomMode === "bluetooth" || bloomMode === "devices") return 350;
 		if (showMusicOnStatusHover) {
 			return 170 + (settingsVisualizerEnabled ? 30 : 0);
 		}
@@ -2745,6 +3067,8 @@ function App() {
 		if (bloomMode === "announcement" && announcement && !announcementDismissed) {
 			return announcement.url ? 168 : 148;
 		}
+		// Device alert: the drawing, with room for its motion.
+		if (bloomMode === "device" && deviceAlert) return 76;
 		// Sized to the calendar's week-row count plus the timer's fixed content.
 		if (bloomMode === "calendar") return calendarMonthRows >= 6 ? 305 : 273;
 		// Shelf expands on mode alone (no hover needed: there is no cursor
@@ -2755,6 +3079,9 @@ function App() {
 			return shelfOverflowing ? 190 : 176;
 		}
 		if (bloomMode === "command-center") return isOpen ? 230 : 36;
+		if (bloomMode === "devices") {
+			return Math.min(DEVICES_MAX_HEIGHT, Math.max(DEVICES_MIN_HEIGHT, devicesContentHeight));
+		}
 		if (bloomMode === "wifi" || bloomMode === "bluetooth") return 300;
 		if (bloomMode === "status") return 36;
 		if (isMusicMode && isOpen) {
@@ -2841,6 +3168,7 @@ function App() {
 					position: "relative"
 				}}
 			>
+				<DeviceArtDefs />
 				<motion.div
 					ref={bloomRef}
 					className={`bloom ${isHovered ? "expanded" : ""} ${isImpacted ? "is-impacted" : ""} ${isDragHovering ? "drag-hover" : ""}`}
@@ -3211,7 +3539,11 @@ function App() {
 											transition={{ duration: 0.2 }}
 											style={{ width: "100%" }}
 										>
-											<div className="main-row">
+											<div
+												className="main-row"
+												// A device alert covers the whole pill.
+												style={bloomMode === "device" || deviceAlertOnScreen ? { visibility: "hidden" } : undefined}
+											>
 												<AnimatePresence mode="wait">
 													{(showPowerPulse || showLowBatteryPulse || showUpdatePulse) &&
 													!isHovered ? (
@@ -3504,6 +3836,25 @@ function App() {
 									)}
 								</AnimatePresence>
 
+								{/* Connected devices: everything connected, with its battery, by priority */}
+								<AnimatePresence>
+									{bloomMode === "devices" && (
+										<motion.div
+											key="devices-view"
+											initial={{ opacity: 0 }}
+											animate={{ opacity: 1 }}
+											exit={{ opacity: 0, filter: "blur(4px)", transition: { duration: 0.1 } }}
+											transition={{ type: "spring", stiffness: 400, damping: 30 }}
+										>
+											<ConnectedDevicesPanel
+												buds={budsById}
+												lowThreshold={lowBatteryThreshold}
+												onContentHeight={setDevicesContentHeight}
+											/>
+										</motion.div>
+									)}
+								</AnimatePresence>
+
 								{/* Command Center Panel */}
 								<AnimatePresence>
 									{bloomMode === "command-center" && (
@@ -3756,6 +4107,54 @@ function App() {
 													<span className="cc-classic-percentage">{currentBrightness}%</span>
 												</div>
 											</div>
+										</motion.div>
+									)}
+								</AnimatePresence>
+
+								{/* Device alert: a device connected or disconnected. A
+								    click opens the Bluetooth view. */}
+								<AnimatePresence
+									// An alert arriving while the last one fades out keeps the
+									// clock row hidden.
+									onExitComplete={() => setDeviceAlertOnScreen(deviceAlertRef.current !== null)}
+								>
+									{bloomMode === "device" && deviceAlert && (
+										<motion.div
+											className="device-alert"
+											onClick={(e) => {
+												e.stopPropagation();
+												const usb = deviceAlert.usb;
+												deviceAlertQueueRef.current = [];
+												setDeviceAlert(null);
+												// Bluetooth devices open their list; USB ones
+												// have none, so the click just dismisses.
+												if (usb) return;
+												setIsOpen(true);
+												setBloomMode("bluetooth");
+											}}
+											initial={{ opacity: 0 }}
+											animate={{ opacity: 1 }}
+											exit={{ opacity: 0, filter: "blur(4px)", transition: { duration: 0.12 } }}
+											transition={{ duration: 0.2 }}
+										>
+											<DeviceArt
+												art={deviceAlert.art}
+												phase={deviceAlert.connected ? "play" : "leave"}
+												runId={deviceAlert.runId}
+												size={60}
+											/>
+											<div className="device-alert-text">
+												<span className="device-alert-name">{deviceAlert.name}</span>
+												<span className="device-alert-status">
+													{deviceAlertStatus(deviceAlert.art, deviceAlert.connected, deviceAlert.usb)}
+												</span>
+											</div>
+											{deviceAlert.connected && deviceAlert.buds ? (
+												<DeviceBudsBattery buds={deviceAlert.buds} />
+											) : (
+												deviceAlert.connected &&
+												deviceAlert.battery !== null && <DeviceBatteryRing level={deviceAlert.battery} />
+											)}
 										</motion.div>
 									)}
 								</AnimatePresence>

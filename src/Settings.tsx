@@ -169,6 +169,11 @@ function SettingsApp() {
 							handleNotchEdgeDelayChange={settings.handleNotchEdgeDelayChange}
 							calendarEnabled={settings.calendarEnabled}
 							toggleCalendar={settings.toggleCalendar}
+							controlsPanelEnabled={settings.controlsPanelEnabled}
+							toggleControlsPanel={settings.toggleControlsPanel}
+							devicesPanelEnabled={settings.devicesPanelEnabled}
+							toggleDevicesPanel={settings.toggleDevicesPanel}
+							enabledPanelCount={settings.enabledPanelCount}
 							notchRememberPanel={settings.notchRememberPanel}
 							toggleNotchRememberPanel={settings.toggleNotchRememberPanel}
 							notchDefaultPanel={settings.notchDefaultPanel}

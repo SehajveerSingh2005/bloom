@@ -10,11 +10,21 @@ import {
 	CloudSun,
 	Timer,
 	Archive,
+	Headphones,
+	SlidersHorizontal,
 	X
 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 import { StatusWidgetConfig } from "../components/StatusWidgetConfig";
 import type { WidgetConfig } from "./types";
+import type { NotchPanelChoice } from "./useSettings";
+
+/** The notch's panels, in the order the notch cycles through them. */
+const PANEL_CHOICES: readonly (readonly [NotchPanelChoice, string])[] = [
+	["calendar", "Calendar"],
+	["command-center", "Command Center"],
+	["devices", "Connected devices"]
+];
 
 interface NotchTabProps {
 	notchMode: string;
@@ -23,10 +33,15 @@ interface NotchTabProps {
 	handleNotchEdgeDelayChange: (val: number) => void;
 	calendarEnabled: boolean;
 	toggleCalendar: () => void;
+	controlsPanelEnabled: boolean;
+	toggleControlsPanel: () => void;
+	devicesPanelEnabled: boolean;
+	toggleDevicesPanel: () => void;
+	enabledPanelCount: number;
 	notchRememberPanel: boolean;
 	toggleNotchRememberPanel: () => void;
-	notchDefaultPanel: "calendar" | "command-center";
-	changeNotchDefaultPanel: (panel: "calendar" | "command-center") => void;
+	notchDefaultPanel: NotchPanelChoice;
+	changeNotchDefaultPanel: (panel: NotchPanelChoice) => void;
 	timerSoundEnabled: boolean;
 	toggleTimerSound: () => void;
 	musicModeEnabled: boolean;
@@ -68,6 +83,11 @@ export function NotchTab({
 	handleNotchEdgeDelayChange,
 	calendarEnabled,
 	toggleCalendar,
+	controlsPanelEnabled,
+	toggleControlsPanel,
+	devicesPanelEnabled,
+	toggleDevicesPanel,
+	enabledPanelCount,
 	notchRememberPanel,
 	toggleNotchRememberPanel,
 	notchDefaultPanel,
@@ -100,6 +120,17 @@ export function NotchTab({
 	statusWidgets,
 	handleWidgetsChange
 }: NotchTabProps) {
+	const panelOn: Record<NotchPanelChoice, boolean> = {
+		calendar: calendarEnabled,
+		"command-center": controlsPanelEnabled,
+		devices: devicesPanelEnabled
+	};
+	const firstPanelOn = PANEL_CHOICES.find(([panel]) => panelOn[panel])?.[0] ?? "command-center";
+	// The notch needs at least one panel, so the last one on stays on.
+	const isLastPanel = (on: boolean) => on && enabledPanelCount <= 1;
+	const lastPanelTitle = (on: boolean) =>
+		isLastPanel(on) ? "The notch needs at least one panel" : undefined;
+
 	return (
 		<>
 			<div className="setting-group-label">Notch</div>
@@ -138,35 +169,18 @@ export function NotchTab({
 					</SettingRow>
 				)}
 
-				<SettingRow
-					icon={PanelTop}
-					label="Remember Last Panel"
-					desc="Reopen the panel you last used; turn off to choose a fixed default"
-				>
-					<label className="toggle-switch">
-						<input type="checkbox" checked={notchRememberPanel} onChange={toggleNotchRememberPanel} />
-						<span className="slider"></span>
-					</label>
-				</SettingRow>
+			</div>
 
-				{!notchRememberPanel && (
-					<SettingRow icon={PanelTop} label="Default Panel" desc="Open this panel when you click the notch">
-						<select
-							className="settings-select"
-							value={calendarEnabled ? notchDefaultPanel : "command-center"}
-							onChange={(e) =>
-								changeNotchDefaultPanel(e.target.value as "calendar" | "command-center")
-							}
-						>
-							<option value="calendar" disabled={!calendarEnabled}>Calendar</option>
-							<option value="command-center">Command Center</option>
-						</select>
-					</SettingRow>
-				)}
-
+			<div className="setting-group-label">Panels</div>
+			<div className="setting-group">
 				<SettingRow icon={Calendar} label="Calendar & Timer" desc="Enable productivity split-view">
-					<label className="toggle-switch">
-						<input type="checkbox" checked={calendarEnabled} onChange={toggleCalendar} />
+					<label className="toggle-switch" title={lastPanelTitle(calendarEnabled)}>
+						<input
+							type="checkbox"
+							checked={calendarEnabled}
+							disabled={isLastPanel(calendarEnabled)}
+							onChange={toggleCalendar}
+						/>
 						<span className="slider"></span>
 					</label>
 				</SettingRow>
@@ -184,6 +198,64 @@ export function NotchTab({
 					</SettingRow>
 				)}
 
+				<SettingRow icon={SlidersHorizontal} label="Command Center" desc="Quick toggles, Wi-Fi and Bluetooth">
+					<label className="toggle-switch" title={lastPanelTitle(controlsPanelEnabled)}>
+						<input
+							type="checkbox"
+							checked={controlsPanelEnabled}
+							disabled={isLastPanel(controlsPanelEnabled)}
+							onChange={toggleControlsPanel}
+						/>
+						<span className="slider"></span>
+					</label>
+				</SettingRow>
+
+				<SettingRow
+					icon={Headphones}
+					label="Connected Devices"
+					desc="Batteries and audio of your connected devices"
+				>
+					<label className="toggle-switch" title={lastPanelTitle(devicesPanelEnabled)}>
+						<input
+							type="checkbox"
+							checked={devicesPanelEnabled}
+							disabled={isLastPanel(devicesPanelEnabled)}
+							onChange={toggleDevicesPanel}
+						/>
+						<span className="slider"></span>
+					</label>
+				</SettingRow>
+
+				<SettingRow
+					icon={PanelTop}
+					label="Remember Last Panel"
+					desc="Reopen the panel you last used; turn off to choose a fixed default"
+				>
+					<label className="toggle-switch">
+						<input type="checkbox" checked={notchRememberPanel} onChange={toggleNotchRememberPanel} />
+						<span className="slider"></span>
+					</label>
+				</SettingRow>
+
+				{!notchRememberPanel && (
+					<SettingRow icon={PanelTop} label="Default Panel" desc="Open this panel when you click the notch">
+						<select
+							className="settings-select"
+							value={panelOn[notchDefaultPanel] ? notchDefaultPanel : firstPanelOn}
+							onChange={(e) => changeNotchDefaultPanel(e.target.value as NotchPanelChoice)}
+						>
+							{PANEL_CHOICES.map(([panel, label]) => (
+								<option key={panel} value={panel} disabled={!panelOn[panel]}>
+									{label}
+								</option>
+							))}
+						</select>
+					</SettingRow>
+				)}
+			</div>
+
+			<div className="setting-group-label">Music</div>
+			<div className="setting-group">
 				<SettingRow icon={Music} label="Music Mode" desc="Interactive live music widget">
 					<label className="toggle-switch">
 						<input type="checkbox" checked={musicModeEnabled} onChange={toggleMusicMode} />
