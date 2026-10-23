@@ -12,6 +12,7 @@ mod state;
 mod tray;
 mod types;
 mod updater;
+mod usb;
 mod utils;
 mod wifi;
 mod window_region;
@@ -374,6 +375,7 @@ fn main() {
             diagnostics::record("services_ready", "hooks and settings watcher initialized");
             wifi::setup_wifi_notifications(app.handle().clone());
             bluetooth::setup_bluetooth_notifications(app.handle().clone());
+            usb::setup_usb_notifications(app.handle().clone());
 
             // Listen for second-instance signal to open settings
             if let Some(&h_event) = SINGLE_INSTANCE_EVENT_HANDLE.get() {

@@ -1641,6 +1641,78 @@ img {
 	opacity: 1;
 }
 
+/* Device alert: a device's drawing, name and battery across the whole pill */
+.device-alert {
+	position: absolute;
+	inset: 0;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 0 18px 0 14px;
+	color: var(--bloom-text, white);
+	cursor: pointer;
+}
+
+.device-alert-text {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.device-alert-name {
+	font-size: 13.5px;
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.device-alert-status {
+	font-size: 12px;
+	color: var(--bloom-text-muted, rgba(255, 255, 255, 0.55));
+}
+
+.device-alert-battery {
+	position: relative;
+	width: 28px;
+	height: 28px;
+	flex: none;
+	display: grid;
+	place-items: center;
+}
+
+.device-alert-battery svg {
+	position: absolute;
+	inset: 0;
+}
+
+.device-alert-battery circle {
+	fill: none;
+	stroke-width: 2.6;
+}
+
+.device-alert-battery .track {
+	stroke: rgba(255, 255, 255, 0.14);
+}
+
+.device-alert-battery .level {
+	stroke: #32d74b;
+	stroke-linecap: round;
+	transition: stroke-dasharray 0.6s ease;
+}
+
+.device-alert-battery.low .level {
+	stroke: #ff453a;
+}
+
+.device-alert-battery span {
+	font-size: 9.5px;
+	font-weight: 600;
+}
+
 /* Announcement card */
 .announcement-content {
 	position: absolute;
