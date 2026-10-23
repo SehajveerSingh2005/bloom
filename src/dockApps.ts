@@ -45,6 +45,52 @@ export function matchesPackagedExecutable(
 	return aFamily ? aFamily === executableFamily(b.path) : bFamily === executableFamily(a.path);
 }
 
+/** A browser-installed web app's shell id, such as Chrome._crx_<app id>. */
+export const isWebAppId = (path: string) => !/[\\/]/.test(path) && path.toLowerCase().includes("_crx_");
+
+const BROWSER_HOSTS = ["chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe"];
+const isBrowserProcess = (path: string) => BROWSER_HOSTS.some((host) => path.toLowerCase().endsWith(host));
+
+/**
+ * What to pin for a dock item. A web app's window runs as its browser
+ * (chrome.exe), so pinning that would launch the browser and show its icon;
+ * pin the installed web app it is instead, found by name among the installed
+ * apps, which launches the web app and carries its icon.
+ */
+export function pinnableApp(app: AppInfo, installed: AppInfo[]): AppInfo {
+	if (!isBrowserProcess(app.path)) return app;
+	const name = app.name.toLowerCase();
+	const webApp = installed.find((i) => isWebAppId(i.path) && i.name.toLowerCase() === name);
+	return webApp ? { ...app, path: webApp.path } : app;
+}
+
+/**
+ * Whether a pin may stand for a running window found only by its program
+ * (the same executable). A browser runs the browser and every web app
+ * installed from it, all as one program, so a browser window counts only
+ * with the pin's own name: a pin must never claim another web app's window
+ * (a Netflix pin showing as a running YouTube), and a web app pin matches
+ * nothing by its program at all.
+ */
+export function canMatchByProgram(pin: AppInfo, window: AppInfo): boolean {
+	if (isWebAppId(pin.path)) return false;
+	if (!isBrowserProcess(window.executable ?? window.path)) return true;
+	return pin.name.toLowerCase() === window.name.toLowerCase();
+}
+
+/**
+ * Whether a web app pinned by its id and a browser window are the same app:
+ * a web app's window is its browser's process, titled with the app's name.
+ */
+export function isSameWebApp(a: AppInfo, b: AppInfo): boolean {
+	const [pin, window] = isWebAppId(a.path) ? [a, b] : [b, a];
+	return (
+		isWebAppId(pin.path) &&
+		isBrowserProcess(window.path) &&
+		pin.name.toLowerCase() === window.name.toLowerCase()
+	);
+}
+
 const trayPath = (app: TrayApp) => app.path.toLowerCase().replace(/\\/g, "/");
 
 const isBrowserHostPath = (p: string) => /(msedge|chrome|brave|vivaldi|firefox)\.exe$/i.test(p);

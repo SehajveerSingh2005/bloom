@@ -9,8 +9,12 @@ import { useSettingsSync } from "./hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 
 import {
+	canMatchByProgram,
+	isSameWebApp,
+	isWebAppId,
 	matchesPackagedExecutable,
 	mergeTrayApps,
+	pinnableApp,
 	selectDockTrayApps,
 	type AppInfo,
 	type TrayApp
@@ -72,6 +76,8 @@ export function isSameApp(a: AppInfo, b: AppInfo): boolean {
 	if (!a.path || !b.path) return false;
 	if (itemKey(a) === itemKey(b)) return true;
 	if (matchesPackagedExecutable(a, b)) return true;
+	// A web app pinned by its id and its running window (its browser's process).
+	if (isSameWebApp(a, b)) return true;
 	// Browser hosts run many apps under one exe — only the full identity
 	// (which folds in the window/AUMID name) can match those.
 	if (isBrowserHost(a.path) || isBrowserHost(b.path)) return false;
@@ -410,15 +416,21 @@ const Dock = memo(function Dock() {
 		init();
 
 		// The installed-apps scan finishes after the first load; pins saved under
-		// their executable's name then get their Start menu name.
+		// their executable's name then get their Start menu name, and web apps
+		// pinned as their browser get the web app's id.
 		const unlistenInstalledApps = listen("installed-apps-updated", async () => {
 			try {
 				const refreshed = await invoke<AppInfo[]>("load_pinned_apps");
-				const names = new Map(refreshed.map((a) => [a.path, a.name]));
 				setPinnedApps((prev) => {
-					const next = prev.map((a) => ({ ...a, name: names.get(a.path) ?? a.name }));
-					if (!next.some((a, i) => a.name !== prev[i].name)) return prev;
-					// Pins are otherwise saved only when they change; keep the names.
+					// The backend keeps the pins' order; anything else means they
+					// changed meanwhile, and the refresh is stale.
+					if (refreshed.length !== prev.length) return prev;
+					const next = prev.map((a, i) => ({ ...a, name: refreshed[i].name, path: refreshed[i].path }));
+					if (!next.some((a, i) => a.name !== prev[i].name || a.path !== prev[i].path)) return prev;
+					next.forEach((a, i) => {
+						if (a.path !== prev[i].path) fetchIcon(a.path, a.name);
+					});
+					// Pins are otherwise saved only when they change; keep the corrections.
 					queueMicrotask(() => {
 						invoke("save_pinned_apps", { apps: next }).catch(console.error);
 					});
@@ -716,8 +728,16 @@ const Dock = memo(function Dock() {
 			// Fuzzy guard: the same app pinned via another entry shape (running
 			// window vs installed shortcut) must never create a duplicate.
 			if (pinnedApps.some((a) => isSameApp(a, app))) return;
-			newPinned = [...pinnedApps, { ...app, is_pinned: true, is_running: false, hwnd: undefined }];
-			fetchIcon(app.path, app.name);
+			// A web app's window carries the web app's id as its path. One that
+			// doesn't (an unusual browser) is its browser's process: pin the
+			// installed web app with its name instead.
+			const installed = await invoke<AppInfo[]>("get_installed_apps").catch(() => []);
+			const pin = pinnableApp(app, installed);
+			// Not in the list yet (installed a moment ago): scan again, and the
+			// pin is repaired when the new list arrives.
+			if (pin === app && isBrowserHost(app.path)) invoke("refresh_installed_apps").catch(() => {});
+			newPinned = [...pinnedApps, { ...pin, is_pinned: true, is_running: false, hwnd: undefined }];
+			fetchIcon(pin.path, pin.name);
 		}
 		setPinnedApps(newPinned);
 		await invoke("save_pinned_apps", { apps: newPinned });
@@ -965,11 +985,23 @@ const Dock = memo(function Dock() {
 				return running;
 			}
 
+			// A web app pinned by its id is running only as a window with its name.
+			if (isWebAppId(p.path)) {
+				const found = activeApps.find(
+					(a) => !matchedRunningKeys.has(itemKey(a)) && isSameWebApp(p, a)
+				);
+				if (found) matchedRunningKeys.add(itemKey(found));
+				return found;
+			}
+
 			// 3. Try fallback match by executable name if defined
 			if (p.executable) {
 				const targetExe = p.executable.toLowerCase();
 				const found = activeApps.find(
-					(a) => !isIdentifier(a.path) && a.executable?.toLowerCase() === targetExe
+					(a) =>
+						!isIdentifier(a.path) &&
+						a.executable?.toLowerCase() === targetExe &&
+						canMatchByProgram(p, a)
 				);
 				if (found) {
 					matchedRunningKeys.add(appIdentity(found.path, found.executable, found.name));
@@ -981,7 +1013,7 @@ const Dock = memo(function Dock() {
 			const pinFilename = p.path.split("/").pop()?.split("\\").pop()?.toLowerCase() || "";
 			if (pinFilename) {
 				const found = activeApps.find((a) => {
-					if (isIdentifier(a.path)) return false;
+					if (isIdentifier(a.path) || !canMatchByProgram(p, a)) return false;
 					const runExe =
 						a.executable?.toLowerCase() ||
 						a.path.split("/").pop()?.split("\\").pop()?.toLowerCase() ||
@@ -2188,6 +2220,13 @@ function AddAppPopup({
 			}
 		};
 		load();
+		// Apps installed since the list was made (a web app just installed from
+		// the browser) appear once a fresh scan finishes.
+		invoke("refresh_installed_apps").catch(() => {});
+		const unlisten = listen("installed-apps-updated", () => void load());
+		return () => {
+			unlisten.then((f) => f());
+		};
 	}, []);
 
 	useEffect(() => {

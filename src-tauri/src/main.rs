@@ -153,6 +153,7 @@ fn main() {
             open_system_action,
             get_app_icon,
             get_installed_apps,
+            refresh_installed_apps,
             save_pinned_apps,
             load_pinned_apps,
             clear_icon_cache,
