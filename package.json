@@ -1,11 +1,12 @@
 {
   "name": "bloom",
-  "version": "3.10.1",
+  "version": "3.10.2",
   "private": true,
   "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "bun test scripts",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
