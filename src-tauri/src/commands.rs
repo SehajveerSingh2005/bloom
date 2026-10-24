@@ -660,18 +660,20 @@ fn toggle_start_menu() {
 }
 
 #[tauri::command]
-pub async fn open_app(app: AppHandle, app_name: String) {
+pub async fn open_app(app: AppHandle, app_name: String) -> Result<(), String> {
     if app_name == "start" {
         toggle_start_menu();
-        return;
+        return Ok(());
     }
 
     if is_bloom_launch_target(&app_name, &app.config().identifier) {
         open_settings_window(app);
-        return;
+        return Ok(());
     }
 
-    tauri::async_runtime::spawn_blocking(move || launch_path(&app_name));
+    tauri::async_runtime::spawn_blocking(move || launch_path(&app_name))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn is_bloom_launch_target(target: &str, identifier: &str) -> bool {
@@ -686,14 +688,16 @@ fn is_bloom_launch_target(target: &str, identifier: &str) -> bool {
 /// Running browser PWAs are relaunched through their Start Menu shortcut so the
 /// new window belongs to the web app rather than the bare browser.
 #[tauri::command]
-pub async fn launch_new_instance(app_path: String, app_name: Option<String>) {
+pub async fn launch_new_instance(app_path: String, app_name: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         if app_path == "start" {
-            return;
+            return Ok(());
         }
         let target = pwa_launch_target(&app_path, app_name.as_deref()).unwrap_or(app_path);
-        launch_path(&target);
-    });
+        launch_path(&target)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Finds the Start Menu shortcut of an installed PWA that matches a running
@@ -722,7 +726,7 @@ fn is_pwa_shortcut_for(app: &AppInfo, name: &str, host_exe: &str) -> bool {
 }
 
 /// Opens a file path, shortcut, or shell application id through the shell.
-fn launch_path(path: &str) {
+fn launch_path(path: &str) -> Result<(), String> {
     unsafe {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -749,10 +753,7 @@ fn launch_path(path: &str) {
                 None,
                 SW_SHOWNORMAL,
             );
-            if res.0 as usize <= 32 {
-                eprintln!("Failed to open {}: error code {}", target, res.0 as usize);
-            }
-            return;
+            return shell_launch_result(res.0 as usize);
         }
 
         if let Some(uwp_cmd) = crate::commands::get_uwp_launch_cmd(path) {
@@ -767,13 +768,7 @@ fn launch_path(path: &str) {
                 SW_SHOWNORMAL,
             );
 
-            if res.0 as usize <= 32 {
-                eprintln!(
-                    "Failed to open UWP app {}: error code {}",
-                    uwp_cmd, res.0 as usize
-                );
-            }
-            return;
+            return shell_launch_result(res.0 as usize);
         }
 
         use std::path::Path;
@@ -809,12 +804,17 @@ fn launch_path(path: &str) {
             SW_SHOWNORMAL,
         );
 
-        if res.0 as usize <= 32 {
-            eprintln!(
-                "Failed to open app {}: error code {}",
-                final_path, res.0 as usize
-            );
-        }
+        shell_launch_result(res.0 as usize)
+    }
+}
+
+fn shell_launch_result(code: usize) -> Result<(), String> {
+    if code > 32 {
+        Ok(())
+    } else {
+        Err(format!(
+            "Windows could not open this application (code {code})."
+        ))
     }
 }
 
@@ -1054,9 +1054,8 @@ pub async fn focus_window(app: AppHandle, hwnd: isize) -> bool {
         .map(|dock| dock.0 as isize);
     tauri::async_runtime::spawn_blocking(move || unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{
-            BringWindowToTop, FlashWindow, GetAncestor, GetForegroundWindow, IsIconic, IsWindow,
-            IsWindowVisible, SetForegroundWindow, ShowWindow, GA_ROOTOWNER, SW_MINIMIZE,
-            SW_RESTORE, SW_SHOW,
+            GetAncestor, GetForegroundWindow, IsIconic, IsWindow, IsWindowVisible, ShowWindow,
+            GA_ROOTOWNER, SW_MINIMIZE,
         };
         let hwnd = HWND(hwnd as *mut _);
         if !IsWindow(Some(hwnd)).as_bool() {
@@ -1083,27 +1082,7 @@ pub async fn focus_window(app: AppHandle, hwnd: isize) -> bool {
             return IsIconic(hwnd).as_bool();
         }
 
-        if !IsWindowVisible(hwnd).as_bool() {
-            let _ = ShowWindow(hwnd, SW_SHOW);
-        }
-        if IsIconic(hwnd).as_bool() {
-            bring_restore_position_on_screen(hwnd);
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-        }
-
-        if SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd {
-            return true;
-        }
-        // Foreground activation is restricted by Windows. Uncover the window,
-        // retry once, then request attention instead of silently claiming focus.
-        let _ = BringWindowToTop(hwnd);
-        if GetForegroundWindow() == hwnd
-            || (SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd)
-        {
-            return true;
-        }
-        let _ = FlashWindow(hwnd, true);
-        false
+        restore_and_focus_window(hwnd)
     })
     .await
     .unwrap_or(false)
@@ -1115,35 +1094,96 @@ pub async fn focus_window(app: AppHandle, hwnd: isize) -> bool {
 /// window in a stable order is, so repeated clicks visit every window instead
 /// of flipping between the two most recent.
 #[tauri::command]
-pub async fn focus_app_windows(hwnds: Vec<isize>) {
+pub async fn focus_app_windows(hwnds: Vec<isize>) -> bool {
     tauri::async_runtime::spawn_blocking(move || unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetForegroundWindow, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow,
-            SW_RESTORE, SW_SHOW,
-        };
-        let Some(&most_recent) = hwnds.first() else {
-            return;
-        };
-        let foreground = GetForegroundWindow().0 as isize;
-        let mut ring = hwnds.clone();
-        ring.sort_unstable();
-        let target = match ring.iter().position(|&h| h == foreground) {
-            Some(i) => ring[(i + 1) % ring.len()],
-            None => most_recent,
-        };
-
-        let hwnd = HWND(target as *mut _);
-        if !IsWindowVisible(hwnd).as_bool() {
-            let _ = ShowWindow(hwnd, SW_SHOW);
-        }
-        if IsIconic(hwnd).as_bool() {
-            bring_restore_position_on_screen(hwnd);
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-        }
-        let _ = SetForegroundWindow(hwnd);
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsWindow};
+        let target = select_live_window(&hwnds, GetForegroundWindow().0 as isize, |h| {
+            IsWindow(Some(HWND(h as *mut _))).as_bool()
+        });
+        target.is_some_and(|h| restore_and_focus_window(HWND(h as *mut _)))
     })
     .await
-    .unwrap_or_default();
+    .unwrap_or(false)
+}
+
+fn select_live_window(
+    hwnds: &[isize],
+    foreground: isize,
+    is_live: impl Fn(isize) -> bool,
+) -> Option<isize> {
+    let live: Vec<_> = hwnds
+        .iter()
+        .copied()
+        .filter(|h| *h != 0 && is_live(*h))
+        .collect();
+    let recent = *live.first()?;
+    let mut ring = live;
+    ring.sort_unstable();
+    ring.dedup();
+    Some(match ring.iter().position(|h| *h == foreground) {
+        Some(index) => ring[(index + 1) % ring.len()],
+        None => recent,
+    })
+}
+
+unsafe fn restore_and_focus_window(hwnd: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, FlashWindow, GetForegroundWindow, IsIconic, IsWindow, IsWindowVisible,
+        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    };
+    if !IsWindow(Some(hwnd)).as_bool() {
+        return false;
+    }
+    if !IsWindowVisible(hwnd).as_bool() {
+        let _ = ShowWindow(hwnd, SW_SHOW);
+    }
+    if IsIconic(hwnd).as_bool() {
+        bring_restore_position_on_screen(hwnd);
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+    }
+
+    if SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd {
+        return true;
+    }
+    // Foreground activation is restricted by Windows. Uncover the window,
+    // retry once, then request attention instead of silently claiming focus.
+    let _ = BringWindowToTop(hwnd);
+    if GetForegroundWindow() == hwnd
+        || (SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd)
+    {
+        return true;
+    }
+    let _ = FlashWindow(hwnd, true);
+    false
+}
+
+#[cfg(test)]
+mod dock_activation_tests {
+    use super::*;
+    #[test]
+    fn skips_destroyed_and_zero_window_handles() {
+        assert_eq!(select_live_window(&[0, 10, 20], 99, |h| h == 20), Some(20));
+        assert_eq!(select_live_window(&[10], 99, |_| false), None);
+        assert_eq!(select_live_window(&[], 99, |_| true), None);
+    }
+    #[test]
+    fn cycles_live_windows_in_stable_order_without_duplicates() {
+        assert_eq!(
+            select_live_window(&[30, 10, 30, 20], 10, |_| true),
+            Some(20)
+        );
+        assert_eq!(select_live_window(&[30, 10, 20], 30, |_| true), Some(10));
+        assert_eq!(select_live_window(&[30, 10, 20], 99, |_| true), Some(30));
+        assert_eq!(select_live_window(&[30], 30, |_| true), Some(30));
+    }
+    #[test]
+    fn shell_errors_are_not_reported_as_success() {
+        for code in [0, 2, 5, 31, 32] {
+            assert!(shell_launch_result(code).is_err());
+        }
+        assert!(shell_launch_result(33).is_ok());
+        assert!(shell_launch_result(1024).is_ok());
+    }
 }
 
 fn get_cache_key(path: &str, name: Option<&str>) -> String {

@@ -9,38 +9,20 @@ import { useSettingsSync } from "./hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "./hooks/settingsMirror";
 
 import {
-	matchesPackagedExecutable,
+	appIdentity,
+	buildDockItems,
+	fileOf,
+	isBrowserHost,
+	isSameApp,
+	itemKey,
 	mergeTrayApps,
 	selectDockTrayApps,
 	type AppInfo,
 	type TrayApp
 } from "./dockApps";
+import { activateDockApp } from "./dockActivation";
 import { driveLetter, hideDrive, removeCustomFolder, type DockExtra } from "./dockExtras";
 import { createRegionSender, measureElements, padRect, type RegionRect } from "./windowRegion";
-
-// Host processes (Edge/Chrome/Brave/ApplicationFrameHost) run every PWA/UWP
-// window, so their window title must be part of their identity — otherwise two
-// PWAs running under the same browser collapse into a single dock item.
-const HOST_PROCESSES = ["msedge.exe", "chrome.exe", "brave.exe", "applicationframehost.exe"];
-export function isBrowserHost(path: string) {
-	const p = path.toLowerCase();
-	return HOST_PROCESSES.some((host) => p.includes(host));
-}
-
-// Stable identity for a dock item.
-export function appIdentity(p: string, executable?: string, name?: string) {
-	if (!p) return "";
-	const normalized = p.toLowerCase().replace(/\\/g, "/");
-	// Shell application ids (AUMIDs) and bare names are unique on their own.
-	if (!normalized.includes("/")) return normalized;
-	if (name && isBrowserHost(normalized)) {
-		return `${normalized}:${name.toLowerCase()}`;
-	}
-	if (executable) return `${normalized}:${executable.toLowerCase()}`;
-	return normalized;
-}
-
-const itemKey = (app: AppInfo) => appIdentity(app.path, app.executable, app.name);
 
 // WinEvent notifications can arrive for windows that do not change the dock.
 // Keep the existing array when its visible content is identical so Framer
@@ -64,52 +46,6 @@ function sameRunningApps(left: AppInfo[], right: AppInfo[]): boolean {
 		})
 	);
 }
-
-// Fuzzy identity: a running window and its installed/pinned entry often carry
-// different paths (exe vs .lnk vs AUMID), so exact keys miss and the same app
-// looks pinnable twice. Mirrors the dock list's own pinned↔running matching.
-export function isSameApp(a: AppInfo, b: AppInfo): boolean {
-	if (!a.path || !b.path) return false;
-	if (itemKey(a) === itemKey(b)) return true;
-	if (matchesPackagedExecutable(a, b)) return true;
-	// Browser hosts run many apps under one exe — only the full identity
-	// (which folds in the window/AUMID name) can match those.
-	if (isBrowserHost(a.path) || isBrowserHost(b.path)) return false;
-	const aId = isIdentifier(a.path);
-	const bId = isIdentifier(b.path);
-	// Two opaque shell ids match only exactly (checked above).
-	if (aId && bId) return false;
-	if (aId !== bId) {
-		// One side is a shell id (AUMID), the other a file path. AUMIDs embed
-		// the product name (ZedIndustries.Zed, com.squirrel.Figma.Figma), so
-		// match on overlapping display names plus id/stem cross-containment.
-		// This is the common shape: installed entries come from the AppsFolder
-		// scan (AUMID) while pinned entries are exe/.lnk paths.
-		const fileSide = aId ? b : a;
-		const idLower = (aId ? a : b).path.toLowerCase();
-		const na = a.name.toLowerCase();
-		const nb = b.name.toLowerCase();
-		if (na !== nb && !na.includes(nb) && !nb.includes(na)) return false;
-		const stem = (fileSide.executable?.toLowerCase() || fileOf(fileSide.path)).replace(
-			/\.(exe|lnk)$/,
-			""
-		);
-		return stem.length >= 3 && idLower.includes(stem);
-	}
-	if (appIdentity(a.path) === appIdentity(b.path)) return true;
-	const normExe = (s: string) => (s.endsWith(".exe") ? s : `${s}.exe`);
-	const aExe = a.executable?.toLowerCase() || fileOf(a.path);
-	const bExe = b.executable?.toLowerCase() || fileOf(b.path);
-	if (!aExe || !bExe) return false;
-	return normExe(aExe) === normExe(bExe);
-}
-
-const fileOf = (p: string) =>
-	(p.split("/").pop()?.split("\\").pop()?.toLowerCase() || "").replace(/\.lnk$/, "");
-
-// Shell application ids (AUMIDs) identify one specific app; two different PWAs
-// running in the same browser must never be matched by their shared exe name.
-const isIdentifier = (p: string) => !p.includes("/") && !p.includes("\\");
 
 // Resolve the configured start-button icon to a public asset, or to the data
 // URI of a user-uploaded icon (stored with a "custom:" prefix).
@@ -164,6 +100,9 @@ const Dock = memo(function Dock() {
 
 	const [pinnedApps, setPinnedApps] = useState<AppInfo[]>([]);
 	const [activeApps, setActiveApps] = useState<AppInfo[]>([]);
+	const activeAppsRef = useRef<AppInfo[]>([]);
+	const refreshDockAppsRef = useRef<() => Promise<AppInfo[]>>(async () => []);
+	const activatingAppsRef = useRef(new Set<string>());
 	const iconsRef = useRef<Record<string, string>>({});
 	const [, setIconsTick] = useState(0);
 	const [dockMode, setDockMode] = useState(() => {
@@ -502,7 +441,7 @@ const Dock = memo(function Dock() {
 		let stopped = false;
 
 		const poll = async () => {
-			if (isDragging) return;
+			if (isDragging) return activeAppsRef.current;
 			const seq = ++pollSeq;
 			let windows: AppInfo[];
 			let tray: TrayApp[];
@@ -513,11 +452,11 @@ const Dock = memo(function Dock() {
 				]);
 			} catch (error) {
 				console.error("Failed to refresh dock apps:", error);
-				return;
+				throw error;
 			}
 			// Ignore responses that arrive out of order: an older poll must never
 			// overwrite a newer state, which would resurrect closed apps.
-			if (stopped || seq !== pollSeq) return;
+			if (stopped || seq !== pollSeq) return activeAppsRef.current;
 			const selected = selectDockTrayApps(windows, tray, observedTrayPathsRef.current, (app) =>
 				pinnedApps.some((pinned) =>
 					isSameApp(pinned, {
@@ -530,7 +469,8 @@ const Dock = memo(function Dock() {
 				)
 			);
 			observedTrayPathsRef.current = selected.observed;
-			const running = mergeTrayApps(windows, selected.visible);
+			const running = mergeTrayApps(windows, selected.visible, activeAppsRef.current);
+			activeAppsRef.current = running;
 			setActiveApps((prev) => (sameRunningApps(prev, running) ? prev : running));
 
 			setActiveOrder((prev) => {
@@ -544,16 +484,19 @@ const Dock = memo(function Dock() {
 			});
 
 			running.forEach((app) => fetchIcon(app.path, app.name, app.hwnd));
+			return running;
 		};
 
-		poll();
+		refreshDockAppsRef.current = poll;
+		const refreshQuietly = () => {
+			void poll().catch(console.error);
+		};
+		refreshQuietly();
 
-		const unlistenWindowChange = listen("windows-changed", () => {
-			poll();
-		});
+		const unlistenWindowChange = listen("windows-changed", refreshQuietly);
 
 		// Safety net: even if a window event is missed, converge on the real state
-		const interval = setInterval(poll, 10000);
+		const interval = setInterval(refreshQuietly, 10000);
 
 		return () => {
 			stopped = true;
@@ -671,22 +614,24 @@ const Dock = memo(function Dock() {
 	};
 
 	const handleAppClick = async (app: AppInfo) => {
+		const key = itemKey(app);
+		if (activatingAppsRef.current.has(key)) return;
+		activatingAppsRef.current.add(key);
 		try {
-			if (app.path === "start") {
-				await invoke("open_app", { appName: "start" });
-			} else if (app.is_background && app.tray_ids?.length === 1) {
-				await invoke("activate_tray_icon", { trayId: app.tray_ids[0] });
-			} else if (app.all_hwnds && app.all_hwnds.length > 1) {
-				// Several windows: bring the most recent forward, then cycle.
-				await invoke("focus_app_windows", { hwnds: app.all_hwnds.map(([hwnd]) => hwnd) });
-			} else if (app.hwnd) {
-				await invoke("focus_window", { hwnd: app.hwnd });
-			} else {
-				await invoke("open_app", { appName: app.path });
-			}
-		} catch (e) {
-			console.error(`Failed to interact with ${app.name}:`, e);
-			showActionError(e);
+			await activateDockApp(app, {
+				refresh: () => refreshDockAppsRef.current(),
+				focus: (hwnd) => invoke<boolean>("focus_window", { hwnd }),
+				cycle: (hwnds) => invoke<boolean>("focus_app_windows", { hwnds }),
+				open: (path) => invoke<void>("open_app", { appName: path }),
+				tray: (trayId) => invoke<void>("activate_tray_icon", { trayId }),
+				wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+			});
+		} catch (error) {
+			console.error("Failed to interact with dock app:", error);
+			showActionError(error instanceof Error ? error.message : error);
+		} finally {
+			activatingAppsRef.current.delete(key);
+			void refreshDockAppsRef.current().catch(console.error);
 		}
 	};
 
@@ -813,9 +758,7 @@ const Dock = memo(function Dock() {
 	const hideTaskView = () => {
 		setDockTaskView(false);
 		localStorage.setItem("bloom-dock-task-view", "false");
-		invoke("save_setting", { key: "bloom-dock-task-view", value: "false" }).catch(
-			showActionError
-		);
+		invoke("save_setting", { key: "bloom-dock-task-view", value: "false" }).catch(showActionError);
 		closeMenu();
 	};
 
@@ -939,111 +882,10 @@ const Dock = memo(function Dock() {
 		invoke("set_menu_open", { open, rect }).catch(() => {});
 	}, [contextMenu, menuPos, showAddPopup, pinnedApps, activeApps, activeSubmenu, scale]);
 
-	const dockItems = useMemo(() => {
-		const runningMap = new Map();
-		activeApps.forEach((a) => {
-			const id = appIdentity(a.path, a.executable, a.name);
-			if (!runningMap.has(id)) runningMap.set(id, a);
-		});
-
-		const matchedRunningKeys = new Set<string>();
-
-		const findRunningApp = (p: AppInfo) => {
-			// 1. Try exact match by identity
-			const id = appIdentity(p.path, p.executable, p.name);
-			let running = runningMap.get(id);
-			if (running) {
-				matchedRunningKeys.add(appIdentity(running.path, running.executable, running.name));
-				return running;
-			}
-
-			// 2. Try match by path (without executable)
-			const pathId = appIdentity(p.path);
-			running = runningMap.get(pathId);
-			if (running) {
-				matchedRunningKeys.add(appIdentity(running.path, running.executable, running.name));
-				return running;
-			}
-
-			// 3. Try fallback match by executable name if defined
-			if (p.executable) {
-				const targetExe = p.executable.toLowerCase();
-				const found = activeApps.find(
-					(a) => !isIdentifier(a.path) && a.executable?.toLowerCase() === targetExe
-				);
-				if (found) {
-					matchedRunningKeys.add(appIdentity(found.path, found.executable, found.name));
-					return found;
-				}
-			}
-
-			// 4. Try fallback match by path's file name (e.g., if path is "msedge" and running app's executable is "msedge.exe")
-			const pinFilename = p.path.split("/").pop()?.split("\\").pop()?.toLowerCase() || "";
-			if (pinFilename) {
-				const found = activeApps.find((a) => {
-					if (isIdentifier(a.path)) return false;
-					const runExe =
-						a.executable?.toLowerCase() ||
-						a.path.split("/").pop()?.split("\\").pop()?.toLowerCase() ||
-						"";
-					return (
-						runExe === pinFilename ||
-						runExe === `${pinFilename}.exe` ||
-						`${runExe}.exe` === pinFilename
-					);
-				});
-				if (found) {
-					matchedRunningKeys.add(appIdentity(found.path, found.executable, found.name));
-					return found;
-				}
-			}
-
-			// A pinned shell id and a visible window can have different paths
-			// (for example com.sehaz.bloom and bloom.exe). Match both visible
-			// and background apps so the window cannot become a second dock item.
-			const equivalent = activeApps.find(
-				(app) => !matchedRunningKeys.has(itemKey(app)) && isSameApp(p, app)
-			);
-			if (equivalent) {
-				matchedRunningKeys.add(itemKey(equivalent));
-				return equivalent;
-			}
-			return undefined;
-		};
-
-		const pinned: AppInfo[] = [
-			{
-				name: "Start",
-				path: "start",
-				icon: null,
-				is_running: false,
-				is_pinned: true,
-				hwnd: undefined,
-				all_hwnds: undefined,
-				executable: undefined
-			},
-			...pinnedApps.map((p) => {
-				const running = findRunningApp(p);
-				return {
-					...p,
-					is_running: !!running,
-					hwnd: running?.hwnd,
-					all_hwnds: running?.all_hwnds,
-					tray_ids: running?.tray_ids,
-					is_background: running?.is_background
-				};
-			})
-		];
-
-		const unpinned = activeOrder
-			.map((id) => activeApps.find((a) => appIdentity(a.path, a.executable, a.name) === id))
-			.filter(
-				(a): a is AppInfo =>
-					!!a && !matchedRunningKeys.has(appIdentity(a.path, a.executable, a.name))
-			);
-
-		return [...pinned, ...unpinned];
-	}, [pinnedApps, activeApps, activeOrder]);
+	const dockItems = useMemo(
+		() => buildDockItems(pinnedApps, activeApps, activeOrder),
+		[pinnedApps, activeApps, activeOrder]
+	);
 
 	const startItem = useMemo(
 		() => dockItems.find((i) => i.path === "start") as AppInfo,
