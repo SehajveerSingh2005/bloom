@@ -264,8 +264,8 @@ pub fn setup_window_change_hook(app_handle: AppHandle) {
 
         use windows::Win32::UI::Accessibility::SetWinEventHook;
         use windows::Win32::UI::WindowsAndMessaging::{
-            EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_SHOW,
-            WINEVENT_OUTOFCONTEXT,
+            EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
+            EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW, WINEVENT_OUTOFCONTEXT,
         };
 
         // Hook create and destroy events for top-level windows
@@ -307,6 +307,16 @@ pub fn setup_window_change_hook(app_handle: AppHandle) {
             WINEVENT_OUTOFCONTEXT,
         );
 
+        let _location_hook = SetWinEventHook(
+            EVENT_OBJECT_LOCATIONCHANGE,
+            EVENT_OBJECT_LOCATIONCHANGE,
+            None,
+            Some(window_change_event_proc),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        );
+
         // Store hooks to prevent them from being dropped
         Box::leak(Box::new(_create_hook));
     }
@@ -336,11 +346,18 @@ unsafe extern "system" fn window_change_event_proc(
     // state may have changed. Cheap flag; the worker thread does the scan.
     {
         use windows::Win32::UI::WindowsAndMessaging::{
-            EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_SHOW,
+            EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW,
         };
-        if event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_HIDE || event == EVENT_OBJECT_DESTROY
+        if event == EVENT_OBJECT_SHOW
+            || event == EVENT_OBJECT_HIDE
+            || event == EVENT_OBJECT_DESTROY
+            || event == EVENT_OBJECT_LOCATIONCHANGE
         {
             CAPTURE_RECHECK.store(true, Ordering::Relaxed);
+        }
+        // Moving a toolbar changes capture overlap, not the dock's app list.
+        if event == EVENT_OBJECT_LOCATIONCHANGE {
+            return;
         }
     }
 
@@ -1724,17 +1741,16 @@ pub fn setup_system_worker(app_handle: AppHandle) -> Sender<SystemCommand> {
             // Capture UI state is event-driven: WinEvent callbacks set the
             // recheck flag on top-level window show/hide/destroy and foreground
             // changes, so the scan below only runs when something changed
-            // (throttled to coalesce bursts of window events).
-            let scan_now = now_ms();
-            if CAPTURE_RECHECK.load(Ordering::Relaxed)
-                && scan_now - CAPTURE_LAST_SCAN_MS.load(Ordering::Relaxed) >= 400
-            {
-                CAPTURE_RECHECK.store(false, Ordering::Relaxed);
-                CAPTURE_LAST_SCAN_MS.store(scan_now, Ordering::Relaxed);
-                let active = is_capture_ui_present();
-                if active != CAPTURE_UI_ACTIVE.load(Ordering::Relaxed) {
-                    CAPTURE_UI_ACTIVE.store(active, Ordering::Relaxed);
-                    apply_capture_ui_state(&handle_visibility, active);
+            // Consume the flag atomically: an event during the scan is handled
+            // on the next worker tick, with no additional debounce window.
+            if CAPTURE_RECHECK.swap(false, Ordering::Relaxed) {
+                let (full, notch) = capture_ui_state(&handle_visibility);
+                if full != CAPTURE_UI_ACTIVE.load(Ordering::Relaxed)
+                    || notch != CAPTURE_NOTCH_BLOCKED.load(Ordering::Relaxed)
+                {
+                    CAPTURE_UI_ACTIVE.store(full, Ordering::Relaxed);
+                    CAPTURE_NOTCH_BLOCKED.store(notch, Ordering::Relaxed);
+                    apply_capture_ui_state(&handle_visibility, full, notch);
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(150));
@@ -2078,8 +2094,8 @@ static MH_LAST_MONITOR_UPDATE_MS: AtomicI64 = AtomicI64::new(0);
 static MH_CACHED_MON_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 static MH_CACHED_MON_SIZE: Mutex<Option<(u32, u32)>> = Mutex::new(None);
 static CAPTURE_UI_ACTIVE: AtomicBool = AtomicBool::new(false);
+static CAPTURE_NOTCH_BLOCKED: AtomicBool = AtomicBool::new(false);
 static CAPTURE_RECHECK: AtomicBool = AtomicBool::new(true);
-static CAPTURE_LAST_SCAN_MS: AtomicI64 = AtomicI64::new(0);
 
 /// Recognizes the native Start/Search surface by its host process. Its window
 /// title is localized, so title-only checks make Smart dock overlap detection
@@ -2222,19 +2238,25 @@ pub fn refresh_main_interaction(app_handle: &AppHandle) {
     update_main_interaction(app_handle, pt, now_ms(), fg_fs);
 }
 
-/// True while a screen-capture UI (Windows Snipping Tool) has a visible window.
-/// Bloom's notch sits exactly where that toolbar lives, so it must get out of
-/// the way even if the capture window isn't recognised as fullscreen.
+struct CaptureScan {
+    notch: Option<windows::Win32::Foundation::RECT>,
+    full: bool,
+    over_notch: bool,
+}
+
+/// Selection overlays block everything. A toolbar only blocks the notch when
+/// it overlaps it; an editor elsewhere must not disable the dock or overlays.
 unsafe extern "system" fn capture_ui_enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     use windows::Win32::UI::WindowsAndMessaging::IsIconic;
-    let found = &mut *(lparam.0 as *mut bool);
-    if *found {
+    let scan = &mut *(lparam.0 as *mut CaptureScan);
+    if scan.full {
         return BOOL(0);
     }
     if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
         return BOOL(1);
     }
 
+    let mut found = false;
     let mut pid = 0u32;
     GetWindowThreadProcessId(hwnd, Some(&mut pid));
     if pid != 0 && pid != std::process::id() {
@@ -2255,14 +2277,14 @@ unsafe extern "system" fn capture_ui_enum_proc(hwnd: HWND, lparam: LPARAM) -> BO
                     || name == "screenclippinghost.exe"
                     || name == "screensketch.exe"
                 {
-                    *found = true;
+                    found = true;
                 }
             }
             let _ = CloseHandle(handle);
         }
     }
 
-    if !*found {
+    if !found {
         use windows::Win32::UI::WindowsAndMessaging::GetClassNameA;
         let mut class_buf = [0u8; 256];
         let len = GetClassNameA(hwnd, &mut class_buf);
@@ -2270,37 +2292,114 @@ unsafe extern "system" fn capture_ui_enum_proc(hwnd: HWND, lparam: LPARAM) -> BO
             .unwrap_or("")
             .to_lowercase();
         if class.contains("snipping") {
-            *found = true;
+            found = true;
         }
     }
 
+    if found {
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+        let mut rect = RECT::default();
+        let mut monitor = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetWindowRect(hwnd, &mut rect).is_ok()
+            && GetMonitorInfoW(
+                MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                &mut monitor,
+            )
+            .as_bool()
+        {
+            use windows::Win32::UI::WindowsAndMessaging::{GWL_STYLE, WS_CAPTION};
+            let transparent = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TRANSPARENT.0 != 0;
+            // The normal editor has a caption even when maximized. Capture
+            // selection surfaces and the recording toolbar are borderless.
+            let editor = GetWindowLongW(hwnd, GWL_STYLE) as u32 & WS_CAPTION.0 != 0;
+            let (full, notch) =
+                capture_window_effect(rect, monitor.rcMonitor, scan.notch, transparent, editor);
+            scan.full |= full;
+            scan.over_notch |= notch;
+        }
+    }
     BOOL(1)
 }
 
-fn is_capture_ui_present() -> bool {
+fn capture_window_effect(
+    r: windows::Win32::Foundation::RECT,
+    m: windows::Win32::Foundation::RECT,
+    notch: Option<windows::Win32::Foundation::RECT>,
+    transparent: bool,
+    editor: bool,
+) -> (bool, bool) {
+    if transparent || editor {
+        return (false, false);
+    }
+    let full = r.left <= m.left + 8
+        && r.top <= m.top + 8
+        && r.right >= m.right - 8
+        && r.bottom >= m.bottom - 8;
+    let over = notch.is_some_and(|n| {
+        r.left < n.right && r.right > n.left && r.top < n.bottom && r.bottom > n.top
+    });
+    (full, full || over)
+}
+
+fn capture_ui_state(app: &AppHandle) -> (bool, bool) {
     use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
-    let mut found = false;
+    let notch = (|| {
+        let n = (*NOTCH_RECT.lock().ok()?)?;
+        let monitor = app.primary_monitor().ok().flatten()?;
+        let scale = monitor.scale_factor();
+        let pos = monitor.position();
+        Some(windows::Win32::Foundation::RECT {
+            left: pos.x + (n.x as f64 * scale) as i32,
+            top: pos.y + (n.y as f64 * scale) as i32,
+            right: pos.x + ((n.x + n.width) as f64 * scale) as i32,
+            bottom: pos.y + ((n.y + n.height) as f64 * scale) as i32,
+        })
+    })();
+    let mut scan = CaptureScan {
+        notch,
+        full: false,
+        over_notch: false,
+    };
     unsafe {
         let _ = EnumWindows(
             Some(capture_ui_enum_proc),
-            LPARAM(&mut found as *mut bool as isize),
+            LPARAM(&mut scan as *mut CaptureScan as isize),
         );
     }
-    found
+    (scan.full, scan.over_notch)
 }
 
-fn apply_capture_ui_state(app: &AppHandle, active: bool) {
+fn apply_capture_ui_state(app: &AppHandle, active: bool, notch_blocked: bool) {
     if SHUTTING_DOWN.load(Ordering::Relaxed) {
         return;
     }
     if let Some(main_win) = app.get_webview_window("main") {
-        if active {
+        if notch_blocked {
             if let Ok(hwnd) = main_win.hwnd() {
                 set_click_through(hwnd, true);
             }
             let _ = main_win.hide();
         } else {
             let _ = main_win.show();
+            // Smart/peek modes have no AppBar to restore their placement after
+            // Windows re-shows the window following a capture (#265).
+            if let Ok(Some(monitor)) = main_win.primary_monitor() {
+                let pos = monitor.position();
+                let height =
+                    (420.0 * crate::utils::get_bloom_scale(app) * monitor.scale_factor()) as u32;
+                let _ = main_win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+                let _ = main_win.set_size(tauri::PhysicalSize::new(monitor.size().width, height));
+            }
+            if let Ok(hwnd) = main_win.hwnd() {
+                set_click_through(hwnd, true);
+            }
             reconcile_main_appbar(app);
         }
     }
@@ -2537,7 +2636,7 @@ fn update_main_interaction(
     now: i64,
     fg_fs: bool,
 ) {
-    if fg_fs {
+    if fg_fs || CAPTURE_NOTCH_BLOCKED.load(Ordering::Relaxed) {
         // Fullscreen foreground app or capture overlay: Bloom steps aside and
         // any pending top-edge dwell is dropped.
         MH_TOP_EDGE_ENTER_MS.store(0, Ordering::Relaxed);
@@ -4557,6 +4656,75 @@ fn recover_from_webview_failure(handle: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn capture_selection_toolbar_editor_and_recording_border_have_distinct_effects() {
+        use windows::Win32::Foundation::RECT;
+        let screen = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let notch = RECT {
+            left: 800,
+            top: 0,
+            right: 1120,
+            bottom: 40,
+        };
+        let editor = RECT {
+            left: 300,
+            top: 200,
+            right: 1500,
+            bottom: 900,
+        };
+        let toolbar = RECT {
+            left: 700,
+            top: 0,
+            right: 1220,
+            bottom: 70,
+        };
+        assert_eq!(
+            super::capture_window_effect(screen, screen, Some(notch), false, false),
+            (true, true)
+        );
+        assert_eq!(
+            super::capture_window_effect(toolbar, screen, Some(notch), false, false),
+            (false, true)
+        );
+        assert_eq!(
+            super::capture_window_effect(editor, screen, Some(notch), false, true),
+            (false, false)
+        );
+        assert_eq!(
+            super::capture_window_effect(screen, screen, Some(notch), true, false),
+            (false, false)
+        );
+        let secondary = RECT {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        };
+        assert_eq!(
+            super::capture_window_effect(secondary, secondary, Some(notch), false, false),
+            (true, true)
+        );
+        // A maximized editor and a toolbar with no known notch do not disable
+        // the dock. Moving a toolbar clear releases its notch-only block.
+        assert_eq!(
+            super::capture_window_effect(screen, screen, Some(notch), false, true),
+            (false, false)
+        );
+        assert_eq!(
+            super::capture_window_effect(toolbar, screen, None, false, false),
+            (false, false)
+        );
+        assert_eq!(
+            super::capture_window_effect(editor, screen, Some(notch), false, false),
+            (false, false)
+        );
+    }
+
     use super::{
         is_helper_name, is_launchable_entry, is_primary_monitor, is_start_menu_process_path,
         notch_mode_reserves_work_area, pack_cursor, process_exe_name, trim_thumbnail_cache,
