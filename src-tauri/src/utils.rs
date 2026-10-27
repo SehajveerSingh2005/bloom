@@ -612,6 +612,24 @@ pub fn set_taskbar_visibility(visible: bool, always_on_top: bool) -> bool {
     }
 }
 
+/// The `IconFile=` an Internet shortcut's text names, if any.
+fn url_shortcut_icon_line(text: &str) -> Option<&str> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("IconFile="))
+        .map(str::trim)
+        .filter(|file| !file.is_empty())
+}
+
+/// The icon file an Internet shortcut (`.url`) names. The shell shows every
+/// `.url` with the generic web shortcut icon, so web apps installed as one
+/// (Google Messages) need it read from the file.
+pub fn url_shortcut_icon_file(path: &str) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let file = expand_env_vars(url_shortcut_icon_line(&text)?);
+    std::path::Path::new(&file).is_file().then_some(file)
+}
+
 /// Extracts the icon a shortcut declares for itself (`IShellLinkW::GetIconLocation`).
 ///
 /// This is how Firefox web apps and user-customized shortcuts store their icon.
@@ -1499,7 +1517,7 @@ mod tests {
     use super::{
         click_through_style, expand_env_vars, is_placed_rect, marker_contents, moved_squirrel_exe,
         newest_squirrel_folder, parse_marker_pid, parse_marker_rect, parse_marker_secondaries,
-        parse_marker_state, relaunch_executable,
+        parse_marker_state, relaunch_executable, url_shortcut_icon_line,
     };
 
     #[test]
@@ -1567,6 +1585,18 @@ mod tests {
         assert_eq!(relaunch_executable(&format!("{exe} --argument")), None);
         assert_eq!(relaunch_executable("C:\\does\\not\\exist.exe"), None);
         assert_eq!(relaunch_executable(""), None);
+    }
+
+    #[test]
+    fn reads_the_icon_an_internet_shortcut_names() {
+        let messages = "[{000214A0-0000-0000-C000-000000000046}]\r\nProp3=19,11\r\n[InternetShortcut]\r\nIDList=\r\nURL=https://messages.google.com/web\r\nIconFile=c:\\windows\\Google Messages.ico\r\nIconIndex=0\r\n";
+        assert_eq!(
+            url_shortcut_icon_line(messages),
+            Some("c:\\windows\\Google Messages.ico")
+        );
+        // A documentation link without its own icon.
+        let docs = "[InternetShortcut]\nIconIndex=0\nURL=https://nodejs.org/\nIconFile=\n";
+        assert_eq!(url_shortcut_icon_line(docs), None);
     }
 
     #[test]
