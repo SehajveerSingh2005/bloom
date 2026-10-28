@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Test frontend logic
+        run: bun run test
+
       - name: Build frontend
         run: bun run build
 
@@ -46,4 +49,8 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --locked --all-targets
+        working-directory: src-tauri
+
+      - name: Test Rust
+        run: cargo test --locked
         working-directory: src-tauri
