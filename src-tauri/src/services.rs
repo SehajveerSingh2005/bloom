@@ -4500,41 +4500,45 @@ static RECOVERING_FROM_WEBVIEW_FAILURE: AtomicBool = AtomicBool::new(false);
 pub fn watch_webview_processes(app: &AppHandle) {
     let _ = WEBVIEWS_WATCHED_AT.set(Instant::now());
     for (_, window) in app.webview_windows() {
-        let handle = app.clone();
-        let _ = window.with_webview(move |webview| unsafe {
-            use webview2_com::Microsoft::Web::WebView2::Win32::{
-                COREWEBVIEW2_PROCESS_FAILED_KIND,
-                COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
-                COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
-            };
-            use webview2_com::ProcessFailedEventHandler;
-
-            let Ok(core) = webview.controller().CoreWebView2() else {
-                return;
-            };
-            let mut token = 0i64;
-            let _ = core.add_ProcessFailed(
-                &ProcessFailedEventHandler::create(Box::new(move |_, args| {
-                    let Some(args) = args else {
-                        return Ok(());
-                    };
-                    let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
-                    args.ProcessFailedKind(&mut kind)?;
-                    if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
-                        || kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED
-                    {
-                        crate::diagnostics::record(
-                            "webview_failure",
-                            &format!("process_kind={kind:?}"),
-                        );
-                        recover_from_webview_failure(&handle);
-                    }
-                    Ok(())
-                })),
-                &mut token,
-            );
-        });
+        watch_webview_process(app, &window);
     }
+}
+
+pub fn watch_webview_process(app: &AppHandle, window: &tauri::WebviewWindow) {
+    let handle = app.clone();
+    let _ = window.with_webview(move |webview| unsafe {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            COREWEBVIEW2_PROCESS_FAILED_KIND,
+            COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+            COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
+        };
+        use webview2_com::ProcessFailedEventHandler;
+
+        let Ok(core) = webview.controller().CoreWebView2() else {
+            return;
+        };
+        let mut token = 0i64;
+        let _ = core.add_ProcessFailed(
+            &ProcessFailedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else {
+                    return Ok(());
+                };
+                let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                args.ProcessFailedKind(&mut kind)?;
+                if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
+                    || kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED
+                {
+                    crate::diagnostics::record(
+                        "webview_failure",
+                        &format!("process_kind={kind:?}"),
+                    );
+                    recover_from_webview_failure(&handle);
+                }
+                Ok(())
+            })),
+            &mut token,
+        );
+    });
 }
 
 fn recover_from_webview_failure(handle: &AppHandle) {

@@ -1,0 +1,64 @@
+/* Loaded by the HTML shell so feedback paints before the React bundle loads. */
+html,
+body {
+	margin: 0;
+	background: transparent;
+}
+
+#settings-loading {
+	position: fixed;
+	inset: 0;
+	z-index: 100;
+	display: grid;
+	place-items: center;
+	background: var(--bloom-bg, rgba(18, 18, 20, 0.5));
+	border-radius: 12px;
+	transition: opacity 160ms ease-out, visibility 160ms;
+}
+
+#settings-loading img {
+	width: 44px;
+	height: 44px;
+	opacity: 0.85;
+	animation: settings-logo-spin 1.8s linear infinite;
+}
+
+.light-mode #settings-loading img {
+	filter: invert(1);
+}
+
+#root {
+	opacity: 0;
+	visibility: hidden;
+	transition: opacity 160ms ease-out;
+}
+
+html[data-settings-ready] #root {
+	opacity: 1;
+	visibility: visible;
+}
+
+html[data-settings-ready] #settings-loading {
+	opacity: 0;
+	visibility: hidden;
+	pointer-events: none;
+}
+
+html[data-settings-ready] #settings-loading img {
+	animation-play-state: paused;
+}
+
+@keyframes settings-logo-spin {
+	to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	#settings-loading,
+	#root {
+		transition: none;
+	}
+
+	#settings-loading img {
+		animation: none;
+	}
+}
