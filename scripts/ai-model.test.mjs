@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
 	askOpenCode,
 	canFallback,
+	failureReason,
 	modelAttribution,
 	modelList,
 	parseOpenCodeOutput,
@@ -67,6 +68,33 @@ test("reads only text events, provider errors and reported usage", () => {
 		(error) => canFallback(error)
 	);
 	assert.throws(() => parseOpenCodeOutput('{"type":"step_start"}'));
+});
+
+test("preserves structured provider status and reports quota failures without raw details", () => {
+	assert.throws(
+		() =>
+			parseOpenCodeOutput(
+				JSON.stringify({
+					type: "error",
+					error: {
+						type: "provider.quota",
+						status: 429,
+						message: "Free usage limit reached. sensitive provider detail"
+					}
+				})
+			),
+		(error) => {
+			assert.equal(error.status, 429);
+			assert.equal(canFallback(error), false);
+			assert.equal(failureReason(error), "free usage limit reached");
+			return true;
+		}
+	);
+	assert.equal(canFallback({ status: 429, message: "Try later" }), true);
+	assert.equal(
+		failureReason({ status: 401, message: "secret-bearing detail" }),
+		"authentication or access rejected"
+	);
 });
 
 test("isolates provider process, denies tools, and attributes the successful fallback", async () => {

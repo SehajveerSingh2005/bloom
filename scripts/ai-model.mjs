@@ -45,10 +45,14 @@ export function parseOpenCodeOutput(stdout) {
 		.filter(Boolean)
 		.map((line) => JSON.parse(line));
 	const failure = events.find((e) => e.type === "error");
-	if (failure)
-		throw new Error(
+	if (failure) {
+		const error = new Error(
 			`${failure.error?.name ?? ""} ${failure.error?.data?.message || failure.error?.message || "OpenCode model request failed."}`.trim()
 		);
+		error.providerType = failure.error?.type;
+		error.status = failure.error?.status;
+		throw error;
+	}
 	const text = events
 		.filter((e) => e.type === "text")
 		.map((e) => e.part?.text ?? "")
@@ -71,15 +75,41 @@ export function parseOpenCodeOutput(stdout) {
 export function canFallback(error) {
 	const message = `${error.stderr ?? ""} ${error.message ?? ""}`;
 	if (
+		error.providerType === "provider.quota" ||
+		/insufficient.?quota|free usage limit reached/i.test(message) ||
 		/unauthorized|invalid.?api.?key|401|insufficient.?quota|billing|authentication/i.test(message)
 	)
 		return false;
 	return (
 		error.killed ||
+		[429, 502, 503].includes(error.status) ||
 		/model.{0,80}(not[ _-]?found|unavailable|not[ _-]?available|not[ _-]?supported)|unknown.model|rate[ _-]?limit|429|overload|503|502|timed?.?out|timeout/i.test(
 			message
 		)
 	);
+}
+
+// Report actionable categories without printing provider bodies or credentials.
+export function failureReason(error) {
+	const message = `${error.stderr ?? ""} ${error.message ?? ""}`;
+	if (error.killed) return "timeout";
+	if (/free usage limit reached/i.test(message)) return "free usage limit reached";
+	if (error.providerType === "provider.quota" || /insufficient.?quota|billing/i.test(message))
+		return "provider quota or billing rejected";
+	if (
+		[401, 403].includes(error.status) ||
+		/unauthorized|invalid.?api.?key|authentication/i.test(message)
+	)
+		return "authentication or access rejected";
+	if (error.status === 429 || /rate[ _-]?limit|429/i.test(message)) return "rate limited";
+	if (
+		/model.{0,80}(not[ _-]?found|unavailable|not[ _-]?available|not[ _-]?supported)|unknown.model/i.test(
+			message
+		)
+	)
+		return "model unavailable";
+	if ([502, 503].includes(error.status)) return "provider unavailable";
+	return "CLI configuration or invalid output";
 }
 
 export function modelAttribution(response) {
@@ -186,9 +216,11 @@ export async function askOpenCode(
 					parseOpenCodeOutput(error.stdout);
 				} catch (providerError) {
 					error.message += ` ${providerError.message}`;
+					error.providerType = providerError.providerType;
+					error.status = providerError.status;
 				}
 			}
-			attempts.push({ model, status: error.killed ? "timeout" : "failed" });
+			attempts.push({ model, status: failureReason(error) });
 			if (!canFallback(error))
 				throw new Error(
 					`OpenCode request failed; no fallback for authentication, configuration or invalid output errors. Attempts: ${attempts.map((a) => `${a.model} (${a.status})`).join(", ")}`
