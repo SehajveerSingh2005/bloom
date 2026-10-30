@@ -79,6 +79,13 @@ test("findings must cite supplied paths and actual right-side diff lines", () =>
 	);
 	assert.equal(result.findings.length, 1);
 	assert.equal(result.rejected, 2);
+	assert.equal(
+		validateReview(
+			{ findings: [{ ...JSON.parse(response.text).findings[0], line: 4 }], tests: [] },
+			[{ path: file.filename, patch }]
+		).findings.length,
+		0
+	);
 });
 
 test("large source context comes from changed hunks, not just the start of a file", () => {

@@ -6,7 +6,7 @@ from tracked Rust/TypeScript/CSS files. It also includes the latest five human
 comments. Attachments are not downloaded or inspected.
 
 The comment contains possible duplicates with reasons, an unverified cause and
-fix direction when supported by supplied source references, specific unanswered
+fix direction when supported by exact quotes from supplied source references, specific unanswered
 questions, and verification steps. This is investigation assistance, not an
 automatic diagnosis. It never closes an issue or applies a duplicate label.
 Existing maintainer classifications are preserved.
@@ -92,7 +92,7 @@ APIs, four files at a time. Large files use changed-hunk neighborhoods rather
 than only the beginning of the file. Binary/generated assets are omitted and
 lockfiles receive diff-only review. Coverage and truncation are disclosed.
 
-Only concrete findings with supplied paths and valid right-side diff lines are
+Only concrete findings with supplied paths and valid added (+) diff lines are
 published, with source links at the reviewed commit. Invalid references are
 counted and disclosed. Tests, CI, merge conflicts and runtime behavior are not
 claimed to be validated. These reviews supplement human review and CI.

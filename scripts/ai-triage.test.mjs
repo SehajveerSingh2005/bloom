@@ -44,7 +44,7 @@ const answer = {
 		}
 	],
 	hypothesis: "The dock setting guard exits before the tray action.",
-	evidence: [1],
+	evidence: [{ id: 1, quote: "if !dock_enabled() { return; }" }],
 	fix: "Separate popup activation from taskbar hiding.",
 	questions: [],
 	checks: ["Verify the tray button with dock enabled and disabled."]
@@ -75,7 +75,7 @@ test("rejects invented issue IDs and suppresses code-free diagnoses", () => {
 	const result = validateTriage(
 		{
 			...answer,
-			evidence: [999],
+			evidence: [{ id: 999, quote: "invented code quote" }],
 			duplicates: [...answer.duplicates, { number: 999, confidence: "high", reason: "invented" }]
 		},
 		[candidate],
@@ -87,7 +87,32 @@ test("rejects invented issue IDs and suppresses code-free diagnoses", () => {
 	);
 	assert.equal(result.hypothesis, "");
 	assert.equal(result.fix, "");
+	assert.equal(
+		validateTriage(
+			{ ...answer, evidence: [{ id: 1, quote: "invented code quote" }] },
+			[candidate],
+			sourceExcerpts(files, issue)
+		).hypothesis,
+		""
+	);
 	assert.throws(() => validateTriage({ ...answer, type: "accepted" }, [], []));
+});
+
+test("source retrieval matches snake-case identifiers and favors the report topic", () => {
+	const excerpts = sourceExcerpts(
+		[
+			[
+				"src/buds.rs",
+				"// The latest version still runs on Windows computers\nfn bluetooth_battery() {}"
+			],
+			["src/services.rs", "fn monitor_overlap() {\n capture_window_thumbnail();\n}"]
+		],
+		{
+			title: "Monitor freeze during thumbnail capture",
+			body: "The latest installed version still runs."
+		}
+	);
+	assert.equal(excerpts[0].path, "src/services.rs");
 });
 
 test("comments use verified source links, mark uncertainty and do not emit model mentions or URLs", () => {
