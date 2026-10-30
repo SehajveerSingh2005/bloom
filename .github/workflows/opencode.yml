@@ -24,8 +24,9 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
-  issues: write
+  # The review publishes a discussion comment on a pull request.
+  pull-requests: write
+  issues: read
 
 jobs:
   review:
