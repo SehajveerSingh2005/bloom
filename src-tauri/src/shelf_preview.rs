@@ -2,7 +2,7 @@
 //! opening text of documents and text files. Files with neither get an icon
 //! for their type in the frontend.
 
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::Path;
 
 use base64::Engine;
@@ -154,8 +154,9 @@ fn pdf_thumbnail(path: &str) -> Option<String> {
     render().ok().map(|png| png_data_uri(&png))
 }
 
-fn read_entry(archive: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Option<Vec<u8>> {
-    let entry = archive.by_name(name).ok()?;
+fn read_entry<R: Read + Seek>(archive: &mut zip::ZipArchive<R>, name: &str) -> Option<Vec<u8>> {
+    let options = zip::ZipReadOptions::new().enforce_header_consistency(true);
+    let entry = archive.by_name_with_options(name, options).ok()?;
     if entry.size() > MAX_ENTRY_BYTES {
         return None;
     }
@@ -296,6 +297,36 @@ fn shell_thumbnail(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Cursor, Write};
+
+    fn office_archive() -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        writer.start_file("word/document.xml", options).unwrap();
+        writer.write_all(b"<document>Hello</document>").unwrap();
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn reads_deflated_office_entries() {
+        let mut archive = zip::ZipArchive::new(Cursor::new(office_archive())).unwrap();
+        assert_eq!(
+            read_entry(&mut archive, "word/document.xml").as_deref(),
+            Some(b"<document>Hello</document>".as_slice())
+        );
+        assert!(read_entry(&mut archive, "missing.xml").is_none());
+    }
+
+    #[test]
+    fn rejects_office_entries_with_inconsistent_header_names() {
+        let mut bytes = office_archive();
+        // The local filename starts at byte 30; leave the directory name intact.
+        assert_eq!(&bytes[..4], b"PK\x03\x04");
+        bytes[30] = b'x';
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        assert!(read_entry(&mut archive, "word/document.xml").is_none());
+    }
 
     #[test]
     fn extracts_paragraph_text() {

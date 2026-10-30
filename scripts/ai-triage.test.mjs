@@ -91,22 +91,32 @@ test("rejects invented issue IDs and suppresses code-free diagnoses", () => {
 });
 
 test("comments use verified source links, mark uncertainty and do not emit model mentions or URLs", () => {
-	const result = validateTriage(
-		{ ...answer, hypothesis: "Possible @maintainer <script> https://evil.test/path" },
-		[candidate],
-		sourceExcerpts(files, issue)
-	);
-	const body = triageComment(result, {
-		repo: "owner/bloom",
-		sha: "abc123",
-		candidates: [candidate],
-		fingerprint: "hash",
-		response
-	});
-	assert.match(body, /unverified/);
-	assert.match(body, /closed, high confidence/);
-	assert.match(body, /blob\/abc123\/src-tauri\/src\/commands.rs#L1/);
-	assert.doesNotMatch(body, /@maintainer|<script>|https:\/\/evil/);
+	for (const markup of [
+		"<script>",
+		"<SCRIPT>",
+		"<ScRiPt>",
+		'</script foo="bar">',
+		"<!-- hidden --!>"
+	]) {
+		const result = validateTriage(
+			{ ...answer, hypothesis: `Possible @maintainer ${markup} https://evil.test/path` },
+			[candidate],
+			sourceExcerpts(files, issue)
+		);
+		const body = triageComment(result, {
+			repo: "owner/bloom",
+			sha: "abc123",
+			candidates: [candidate],
+			fingerprint: "hash",
+			response
+		});
+		assert.match(body, /unverified/);
+		assert.match(body, /closed, high confidence/);
+		assert.match(body, /blob\/abc123\/src-tauri\/src\/commands.rs#L1/);
+		for (const forbidden of ["<", ">", "@maintainer", "https://evil"])
+			assert.equal(result.hypothesis.includes(forbidden), false);
+		assert.doesNotMatch(body, /@maintainer|https:\/\/evil/);
+	}
 });
 
 test("empty model advice produces no filler comment", () => {

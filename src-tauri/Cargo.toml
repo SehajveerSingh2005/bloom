@@ -80,14 +80,15 @@ windows = { version = "0.61", features = [
 base64 = "0.22"
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-clipboard-manager = "2"
-tauri-plugin-updater = "2"
+# Releases use signed raw NSIS/MSI installers, so ZIP extraction is unnecessary.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 window-vibrancy = "0.7.1"
 wmi = "0.14"
 tokio = { version = "1", features = ["time", "sync"] }
 webview2-com = "0.38"
 image = "0.25"
 # Reads the thumbnail or text inside Office files for shelf previews.
-zip = { version = "4.6", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2"] }
 tauri-plugin-drag = "2.1.1"
 tauri-plugin-dialog = "2"
 rustfft = "6"
