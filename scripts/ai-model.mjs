@@ -5,6 +5,14 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
+
+export function runWithClosedStdin(binary, args, options) {
+	const pending = exec(binary, args, options);
+	// Noninteractive OpenCode also reads piped stdin before submitting its prompt.
+	// execFile leaves that pipe open, so explicitly signal EOF to avoid a deadlock.
+	pending.child.stdin?.end();
+	return pending;
+}
 export const DEFAULT_MODELS = [
 	"opencode/glm-5.3-flash-free",
 	"opencode/mimo-v2.6-flash-free",
@@ -86,7 +94,12 @@ export function modelAttribution(response) {
 // there are no tools, no repository checkout and no GitHub token in this process.
 export async function askOpenCode(
 	prompt,
-	{ models = modelList(), key = process.env.OPENCODE_API_KEY, run = exec, now = Date.now } = {}
+	{
+		models = modelList(),
+		key = process.env.OPENCODE_API_KEY,
+		run = runWithClosedStdin,
+		now = Date.now
+	} = {}
 ) {
 	modelList(models.join(","));
 	if (!key)

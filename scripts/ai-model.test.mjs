@@ -7,10 +7,20 @@ import {
 	canFallback,
 	modelAttribution,
 	modelList,
-	parseOpenCodeOutput
+	parseOpenCodeOutput,
+	runWithClosedStdin
 } from "./ai-model.mjs";
 
 const output = (text) => JSON.stringify({ type: "text", part: { text } });
+
+test("noninteractive child receives stdin EOF before responding", async () => {
+	const { stdout } = await runWithClosedStdin(
+		process.execPath,
+		["-e", "process.stdin.resume(); process.stdin.on('end', () => console.log('received EOF'))"],
+		{ timeout: 5000, windowsHide: true }
+	);
+	assert.equal(stdout.trim(), "received EOF");
+});
 
 test("allows only a bounded, explicit free-model list", () => {
 	assert.deepEqual(modelList("opencode/big-pickle,opencode/big-pickle"), ["opencode/big-pickle"]);
