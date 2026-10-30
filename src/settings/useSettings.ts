@@ -7,6 +7,7 @@ import type { UpdateCheckResult } from "../updater";
 import { useSettingsSync } from "../hooks/useSettingsSync";
 import { reloadIfMirrorWasStale } from "../hooks/settingsMirror";
 import { hexToHsl } from "../theme";
+import { waitForPendingSaves } from "./pendingSaves";
 import {
 	addCustomFolder,
 	removeCustomFolder,
@@ -28,6 +29,7 @@ function asPanelChoice(val: unknown): NotchPanelChoice {
 }
 
 export function useSettings() {
+	const [isLoaded, setIsLoaded] = useState(false);
 	const [saveError, setSaveError] = useState(
 		() => sessionStorage.getItem("bloom-settings-save-error") !== null
 	);
@@ -36,6 +38,10 @@ export function useSettings() {
 	);
 	const saveQueue = useRef<Promise<void>>(Promise.resolve());
 	const saveFailed = useRef(false);
+	const flushPendingSaves = useCallback(async () => {
+		await waitForPendingSaves(() => saveQueue.current);
+		return !saveFailed.current;
+	}, []);
 	const [autostart, setAutostart] = useState(false);
 	const [weatherEnabled, setWeatherEnabled] = useState(true);
 	const [calendarEnabled, setCalendarEnabled] = useState(true);
@@ -266,6 +272,9 @@ export function useSettings() {
 		} catch (e) {
 			console.error("Failed to load settings:", e);
 		}
+		// Also reveal the controls on failure, so a load error cannot trap the
+		// user behind the opening indicator. A stale-mirror reload returns above.
+		setIsLoaded(true);
 	}, []);
 
 	// The file write is authoritative. Serialize controls that change several
@@ -952,6 +961,8 @@ export function useSettings() {
 	};
 
 	return {
+		isLoaded,
+		flushPendingSaves,
 		saveError,
 		saveErrorDetail,
 		dismissSaveError,

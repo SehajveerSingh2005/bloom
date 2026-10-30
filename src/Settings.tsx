@@ -1,4 +1,4 @@
-import { StrictMode, useState, useEffect, useRef } from "react";
+import { StrictMode, useState, useEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Effect } from "@tauri-apps/api/window";
@@ -45,6 +45,36 @@ function SettingsApp() {
 	const [previewFocus, setPreviewFocus] = useState("");
 	const contentRef = useRef<HTMLDivElement>(null);
 	const settings = useSettings();
+	useEffect(() => {
+		if (!settings.isLoaded) return;
+		document.documentElement.dataset.settingsReady = "true";
+		document.getElementById("settings-loading")?.setAttribute("aria-hidden", "true");
+		document.getElementById("root")?.setAttribute("aria-busy", "false");
+	}, [settings.isLoaded]);
+	const closingRef = useRef(false);
+	const [isClosing, setIsClosing] = useState(false);
+	const { flushPendingSaves } = settings;
+	const closeSettings = useCallback(async () => {
+		if (closingRef.current) return;
+		closingRef.current = true;
+		setIsClosing(true);
+		try {
+			if (await flushPendingSaves()) await invoke("close_settings_window");
+		} catch (error) {
+			console.error("Failed to close Settings:", error);
+		} finally {
+			closingRef.current = false;
+			setIsClosing(false);
+		}
+	}, [flushPendingSaves]);
+
+	useEffect(() => {
+		const unlisten = appWindow.onCloseRequested((event) => {
+			event.preventDefault();
+			return closeSettings();
+		});
+		return () => { void unlisten.then((fn) => fn()); };
+	}, [closeSettings]);
 	const { announcement, dismissed, dismiss } = useAnnouncement();
 
 	useEffect(() => {
@@ -81,13 +111,11 @@ function SettingsApp() {
 	const handleClose = async (e: React.MouseEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
-		try {
-			await appWindow.hide();
-		} catch {}
+		await closeSettings();
 	};
 
 	return (
-		<div className="settings-container" style={{ zoom: settings.scale }}>
+		<div className="settings-container" style={{ zoom: settings.scale }} inert={isClosing}>
 			<div className="title-bar" data-tauri-drag-region>
 				<span className="title-text" data-tauri-drag-region>
 					Settings

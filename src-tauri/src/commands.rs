@@ -2197,21 +2197,41 @@ pub fn hide_native_osd() {
 
 #[tauri::command]
 pub fn open_settings_window(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("settings") {
-        let _ = win.show();
-        let _ = win.unminimize();
-        let _ = win.set_focus();
-        if let Ok(hwnd) = win.hwnd() {
-            unsafe {
-                use windows::Win32::UI::WindowsAndMessaging::{
-                    SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
-                };
-                let _ = ShowWindow(hwnd, SW_SHOW);
-                let _ = ShowWindow(hwnd, SW_RESTORE);
-                let _ = SetForegroundWindow(hwnd);
+    // WebView2 creation must run off the Windows UI thread, including tray callbacks.
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = crate::settings_window::with_window(&app, |win, created| {
+            if SHUTTING_DOWN.load(Ordering::Relaxed) {
+                return;
             }
+            if created {
+                let _ = window_vibrancy::apply_mica(win, None);
+                crate::services::watch_webview_process(&app, win);
+            }
+            let _ = win.show();
+            let _ = win.unminimize();
+            let _ = win.set_focus();
+            if let Ok(hwnd) = win.hwnd() {
+                unsafe {
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+                    };
+                    let _ = ShowWindow(hwnd, SW_SHOW);
+                    let _ = ShowWindow(hwnd, SW_RESTORE);
+                    let _ = SetForegroundWindow(hwnd);
+                }
+            }
+        });
+        if let Err(error) = result {
+            eprintln!("Failed to open Bloom settings: {error}");
         }
-    }
+    });
+}
+
+#[tauri::command]
+pub async fn close_settings_window(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::settings_window::close(&app))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
