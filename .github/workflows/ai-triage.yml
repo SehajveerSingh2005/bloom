@@ -46,6 +46,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_FALLBACK_MODEL: ${{ vars.GEMINI_FALLBACK_MODEL || 'gemini-3.1-flash-lite' }}
           AI_MODELS: ${{ vars.TRIAGE_MODELS || vars.AI_MODELS || 'opencode/glm-5.3-flash-free,opencode/mimo-v2.6-flash-free,opencode/big-pickle' }}
           TRIAGE_DRY_RUN: ${{ inputs.dry_run || false }}
           ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}

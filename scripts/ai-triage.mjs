@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
-import { askOpenCode, modelAttribution, modelList } from "./ai-model.mjs";
+import { askModel, geminiFallbackModel, modelAttribution, modelList } from "./ai-model.mjs";
 
 const exec = promisify(execFile);
 const MARKER = "<!-- bloom-ai-triage:v2 -->";
@@ -163,7 +163,7 @@ export async function investigate({
 	sha,
 	files,
 	comments,
-	ask = askOpenCode,
+	ask = askModel,
 	dryRun = false
 }) {
 	const humanComments = comments
@@ -177,7 +177,8 @@ export async function investigate({
 				body: issue.body,
 				humanComments,
 				sha,
-				models: modelList()
+				models: modelList(),
+				gemini: process.env.GEMINI_API_KEY ? geminiFallbackModel() : null
 			})
 		)
 		.digest("hex")

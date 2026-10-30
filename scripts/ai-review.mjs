@@ -2,7 +2,13 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { askOpenCode, modelAttribution, modelList, DEFAULT_MODELS } from "./ai-model.mjs";
+import {
+	askModel,
+	geminiFallbackModel,
+	modelAttribution,
+	modelList,
+	DEFAULT_MODELS
+} from "./ai-model.mjs";
 import { githubClient } from "./ai-github.mjs";
 
 const MARKER = "<!-- bloom-ai-review:v1 -->";
@@ -210,7 +216,7 @@ export function renderReview(result, { repo, head, mode, context, total, fingerp
 	return lines.join("\n");
 }
 
-export async function reviewPullRequest({ event, gh, repo, ask = askOpenCode, dryRun = false }) {
+export async function reviewPullRequest({ event, gh, repo, ask = askModel, dryRun = false }) {
 	const request = reviewRequest(event);
 	if (!request) return { skipped: true };
 	const { number, mode, focus } = request;
@@ -223,7 +229,16 @@ export async function reviewPullRequest({ event, gh, repo, ask = askOpenCode, dr
 			: process.env.REVIEW_MODELS || process.env.AI_MODELS || DEFAULT_MODELS.join(",")
 	);
 	const fingerprint = createHash("sha256")
-		.update(JSON.stringify({ head: pr.head.sha, base: pr.base.sha, mode, focus, models }))
+		.update(
+			JSON.stringify({
+				head: pr.head.sha,
+				base: pr.base.sha,
+				mode,
+				focus,
+				models,
+				gemini: process.env.GEMINI_API_KEY ? geminiFallbackModel() : null
+			})
+		)
 		.digest("hex")
 		.slice(0, 20);
 	const comments = [];

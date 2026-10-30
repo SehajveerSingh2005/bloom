@@ -21,10 +21,10 @@ with the issue number. Old summary-only bot comments are updated in place.
 
 ## Provider, models and budgets
 
-Issue triage, the weekly digest and `/oc` reviews use the existing repository
-Actions secret `OPENCODE_API_KEY`. This is an OpenCode Console key, not an OpenAI
-API key. Both services offer models from multiple vendors; OpenCode's free
-models are temporary offers, not free OpenAI API credits.
+Issue triage, the weekly digest and `/oc` reviews try OpenCode first using
+`OPENCODE_API_KEY`, then Google Gemini using `GEMINI_API_KEY` if configured.
+The OpenCode key is not an OpenAI API key. OpenCode's free models are temporary
+offers, not free OpenAI API credits.
 
 The CLI is pinned to **2.0.26**. One tool-free model step receives prepared
 context. The explicit default fallback order is:
@@ -37,14 +37,25 @@ Repository Actions variables control the allowlist: `AI_MODELS` for the shared
 list, `TRIAGE_MODELS` for triage/digests, `REVIEW_MODELS` for quick review, and
 `REVIEW_DEEP_MODELS` for expanded review. Use comma-separated IDs (at most three).
 Deep review defaults to Big Pickle first, then GLM and MiMo. Only `opencode/`
-free IDs and `opencode/big-pickle` are accepted; no paid-provider fallback exists.
+free IDs and `opencode/big-pickle` are accepted in the OpenCode list.
 Update this list when free offerings change. Runtime model discovery never
 silently picks a new, potentially paid model.
 
-Fallback happens for unavailable models, rate limits, provider overload or
-request timeouts. Authentication, billing/quota, configuration and malformed
-output errors stop the run rather than repeatedly trying other models. A
-request gets at most 60 seconds per model and 150 seconds across the list.
+Within OpenCode, fallback happens for unavailable models, rate limits, provider
+overload or request timeouts. A provider quota rejection skips the remaining
+OpenCode models and tries Gemini. Exhausting the OpenCode list also tries Gemini.
+Authentication, configuration and malformed-output errors stop the run.
+If only the Gemini secret is configured, Gemini can run directly.
+
+Gemini defaults to `gemini-3.1-flash-lite`; override it with the Actions variable
+`GEMINI_FALLBACK_MODEL`. This uses the Google project's API quota and billing;
+there is no automatic upgrade to a larger model or paid OpenCode route.
+Gemini gets one tool-free request, a 4,096 output-token cap, and a 45-second
+timeout. JSON tasks require a complete valid JSON response; blocked or truncated
+responses are rejected. Digests retain Markdown output.
+
+A request gets at most 60 seconds per OpenCode model and 150 seconds across
+the OpenCode list, plus up to 45 seconds for Gemini.
 Workflows stop after six minutes including setup and GitHub reads; this is a
 runtime ceiling, not a measured latency guarantee. Output/context limits and
 one model step bound work; there is no unrestricted coding-agent loop.
@@ -52,13 +63,16 @@ one model step bound work; there is no unrestricted coding-agent loop.
 Every public result reports provider, explicitly selected model, provider-default
 reasoning, attempted fallback chain, total model time and reported input/output
 tokens when the CLI supplies them. Backend identity behind an OpenCode model
-alias is not independently verified. Do not infer a review's correctness from
+alias is not independently verified. Gemini's returned model version is included
+when supplied. Do not infer a review's correctness from
 its model name alone.
 
 The CLI runs in a fresh temporary directory with separate configuration and
 credential storage, all tools denied and no repository checkout. Only the
-OpenCode key is forwarded for provider authentication. GitHub and other provider
-tokens are excluded. Surrounding Node scripts perform validated GitHub writes.
+OpenCode key is forwarded for provider authentication. GitHub and Gemini tokens
+are excluded from that child process. The Gemini API receives only its own key
+in an HTTP header and the prepared prompt, with no tools. Surrounding Node
+scripts perform validated GitHub writes.
 
 ## On-request PR reviews
 
