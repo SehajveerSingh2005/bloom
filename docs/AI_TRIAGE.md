@@ -47,21 +47,34 @@ OpenCode models and tries Gemini. Exhausting the OpenCode list also tries Gemini
 Authentication, configuration and malformed-output errors stop the run.
 If only the Gemini secret is configured, Gemini can run directly.
 
-Gemini defaults to `gemini-3.1-flash-lite`; override it with the Actions variable
-`GEMINI_FALLBACK_MODEL`. This uses the Google project's API quota and billing;
-there is no automatic upgrade to a larger model or paid OpenCode route.
-Gemini gets one tool-free request, a 4,096 output-token cap, and a 45-second
-timeout. JSON tasks require a complete valid JSON response; blocked or truncated
-responses are rejected. Digests retain Markdown output.
+Gemini's ordered text-model fallback list is:
+
+1. `gemini-3.8-flash`
+2. `gemini-3.5-flash` (Google currently routes this alias to `gemini-3.6-flash`)
+3. `gemini-3.5-flash-lite`
+
+Google does not currently list a text `gemini-3.8-flash-lite` model; the
+`gemini-3.8-flash-lite-tts` model generates speech and is not used here.
+Set the comma-separated Actions variable `GEMINI_MODELS` to override the list
+(up to four text Flash models). The old `GEMINI_FALLBACK_MODEL` variable still
+works as a single-model override. No unrequested models are selected automatically.
+The API key uses its Google Cloud project's quota and billing; Google AI Pro's
+app/AI Studio benefits do not establish this API project's access or balance.
+
+Each Gemini model gets one tool-free request, low thinking, a 4,096 output-token
+cap, and at most 30 seconds, with a shared 90-second Gemini budget. Missing
+models, rate limits, server failures and network timeouts advance the list;
+authentication, blocked/truncated answers and invalid JSON stop the run. JSON
+tasks require a complete valid JSON response. Digests retain Markdown output.
 
 A request gets at most 60 seconds per OpenCode model and 150 seconds across
-the OpenCode list, plus up to 45 seconds for Gemini.
+the OpenCode list, plus up to 90 seconds for Gemini.
 Workflows stop after six minutes including setup and GitHub reads; this is a
 runtime ceiling, not a measured latency guarantee. Output/context limits and
 one model step bound work; there is no unrestricted coding-agent loop.
 
-Every public result reports provider, explicitly selected model, provider-default
-reasoning, attempted fallback chain, total model time and reported input/output
+Every public result reports provider, explicitly selected model, reasoning
+(provider default for OpenCode; low for Gemini), attempted fallback chain, total model time and reported input/output
 tokens when the CLI supplies them. Backend identity behind an OpenCode model
 alias is not independently verified. Gemini's returned model version is included
 when supplied. Do not infer a review's correctness from
@@ -129,3 +142,5 @@ Provider references:
 - [OpenCode free models](https://dev.opencode.ai/v2/docs/console/models)
 - [OpenCode permissions](https://dev.opencode.ai/v2/docs/permissions/)
 - [Noninteractive CLI](https://dev.opencode.ai/v2/docs/cli/commands/)
+- [Gemini model deprecations and alias routing](https://ai.google.dev/gemini-api/docs/deprecations/)
+- [Gemini API billing](https://ai.google.dev/gemini-api/docs/billing)

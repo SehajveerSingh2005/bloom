@@ -95,6 +95,20 @@ test("large source context comes from changed hunks, not just the start of a fil
 	assert.ok(result.partial);
 });
 
+test("review prose escapes backslashes and angle brackets together", () => {
+	for (const [input, expected] of [
+		[String.raw`\<script>`, String.raw`\\\<script\>`],
+		[String.raw`\\<SCRIPT>`, String.raw`\\\\\<SCRIPT\>`],
+		[String.raw`a <= b && c > d; C:\Temp\file`, String.raw`a \<= b && c \> d; C:\\Temp\\file`]
+	]) {
+		const result = validateReview(
+			{ findings: [{ ...JSON.parse(response.text).findings[0], body: input }], tests: [] },
+			[{ path: file.filename, patch }]
+		);
+		assert.equal(result.findings[0].body, expected);
+	}
+});
+
 function harness() {
 	let head = "abc123";
 	const writes = [];

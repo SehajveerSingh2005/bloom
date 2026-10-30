@@ -9,6 +9,7 @@ import {
 	failureReason,
 	modelAttribution,
 	modelList,
+	geminiFallbackModels,
 	parseOpenCodeOutput,
 	runWithClosedStdin
 } from "./ai-model.mjs";
@@ -28,7 +29,7 @@ const geminiReply = (overrides = {}) => ({
 	ok: true,
 	json: async () => ({
 		candidates: [{ finishReason: "STOP", content: { parts: [{ text: '{"ok":true}' }] } }],
-		modelVersion: "gemini-3.1-flash-lite",
+		modelVersion: "gemini-3.8-flash",
 		usageMetadata: { promptTokenCount: 30, candidatesTokenCount: 8, thoughtsTokenCount: 2 },
 		...overrides
 	})
@@ -71,7 +72,7 @@ test("real OpenCode quota errors switch providers with bounded Gemini JSON and a
 			request: async (url, options) => {
 				assert.equal(
 					url,
-					"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent"
+					"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
 				);
 				assert.equal(options.headers["x-goog-api-key"], "gemini-test-key");
 				assert.equal(options.headers.Authorization, undefined);
@@ -87,7 +88,7 @@ test("real OpenCode quota errors switch providers with bounded Gemini JSON and a
 		assert.deepEqual(result.usage, { input: 30, output: 10 });
 		assert.equal(result.provider, "Google Gemini");
 		assert.match(modelAttribution(result), /Provider: Google Gemini/);
-		assert.match(modelAttribution(result), /opencode\/a-free → google\/gemini-3.1-flash-lite/);
+		assert.match(modelAttribution(result), /opencode\/a-free → google\/gemini-3.8-flash/);
 	} finally {
 		if (previous === undefined) delete process.env.OPENCODE_BIN;
 		else process.env.OPENCODE_BIN = previous;
@@ -137,6 +138,7 @@ test("Gemini rejects blocked/truncated/invalid answers and sanitizes HTTP errors
 		await assert.rejects(
 			askModel("test", {
 				geminiKey: "test",
+				geminiModels: ["gemini-3.8-flash"],
 				opencode: async () => {
 					throw Object.assign(new Error("quota"), { fallbackEligible: true });
 				},
@@ -149,6 +151,72 @@ test("Gemini rejects blocked/truncated/invalid answers and sanitizes HTTP errors
 		);
 		assert.equal(requests, 1);
 	}
+});
+
+test("Gemini fallback order skips missing or rate-limited models and reports the responding version", async () => {
+	const visited = [];
+	const result = await askModel("test", {
+		key: "",
+		geminiKey: "test",
+		geminiModels: ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
+		request: async (url, options) => {
+			visited.push(url.split("/models/")[1].split(":")[0]);
+			assert.equal(JSON.parse(options.body).generationConfig.thinkingConfig.thinkingLevel, "low");
+			return visited.length < 3
+				? { ok: false, status: visited.length === 1 ? 404 : 429 }
+				: geminiReply({ modelVersion: "gemini-3.5-flash-lite" });
+		}
+	});
+	assert.deepEqual(visited, ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]);
+	assert.equal(result.model, "google/gemini-3.5-flash-lite");
+	assert.match(modelAttribution(result), /reported version: gemini-3.5-flash-lite/);
+	assert.match(modelAttribution(result), /reasoning: low/);
+	assert.deepEqual(geminiFallbackModels("gemini-3.8-flash,gemini-3.8-flash"), ["gemini-3.8-flash"]);
+	for (const model of ["", "gemini-3.8-flash-lite-tts", "gemini-4-argon", "invalid/model"])
+		assert.throws(() => geminiFallbackModels(model));
+});
+
+test("Gemini authentication and invalid output stop the fallback chain", async () => {
+	for (const reply of [{ ok: false, status: 403 }, geminiReply({ candidates: [] })]) {
+		let requests = 0;
+		await assert.rejects(
+			askModel("test", {
+				key: "",
+				geminiKey: "test",
+				request: async () => {
+					requests++;
+					return reply;
+				}
+			}),
+			/Gemini fallback failed/
+		);
+		assert.equal(requests, 1);
+	}
+});
+
+test("Gemini timeouts respect the shared 90-second budget", async () => {
+	let clock = 0;
+	let requests = 0;
+	await assert.rejects(
+		askModel("test", {
+			key: "",
+			geminiKey: "test",
+			now: () => clock,
+			geminiModels: [
+				"gemini-3.8-flash",
+				"gemini-3.5-flash",
+				"gemini-3.5-flash-lite",
+				"gemini-3.1-flash-lite"
+			],
+			request: async () => {
+				requests++;
+				clock += 30_000;
+				throw new DOMException("timeout", "TimeoutError");
+			}
+		}),
+		/90-second Gemini budget/
+	);
+	assert.equal(requests, 3);
 });
 
 test("digest fallback keeps Markdown output and works when only Gemini is configured", async () => {

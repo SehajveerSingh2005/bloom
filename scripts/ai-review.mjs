@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
 	askModel,
-	geminiFallbackModel,
+	geminiFallbackModels,
 	modelAttribution,
 	modelList,
 	DEFAULT_MODELS
@@ -16,7 +16,7 @@ const clip = (s, n = 900) => (typeof s === "string" ? s.slice(0, n) : "");
 const prose = (s) =>
 	clip(s)
 		.replace(/https?:\/\/\S+/g, "link omitted")
-		.replace(/[<>]/g, "\\$&")
+		.replace(/[\\<>]/g, "\\$&")
 		.replace(/[@\[\]]/g, "");
 const encodedPath = (path) => path.split("/").map(encodeURIComponent).join("/");
 const generated = (path) => /\.(svg|png|jpg|woff2?|mp4)$/i.test(path);
@@ -235,13 +235,13 @@ export async function reviewPullRequest({ event, gh, repo, ask = askModel, dryRu
 	const fingerprint = createHash("sha256")
 		.update(
 			JSON.stringify({
-				policy: 2,
+				policy: 3,
 				head: pr.head.sha,
 				base: pr.base.sha,
 				mode,
 				focus,
 				models,
-				gemini: process.env.GEMINI_API_KEY ? geminiFallbackModel() : null
+				gemini: process.env.GEMINI_API_KEY ? geminiFallbackModels() : null
 			})
 		)
 		.digest("hex")
