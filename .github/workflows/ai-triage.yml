@@ -2,12 +2,16 @@ name: AI triage
 
 on:
   issues:
-    types: [opened, reopened]
+    types: [opened, reopened, edited]
   workflow_dispatch:
     inputs:
       issue_number:
         description: Issue number to triage (for testing)
         required: true
+      dry_run:
+        description: Preview without applying labels or posting a comment
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -21,17 +25,28 @@ jobs:
   triage:
     if: github.event.issue.user.login != 'github-actions[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
+      - name: Install pinned OpenCode CLI
+        run: npm install --global @opencode/cli@2.0.26
+
+      - name: Test triage logic
+        run: node --test scripts/ai-model.test.mjs scripts/ai-review.test.mjs scripts/ai-triage.test.mjs
+
       - name: Triage issue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          AI_MODELS: ${{ vars.TRIAGE_MODELS || vars.AI_MODELS || 'opencode/glm-5.3-flash-free,opencode/mimo-v2.6-flash-free,opencode/big-pickle' }}
+          TRIAGE_DRY_RUN: ${{ inputs.dry_run || false }}
           ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}
-          AUTHOR_ASSOCIATION: ${{ github.event.issue.author_association || 'CONTRIBUTOR' }}
         run: node scripts/ai-issues.mjs triage
