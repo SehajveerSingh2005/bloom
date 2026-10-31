@@ -42,6 +42,9 @@ img {
 	--notch-bg: var(--bloom-bg, rgba(0, 0, 0, 0.8));
 	/* Painted by the .edge-surface child (see components/EdgeSurface.css). */
 	--surface-bg: var(--notch-bg);
+	/* Hairline on its sides and bottom, so the notch stays outlined over a
+	   window of its own colour. */
+	--surface-edge: var(--bloom-text, white);
 	isolation: isolate;
 	border-radius: 0 0 18px 18px;
 	border: none;
