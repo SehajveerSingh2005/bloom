@@ -97,14 +97,15 @@ const DEVICES_MAX_HEIGHT = 300;
 // Pomodoro timer limit.
 const MAX_TIMER_SECONDS = 180 * 60;
 
-// Inline timer editing: digits fill from the right and the colon is inserted
-// automatically ("130" -> 1:30, "2500" -> 25:00, "45" -> 0:45).
-const timerDigitsToSeconds = (digits: string): number | null => {
-	if (!digits) return null;
-	const secs = parseInt(digits.slice(-2) || "0", 10);
-	const mins = parseInt(digits.slice(0, -2) || "0", 10);
-	const total = mins * 60 + secs;
-	return total > 0 && total <= MAX_TIMER_SECONDS ? total : null;
+// Accept both mm:ss and compact digits ("130" -> 1:30).
+const timerDigitsToSeconds = (value: string): number | null => {
+	if (!/^\d{1,5}$/.test(value) && !/^\d{1,3}:\d{1,2}$/.test(value)) return null;
+	const [minutes, seconds] = value.includes(":")
+		? value.split(":")
+		: [value.slice(0, -2) || "0", value.slice(-2)];
+	const secs = Number(seconds);
+	const total = Number(minutes) * 60 + secs;
+	return secs < 60 && total > 0 && total <= MAX_TIMER_SECONDS ? total : null;
 };
 
 const timerSecondsToDigits = (seconds: number): string => {
@@ -114,6 +115,7 @@ const timerSecondsToDigits = (seconds: number): string => {
 };
 
 const formatTimerDigits = (digits: string): string => {
+	digits = digits.replace(/\D/g, "");
 	if (!digits) return "0:00";
 	const secs = digits.slice(-2).padStart(2, "0");
 	const mins = parseInt(digits.slice(0, -2) || "0", 10);
@@ -2004,8 +2006,7 @@ function App() {
 		}
 	};
 
-	// Clicking the big time turns it into a masked editor. Digits fill from the
-	// right, so the colon never has to be typed.
+	// Keep raw digits in the input; the clock adds the colon without moving the caret.
 	const beginTimerEdit = () => {
 		if (isTimerRunning || isEditingTimer) return;
 		if (isTimerFinished) resetTimer();
@@ -2017,16 +2018,20 @@ function App() {
 
 	const commitTimerEdit = (start: boolean) => {
 		if (!timerEditActiveRef.current) return;
+		const total = timerDigitsToSeconds(timerEditDigits);
+		if (total === null && start) {
+			timerInputRef.current?.focus();
+			return;
+		}
 		timerEditActiveRef.current = false;
 		setIsEditingTimer(false);
-		const total = timerDigitsToSeconds(timerEditDigits);
 		if (total === null) return;
 		const base = timerSeconds > 0 ? timerSeconds : lastDurationSeconds;
 		// A tap that changes nothing (e.g. paused timer) must not reset the state.
 		if (!start && total === base) return;
 		localStorage.setItem("bloom-timer-last-duration", String(total));
 		setLastDurationSeconds(total);
-		setTimerSeconds(start ? total : 0);
+		setTimerSeconds(total);
 		setIsTimerRunning(start);
 		setIsTimerFinished(false);
 		if (start) getTimerChimeCtx();
@@ -2034,8 +2039,19 @@ function App() {
 
 	useEffect(() => {
 		if (isEditingTimer) {
-			timerInputRef.current?.focus();
-			timerInputRef.current?.select();
+			// The notch uses WS_EX_NOACTIVATE: DOM focus alone cannot receive typing.
+			let cancelled = false;
+			void getCurrentWebviewWindow()
+				.setFocus()
+				.then(() => {
+					if (cancelled) return;
+					timerInputRef.current?.focus();
+					timerInputRef.current?.select();
+				})
+				.catch(console.error);
+			return () => {
+				cancelled = true;
+			};
 		}
 	}, [isEditingTimer]);
 
@@ -2070,8 +2086,7 @@ function App() {
 
 	// Split the display time into individual flip-clock digits. Keys are counted
 	// from the right so existing digits keep their identity when minutes grow
-	// from two digits to three. While editing, the same clock renders the digits
-	// being typed so the layout never changes.
+	// from two digits to three. The editor occupies the same clock row.
 	const clockText = isEditingTimer
 		? formatTimerDigits(timerEditDigits)
 		: formatTimerTime(timerDisplaySeconds);
@@ -4281,7 +4296,7 @@ function App() {
 													<div className="timer-main">
 														<div className="timer-status">
 															{isEditingTimer
-																? "Set duration"
+																? "Type to set duration"
 																: isTimerFinished
 																	? "Time's up"
 																	: timerEndTime
@@ -4310,8 +4325,10 @@ function App() {
 																	className="timer-edit-input"
 																	type="text"
 																	inputMode="numeric"
-																	aria-label="Set timer duration"
-																	value={formatTimerDigits(timerEditDigits)}
+																	aria-label="Set timer duration as minutes and seconds, for example 1230 for 12 minutes 30 seconds"
+																	maxLength={5}
+																	aria-invalid={!timerEditValid}
+																	value={timerEditDigits}
 																	onChange={(e) =>
 																		setTimerEditDigits(
 																			e.target.value.replace(/\D/g, "").slice(0, 5)
@@ -4319,6 +4336,10 @@ function App() {
 																	}
 																	onKeyDown={(e) => {
 																		if (e.key === "Enter") commitTimerEdit(true);
+																		if (e.key === "Escape") {
+																			timerEditActiveRef.current = false;
+																			setIsEditingTimer(false);
+																		}
 																	}}
 																	onBlur={() => commitTimerEdit(false)}
 																	onWheel={(e) => e.stopPropagation()}

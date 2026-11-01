@@ -962,23 +962,23 @@ img {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	gap: 5px;
+	gap: 0;
 	cursor: text;
 }
 
 .roll-digit {
 	position: relative;
 	display: inline-flex;
-	width: 34px;
-	height: 58px;
+	width: 23px;
+	height: 52px;
 	overflow: hidden;
 	perspective: 300px;
 	font-variant-numeric: tabular-nums;
 }
 
 .roll-digit.compact {
-	width: 26px;
-	height: 46px;
+	width: 18px;
+	height: 44px;
 }
 
 .roll-num {
@@ -1003,7 +1003,7 @@ img {
 	font-weight: 600;
 	line-height: 1;
 	opacity: 0.3;
-	padding: 0 2px;
+	padding: 0 1px;
 }
 
 .timer-main {
@@ -1063,6 +1063,12 @@ img {
 	background: transparent;
 	color: transparent;
 	caret-color: transparent;
+	text-align: center;
+	font: inherit;
+	font-size: 32px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -1px;
 	cursor: text;
 }
 
