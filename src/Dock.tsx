@@ -206,7 +206,9 @@ const Dock = memo(function Dock() {
 	const [isDockHovered, setIsDockHovered] = useState(false);
 	const [isEdgeHovered, setIsEdgeHovered] = useState(false);
 	const [isOverlapped, setIsOverlapped] = useState(false);
-	const [isVisible, setIsVisible] = useState(true);
+	const [systemVisible, setIsVisible] = useState(true);
+	const [shellInteraction, setShellInteraction] = useState(false);
+	const isVisible = systemVisible || shellInteraction;
 	const [showAddPopup, setShowAddPopup] = useState(false);
 	const [nativeMenuOpen, setNativeMenuOpen] = useState(false);
 	const [contextMenu, setContextMenu] = useState<{
@@ -1074,6 +1076,37 @@ const Dock = memo(function Dock() {
 		() => dockItems.find((i) => i.path === "start") as AppInfo,
 		[dockItems]
 	);
+	// Only a deliberate icon hover dismisses Start. Once dismissed, the session
+	// belongs to the whole dock, including the gaps between icons and its popups.
+	const dockPopupRequested = !!contextMenu || showAddPopup || nativeMenuOpen;
+	const dockHoverTarget =
+		hoveredApp !== null && (!startItem || hoveredApp !== itemKey(startItem)) ? hoveredApp : null;
+	const keepShellInteraction =
+		shellInteraction && (isDockHovered || !!previewData || dockPopupRequested);
+	useEffect(() => {
+		const report = (active: boolean) => {
+			void invoke("set_dock_popup_active", { active }).catch(console.error);
+		};
+		if (dockPopupRequested || keepShellInteraction) {
+			report(true);
+			return;
+		}
+		// Cancel short pass-overs; restarting for a different icon requires a
+		// fresh dwell. A brief leave grace bridges the dock-to-popup handoff.
+		const timer = setTimeout(() => report(dockHoverTarget !== null), dockHoverTarget ? 350 : 250);
+		return () => clearTimeout(timer);
+	}, [dockPopupRequested, dockHoverTarget, keepShellInteraction]);
+	useEffect(() => {
+		let disposed = false;
+		const unlisten = listen<boolean>("dock-shell-interaction", ({ payload }) => {
+			if (!disposed) setShellInteraction(payload);
+		});
+		return () => {
+			disposed = true;
+			void unlisten.then((stop) => stop());
+			void invoke("set_dock_popup_active", { active: false });
+		};
+	}, []);
 	const pinnedItems = useMemo(
 		() => dockItems.filter((i) => i.path !== "start" && i.is_pinned),
 		[dockItems]

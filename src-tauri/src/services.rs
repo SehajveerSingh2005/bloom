@@ -2087,6 +2087,10 @@ static CAPTURE_UI_ACTIVE: AtomicBool = AtomicBool::new(false);
 static CAPTURE_RECHECK: AtomicBool = AtomicBool::new(true);
 static CAPTURE_LAST_SCAN_MS: AtomicI64 = AtomicI64::new(0);
 
+pub fn dock_popup_allowed() -> bool {
+    !CAPTURE_UI_ACTIVE.load(Ordering::Relaxed) && !SHUTTING_DOWN.load(Ordering::Relaxed)
+}
+
 /// Recognizes the native Start/Search surface by its host process. Its window
 /// title is localized, so title-only checks make Smart dock overlap detection
 /// hide the dock on non-English Windows.
@@ -2298,6 +2302,12 @@ fn is_capture_ui_present() -> bool {
 fn apply_capture_ui_state(app: &AppHandle, active: bool) {
     if SHUTTING_DOWN.load(Ordering::Relaxed) {
         return;
+    }
+    if active && DOCK_SHELL_INTERACTION.swap(false, Ordering::Relaxed) {
+        let _ = app.emit_to("dock", "dock-shell-interaction", false);
+    }
+    if active {
+        DOCK_START_PRESS_MS.store(0, Ordering::Relaxed);
     }
     if let Some(main_win) = app.get_webview_window("main") {
         if active {
@@ -2791,7 +2801,7 @@ fn update_dock_interaction(
     now: i64,
     fg_fs: bool,
 ) {
-    if fg_fs {
+    if fg_fs && !DOCK_SHELL_INTERACTION.load(Ordering::Relaxed) {
         // Fullscreen foreground app or capture overlay: the dock must not
         // intercept input (e.g. a Snipping Tool selection ending at the
         // bottom edge), so keep it click-through.
@@ -2981,6 +2991,11 @@ unsafe extern "system" fn mouse_hook_proc(
     // use. A cheap foreground check, and only on presses.
     if code >= 0 && wparam.0 == WM_LBUTTONDOWN as usize {
         START_OPEN_AT_PRESS.store(crate::commands::is_start_menu_open(), Ordering::Relaxed);
+    }
+    if code >= 0 && wparam.0 == WM_RBUTTONDOWN as usize {
+        let point = (*(lparam.0 as *const MSLLHOOKSTRUCT)).pt;
+        let start_press = dock_takes_press(point) && crate::commands::is_start_menu_open();
+        DOCK_START_PRESS_MS.store(if start_press { now_ms() } else { 0 }, Ordering::Relaxed);
     }
     // A dock menu or the Add App popup closes when you press outside it. The
     // dock window's region keeps it from catching that press, so the dock

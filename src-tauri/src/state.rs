@@ -31,6 +31,11 @@ pub static NOTCH_IS_HOVERED: AtomicBool = AtomicBool::new(false);
 /// smart/peek mode the notch must stay click-through even over its footprint.
 pub static NOTCH_IS_VISIBLE: AtomicBool = AtomicBool::new(true);
 pub static MENU_IS_OPEN: AtomicBool = AtomicBool::new(false);
+/// A dock popup deliberately dismissed Start. Keep only this interaction usable
+/// if dismissing the shell reveals a fullscreen app underneath it.
+pub static DOCK_SHELL_INTERACTION: AtomicBool = AtomicBool::new(false);
+/// Start may dismiss itself on right-button down before the webview opens its menu.
+pub static DOCK_START_PRESS_MS: AtomicI64 = AtomicI64::new(0);
 // The dock window's handle, for the mouse hook to tell whether a press lands
 // on the dock (which closes its own menus) or outside it.
 pub static DOCK_HWND: AtomicIsize = AtomicIsize::new(0);

@@ -144,6 +144,7 @@ fn main() {
             update_notch_rect,
             window_region::set_window_region,
             set_dock_hovered,
+            set_dock_popup_active,
             set_notch_hovered,
             set_notch_visible,
             setup_shelf_drop,

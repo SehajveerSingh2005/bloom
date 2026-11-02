@@ -29,6 +29,32 @@ pub async fn set_dock_hovered(hovered: bool) {
 }
 
 #[tauri::command]
+pub fn set_dock_popup_active(app: AppHandle, window: Window, active: bool) {
+    if window.label() != "dock" {
+        return;
+    }
+    let active = active && crate::services::dock_popup_allowed();
+    let start_open = active && is_start_menu_open();
+    let press_ms = DOCK_START_PRESS_MS.swap(0, Ordering::Relaxed);
+    let recent_start_press = press_ms > 0 && (0..=1000).contains(&(get_now_ms() - press_ms));
+    let keep_visible = active
+        && (start_open || recent_start_press || DOCK_SHELL_INTERACTION.load(Ordering::Relaxed));
+    if DOCK_SHELL_INTERACTION.swap(keep_visible, Ordering::Relaxed) != keep_visible {
+        let _ = app.emit_to("dock", "dock-shell-interaction", keep_visible);
+    }
+    if start_open {
+        // Start's shell surface may live above ordinary topmost windows. Close
+        // it on deliberate dock use, rather than endlessly fighting its z-order.
+        send_key_tap(windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE);
+    }
+    if active {
+        if let Ok(hwnd) = window.hwnd() {
+            re_assert_topmost(hwnd);
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn set_notch_hovered(app: AppHandle, hovered: bool) {
     NOTCH_IS_HOVERED.store(hovered, Ordering::Relaxed);
     // Re-evaluate right away. During a native drag the webview never sees the
@@ -296,6 +322,9 @@ fn disable_dock(app: &AppHandle) {
     if !set_taskbar_visibility(true, true) {
         return;
     }
+    DOCK_SHELL_INTERACTION.store(false, Ordering::Relaxed);
+    DOCK_START_PRESS_MS.store(0, Ordering::Relaxed);
+    let _ = app.emit_to("dock", "dock-shell-interaction", false);
     if let Some(dock_win) = app.get_webview_window("dock") {
         disable_dock_appbar(dock_win);
     }
