@@ -62,6 +62,7 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 | Key                         | Type                              | Default  | Description                                                                                              |
 | --------------------------- | --------------------------------- | -------- | -------------------------------------------------------------------------------------------------------- |
 | `bloom-calendar-enabled`    | `"true"` / `"false"`              | `"true"` | Enable calendar/timer mode in the notch.                                                                 |
+| `bloom-calendar-monday-first` | `"true"` / `"false"` | `"false"` | Start calendar weeks on Monday; Sunday remains the default. Grid padding and notch height follow this setting. |
 | `bloom-notch-command-center-enabled` | `"true"` / `"false"` | `"true"` | Show the Command Center panel in the notch. |
 | `bloom-notch-devices-enabled` | `"true"` / `"false"` | `"false"` | Show the Connected devices panel in the notch. Settings keeps at least one of the panels (calendar, Command Center, Connected devices) on; if all are off, the notch shows Command Center. |
 | `bloom-music-mode-enabled`  | `"true"` / `"false"`              | `"true"` | Enable interactive music media widget.                                                                   |

@@ -243,6 +243,8 @@ function SettingsApp() {
 							setNotchModeValue={settings.setNotchModeValue}
 							notchEdgeDelay={settings.notchEdgeDelay}
 							handleNotchEdgeDelayChange={settings.handleNotchEdgeDelayChange}
+							calendarMondayFirst={settings.calendarMondayFirst}
+							toggleCalendarMondayFirst={settings.toggleCalendarMondayFirst}
 							calendarEnabled={settings.calendarEnabled}
 							toggleCalendar={settings.toggleCalendar}
 							controlsPanelEnabled={settings.controlsPanelEnabled}

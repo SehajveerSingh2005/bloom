@@ -31,6 +31,8 @@ interface NotchTabProps {
 	setNotchModeValue: (mode: string) => void;
 	notchEdgeDelay: number;
 	handleNotchEdgeDelayChange: (val: number) => void;
+	calendarMondayFirst: boolean;
+	toggleCalendarMondayFirst: () => void;
 	calendarEnabled: boolean;
 	toggleCalendar: () => void;
 	controlsPanelEnabled: boolean;
@@ -81,6 +83,8 @@ export function NotchTab({
 	setNotchModeValue,
 	notchEdgeDelay,
 	handleNotchEdgeDelayChange,
+	calendarMondayFirst,
+	toggleCalendarMondayFirst,
 	calendarEnabled,
 	toggleCalendar,
 	controlsPanelEnabled,
@@ -184,6 +188,23 @@ export function NotchTab({
 						<span className="slider"></span>
 					</label>
 				</SettingRow>
+
+				{calendarEnabled && (
+					<SettingRow
+						icon={Calendar}
+						label="Monday-first Calendar"
+						desc="Start each week on Monday instead of Sunday"
+					>
+						<label className="toggle-switch">
+							<input
+								type="checkbox"
+								checked={calendarMondayFirst}
+								onChange={toggleCalendarMondayFirst}
+							/>
+							<span className="slider" />
+						</label>
+					</SettingRow>
+				)}
 
 				{calendarEnabled && (
 					<SettingRow

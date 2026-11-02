@@ -1062,6 +1062,9 @@ function App() {
 	const [settingsWeatherEnabled, setSettingsWeatherEnabled] = useState(
 		() => localStorage.getItem("bloom-weather-enabled") !== "false"
 	);
+	const [calendarMondayFirst, setCalendarMondayFirst] = useState(
+		() => localStorage.getItem("bloom-calendar-monday-first") === "true"
+	);
 	const [settingsCalendarEnabled, setSettingsCalendarEnabled] = useState(
 		() => localStorage.getItem("bloom-calendar-enabled") !== "false"
 	);
@@ -1147,6 +1150,7 @@ function App() {
 
 				setSettingsWeatherEnabled(getVal("bloom-weather-enabled", "true") !== "false");
 				setSettingsCalendarEnabled(getVal("bloom-calendar-enabled", "true") !== "false");
+				setCalendarMondayFirst(getVal("bloom-calendar-monday-first", "false") === "true");
 				setSettingsControlsPanelEnabled(
 					getVal("bloom-notch-command-center-enabled", "true") !== "false"
 				);
@@ -1268,6 +1272,7 @@ function App() {
 		{
 			"bloom-weather-enabled": setSettingsWeatherEnabled,
 			"bloom-calendar-enabled": setSettingsCalendarEnabled,
+			"bloom-calendar-monday-first": setCalendarMondayFirst,
 			"bloom-notch-command-center-enabled": setSettingsControlsPanelEnabled,
 			"bloom-notch-devices-enabled": setSettingsDevicesPanelEnabled,
 			"bloom-timer-sound-enabled": setSettingsTimerSoundEnabled,
@@ -3113,7 +3118,7 @@ function App() {
 		// Device alert: the drawing, with room for its motion.
 		if (bloomMode === "device" && deviceAlert) return 76;
 		// Sized to the calendar's week-row count plus the timer's fixed content.
-		if (bloomMode === "calendar") return 112 + calendarRows(calendarMonth) * 30;
+		if (bloomMode === "calendar") return 112 + calendarRows(calendarMonth, calendarMondayFirst) * 30;
 		// Shelf expands on mode alone (no hover needed: there is no cursor
 		// hover during an OS drag) and is sized to exactly one row of tiles,
 		// plus room for the scrollbar once the tiles overflow it.
@@ -4288,7 +4293,7 @@ function App() {
 											transition={{ type: "spring", stiffness: 400, damping: 30 }}
 										>
 											<div className="calendar-column">
-												<Calendar month={calendarMonth} onMonthChange={setCalendarMonth} />
+												<Calendar mondayFirst={calendarMondayFirst} month={calendarMonth} onMonthChange={setCalendarMonth} />
 											</div>
 
 											<div className="timer-column">

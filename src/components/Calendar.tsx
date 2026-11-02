@@ -2,9 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 
-export function calendarRows(month: Date): number {
+export function calendarOffset(month: Date, mondayFirst = false): number {
+	return (month.getDay() + (mondayFirst ? 6 : 0)) % 7;
+}
+
+export function calendarRows(month: Date, mondayFirst = false): number {
 	return Math.ceil(
-		(month.getDay() + new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()) / 7
+		(calendarOffset(month, mondayFirst) +
+			new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()) /
+			7
 	);
 }
 
@@ -14,9 +20,11 @@ const monthNames = Array.from({ length: 12 }, (_, month) =>
 
 export function Calendar({
 	month,
+	mondayFirst = false,
 	onMonthChange
 }: {
 	month: Date;
+	mondayFirst?: boolean;
 	onMonthChange: (month: Date) => void;
 }) {
 	const [today, setToday] = useState(() => new Date());
@@ -168,12 +176,15 @@ export function Calendar({
 				className="calendar-grid"
 				aria-label={month.toLocaleDateString("default", { month: "long", year: "numeric" })}
 			>
-				{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+				{(mondayFirst
+					? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+					: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+				).map((day) => (
 					<div key={day} className="day-name">
 						{day}
 					</div>
 				))}
-				{Array.from({ length: month.getDay() }, (_, index) => (
+				{Array.from({ length: calendarOffset(month, mondayFirst) }, (_, index) => (
 					<div key={`empty-${index}`} aria-hidden="true" />
 				))}
 				{Array.from({ length: totalDays }, (_, index) => {

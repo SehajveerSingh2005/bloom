@@ -44,6 +44,7 @@ export function useSettings() {
 	}, []);
 	const [autostart, setAutostart] = useState(false);
 	const [weatherEnabled, setWeatherEnabled] = useState(true);
+	const [calendarMondayFirst, setCalendarMondayFirst] = useState(false);
 	const [calendarEnabled, setCalendarEnabled] = useState(true);
 	const [controlsPanelEnabled, setControlsPanelEnabled] = useState(true);
 	const [devicesPanelEnabled, setDevicesPanelEnabled] = useState(false);
@@ -208,6 +209,7 @@ export function useSettings() {
 
 			apply(getVal("bloom-weather-enabled"), setWeatherEnabled, readBool);
 			apply(getVal("bloom-calendar-enabled"), setCalendarEnabled, readBool);
+			apply(getVal("bloom-calendar-monday-first"), setCalendarMondayFirst, readBool);
 			apply(getVal("bloom-notch-command-center-enabled"), setControlsPanelEnabled, readBool);
 			apply(getVal("bloom-notch-devices-enabled"), setDevicesPanelEnabled, readBool);
 			apply(getVal("bloom-timer-sound-enabled"), setTimerSoundEnabled, readBool);
@@ -387,6 +389,7 @@ export function useSettings() {
 		"bloom-dock-extras-custom-folders": setDockExtrasCustomFolders,
 		"bloom-weather-enabled": setWeatherEnabled,
 		"bloom-calendar-enabled": setCalendarEnabled,
+		"bloom-calendar-monday-first": setCalendarMondayFirst,
 		"bloom-notch-command-center-enabled": setControlsPanelEnabled,
 		"bloom-notch-devices-enabled": setDevicesPanelEnabled,
 		"bloom-timer-sound-enabled": setTimerSoundEnabled,
@@ -548,6 +551,12 @@ export function useSettings() {
 	// The notch needs at least one panel, so the last one on can't be turned off.
 	const enabledPanelCount =
 		Number(calendarEnabled) + Number(controlsPanelEnabled) + Number(devicesPanelEnabled);
+
+	const toggleCalendarMondayFirst = () => {
+		const next = !calendarMondayFirst;
+		setCalendarMondayFirst(next);
+		saveSetting("bloom-calendar-monday-first", String(next));
+	};
 
 	const toggleCalendar = () => {
 		const next = !calendarEnabled;
@@ -999,6 +1008,8 @@ export function useSettings() {
 		setNotchModeValue,
 		notchEdgeDelay,
 		handleNotchEdgeDelayChange,
+		calendarMondayFirst,
+		toggleCalendarMondayFirst,
 		calendarEnabled,
 		toggleCalendar,
 		controlsPanelEnabled,
