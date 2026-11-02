@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Palette, Droplet, Contrast, Droplets, Sun, Square, Maximize2 } from "lucide-react";
 import { SettingRow } from "./SettingRow";
 
@@ -67,7 +68,7 @@ export function AppearanceTab({
 								onChange={(e) => handleThemeColorChange(e.target.value)}
 								className="color-picker-input"
 							/>
-							<span className="color-picker-label">{themeColor.toUpperCase()}</span>
+							<HexInput value={themeColor} onChange={handleThemeColorChange} />
 						</div>
 					</SettingRow>
 				)}
@@ -164,5 +165,39 @@ export function AppearanceTab({
 				</SettingRow>
 			</div>
 		</>
+	);
+}
+
+/** A typed hex code: #RGB or #RRGGBB, with or without the #. Applied on Enter
+ *  or leaving the field; anything else snaps back to the current colour. */
+function HexInput({ value, onChange }: { value: string; onChange: (hex: string) => void }) {
+	const [draft, setDraft] = useState(value.toUpperCase());
+	useEffect(() => setDraft(value.toUpperCase()), [value]);
+	const commit = () => {
+		const m = draft
+			.trim()
+			.replace(/^#/, "")
+			.match(/^([0-9a-f]{3}|[0-9a-f]{6})$/i);
+		if (!m) return setDraft(value.toUpperCase());
+		const hex = m[1].length === 3 ? [...m[1]].map((c) => c + c).join("") : m[1];
+		onChange(`#${hex.toLowerCase()}`);
+	};
+	return (
+		<input
+			className="color-hex-input"
+			value={draft}
+			maxLength={7}
+			spellCheck={false}
+			aria-label="Hex colour"
+			onChange={(e) => setDraft(e.target.value)}
+			onBlur={commit}
+			onKeyDown={(e) => {
+				if (e.key === "Enter") e.currentTarget.blur();
+				if (e.key === "Escape") {
+					setDraft(value.toUpperCase());
+					e.currentTarget.blur();
+				}
+			}}
+		/>
 	);
 }
