@@ -1,0 +1,99 @@
+.agent-alert {
+	position: absolute;
+	inset: 0;
+	z-index: 5;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 0 16px;
+	color: var(--bloom-text, white);
+	--agent-accent: #91d5ad;
+}
+.agent-alert.kind-attention {
+	--agent-accent: #e9b873;
+}
+.agent-alert.kind-error {
+	--agent-accent: #ef9292;
+}
+.agent-logo-wrap {
+	display: grid;
+	place-items: center;
+	width: 38px;
+	height: 38px;
+	flex: none;
+}
+.agent-logo {
+	display: block;
+	width: 30px;
+	height: 30px;
+	flex: none;
+	background: currentColor;
+	mask-size: contain;
+	mask-repeat: no-repeat;
+	mask-position: center;
+}
+.agent-claude {
+	color: #d49a7e;
+}
+.agent-alert-copy {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.agent-alert-copy > * {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.agent-alert-source {
+	font-size: 11px;
+	font-weight: 500;
+}
+.agent-alert-source span {
+	color: var(--bloom-text-muted, #999);
+}
+.agent-alert-copy strong {
+	font-size: 13px;
+	font-weight: 600;
+}
+.agent-alert-state {
+	flex: none;
+	color: var(--agent-accent);
+}
+.agent-alert-dismiss {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 24px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--bloom-text-muted, #aaa);
+	cursor: pointer;
+}
+.agent-alert-dismiss:hover,
+.agent-alert-dismiss:focus-visible {
+	color: var(--bloom-text, white);
+	background: rgba(127, 127, 127, 0.18);
+}
+.activity-bubble.agent-bubble {
+	padding: 0 8px;
+	gap: 5px;
+	color: #e9b873;
+	font-size: 11px;
+}
+.agent-bubble .agent-logo {
+	width: 17px;
+	height: 17px;
+}
+@media (prefers-reduced-motion: reduce) {
+	.agent-alert *,
+	.agent-bubble {
+		animation: none !important;
+		transition: none !important;
+	}
+}

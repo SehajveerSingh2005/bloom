@@ -4,7 +4,8 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Effect } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { X, Settings, Palette, PanelTop, Monitor, Layers, Info, Megaphone } from "lucide-react";
+import { X, Settings, Palette, PanelTop, Monitor, Layers, Info, Megaphone, Plug } from "lucide-react";
+import { IntegrationsTab } from "./settings/IntegrationsTab";
 import {
 	useSettings,
 	GeneralTab,
@@ -28,6 +29,7 @@ const TABS: { id: SettingsTab; label: string; icon: typeof Settings }[] = [
 	{ id: "notch", label: "Notch", icon: PanelTop },
 	{ id: "dock", label: "Dock", icon: Monitor },
 	{ id: "overlays", label: "Overlays", icon: Layers },
+	{ id: "integrations", label: "Integrations", icon: Plug },
 	{ id: "about", label: "About", icon: Info }
 ];
 
@@ -37,6 +39,7 @@ const TAB_COPY: Record<SettingsTab, string> = {
 	notch: "Choose what appears at the top of your screen.",
 	dock: "Shape the taskbar replacement around your workflow.",
 	overlays: "Keep quick controls visible only when you need them.",
+	integrations: "Let your agents reach you through the notch.",
 	about: "Version, updates and your settings data."
 };
 
@@ -219,6 +222,7 @@ function SettingsApp() {
 							quitBloom={settings.quitBloom}
 						/>
 					)}
+					{activeTab === "integrations" && <IntegrationsTab enabled={settings.agentAlertsEnabled} onToggle={settings.toggleAgentAlerts} />}
 					{activeTab === "appearance" && (
 						<AppearanceTab
 							themeMode={settings.themeMode}

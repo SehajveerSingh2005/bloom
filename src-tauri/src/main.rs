@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent_alerts;
 mod battery;
 mod bluetooth;
 mod buds;
@@ -115,6 +116,10 @@ fn main() {
             Some(vec![]),
         ))
         .invoke_handler(tauri::generate_handler![
+            agent_alerts::agent_alert_status,
+            agent_alerts::configure_agent_alert,
+            agent_alerts::test_agent_alert,
+            agent_alerts::agent_alerts_quiet,
             hide_native_osd,
             open_settings_window,
             close_settings_window,
@@ -231,6 +236,7 @@ fn main() {
             // invoke save_setting as soon as it loads, which happens before the
             // rest of this hook runs.
             crate::utils::init_settings_cache(app.handle());
+            agent_alerts::setup(app.handle());
             // Crash-recovery: if a previous session was force-killed while the native
             // taskbar was hidden, restore it now. Runs before the frontend re-hides it
             // (init_dock fires after a delay), so the flag must be removed first.
