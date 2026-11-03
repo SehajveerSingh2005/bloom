@@ -206,9 +206,9 @@ body {
 	border-radius: 18px 18px 0 0;
 	/* Painted by the .edge-surface child (see components/EdgeSurface.css). */
 	--surface-bg: var(--bloom-bg, rgba(0, 0, 0, 0.8));
-	/* Hairline on its top and sides, so the bar stays outlined over a window
-	   of its own colour. */
+	/* A restrained rim with a brighter, light-catching top edge. */
 	--surface-edge: var(--bloom-text, white);
+	--surface-light: white;
 	isolation: isolate;
 	border: none;
 	color: var(--bloom-text, white);
@@ -223,13 +223,6 @@ body {
 
 .dock.dock-impacted {
 	padding: 8px 14px;
-}
-
-/* The collapsed pill floats above the screen edge: outlined all round. */
-.dock:not(.dock-expanded):not(.dock-impacted) > .edge-surface::before {
-	box-shadow:
-		0 0 0 1px var(--surface-solid),
-		inset 0 0 0 1px var(--surface-line);
 }
 
 .dock-reorder-container {

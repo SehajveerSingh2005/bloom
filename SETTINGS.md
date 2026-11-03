@@ -94,6 +94,8 @@ Edit `settings.json` with any text editor while Bloom is running. Changes are ap
 
 ### Appearance
 
+`bloom-edge-shine-enabled` (`"true"` / `"false"`, default `"true"`) controls the reflective hairline around both the dock and notch. Change it with **Appearance → Display → Edge shine**; it applies immediately to both windows.
+
 | Key                      | Type                                             | Default     | Description                                                                                                                                                 |
 | ------------------------ | ------------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bloom-theme-mode`       | `"dark"` / `"light"` / `"custom"` / `"adaptive"` | `"dark"`    | Theme mode. **dark** = dark translucent. **light** = light translucent. **custom** = user-picked color. **adaptive** = follows Windows system accent color. |
