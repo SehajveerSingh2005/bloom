@@ -8,9 +8,10 @@ Run from the repo root unless noted. Bun 1.4.0, Rust stable.
 
 - `bun install` — deps (CI uses `bun install --frozen-lockfile`; never create a root `package-lock.json`)
 - `bun run tauri dev` — full dev loop. Vite is on strict port 1420; do not start `bun run dev` separately
-- `bun run build` — `tsc && vite build`; this is the frontend typecheck. `strict` + `noUnusedLocals`/`noUnusedParameters` fail the build. There is no root lint or frontend test script
+- `bun run test` — `bun test scripts`; runs the frontend logic tests also executed by Windows CI
+- `bun run build` — `tsc && vite build`; this is the frontend typecheck. `strict` + `noUnusedLocals`/`noUnusedParameters` fail the build. There is no root lint script
 - `cargo check --locked` and `cargo clippy --locked --all-targets` in `src-tauri` — CI's Rust gates
-- `cargo test --locked` in `src-tauri` — pure-function unit tests. Runs fast on Windows but CI does **not** run it, so run it yourself
+- `cargo test --locked` in `src-tauri` — pure-function unit tests, also executed by Windows CI
 - `bun run bump <x.y.z>` — bumps `package.json`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock` together
 - `bun run release <x.y.z>` — bump + commit + tag + push, must be on `main`. The release workflow fails unless all four version files match the tag. Before/after releasing, follow `RELEASE_CHECKLIST.md` (updater manifest verification, N‑1 install smoke test)
 - `website/` is a separate static site: use `npm install` / `npm run dev` there. Root scripts and CI do not build it
@@ -34,3 +35,10 @@ Run from the repo root unless noted. Bun 1.4.0, Rust stable.
 - The app hides the native Windows taskbar and registers AppBars while running. Any new exit/restart path must restore the taskbar and unregister AppBars, like the tray menu in `main.rs` does. A marker file restores it after a crash
 - The `windows` crate is pinned to 0.61 with an explicit feature list in `Cargo.toml`; add features there when using new Win32 APIs
 - Commits follow conventional commits (`feat:`, `fix:`); release notes are generated from them and commits touching only `website/*`, `.github/*`, or `*.md` are filtered out
+
+## Commit log and manual push
+
+- Every commit must have a short conventional-commit Summary as its first line, then a blank line and a brief description. Write the Summary and body in Spanish.
+- Explain the change and purpose in the body; briefly record validation and relevant limitations. Do not claim checks that were not run.
+- Leave commits local for the owner to push from GitHub Desktop. Do not push branches/tags or run automatic-push scripts (including `bun run release`) unless the owner explicitly requests it later.
+- Report the commit hash, Summary and description to the owner. Stage only files belonging to the current delivery.

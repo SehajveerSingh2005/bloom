@@ -143,12 +143,12 @@ MpCmdRun.exe -SignatureUpdate
 
 ## Get It Running
 
-**Download** the latest build from [Releases](https://github.com/SehajveerSingh2005/bloom/releases/latest).
+**Download** this fork's latest build from [Releases](https://github.com/Asius/bloom/releases/latest) once its first signed release is published. See [FORK_WINDOWS.md](FORK_WINDOWS.md) for the Windows development and update setup.
 
 Or build from source:
 
 ```bash
-git clone https://github.com/SehajveerSingh2005/bloom.git
+git clone https://github.com/Asius/bloom.git
 cd bloom
 bun install
 bun run tauri dev
