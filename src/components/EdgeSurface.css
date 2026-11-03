@@ -12,6 +12,24 @@
    visible edges on the same unrounded geometry. */
 .edge-surface {
 	--surface-solid: rgb(from var(--surface-bg) r g b / 1);
+	/* A continuous reflection around the free edge and into both sides.
+	   Mix into the opaque fill before masking so the reflection shares the
+	   surface opacity. Surfaces without edge/light tokens keep their fill. */
+	--surface-line: color-mix(
+		in srgb,
+		var(--surface-solid),
+		var(--surface-edge, var(--surface-solid)) 18%
+	);
+	--surface-highlight: color-mix(
+		in srgb,
+		var(--surface-line),
+		var(--surface-light, var(--surface-solid)) 14%
+	);
+	--surface-side-light: color-mix(
+		in srgb,
+		var(--surface-line),
+		var(--surface-light, var(--surface-solid)) 5%
+	);
 	position: absolute;
 	inset: 0;
 	z-index: -1;
@@ -50,6 +68,15 @@
 .edge-surface--bottom::before {
 	left: 13px;
 	right: 13px;
+}
+
+/* A single SVG stroke follows the entire silhouette, including the flares.
+   Its gradient uses the full surface height, so adjoining curves share both
+   their tangent and their brightness. The opaque fill stays seam-free. */
+.edge-surface-rim {
+	position: absolute;
+	inset: 0;
+	overflow: visible;
 }
 
 .edge-surface--left::before,

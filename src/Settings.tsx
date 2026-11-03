@@ -233,6 +233,8 @@ function SettingsApp() {
 							handleBrightnessChange={settings.handleBrightnessChange}
 							cornersEnabled={settings.cornersEnabled}
 							toggleCorners={settings.toggleCorners}
+							edgeShineEnabled={settings.edgeShineEnabled}
+							toggleEdgeShine={settings.toggleEdgeShine}
 							scale={settings.scale}
 							handleScaleChange={settings.handleScaleChange}
 						/>
