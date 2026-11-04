@@ -1,65 +1,100 @@
-import { motion, useReducedMotion } from "framer-motion";
-import { Check, CircleAlert, X } from "lucide-react";
-import { AGENT_MESSAGES, AGENT_NAMES, type Agent, type AgentAlert as Alert } from "../agentAlerts";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { motion, useIsPresent, useReducedMotion } from "framer-motion";
+import {
+	AGENT_ACTIVITIES,
+	agentActivityWidth,
+	AGENT_MESSAGES,
+	AGENT_NAMES,
+	formatAgentElapsed,
+	type Agent,
+	type AgentAlert as Alert
+} from "../agentAlerts";
 import "./AgentAlert.css";
 
 export function AgentLogo({ agent }: { agent: Agent }) {
 	return (
-		<span
-			className={`agent-logo agent-${agent}`}
-			style={{ maskImage: `url(/agents/${agent}.svg)` }}
-			aria-hidden="true"
-		/>
+		<span className={`agent-logo agent-${agent}`} aria-hidden="true">
+			<img className="agent-logo-dark" src={`/agents/${agent}.svg`} alt="" draggable={false} />
+			{agent !== "claude" && (
+				<img
+					className="agent-logo-light"
+					src={`/agents/${agent}-light.svg`}
+					alt=""
+					draggable={false}
+				/>
+			)}
+		</span>
 	);
 }
 
-export function AgentAlert({ alert, onDismiss }: { alert: Alert; onDismiss: () => void }) {
+function Elapsed({ started, ended }: { started: number; ended?: number }) {
+	const [now, setNow] = useState(Date.now);
+	useEffect(() => {
+		if (ended !== undefined) return;
+		setNow(Date.now());
+		const timer = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(timer);
+	}, [started, ended]);
+	return (
+		<span className="agent-elapsed" aria-hidden="true">
+			{formatAgentElapsed(started, ended ?? now)}
+		</span>
+	);
+}
+
+export function AgentAlert({
+	alert,
+	onWidthChange
+}: {
+	alert: Alert & { started?: number; received?: number };
+	onWidthChange?: (width: number) => void;
+}) {
+	const isPresent = useIsPresent();
+	const containerRef = useRef<HTMLDivElement>(null);
+	useLayoutEffect(() => {
+		const container = containerRef.current;
+		if (!container || !onWidthChange) return;
+		const status = container.querySelector<HTMLElement>(".agent-activity-status");
+		const elapsed = container.querySelector<HTMLElement>(".agent-elapsed");
+		if (!status || !elapsed) return;
+		const measure = () => onWidthChange(agentActivityWidth(status.scrollWidth, elapsed.offsetWidth));
+		const observer = new ResizeObserver(measure);
+		observer.observe(status);
+		observer.observe(elapsed);
+		measure();
+		return () => observer.disconnect();
+	}, [onWidthChange, alert.kind, alert.activity]);
 	const reducedMotion = useReducedMotion();
+	const [fallbackStart] = useState(Date.now);
+	const working = alert.kind === "working";
+	const label = working
+		? AGENT_ACTIVITIES[alert.activity ?? "thinking"]
+		: AGENT_MESSAGES[alert.kind];
+	const description = `${AGENT_NAMES[alert.agent]} · ${alert.project}: ${label}`;
 	return (
 		<motion.div
+			ref={containerRef}
 			className={`agent-alert kind-${alert.kind}`}
+			data-activity={working ? (alert.activity ?? "thinking") : undefined}
+			style={{ pointerEvents: isPresent ? "auto" : "none" }}
 			role="status"
 			aria-live="polite"
-			onClick={(event) => event.stopPropagation()}
-			initial={{ opacity: 0, y: reducedMotion ? 0 : -6 }}
-			animate={{ opacity: 1, y: 0 }}
+			aria-label={description}
+			initial={{ opacity: 0 }}
+			animate={{ opacity: 1 }}
 			exit={{ opacity: 0 }}
+			transition={{ duration: reducedMotion ? 0 : 0.15 }}
 		>
-			<motion.div
-				className="agent-logo-wrap"
-				initial={false}
-				animate={
-					reducedMotion
-						? {}
-						: alert.kind === "attention"
-							? { scale: [1, 1.07, 1] }
-							: { rotate: [0, -12, 8, 0] }
-				}
-				transition={
-					alert.kind === "attention" ? { duration: 2.4, repeat: Infinity } : { duration: 0.7 }
-				}
-			>
-				<AgentLogo agent={alert.agent} />
-			</motion.div>
-			<div className="agent-alert-copy">
-				<span className="agent-alert-source">
-					{AGENT_NAMES[alert.agent]} <span>· {alert.project}</span>
-				</span>
-				<strong>{AGENT_MESSAGES[alert.kind]}</strong>
+			<div className="agent-activity-label">
+				<div className={`agent-logo-wrap${working ? " is-working" : ""}`}>
+					<AgentLogo agent={alert.agent} />
+				</div>
+				<span className="agent-activity-status">{label}</span>
 			</div>
-			{alert.kind === "ready" ? (
-				<Check className="agent-alert-state" size={16} />
-			) : (
-				<CircleAlert className="agent-alert-state" size={16} />
-			)}
-			<button
-				type="button"
-				className="agent-alert-dismiss"
-				onClick={onDismiss}
-				aria-label="Dismiss agent alert"
-			>
-				<X size={12} />
-			</button>
+			<Elapsed
+				started={alert.started ?? fallbackStart}
+				ended={working ? undefined : (alert.received ?? fallbackStart)}
+			/>
 		</motion.div>
 	);
 }

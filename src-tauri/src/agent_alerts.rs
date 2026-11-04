@@ -15,10 +15,19 @@ const MAX_BODY: usize = 4096;
 const MAX_HEADERS: usize = 4096;
 const HOOK_SCRIPT: &str = include_str!("../../integrations/agent-hook.ps1");
 const OPENCODE_PLUGIN: &str = include_str!("../../integrations/opencode-bloom.js");
+const OPENCODE_PLUGIN_V1: &str = include_str!("../../integrations/legacy/opencode-bloom-v1.js");
 
 fn opencode_plugin(app: &tauri::AppHandle) -> Result<String, String> {
+    render_opencode_plugin(app, OPENCODE_PLUGIN)
+}
+
+fn same_plugin(left: &str, right: &str) -> bool {
+    left.replace("\r\n", "\n") == right.replace("\r\n", "\n")
+}
+
+fn render_opencode_plugin(app: &tauri::AppHandle, source: &str) -> Result<String, String> {
     let path = bridge_dir(app)?.join("bridge.json");
-    Ok(OPENCODE_PLUGIN.replace(
+    Ok(source.replace(
         "\"__BLOOM_BRIDGE_FILE__\"",
         &serde_json::to_string(&path).map_err(|e| e.to_string())?,
     ))
@@ -31,12 +40,25 @@ pub struct AgentAlert {
     pub session: String,
     pub project: String,
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
 }
 
 impl AgentAlert {
     fn validate(&mut self) -> Result<(), String> {
         if !["claude", "codex", "opencode"].contains(&self.agent.as_str())
-            || !["ready", "attention", "error", "resolved"].contains(&self.kind.as_str())
+            || ![
+                "working",
+                "ready",
+                "attention",
+                "error",
+                "resolved",
+                "stopped",
+            ]
+            .contains(&self.kind.as_str())
+            || self.activity.as_deref().is_some_and(|value| {
+                !["thinking", "reading", "editing", "running", "checking"].contains(&value)
+            })
             || self.session.is_empty()
             || self.session.len() > 256
         {
@@ -60,6 +82,7 @@ pub struct AgentBridge {
     error: Mutex<Option<String>>,
     // Serializes read/merge/write so two Settings requests cannot lose hooks.
     config_lock: Mutex<()>,
+    last_received: Mutex<HashMap<String, u64>>,
 }
 
 fn bridge_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -129,20 +152,9 @@ fn merge_hooks(
     }
     hooks.retain(|_, groups| groups.as_array().is_some_and(|g| !g.is_empty()));
     if install {
-        let events: &[&str] = if agent == "claude" {
-            &[
-                "Stop",
-                "PermissionRequest",
-                "Notification",
-                "UserPromptSubmit",
-                "StopFailure",
-            ]
-        } else {
-            &["Stop", "PermissionRequest", "UserPromptSubmit"]
-        };
-        for event in events {
+        for event in hook_events(agent) {
             let mut group =
-                json!({"hooks": [{"type": "command", "command": command, "timeout": 5}]});
+                json!({"hooks": [{"type": "command", "command": command, "timeout": 3}]});
             if *event == "Notification" {
                 group["matcher"] = json!("permission_prompt|elicitation_dialog");
             }
@@ -155,6 +167,42 @@ fn merge_hooks(
         }
     }
     Ok(())
+}
+
+fn hook_events(agent: &str) -> &'static [&'static str] {
+    if agent == "claude" {
+        &[
+            "Stop",
+            "PermissionRequest",
+            "Notification",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "StopFailure",
+            "SessionEnd",
+        ]
+    } else {
+        &[
+            "Stop",
+            "PermissionRequest",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "Interrupt",
+            "SessionEnd",
+        ]
+    }
+}
+
+fn has_hook(config: &Value, event: &str, command: &str) -> bool {
+    config["hooks"][event].as_array().is_some_and(|groups| {
+        groups.iter().any(|g| {
+            g["hooks"]
+                .as_array()
+                .is_some_and(|hs| hs.iter().any(|h| h["command"].as_str() == Some(command)))
+        })
+    })
 }
 
 fn hook_command(script: &Path, agent: &str) -> Result<String, String> {
@@ -174,6 +222,8 @@ fn hook_command(script: &Path, agent: &str) -> Result<String, String> {
 pub struct IntegrationStatus {
     agent: String,
     installed: bool,
+    needs_update: bool,
+    last_event_at: Option<u64>,
     path: String,
 }
 
@@ -189,28 +239,28 @@ pub fn agent_alert_status(
     state: State<'_, AgentBridge>,
 ) -> Result<BridgeStatus, String> {
     let mut integrations = Vec::new();
+    let last_received = state.last_received.lock().map_err(|e| e.to_string())?;
     for agent in ["claude", "codex", "opencode"] {
         let path = config_path(agent)?;
         let content = std::fs::read_to_string(&path).unwrap_or_default();
-        let installed = if agent == "opencode" {
-            content == opencode_plugin(&app)?
+        let (installed, needs_update) = if agent == "opencode" {
+            let current = same_plugin(&content, &opencode_plugin(&app)?);
+            let legacy = same_plugin(&content, &render_opencode_plugin(&app, OPENCODE_PLUGIN_V1)?);
+            (current || legacy, legacy && !current)
         } else {
             let command = hook_command(&bridge_dir(&app)?.join("agent-hook.ps1"), agent)?;
-            serde_json::from_str::<Value>(&content)
-                .ok()
-                .is_some_and(|v| {
-                    v["hooks"]["Stop"].as_array().is_some_and(|groups| {
-                        groups.iter().any(|g| {
-                            g["hooks"].as_array().is_some_and(|hs| {
-                                hs.iter().any(|h| h["command"].as_str() == Some(&command))
-                            })
-                        })
-                    })
-                })
+            let config = serde_json::from_str::<Value>(&content).unwrap_or(Value::Null);
+            let installed = has_hook(&config, "Stop", &command);
+            let complete = hook_events(agent)
+                .iter()
+                .all(|event| has_hook(&config, event, &command));
+            (installed, installed && !complete)
         };
         integrations.push(IntegrationStatus {
             agent: agent.into(),
             installed,
+            needs_update,
+            last_event_at: last_received.get(agent).copied(),
             path: path.display().to_string(),
         });
     }
@@ -233,7 +283,9 @@ pub async fn configure_agent_alert(
         let plugin = opencode_plugin(&app)?;
         if path.exists() {
             let old = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            if old != plugin {
+            if !same_plugin(&old, &plugin)
+                && !same_plugin(&old, &render_opencode_plugin(&app, OPENCODE_PLUGIN_V1)?)
+            {
                 return Err("The Bloom plugin file was modified. Move it aside before changing this integration.".into());
             }
         }
@@ -242,6 +294,11 @@ pub async fn configure_agent_alert(
         } else if path.exists() {
             std::fs::remove_file(&path).map_err(|e| e.to_string())?;
         }
+        state
+            .last_received
+            .lock()
+            .map_err(|e| e.to_string())?
+            .remove(&agent);
         return Ok(());
     }
     let command = hook_command(&bridge_dir(&app)?.join("agent-hook.ps1"), &agent)?;
@@ -269,16 +326,28 @@ pub async fn configure_agent_alert(
     save(
         &path,
         &serde_json::to_vec_pretty(&config).map_err(|e| e.to_string())?,
-    )
+    )?;
+    state
+        .last_received
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&agent);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn test_agent_alert(app: tauri::AppHandle, agent: String, kind: String) -> Result<(), String> {
+pub fn test_agent_alert(
+    app: tauri::AppHandle,
+    agent: String,
+    kind: String,
+    activity: Option<String>,
+) -> Result<(), String> {
     let mut alert = AgentAlert {
         agent,
         kind,
         session: "bloom-preview".into(),
         project: "Bloom preview".into(),
+        activity,
     };
     alert.validate()?;
     app.emit_to("main", "agent-alert", alert)
@@ -364,7 +433,22 @@ fn receive(
         token,
     ) {
         Ok(alert) => {
-            let key = format!("{}:{}:{}", alert.agent, alert.session, alert.kind);
+            if let Ok(mut received) = app.state::<AgentBridge>().last_received.lock() {
+                received.insert(
+                    alert.agent.clone(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                );
+            }
+            let key = format!(
+                "{}:{}:{}:{}",
+                alert.agent,
+                alert.session,
+                alert.kind,
+                alert.activity.as_deref().unwrap_or_default()
+            );
             recent.retain(|_, time| time.elapsed() < Duration::from_secs(2));
             let enabled = crate::utils::get_setting_str(app, "bloom-agent-alerts-enabled")
                 .as_deref()
@@ -469,6 +553,19 @@ mod tests {
     }
     #[test]
     fn receiver_bounds_input_and_validates_events() {
+        let working = BODY.replace("\"ready\"", "\"working\",\"activity\":\"editing\"");
+        assert_eq!(
+            read_request(&mut &request("", &working)[..], "test-token")
+                .unwrap()
+                .activity
+                .as_deref(),
+            Some("editing")
+        );
+        assert!(read_request(
+            &mut &request("", &working.replace("editing", "execute-arbitrary"))[..],
+            "test-token"
+        )
+        .is_err());
         assert!(read_request(
             &mut &request("Content-Length: 1\r\n", BODY)[..],
             "test-token"
@@ -517,6 +614,27 @@ mod tests {
     }
 
     #[test]
+    fn live_hooks_cover_work_and_stop_and_preserve_existing_handlers() {
+        for agent in ["claude", "codex"] {
+            let mut config = json!({"hooks": {"Stop": [{"hooks": [{"type":"command", "command":"bloom"}, {"type":"command", "command":"my-hook"}]}]}});
+            merge_hooks(&mut config, "bloom", agent, true).unwrap();
+            assert!(hook_events(agent)
+                .iter()
+                .all(|event| has_hook(&config, event, "bloom")));
+            assert!(has_hook(&config, "Stop", "my-hook"));
+            assert!(has_hook(&config, "PreToolUse", "bloom"));
+            assert!(has_hook(&config, "SessionEnd", "bloom"));
+            merge_hooks(&mut config, "bloom", agent, false).unwrap();
+            assert!(hook_events(agent)
+                .iter()
+                .all(|event| !has_hook(&config, event, "bloom")));
+            assert!(has_hook(&config, "Stop", "my-hook"));
+        }
+        assert!(same_plugin("known\r\nplugin\r\n", "known\nplugin\n"));
+        assert!(!same_plugin("known plugin", "modified plugin"));
+    }
+
+    #[test]
     fn powershell_adapter_sends_authenticated_metadata_and_returns_neutral_json() {
         use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
@@ -533,8 +651,11 @@ mod tests {
         .unwrap();
         for (agent, event, kind) in [
             ("claude", "Stop", "ready"),
-            ("codex", "PermissionRequest", "attention"),
-            ("claude", "UserPromptSubmit", "resolved"),
+            ("codex", "PermissionRequest", "working"),
+            ("claude", "PermissionRequest", "attention"),
+            ("claude", "UserPromptSubmit", "working"),
+            ("codex", "PreToolUse", "working"),
+            ("codex", "Interrupt", "stopped"),
         ] {
             let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
             listener.set_nonblocking(true).unwrap();
@@ -604,7 +725,7 @@ mod tests {
                 .spawn()
                 .unwrap();
             child.stdin.take().unwrap().write_all(&serde_json::to_vec(&json!({
-                "hook_event_name": event, "session_id": "session-test", "cwd": "C:\\work\\bloom",
+                "hook_event_name": event, "session_id": "session-test", "cwd": "C:\\work\\bloom", "tool_name": "apply_patch",
                 "last_assistant_message": "private response must never be sent"
             })).unwrap()).unwrap();
             let output = child.wait_with_output().unwrap();
@@ -620,6 +741,15 @@ mod tests {
             assert_eq!(payload.kind, kind);
             assert_eq!(payload.project, "bloom");
             assert_eq!(payload.session, "session-test");
+            if event == "PermissionRequest" && agent == "codex" {
+                assert_eq!(payload.activity.as_deref(), Some("checking"));
+            }
+            if event == "PreToolUse" {
+                assert_eq!(payload.activity.as_deref(), Some("editing"));
+            }
+            if event == "UserPromptSubmit" {
+                assert_eq!(payload.activity.as_deref(), Some("thinking"));
+            }
         }
         std::fs::remove_dir_all(dir).unwrap();
     }

@@ -3,7 +3,7 @@
 ## Agent notifications
 
 `bloom-agent-alerts-enabled` is a string boolean, default `"true"`, controlling
-Claude Code, Codex and OpenCode notch notifications. Each agent must also be
+Claude Code, Codex and OpenCode live activities and notch notifications. Each agent must also be
 connected in Settings → Integrations. Hooks/plugins live in the agent's own user
 configuration; bridge details live under `agents/` in Bloom's app config directory.
 See [agent integration details](integrations/README.md).

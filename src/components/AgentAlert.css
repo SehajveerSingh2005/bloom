@@ -3,82 +3,127 @@
 	inset: 0;
 	z-index: 5;
 	display: flex;
+	justify-content: space-between;
+	gap: 24px;
+	box-sizing: border-box;
 	align-items: center;
-	gap: 12px;
+	pointer-events: auto;
 	padding: 0 16px;
 	color: var(--bloom-text, white);
-	--agent-accent: #91d5ad;
 }
-.agent-alert.kind-attention {
-	--agent-accent: #e9b873;
-}
-.agent-alert.kind-error {
-	--agent-accent: #ef9292;
+.agent-activity-label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
 }
 .agent-logo-wrap {
 	display: grid;
 	place-items: center;
-	width: 38px;
-	height: 38px;
+	width: 20px;
+	height: 22px;
 	flex: none;
 }
 .agent-logo {
 	display: block;
-	width: 30px;
-	height: 30px;
+	width: 20px;
+	height: 20px;
 	flex: none;
-	background: currentColor;
-	mask-size: contain;
-	mask-repeat: no-repeat;
-	mask-position: center;
 }
-.agent-claude {
-	color: #d49a7e;
+.agent-logo img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
 }
-.agent-alert-copy {
-	flex: 1;
+.agent-logo .agent-logo-light {
+	display: none;
+}
+.light-mode .agent-logo .agent-logo-dark {
+	display: none;
+}
+.light-mode .agent-logo .agent-logo-light {
+	display: block;
+}
+.light-mode .agent-claude .agent-logo-dark {
+	display: block;
+}
+.light-mode .agent-preview-pill .agent-logo .agent-logo-dark {
+	display: block;
+}
+.light-mode .agent-preview-pill .agent-logo .agent-logo-light {
+	display: none;
+}
+.agent-logo-wrap.is-working {
+	animation: agent-logo-working 3.6s linear infinite;
+}
+@keyframes agent-logo-working {
+	to {
+		transform: rotate(360deg);
+	}
+}
+.agent-activity-status {
 	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-}
-.agent-alert-copy > * {
+	max-width: 100%;
+	font-size: 12px;
+	font-weight: 600;
+	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	white-space: nowrap;
 }
-.agent-alert-source {
-	font-size: 11px;
-	font-weight: 500;
+/* A quiet light pass through the glyphs, with a rest between sweeps.
+   Only working states animate; the label's geometry never changes. */
+@supports (color: color-mix(in srgb, white 78%, transparent)) and ((background-clip: text) or (-webkit-background-clip: text)) {
+	.agent-alert.kind-working .agent-activity-status {
+		--agent-shimmer-period: 4.8s;
+		--agent-shimmer-start: 40%;
+		--agent-shimmer-end: 60%;
+		background-image: linear-gradient(110deg,
+			color-mix(in srgb, var(--bloom-text, white) 78%, transparent) var(--agent-shimmer-start),
+			var(--bloom-text, white) 50%,
+			color-mix(in srgb, var(--bloom-text, white) 78%, transparent) var(--agent-shimmer-end));
+		background-size: 250% 100%;
+		background-repeat: no-repeat;
+		background-clip: text;
+		-webkit-background-clip: text;
+		color: transparent;
+		animation: agent-status-shimmer var(--agent-shimmer-period) ease-in-out infinite;
+	}
+	.agent-alert[data-activity="editing"] .agent-activity-status {
+		--agent-shimmer-period: 3.2s;
+		--agent-shimmer-start: 46%;
+		--agent-shimmer-end: 54%;
+	}
+	.agent-alert[data-activity="reading"] .agent-activity-status {
+		--agent-shimmer-period: 4s;
+		--agent-shimmer-start: 44%;
+		--agent-shimmer-end: 56%;
+	}
+	.agent-alert[data-activity="running"] .agent-activity-status {
+		--agent-shimmer-period: 3.8s;
+	}
+	.agent-alert[data-activity="checking"] .agent-activity-status {
+		--agent-shimmer-period: 5.2s;
+	}
 }
-.agent-alert-source span {
+@keyframes agent-status-shimmer {
+	0%, 16% { background-position: 100% 0; }
+	66%, 100% { background-position: 0% 0; }
+}
+.agent-alert.kind-attention .agent-activity-status {
+	color: #e9b873;
+}
+.agent-alert.kind-error .agent-activity-status {
+	color: #ef9292;
+}
+.agent-elapsed {
+	flex: none;
 	color: var(--bloom-text-muted, #999);
-}
-.agent-alert-copy strong {
-	font-size: 13px;
-	font-weight: 600;
-}
-.agent-alert-state {
-	flex: none;
-	color: var(--agent-accent);
-}
-.agent-alert-dismiss {
-	display: grid;
-	place-items: center;
-	flex: none;
-	width: 24px;
-	height: 28px;
-	padding: 0;
-	border: 0;
-	border-radius: 7px;
-	background: transparent;
-	color: var(--bloom-text-muted, #aaa);
-	cursor: pointer;
-}
-.agent-alert-dismiss:hover,
-.agent-alert-dismiss:focus-visible {
-	color: var(--bloom-text, white);
-	background: rgba(127, 127, 127, 0.18);
+	font-size: 12px;
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+	min-width: 34px;
+	text-align: right;
 }
 .activity-bubble.agent-bubble {
 	padding: 0 8px;
@@ -90,10 +135,24 @@
 	width: 17px;
 	height: 17px;
 }
+.activity-bubble .agent-logo img {
+	width: 100%;
+	height: 100%;
+	border-radius: 0;
+	object-fit: contain;
+}
 @media (prefers-reduced-motion: reduce) {
 	.agent-alert *,
 	.agent-bubble {
 		animation: none !important;
 		transition: none !important;
+	}
+}
+
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
+	.agent-alert.kind-working .agent-activity-status {
+		background: none;
+		color: var(--bloom-text, white);
+		animation: none;
 	}
 }

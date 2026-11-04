@@ -52,9 +52,9 @@ test("OpenCode plugin forwards metadata, resolves attention and ignores child se
 		expect(payloads.map((p) => p.kind)).toEqual([
 			"ready",
 			"attention",
-			"resolved",
+			"working",
 			"attention",
-			"resolved",
+			"working",
 			"error"
 		]);
 		expect(payloads[0]).toEqual({
@@ -63,6 +63,17 @@ test("OpenCode plugin forwards metadata, resolves attention and ignores child se
 			project: "bloom",
 			kind: "ready"
 		});
+		await plugin.event({
+			event: { type: "session.status", properties: { sessionID: "root", status: { type: "busy" } } }
+		});
+		await plugin["tool.execute.before"]({ sessionID: "root", tool: "edit" });
+		await plugin["tool.execute.after"]({ sessionID: "root", tool: "edit" });
+		await plugin["tool.execute.before"]({ sessionID: "child", tool: "bash" });
+		expect(payloads.slice(-3).map((p) => [p.kind, p.activity])).toEqual([
+			["working", "thinking"],
+			["working", "editing"],
+			["working", "thinking"]
+		]);
 		server.stop(true);
 		// A closed receiver must never reject the plugin event.
 		await expect(

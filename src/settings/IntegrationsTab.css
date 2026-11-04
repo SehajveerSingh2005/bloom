@@ -1,3 +1,51 @@
+.integration-category + .integration-category {
+	margin-top: 32px;
+	padding-top: 24px;
+	border-top: 1px solid rgba(127, 127, 127, 0.14);
+}
+.integration-category-heading {
+	margin: 0 0 20px;
+}
+.integration-category-heading h2 {
+	margin: 0 0 6px;
+	font-size: 16px;
+	font-weight: 600;
+}
+.integration-category-heading p,
+.integration-planned p {
+	margin: 0;
+	font-size: 12px;
+	line-height: 1.6;
+	opacity: 0.65;
+}
+.integration-planned {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 16px;
+}
+.integration-planned > svg {
+	flex: none;
+	opacity: 0.7;
+}
+.integration-planned > div {
+	flex: 1;
+	min-width: 0;
+}
+.integration-planned strong {
+	display: block;
+	margin-bottom: 4px;
+	font-size: 12px;
+	font-weight: 600;
+}
+.integration-planned-badge {
+	flex: none;
+	padding: 4px 8px;
+	border-radius: 6px;
+	background: rgba(127, 127, 127, 0.1);
+	font-size: 10px;
+	opacity: 0.65;
+}
 .agent-preview {
 	margin: 16px 0 22px;
 	padding: 24px 12px 16px;
@@ -8,8 +56,8 @@
 .agent-preview-pill {
 	position: relative;
 	margin: 0 auto 22px;
-	width: min(350px, 100%);
-	height: 76px;
+	width: min(288px, 100%);
+	height: 36px;
 	border-radius: 0 0 20px 20px;
 	background: #111;
 	--bloom-text: #fff;
@@ -95,4 +143,88 @@
 }
 .agent-integration-error {
 	color: #e77f7f;
+}
+.agent-setup {
+	margin-top: 14px;
+	padding: 16px;
+	border: 1px solid rgba(127, 127, 127, 0.18);
+	border-radius: 12px;
+	background: rgba(127, 127, 127, 0.035);
+}
+.agent-setup-heading,
+.agent-setup-steps li > div {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.agent-setup-heading > strong {
+	font-size: 12px;
+	font-weight: 600;
+}
+.agent-setup-heading > span,
+.agent-setup-steps li > div > span {
+	font-size: 11px;
+	line-height: 1.55;
+	color: var(--text-muted, #999);
+}
+.agent-setup-steps {
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+	margin: 18px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.agent-setup-steps li {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+}
+.agent-setup-number {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 22px;
+	height: 22px;
+	border: 1px solid rgba(127, 127, 127, 0.3);
+	border-radius: 50%;
+	font-size: 10px;
+	color: var(--text-muted, #999);
+}
+.agent-setup-steps .complete .agent-setup-number {
+	border-color: #7db39180;
+	color: #8fc9a5;
+}
+.agent-setup-steps .current .agent-setup-number {
+	border-color: #d0ab6f;
+	color: #d0ab6f;
+}
+.agent-setup-steps li > div {
+	flex: 1;
+	min-width: 0;
+}
+.agent-setup-steps strong {
+	font-size: 11px;
+	font-weight: 600;
+}
+.agent-setup-steps small {
+	flex: none;
+	font-size: 10px;
+	color: var(--text-muted, #999);
+	padding-top: 4px;
+}
+.agent-setup-steps button {
+	flex: none;
+	max-width: 125px;
+	border: 1px solid rgba(127, 127, 127, 0.25);
+	border-radius: 7px;
+	padding: 7px 9px;
+	background: rgba(127, 127, 127, 0.1);
+	color: inherit;
+	font: inherit;
+	font-size: 10px;
+	cursor: pointer;
+}
+.agent-setup-steps button:hover {
+	background: rgba(127, 127, 127, 0.18);
 }

@@ -4,14 +4,34 @@ $ErrorActionPreference = 'Stop'
 try {
     [System.Net.ServicePointManager]::Expect100Continue = $false
     $eventData = [Console]::In.ReadToEnd() | ConvertFrom-Json
+    $activity = $null
     $kind = switch ($eventData.hook_event_name) {
         'Stop' { 'ready' }
-        'PermissionRequest' { 'attention' }
+        'PermissionRequest' {
+            # This fires before the approval decision, including automatic review.
+            # It does not confirm that a person is being asked to respond.
+            if ($Agent -eq 'codex') { $activity = 'checking'; 'working' } else { 'attention' }
+        }
         'Notification' {
             if ($eventData.notification_type -in @('permission_prompt', 'elicitation_dialog')) { 'attention' }
         }
         'StopFailure' { 'error' }
-        'UserPromptSubmit' { 'resolved' }
+        'UserPromptSubmit' { $activity = 'thinking'; 'working' }
+        'PreToolUse' {
+            $activity = switch -Regex ([string]$eventData.tool_name) {
+                '^(Edit|Write|apply_patch|edit|write)$' { 'editing'; break }
+                '^(Read|Glob|Grep|read_file|list_dir|search|read)$' { 'reading'; break }
+                '^(Bash|PowerShell|exec_command|bash)$' { 'running'; break }
+                default { 'thinking' }
+            }
+            'working'
+        }
+        'PostToolUse' { $activity = 'thinking'; 'working' }
+        'PostToolUseFailure' {
+            if ($eventData.is_interrupt) { 'stopped' } else { $activity = 'thinking'; 'working' }
+        }
+        'Interrupt' { 'stopped' }
+        'SessionEnd' { 'stopped' }
     }
     if ($kind) {
         $bridge = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'bridge.json') -Raw | ConvertFrom-Json
@@ -19,7 +39,9 @@ try {
         $session = $eventData.session_id
         if (-not $session) { $session = $eventData.thread_id }
         if ($session) {
-            $body = @{ agent = $Agent; session = [string]$session; project = [string]$project; kind = $kind } | ConvertTo-Json -Compress
+            $payload = @{ agent = $Agent; session = [string]$session; project = [string]$project; kind = $kind }
+            if ($activity) { $payload.activity = $activity }
+            $body = $payload | ConvertTo-Json -Compress
             $bytes = [Text.Encoding]::UTF8.GetBytes($body)
             $request = [Net.HttpWebRequest]::Create("http://127.0.0.1:$($bridge.port)/agent-alert")
             $request.Proxy = $null

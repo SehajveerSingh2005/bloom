@@ -39,7 +39,7 @@ const TAB_COPY: Record<SettingsTab, string> = {
 	notch: "Choose what appears at the top of your screen.",
 	dock: "Shape the taskbar replacement around your workflow.",
 	overlays: "Keep quick controls visible only when you need them.",
-	integrations: "Let your agents reach you through the notch.",
+	integrations: "Connect your apps and services to Bloom.",
 	about: "Version, updates and your settings data."
 };
 
@@ -222,7 +222,7 @@ function SettingsApp() {
 							quitBloom={settings.quitBloom}
 						/>
 					)}
-					{activeTab === "integrations" && <IntegrationsTab enabled={settings.agentAlertsEnabled} onToggle={settings.toggleAgentAlerts} />}
+					{activeTab === "integrations" && <IntegrationsTab agentAlertsEnabled={settings.agentAlertsEnabled} onToggleAgentAlerts={settings.toggleAgentAlerts} />}
 					{activeTab === "appearance" && (
 						<AppearanceTab
 							themeMode={settings.themeMode}

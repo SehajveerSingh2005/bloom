@@ -1,10 +1,12 @@
 export type Agent = "claude" | "codex" | "opencode";
-export type AgentAlertKind = "ready" | "attention" | "error" | "resolved";
+export type AgentAlertKind = "working" | "ready" | "attention" | "error" | "resolved" | "stopped";
+export type AgentActivity = "thinking" | "reading" | "editing" | "running" | "checking";
 export interface AgentAlert {
 	agent: Agent;
 	session: string;
 	project: string;
 	kind: AgentAlertKind;
+	activity?: AgentActivity;
 }
 export const AGENT_NAMES: Record<Agent, string> = {
 	claude: "Claude Code",
@@ -12,13 +14,31 @@ export const AGENT_NAMES: Record<Agent, string> = {
 	opencode: "OpenCode"
 };
 export const AGENT_MESSAGES: Record<AgentAlertKind, string> = {
+	working: "Thinking",
 	ready: "Response ready",
-	attention: "Needs your attention",
-	error: "Session encountered an error",
-	resolved: "Resumed"
+	attention: "Needs attention",
+	error: "Session error",
+	resolved: "Resumed",
+	stopped: "Stopped"
 };
+export const AGENT_ACTIVITIES: Record<AgentActivity, string> = {
+	thinking: "Thinking",
+	reading: "Reading",
+	editing: "Editing",
+	running: "Running",
+	checking: "Checking access"
+};
+export function formatAgentElapsed(started: number, now: number): string {
+	const seconds = Math.max(0, Math.floor((now - started) / 1000));
+	return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+// Logo + status form one group; reserve a 24px gap before the elapsed time.
+export function agentActivityWidth(statusWidth: number, elapsedWidth: number): number {
+	return Math.max(224, Math.ceil(32 + 20 + 8 + statusWidth + 24 + elapsedWidth));
+}
 export interface QueuedAlert extends AgentAlert {
 	received: number;
+	started: number;
 	shown: boolean;
 }
 export interface AlertState {
@@ -36,40 +56,61 @@ export type AlertAction =
 const sameSession = (a: AgentAlert, b: AgentAlert) =>
 	a.agent === b.agent && a.session === b.session;
 export const EMPTY_ALERTS: AlertState = { entries: [], active: null };
+const fresh = (entry: QueuedAlert, now: number) =>
+	now - entry.received < (entry.kind === "working" ? 86_400_000 : 600_000);
 
 export function agentAlertReducer(state: AlertState, action: AlertAction): AlertState {
 	switch (action.type) {
 		case "clear":
 			return EMPTY_ALERTS;
-		case "prune":
+		case "prune": {
+			const entries = state.entries.filter((entry) => fresh(entry, action.now));
 			return {
-				entries: state.entries.filter((entry) => action.now - entry.received < 600_000),
-				active: state.active && action.now - state.active.received < 600_000 ? state.active : null
+				entries,
+				active: state.active && entries.includes(state.active) ? state.active : null
 			};
+		}
 		case "receive": {
 			const { alert, now } = action;
 			const previous = state.entries.find((entry) => sameSession(entry, alert));
-			if (previous?.kind === alert.kind && now - previous.received < 2000) return state;
+			if (
+				previous?.kind === alert.kind &&
+				previous.activity === alert.activity &&
+				now - previous.received < 2000
+			)
+				return state;
 			const entries = state.entries.filter(
-				(entry) => !sameSession(entry, alert) && now - entry.received < 600_000
+				(entry) => !sameSession(entry, alert) && fresh(entry, now)
 			);
-			const next = { ...alert, received: now, shown: false };
-			if (alert.kind !== "resolved") entries.push(next);
+			const continuing = previous && (previous.kind === "working" || previous.kind === "attention");
+			const next = {
+				...alert,
+				received: now,
+				started: continuing ? previous.started : now,
+				shown: false
+			};
+			const removed = alert.kind === "resolved" || alert.kind === "stopped";
+			if (!removed) entries.push(next);
+			let active = state.active;
+			if (active && sameSession(active, alert)) active = removed ? null : next;
+			else if (active?.kind === "working" && !removed && alert.kind !== "working") active = next;
+			const bounded = entries.slice(-12);
 			return {
-				entries: entries.slice(-12),
-				active: state.active && sameSession(state.active, alert) ? null : state.active
+				entries: bounded,
+				active: active && bounded.includes(active) ? active : null
 			};
 		}
 		case "present": {
 			if (state.active) return state;
-			const entries = state.entries.filter((entry) => action.now - entry.received < 600_000);
+			const entries = state.entries.filter((entry) => fresh(entry, action.now));
 			const next =
 				entries.find((entry) => !entry.shown && entry.kind === "attention") ??
-				entries.find((entry) => !entry.shown);
+				entries.find((entry) => !entry.shown && entry.kind !== "working") ??
+				entries.find((entry) => entry.kind === "working");
 			return { entries, active: next ?? null };
 		}
 		case "finish": {
-			if (!state.active) return state;
+			if (!state.active || state.active.kind === "working") return state;
 			return {
 				active: null,
 				entries: state.entries.flatMap((entry) => {

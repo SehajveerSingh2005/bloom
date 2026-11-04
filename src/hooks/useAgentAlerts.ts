@@ -57,10 +57,10 @@ export function useAgentAlerts(mainWindow: boolean, blocked: boolean) {
 		};
 	}, [mainWindow, enabled, blocked, hasEntries, state.active]);
 	useEffect(() => {
-		if (!state.active || blocked) return;
+		if (!state.active || state.active.kind === "working" || blocked) return;
 		const timer = setTimeout(
 			() => dispatch({ type: "finish" }),
-			state.active.kind === "attention" ? 8000 : 5000
+			state.active.kind === "attention" ? 8000 : 4000
 		);
 		return () => clearTimeout(timer);
 	}, [state.active, blocked]);

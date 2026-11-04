@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import {
 	agentAlertReducer as reduce,
 	EMPTY_ALERTS,
+	agentActivityWidth,
+	formatAgentElapsed,
 	type AgentAlert,
 	type AlertState
 } from "../src/agentAlerts";
@@ -65,4 +67,81 @@ test("stale badges expire and replayed badges can be dismissed", () => {
 	state = reduce(state, { type: "replay", entry: state.entries[0] });
 	expect(reduce(state, { type: "dismiss", entry: state.entries[0] })).toEqual(EMPTY_ALERTS);
 	expect(reduce(state, { type: "prune", now: 601_000 })).toEqual(EMPTY_ALERTS);
+});
+
+test("working stays visible beyond ten minutes and tool updates preserve the timer", () => {
+	let state = receive(EMPTY_ALERTS, "s1", "working", 1000);
+	state = reduce(state, { type: "present", now: 1001 });
+	expect(reduce(state, { type: "finish" })).toBe(state);
+	state = reduce(state, { type: "prune", now: 901_000 });
+	expect(state.active?.kind).toBe("working");
+	state = reduce(state, {
+		type: "receive",
+		alert: { ...alert("s1", "working"), activity: "editing" },
+		now: 902_000
+	});
+	expect(state.active?.started).toBe(1000);
+	expect(state.active?.activity).toBe("editing");
+	state = receive(state, "s1", "ready", 903_000);
+	expect(state.active?.kind).toBe("ready");
+	expect(state.active?.started).toBe(1000);
+	state = reduce(state, { type: "finish" });
+	expect(state).toEqual(EMPTY_ALERTS);
+});
+
+test("attention preempts a working session and other work returns after dismissal", () => {
+	let state = receive(EMPTY_ALERTS, "background", "working");
+	state = reduce(state, { type: "present", now: 1001 });
+	state = receive(state, "approval", "attention", 2000);
+	expect(state.active?.session).toBe("approval");
+	state = reduce(state, { type: "finish" });
+	state = reduce(state, { type: "present", now: 3000 });
+	expect(state.active?.session).toBe("background");
+	state = receive(state, "background", "stopped", 4000);
+	expect(state.active).toBeNull();
+	expect(state.entries.map((e) => e.session)).toEqual(["approval"]);
+});
+
+test("approval resume continues the same elapsed time and the next turn resets it", () => {
+	let state = receive(EMPTY_ALERTS, "s1", "working", 1000);
+	state = receive(state, "s1", "attention", 5000);
+	state = receive(state, "s1", "working", 10_000);
+	expect(state.entries[0].started).toBe(1000);
+	state = receive(state, "s1", "ready", 20_000);
+	state = receive(state, "s1", "working", 30_000);
+	expect(state.entries[0].started).toBe(30_000);
+});
+
+test("elapsed time uses total minutes and never goes negative", () => {
+	expect(formatAgentElapsed(1000, 0)).toBe("0:00");
+	expect(formatAgentElapsed(1000, 66_000)).toBe("1:05");
+	expect(formatAgentElapsed(1000, 3_662_000)).toBe("61:01");
+});
+
+
+test("automatic approval checks stay working and keep the turn duration", () => {
+	let state = receive(EMPTY_ALERTS, "s1", "working", 1000);
+	state = reduce(state, { type: "present", now: 1001 });
+	state = reduce(state, {
+		type: "receive",
+		alert: { ...alert("s1", "working"), activity: "checking" },
+		now: 5000
+	});
+	expect(state.active?.kind).toBe("working");
+	expect(state.active?.activity).toBe("checking");
+	expect(state.active?.started).toBe(1000);
+	expect(state.entries.some(entry => entry.kind === "attention")).toBe(false);
+	state = receive(state, "s1", "working", 20_000);
+	expect(state.active?.started).toBe(1000);
+});
+
+
+test("activity width groups logo and status with a gap before duration", () => {
+	expect(agentActivityWidth(50, 34)).toBe(224);
+	expect(agentActivityWidth(90, 34)).toBe(224);
+	for (const [status, duration] of [[50, 34], [120, 34], [120, 48]]) {
+		const gap = agentActivityWidth(status, duration) - 32 - 20 - 8 - status - duration;
+		expect(gap).toBeGreaterThanOrEqual(24);
+	}
+	expect(agentActivityWidth(120, 48)).toBe(agentActivityWidth(120, 34) + 14);
 });
