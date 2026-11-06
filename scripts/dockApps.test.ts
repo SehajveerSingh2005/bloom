@@ -77,6 +77,26 @@ describe("dock tray lifecycle", () => {
 		expect(exited.observed.size).toBe(0);
 		expect(selectDockTrayApps([], [tray], exited.observed, () => false).visible).toEqual([]);
 	});
+	test("when background apps are disabled, closed apps do not stay in the dock", () => {
+		const opened = selectDockTrayApps([windowApp], [tray], new Set(), () => false, false);
+		expect(opened.visible).toEqual([tray]);
+		expect(opened.observed.has(tray.path.toLowerCase().replace(/\\/g, "/"))).toBe(true);
+		const background = selectDockTrayApps([], [tray], opened.observed, () => false, false);
+		expect(background.visible).toEqual([]);
+		expect(background.observed.size).toBe(0);
+		expect(mergeTrayApps([], background.visible)).toEqual([]);
+	});
+	test("when background apps are disabled, pinned apps without windows do not appear in visible", () => {
+		const selected = selectDockTrayApps(
+			[],
+			[tray],
+			new Set(),
+			(app) => app.path === tray.path,
+			false
+		);
+		expect(selected.visible).toEqual([]);
+		expect(mergeTrayApps([], selected.visible)).toEqual([]);
+	});
 	test("shows a pinned app's background dot immediately at startup", () => {
 		const selected = selectDockTrayApps([], [tray], new Set(), (app) => app.path === tray.path);
 		expect(mergeTrayApps([], selected.visible)[0]).toMatchObject({

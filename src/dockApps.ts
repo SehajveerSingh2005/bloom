@@ -83,17 +83,25 @@ export function selectDockTrayApps(
 	windows: AppInfo[],
 	tray: TrayApp[],
 	previouslyOpened: Set<string>,
-	isPinned: (app: TrayApp) => boolean
+	isPinned: (app: TrayApp) => boolean,
+	keepBackground = true
 ): { visible: TrayApp[]; observed: Set<string> } {
 	const observed = new Set<string>();
 	for (const app of tray) {
 		const path = trayPath(app);
-		if (previouslyOpened.has(path) || windows.some((window) => ownsVisibleWindow(window, app))) {
+		if (
+			(keepBackground && previouslyOpened.has(path)) ||
+			windows.some((window) => ownsVisibleWindow(window, app))
+		) {
 			observed.add(path);
 		}
 	}
 	return {
-		visible: tray.filter((app) => observed.has(trayPath(app)) || isPinned(app)),
+		visible: tray.filter((app) =>
+			keepBackground
+				? observed.has(trayPath(app)) || isPinned(app)
+				: windows.some((window) => ownsVisibleWindow(window, app))
+		),
 		observed
 	};
 }

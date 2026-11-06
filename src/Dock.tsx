@@ -187,6 +187,9 @@ const Dock = memo(function Dock() {
 	const [dockSeparatorEnabled, setDockSeparatorEnabled] = useState(
 		() => localStorage.getItem("bloom-dock-separator-enabled") !== "false"
 	);
+	const [dockTrayAppsEnabled, setDockTrayAppsEnabled] = useState(
+		() => localStorage.getItem("bloom-dock-tray-apps-enabled") === "true"
+	);
 	const [dockAdaptive, setDockAdaptive] = useState(
 		() => localStorage.getItem("bloom-dock-adaptive") === "true"
 	);
@@ -405,6 +408,9 @@ const Dock = memo(function Dock() {
 			const separator = getVal("bloom-dock-separator-enabled", "true");
 			setDockSeparatorEnabled(separator === "true");
 
+			const trayApps = getVal("bloom-dock-tray-apps-enabled", "false");
+			setDockTrayAppsEnabled(trayApps === "true");
+
 			const adaptive = getVal("bloom-dock-adaptive", "false");
 			setDockAdaptive(adaptive === "true");
 			setDockTaskView(getVal("bloom-dock-task-view", "false") === "true");
@@ -483,6 +489,7 @@ const Dock = memo(function Dock() {
 		"bloom-edge-shine-enabled": setEdgeShineEnabled,
 		"bloom-dock-icon-only": setDockIconOnly,
 		"bloom-dock-separator-enabled": setDockSeparatorEnabled,
+		"bloom-dock-tray-apps-enabled": setDockTrayAppsEnabled,
 		"bloom-dock-adaptive": setDockAdaptive,
 		"bloom-dock-task-view": setDockTaskView,
 		"bloom-start-icon": setStartIcon,
@@ -544,16 +551,21 @@ const Dock = memo(function Dock() {
 			// Ignore responses that arrive out of order: an older poll must never
 			// overwrite a newer state, which would resurrect closed apps.
 			if (stopped || seq !== pollSeq) return;
-			const selected = selectDockTrayApps(windows, tray, observedTrayPathsRef.current, (app) =>
-				pinnedApps.some((pinned) =>
-					isSameApp(pinned, {
-						name: app.name,
-						path: app.path,
-						icon: null,
-						is_running: true,
-						executable: fileOf(app.path)
-					})
-				)
+			const selected = selectDockTrayApps(
+				windows,
+				tray,
+				observedTrayPathsRef.current,
+				(app) =>
+					pinnedApps.some((pinned) =>
+						isSameApp(pinned, {
+							name: app.name,
+							path: app.path,
+							icon: null,
+							is_running: true,
+							executable: fileOf(app.path)
+						})
+					),
+				dockTrayAppsEnabled
 			);
 			observedTrayPathsRef.current = selected.observed;
 			const running = mergeTrayApps(windows, selected.visible);
@@ -587,7 +599,7 @@ const Dock = memo(function Dock() {
 			clearInterval(interval);
 			unlistenWindowChange.then((f) => f());
 		};
-	}, [isDragging, pinnedApps]);
+	}, [isDragging, pinnedApps, dockTrayAppsEnabled]);
 
 	const fetchIcon = async (path: string, name?: string, hwnd?: number) => {
 		const isHost = isBrowserHost(path);
@@ -705,7 +717,9 @@ const Dock = memo(function Dock() {
 			if (app.path === "start") {
 				await invoke("open_app", { appName: "start" });
 			} else if (app.is_background && app.tray_ids?.length === 1) {
-				await invoke("activate_tray_icon", { trayId: app.tray_ids[0] });
+				await invoke("activate_tray_icon", { trayId: app.tray_ids[0] }).catch(() =>
+					invoke("open_app", { appName: app.path })
+				);
 			} else if (app.all_hwnds && app.all_hwnds.length > 1) {
 				// Several windows: bring the most recent forward, then cycle.
 				await invoke("focus_app_windows", { hwnds: app.all_hwnds.map(([hwnd]) => hwnd) });

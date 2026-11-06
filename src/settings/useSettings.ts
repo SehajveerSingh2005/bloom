@@ -108,6 +108,9 @@ export function useSettings() {
 	const [dockSeparatorEnabled, setDockSeparatorEnabled] = useState(
 		() => localStorage.getItem("bloom-dock-separator-enabled") !== "false"
 	);
+	const [dockTrayAppsEnabled, setDockTrayAppsEnabled] = useState(
+		() => localStorage.getItem("bloom-dock-tray-apps-enabled") === "true"
+	);
 	const [startIcon, setStartIcon] = useState(
 		() => localStorage.getItem("bloom-start-icon") || "default"
 	);
@@ -237,6 +240,7 @@ export function useSettings() {
 			apply(getVal("bloom-dock-preview-enabled"), setDockPreviewEnabled, readBool);
 			apply(getVal("bloom-dock-icon-only"), setDockIconOnly, readBool);
 			apply(getVal("bloom-dock-separator-enabled"), setDockSeparatorEnabled, readBool);
+			apply(getVal("bloom-dock-tray-apps-enabled"), setDockTrayAppsEnabled, readBool);
 			apply(getVal("bloom-start-icon"), setStartIcon, (v) => v);
 			apply(getVal("bloom-dock-adaptive"), setDockAdaptive, readBool);
 			apply(getVal("bloom-dock-win-number-enabled"), setDockWinNumberEnabled, readBool);
@@ -380,6 +384,7 @@ export function useSettings() {
 		"bloom-dock-enabled": setDockEnabled,
 		"bloom-dock-icon-only": setDockIconOnly,
 		"bloom-dock-separator-enabled": setDockSeparatorEnabled,
+		"bloom-dock-tray-apps-enabled": setDockTrayAppsEnabled,
 		"bloom-start-icon": setStartIcon,
 		"bloom-dock-preview-enabled": setDockPreviewEnabled,
 		"bloom-dock-adaptive": setDockAdaptive,
@@ -711,6 +716,12 @@ export function useSettings() {
 		const next = !dockSeparatorEnabled;
 		setDockSeparatorEnabled(next);
 		saveSetting("bloom-dock-separator-enabled", String(next));
+	};
+
+	const toggleDockTrayApps = () => {
+		const next = !dockTrayAppsEnabled;
+		setDockTrayAppsEnabled(next);
+		saveSetting("bloom-dock-tray-apps-enabled", String(next));
 	};
 
 	const handleStartIconChange = (icon: string) => {
@@ -1078,6 +1089,8 @@ export function useSettings() {
 		toggleDockIconOnly,
 		dockSeparatorEnabled,
 		toggleDockSeparator,
+		dockTrayAppsEnabled,
+		toggleDockTrayApps,
 		startIcon,
 		handleStartIconChange,
 		dockAdaptive,
