@@ -1,10 +1,15 @@
 # Dock background apps and system actions
 
-An unpinned app remains in the dock after its last window closes only if Bloom
+When Background Tray Apps is enabled, an unpinned app remains in the dock after its last window closes only if Bloom
 observed that app with a window during the current session and it still has a
 live notification icon. Other tray-only apps do not fill the dock. Pinned apps
 show a grey dot from startup when they are already active in the tray. Windowed
 apps retain their normal window dots and previews.
+
+Settings > Dock > Background Tray Apps (`bloom-dock-tray-apps-enabled`) controls
+this behavior. It is off by default, keeping the system tray separate from the
+taskbar/dock so closed apps exit the dock and live purely in the system tray.
+
 Running unpinned apps appear to the right of the pinned group. Settings > Dock >
 App Separator controls the thin theme-aware divider; it is on by default and
 appears only when an unpinned app is present.

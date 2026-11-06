@@ -6,6 +6,7 @@ import {
 	EyeOff,
 	Circle,
 	Columns2,
+	Layers,
 	Maximize2,
 	Keyboard,
 	Sparkles,
@@ -114,6 +115,8 @@ interface DockTabProps {
 	toggleDockIconOnly: () => void;
 	dockSeparatorEnabled: boolean;
 	toggleDockSeparator: () => void;
+	dockTrayAppsEnabled: boolean;
+	toggleDockTrayApps: () => void;
 	dockAdaptive: boolean;
 	toggleDockAdaptive: () => void;
 	dockWinNumberEnabled: boolean;
@@ -150,6 +153,8 @@ export function DockTab({
 	toggleDockIconOnly,
 	dockSeparatorEnabled,
 	toggleDockSeparator,
+	dockTrayAppsEnabled,
+	toggleDockTrayApps,
 	dockAdaptive,
 	toggleDockAdaptive,
 	dockWinNumberEnabled,
@@ -258,6 +263,21 @@ export function DockTab({
 									type="checkbox"
 									checked={dockSeparatorEnabled}
 									onChange={toggleDockSeparator}
+								/>
+								<span className="slider"></span>
+							</label>
+						</SettingRow>
+
+						<SettingRow
+							icon={Layers}
+							label="Background Tray Apps"
+							desc="Keep apps in the dock when closed to the system tray"
+						>
+							<label className="toggle-switch">
+								<input
+									type="checkbox"
+									checked={dockTrayAppsEnabled}
+									onChange={toggleDockTrayApps}
 								/>
 								<span className="slider"></span>
 							</label>
