@@ -62,6 +62,13 @@
 		transform: rotate(360deg);
 	}
 }
+/* Keep OpenCode’s rectangular mark upright. */
+.agent-logo-wrap.is-working:has(.agent-opencode) {
+	animation: agent-logo-pulse 3s ease-in-out infinite;
+}
+@keyframes agent-logo-pulse {
+	50% { opacity: 0.65; }
+}
 .agent-activity-status {
 	min-width: 0;
 	max-width: 100%;
@@ -102,6 +109,7 @@
 	.agent-alert[data-activity="running"] .agent-activity-status {
 		--agent-shimmer-period: 3.8s;
 	}
+	.agent-alert[data-activity="working"] .agent-activity-status,
 	.agent-alert[data-activity="checking"] .agent-activity-status {
 		--agent-shimmer-period: 5.2s;
 	}

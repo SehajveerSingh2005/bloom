@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
 	agentAlertReducer as reduce,
 	EMPTY_ALERTS,
+	AGENT_ACTIVITIES,
 	agentActivityWidth,
 	formatAgentElapsed,
 	type AgentAlert,
@@ -124,11 +125,11 @@ test("automatic approval checks stay working and keep the turn duration", () => 
 	state = reduce(state, { type: "present", now: 1001 });
 	state = reduce(state, {
 		type: "receive",
-		alert: { ...alert("s1", "working"), activity: "checking" },
+		alert: { ...alert("s1", "working"), activity: "working" },
 		now: 5000
 	});
 	expect(state.active?.kind).toBe("working");
-	expect(state.active?.activity).toBe("checking");
+	expect(state.active?.activity).toBe("working");
 	expect(state.active?.started).toBe(1000);
 	expect(state.entries.some(entry => entry.kind === "attention")).toBe(false);
 	state = receive(state, "s1", "working", 20_000);
@@ -144,4 +145,34 @@ test("activity width groups logo and status with a gap before duration", () => {
 		expect(gap).toBeGreaterThanOrEqual(24);
 	}
 	expect(agentActivityWidth(120, 48)).toBe(agentActivityWidth(120, 34) + 14);
+});
+
+
+test("approval labels stay neutral for current and older installed Codex hooks", () => {
+	expect(AGENT_ACTIVITIES.working).toBe("Working");
+	expect(AGENT_ACTIVITIES.checking).toBe("Working");
+});
+
+test("a manual approval pause stays neutral without inventing an attention event", () => {
+	let state = receive(EMPTY_ALERTS, "s1", "working", 1000);
+	state = reduce(state, { type: "present", now: 1001 });
+	state = reduce(state, { type: "receive", alert: { ...alert("s1", "working"), activity: "working" }, now: 5000 });
+	state = reduce(state, { type: "prune", now: 65_000 });
+	expect(state.active?.activity).toBe("working");
+	expect(state.active?.started).toBe(1000);
+	expect(state.entries.some(entry => entry.kind === "attention")).toBe(false);
+	// The hooks cannot observe the accept decision or execution start. The next
+	// event is tool completion, which returns the status to Thinking.
+	state = reduce(state, { type: "receive", alert: { ...alert("s1", "working"), activity: "thinking" }, now: 70_000 });
+	expect(state.active?.activity).toBe("thinking");
+	expect(state.active?.started).toBe(1000);
+	state = receive(state, "s1", "ready", 80_000);
+	expect(state.active?.kind).toBe("ready");
+});
+
+test("interrupting a pending approval clears the activity", () => {
+	let state = receive(EMPTY_ALERTS, "s1", "working", 1000);
+	state = reduce(state, { type: "present", now: 1001 });
+	state = receive(state, "s1", "stopped", 5000);
+	expect(state).toEqual(EMPTY_ALERTS);
 });

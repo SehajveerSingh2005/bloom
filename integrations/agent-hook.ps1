@@ -9,8 +9,9 @@ try {
         'Stop' { 'ready' }
         'PermissionRequest' {
             # This fires before the approval decision, including automatic review.
-            # It does not confirm that a person is being asked to respond.
-            if ($Agent -eq 'codex') { $activity = 'checking'; 'working' } else { 'attention' }
+            # Keep the label neutral: this hook does not identify who reviews the request
+            # or signal when the command starts executing.
+            if ($Agent -eq 'codex') { $activity = 'working'; 'working' } else { 'attention' }
         }
         'Notification' {
             if ($eventData.notification_type -in @('permission_prompt', 'elicitation_dialog')) { 'attention' }

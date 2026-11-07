@@ -1,6 +1,6 @@
 export type Agent = "claude" | "codex" | "opencode";
 export type AgentAlertKind = "working" | "ready" | "attention" | "error" | "resolved" | "stopped";
-export type AgentActivity = "thinking" | "reading" | "editing" | "running" | "checking";
+export type AgentActivity = "thinking" | "reading" | "editing" | "running" | "working" | "checking";
 export interface AgentAlert {
 	agent: Agent;
 	session: string;
@@ -26,7 +26,9 @@ export const AGENT_ACTIVITIES: Record<AgentActivity, string> = {
 	reading: "Reading",
 	editing: "Editing",
 	running: "Running",
-	checking: "Checking access"
+	working: "Working",
+	// Keep older installed hooks compatible.
+	checking: "Working"
 };
 export function formatAgentElapsed(started: number, now: number): string {
 	const seconds = Math.max(0, Math.floor((now - started) / 1000));

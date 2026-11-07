@@ -1,19 +1,21 @@
 # Agent notifications
 
 Open **Settings → Integrations**, connect an agent, then restart that agent.
-Existing connections show **Update** to install the live activity hooks/plugin.
-“Installed · waiting for agent events” means configuration is present, not that
+Existing connections show **Update** when an integration needs new hooks or a plugin.
+For OpenCode, Bloom installs adapters for 1.x and 2.x. Desktop and terminal
+sessions use the adapter loaded by their local OpenCode server. If OpenCode 2
+uses its shared background service, close OpenCode, run `opencode service stop`,
+then reopen OpenCode so the server reloads the plugin.
+“Installed · awaiting first event” means configuration is present, not that
 the agent has loaded it. Restart the agent, review/trust the hooks where required,
 and submit a new prompt. An already-running turn cannot replay its earlier start
-event. “Receiving agent events” appears only after the local HTTP bridge receives
-an agent event during this Bloom launch; **Test notch** does not set that status.
+event. “Connected” appears after the local HTTP bridge receives a real event and
+is remembered across Bloom restarts. **Test notch** does not verify an integration.
 
-Codex's **Set up** action installs the hooks and opens `codex://settings`. Bloom
-keeps a three-step setup card visible: installation, approval in Codex's Hooks
-page, and verification with a new prompt. It marks setup complete only after an
-actual agent event arrives. Opening Settings does not restart Codex or approve
-anything automatically. Existing installed connections without events resume the
-same setup card when Settings is reopened. Codex still owns hook approval; plugin
+Codex’s **Set up** action installs the hooks and opens Codex settings. Bloom shows
+setup help for the selected integration until its first event arrives. Installed
+integrations awaiting verification can reopen the guide with **Setup help**.
+Codex still owns hook approval; plugin
 packaging does not remove its trust requirement.
 For Codex, review and trust the added hooks using `/hooks` in the CLI or Settings
 → Hooks in the desktop app. Older agent versions without the documented hooks
@@ -23,11 +25,15 @@ need an update. Remote/WSL sessions are not supported by this Windows-local brid
   `PostToolUse` → thinking; `SessionEnd` → clear. `Stop` → response ready; `PermissionRequest` and permission or
   elicitation `Notification` → attention; `StopFailure` → error.
 - Codex: `UserPromptSubmit` and tool hooks → working; `Stop` → response ready;
-  `PermissionRequest` → checking access (approval may be automatic); `Interrupt` and `SessionEnd` → clear.
+  `PermissionRequest` → working (approval may be automatic or manual); `Interrupt` and `SessionEnd` → clear.
 - OpenCode: `session.idle` → response ready; `permission.asked` and
   `question.asked` → attention; `session.error` → error. `session.status` (busy/retry)
   and tool hooks → working; permission/question replies → thinking; `session.deleted`
   → clear. Child sessions are ignored.
+
+Bloom shows **Working** during Codex approval requests because the hook does not
+identify the reviewer or report the approval decision. Approval prompts remain in
+Codex. Older hooks that send `checking` also display **Working**.
 
 The live activity is a single row at the normal 36px notch height. Its animated
 logo and status sit on the left; elapsed wall time sits on the right. There are
